@@ -30,7 +30,7 @@ This project started from this prompt:
 Needs Python 3.12+, Rust, about 2 GB of disk, and `xvfb` for the oracle client. The scripts download their own JDK.
 
 ```sh
-python3 tools/setup_vanilla.py          # download, decompile, fetch JOML's sources, run the data generator
+python3 tools/setup_vanilla.py          # download, decompile, fetch JOML's and Netty's sources, run the data generator
 python3 tools/golden.py                 # record vanilla's answers for the golden tests
 cargo test                              # check the port against them
 python3 tools/oracle_client.py run walk # replay a scenario in the real client
@@ -40,7 +40,7 @@ python3 tools/oracle_client.py run walk # replay a scenario in the real client
 
 | Path | What it is |
 | --- | --- |
-| `src/` | The port. `src/java/` holds JDK behaviour the game relies on (`Math`, `String.hashCode`, `UUID`), and `src/org/joml/` the parts of JOML, the game's vector and matrix library, that the client calls. |
+| `src/` | The port. `src/java/` holds JDK behaviour the game relies on (`Math`, `String.hashCode`, `UUID`), `src/org/joml/` the parts of JOML, the game's vector and matrix library, that the client calls, and `src/io/netty/` the parts of Netty's buffers. |
 | `oracle/golden/` | Java harness that calls real game methods and records the answers |
 | `oracle/client/` | Fabric mod that drives the real client headless: tick traces and screenshots |
 | `oracle/scenarios/` | Scripted inputs both clients replay |

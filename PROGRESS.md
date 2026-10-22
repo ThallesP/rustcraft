@@ -4,7 +4,9 @@ The loop's memory: newest entries first. Each step adds an entry and rewrites "N
 
 ## Next
 
-Milestone 3, part 1: the wire format, starting with `VarInt`, `VarLong` and `Utf8String`, then `FriendlyByteBuf`'s readers and writers for the types ported so far (bytes, shorts, ints, longs, floats, doubles, booleans, VarInts and VarLongs, UTF-8 strings with their length limits, `UUID`, `BlockPos`, `Vec3`, `Identifier`, enums, byte arrays). Netty's `ByteBuf` becomes a byte buffer with Java's reader and writer indexes. The golden harness needs a `ByteBuf` generator (bytes like the packets' fields, truncated ones, VarInts at each length and too long) and encoder (its bytes as hex and its indexes), so readers can be checked on what they consume and throw on, and writers on the bytes they write. `ByteBufCodecs` and `StreamCodec` come after, and they un-pend the `STREAM_CODEC`s of `BlockPos`, `Vec3`, `Direction`, `BlockHitResult` and `Identifier`.
+Milestone 3, part 1 continued: `StreamCodec` (with `StreamDecoder`, `StreamEncoder` and `StreamMemberEncoder`) and `ByteBufCodecs`: the primitive codecs, `VAR_INT`, `VAR_LONG`, `STRING_UTF8` and `stringUtf8(int)`, `BYTE_ARRAY`, `optional`, `collection`, `idMapper`, `composite` and the rest the handshake, login and configuration packets use. They un-pend the `STREAM_CODEC`s of `BlockPos`, `Vec3`, `Direction`, `BlockHitResult` and `Identifier`, and `FriendlyByteBuf`'s readers and writers that take a codec or a function (`readOptional`, `readNullable`, `readEither`, `readById`, `readWithCount` and their writers). A codec is an object, not a method, so the golden harness needs a suite that runs each codec it lists: encoding generated values into a buffer (the bytes it writes) and decoding generated buffers (what it reads, consumes and throws on). Then the frame codecs (`Varint21FrameDecoder`, `Varint21LengthFieldPrepender`), the protocol states, and the packets the join phase sends and receives.
+
+`FriendlyByteBuf.readEnum` and `writeEnum` (49 calls in the client) need generators for `Class` and `Enum` arguments, which would also cover `readEnumSet` and `writeEnumSet`, and those need `java.util.BitSet` (also `readBitSet`, `readFixedBitSet` and their writers). `readChunkPos` and `writeChunkPos` come with `ChunkPos` in milestone 4, the `ResourceKey` ones with the registries, and the NBT ones with NBT.
 
 Left from milestone 2, for when the renderer needs them: Minecraft's `Frustum` on top of `FrustumIntersection` (it needs `BoundingBox`, which also un-pends `AABB.of` and `BlockPos.betweenClosedStream(BoundingBox)`), `PoseStack.translate(Vec3)` (appended to `PoseStackSuite`'s programs), and `BlockMath` (`Quaternionf.rotateX/Y`, `Direction.getApproximateNearest`), which `BlockModelRotation` builds its face transformations with, along with `OctahedralGroup` (and its `SymmetricGroup3` and `FrontAndTop`), which also un-pends `Rotation.rotation()`. When block models and render states come, settle how they hold shared `Transformation`s: Java's `mulPose(Transformation)` and `BlockMath.getFaceTransformation` add properties to a shared transformation's own matrix (static ones like `TheEndPortalRenderer.TRANSFORMATION` included), so every holder sees them, and that changes which shortcuts later JOML calls take.
 
@@ -12,9 +14,40 @@ Left from milestone 2, for when the renderer needs them: Minecraft's `Frustum` o
 
 ## Needs Thalles
 
-- **Licence of the code translated from OpenJDK and JOML.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too. Not blocking. Decide before the repo or any build goes public.
+- **Licence of the code translated from OpenJDK, JOML and Netty.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception, and `string::from_bytes_utf8` from the JDK's `String.java`, the same. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. `src/io/netty/` comes from Netty, Apache 2.0, and keeps its notice, saying the files were translated and changed; a distribution has to carry the licence too. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too, and Apache 2.0 code isn't compatible with GPLv2 only. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22: Netty's ByteBuf, VarInt, VarLong, Utf8String and FriendlyByteBuf
+
+- Ported and checked against vanilla, milestone 3's first slice:
+  - Netty's `ByteBuf` (netty-buffer 4.2.16, whose sources `tools/setup_vanilla.py` now puts next to JOML's): the 48 methods the client calls on a buffer, for its indexes, marks and capacity, primitives, byte arrays, other buffers, and `toString` of a range as UTF-8 (68,682 cases). It's one struct, AbstractByteBuf's checks over UnpooledHeapByteBuf's array, and grows like `Unpooled.buffer()`'s (`calculateNewCapacity`), with `ByteBufUtil`'s UTF-8 helpers and `Unpooled.buffer` (PORTING.md). The translated files keep Netty's Apache notice.
+  - `VarInt` (4 methods and its constant, 4,426 cases), `VarLong` (4 methods, 3,695) and `Utf8String` (both methods, 3,186).
+  - `FriendlyByteBuf`: its constructor, both constants and 47 readers and writers, for VarInts, VarLongs, strings, identifiers, UUIDs, block positions, byte, VarInt and long arrays, container ids, `Vector3f`s and `Quaternionf`s, instance and static (49,682 cases). It owns its `ByteBuf` and derefs to it. Pending (41): the codecs' (5), the ones taking a stream codec or a function (11), `readEnum`, `writeEnum` and the `EnumSet` ones (4, no `Class` or `Enum` generator yet), the `BitSet` ones (6), `ChunkPos` (4), `ResourceKey` (5) and NBT (6).
+  - The JDK's UTF-8 decoding (`String.decodeUTF8_UTF16`, which `new String(bytes, UTF_8)` and Netty's `toString` run) as `string::from_bytes_utf8`, checked in `java.lang.String`'s suite (129,456 cases).
+- Golden harness:
+  - New `NetworkValues`: `ByteBuf`s are `[array, readerIndex, writerIndex, markedReaderIndex, markedWriterIndex]`, the whole array as hex, so the capacity and the bytes past the writer index are checked too. They hold fields the way packets write them, of every length, cut short, too long, malformed and negative (TESTING.md). A `FriendlyByteBuf` is the buffer it wraps.
+  - Generators for `byte[]`, `int[]` and `long[]` (copied for each call, so `after` shows what a method wrote into them), `UUID`, `CharSequence` and `Charset` (UTF-8 only). No member of the earlier suites takes one, so no other file changed.
+  - `InstanceSuite.withoutOverridesOf(ByteBuf.class)` leaves out `FriendlyByteBuf`'s forwarding overrides, which `ByteBuf`'s own suite covers.
+  - Extra inputs where answers change, and two `where` filters, since vanilla allocates up to gigabytes before it throws on some lengths: `ensureWritable` and `writeBytes` grow the buffer before checking the source, and `readByteArray(int)` and `readVarIntArray(int)` allocate the array before reading it. `tools/golden.py` turns Netty's leak detector off: the cases never release what `readBytes(int)` returns.
+- Found:
+  - The JDK's decoder replaces an encoded surrogate (`ED A0 80`) with one U+FFFD, and one cut short (`ED A0`) too. Rust's `from_utf8_lossy` gives three and two, and fails 323 cases.
+  - `utf8MaxBytes(maxLength)` is `maxLength * 3` in ints, so it wraps: with a maximum of `1 << 30` every string is too long, even `""`, and from about 1.43 billion the limit wraps back to a small positive one, which a string can fit.
+  - `ByteBuf.toString(index, length, charset)` checks the range against the array, not the writer index, and doesn't check an empty range at all.
+  - `writeBytes(byte[], int, int)` grows the array before it checks the source's range, so a call that throws can still grow it.
+  - A negative length prefix passes the `size > maxSize` checks of `readByteArray`, `readVarIntArray` and `readLongArray`, and throws `NegativeArraySizeException`.
+  - `writeFloat` writes raw bits: a signaling NaN keeps its payload.
+- Mutations (44, run once and not committed): 38 fail the goldens. The other 6 are equivalent:
+  - `ensureWritable` growing a buffer that's exactly full: `maxFastWritableBytes` grows it to the same capacity;
+  - netty-common's `isOutOfBounds` without its end check: Rust's slice bounds panic before anything changes;
+  - `readBytes(0)` returning a growable empty buffer instead of `EMPTY_BUFFER`, which only differ in their maximum capacity;
+  - `VarInt.read` shifting without Java's mask: only a sixth byte shifts past 31, and it throws anyway;
+  - `Utf8String.read` checking for a negative length first: both checks throw `DecoderException` after the same VarInt;
+  - no negative-size check before allocating an array: `vec!` panics at the same point.
+
+  `readUtf()`'s limit one less survived the first inputs, which led to strings of exactly 32767 and 32768 units. That mutation and the same one in `writeUtf(String)` fail now.
+- With NaNs normalized, every line of the other golden files is identical to before. `java.lang.String`'s only gained the decoding cases after its 1,600 old lines.
+- Evidence: `cargo test --workspace` passes 84 tests, including 50 golden suites (79 and 45 before). fmt, clippy and the port check are clean.
 
 ### 2026-10-22: Identifier and String.compareTo
 

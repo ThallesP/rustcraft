@@ -21,7 +21,7 @@ How Java becomes Rust in this repo. The port should read side by side with `vani
 
 ## Libraries
 
-Libraries whose classes the game's math runs through are ported like the game, from their published sources, which `tools/setup_vanilla.py` puts next to the decompiled game (`vanilla/<version>/src/org/joml/Matrix4f.java` → `src/org/joml/matrix4f.rs`). So far that's JOML, the vector and matrix library. Its classes have hundreds of methods, so only the ones the client calls are ported, and the golden suite lists them.
+Libraries whose classes the game's math and packets run through are ported like the game, from their published sources, which `tools/setup_vanilla.py` puts next to the decompiled game (`vanilla/<version>/src/org/joml/Matrix4f.java` → `src/org/joml/matrix4f.rs`). So far that's JOML, the vector and matrix library, and Netty's buffers (`netty-buffer`). Their classes have hundreds of methods, so only the ones the client calls are ported, and the golden suite lists them. Translated files keep the library's licence notice when it asks for one (Netty's Apache notice, like HotSpot's GPL ones).
 
 Which ones the client calls comes from its bytecode: `javap -c -p` over every class in `client.jar`, keeping the `org/joml/` invocations. A call through a subclass or an interface (`Matrix3x2fStack.translate`, `Matrix3x2fc.transformPosition`) runs the class's own method unless the subclass overrides it.
 
@@ -32,6 +32,12 @@ Which ones the client calls comes from its bytecode: `javap -c -p` over every cl
 - `Matrix4f` keeps JOML's `properties`, which methods take shortcuts on. The shortcuts can give different bits than the full computation (`identity()` leaves an identity with -0.0 in it alone), so they're part of the port, and of the encoded state.
 - JOML's `Math.fma` is `a * b + c`, rounded twice: the fused `java.lang.Math.fma` needs `-Djoml.useMathFma`, which the game doesn't set. Never use `mul_add`.
 
+Netty:
+
+- `ByteBuf` is one struct: AbstractByteBuf's indexes and bounds checks over UnpooledHeapByteBuf's array, read and written big-endian (`src/io/netty/buffer/byte_buf.rs`). The game only sees `ByteBuf`'s API, and Netty's other buffers (pooled, direct, composite, slices) only differ in where the bytes live and how they grow. Its capacity is the array's length, and grows like `Unpooled.buffer()`'s (`AbstractByteBufAllocator.calculateNewCapacity`), which the golden suite checks. `retain` and `release` are Rust's ownership, and `alloc()` is the one allocator.
+- A getter and its setter overload (`readerIndex()` and `readerIndex(int)`, `capacity()` and `capacity(int)`) become `reader_index` and `set_reader_index`. Overloads by argument type get the type: `readBytes(int)` is `read_bytes`, `readBytes(byte[])` `read_bytes_array`, `readBytes(byte[], int, int)` `read_bytes_array_range`, and `writeBytes(ByteBuf)` `write_bytes_buf`.
+- A call that throws halfway leaves the buffer as Java's does: `writeBytes(byte[], int, int)` grows the array before it checks the source's range, and `VarInt.read` has consumed the bytes it read when it throws. The golden cases record the buffer after a throw too.
+
 ## Object model
 
 - Interfaces become traits. An interface-typed value becomes `Box<dyn Trait>` when owned and `&mut dyn Trait` (or `&dyn Trait`, like a `Position`) when borrowed.
@@ -40,6 +46,7 @@ Which ones the client calls comes from its bytecode: `javap -c -p` over every cl
 - An argument Java lets be null is an `Option` (`Direction.getNearest`'s fallback, `Direction.Axis.test`).
 - An interface implemented only by its own constants becomes an enum (`Axis::XP`; `Axis.of` would make another, but nothing calls it). Its overloads that differ by type get the type (`rotate_matrix4f`).
 - A class that extends another to add state holds its parent as a field and derefs to it: `Matrix4fStack` is the `Matrix4f` it derefs to, plus the saved copies. So does one that adds no state: `BlockPos` holds the `Vec3i` it derefs to, and `MutableBlockPos` the `BlockPos`. The methods a subclass overrides are its own and return its type (`BlockPos.offset` returns a `BlockPos`). A parent's method that calls an override in Java (`BlockPos.above(int)` reaching `MutableBlockPos.relative`) calls the parent's own in Rust, which is fine while both give the same values: `MutableBlockPos`'s overrides only make sure a copy comes back instead of the cursor, and every Rust result is a copy anyway.
+- A class that wraps another and forwards its API to it (`FriendlyByteBuf` around a `ByteBuf`) owns it and derefs to it. Its static methods that take the wrapped type, next to instance methods of the same name, get `_from` for readers and `_to` for writers: `readUUID()` is `read_uuid` and `readUUID(ByteBuf)` `read_uuid_from`, `writeUUID(ByteBuf, UUID)` `write_uuid_to`. An overload that adds a maximum gets `_max` (`readUtf(int)` is `read_utf_max`).
 - An abstract class is the same: `BlockHitResult` holds its `HitResult` and derefs to it, and the abstract `getType` is `BlockHitResult`'s own. How the game holds either kind of hit (`Minecraft.hitResult`) gets settled with `EntityHitResult`.
 - Protected members become `pub(super)`, visible to their package: `Vec3i`'s setters, which only `MutableBlockPos` calls. A `toString` that prints the receiver's class name (`MoreObjects.toStringHelper(this)`) becomes a helper taking the name, which each subclass's `Display` passes (`BlockPos{x=1, y=2, z=3}`).
 - An `Iterable` or `List` argument becomes a slice (`AABB.clip`'s boxes, `&[AABB]`), and an `Optional` result an `Option`.
@@ -67,6 +74,10 @@ The golden tests caught each of these, or exist to catch them.
 - **`clamp`:** Rust's `i32::clamp` panics when min > max and Java's doesn't. Write `max(min).min(max)`.
 - **NaN bits:** `Float.floatToIntBits` turns every NaN into the canonical one. `floatToRawIntBits` is `to_bits`.
 - **Strings** are UTF-16. `String.hashCode` runs over UTF-16 units (`JavaString::hash_code`), and lengths and indices count UTF-16 units too. `String.compareTo` returns the difference of the first units that differ, or of the lengths (`JavaString::compare_to`), not just its sign, and beyond the BMP its order isn't code point order. A `char` is a `u16`, since a Rust `char` can't hold half of a surrogate pair (`Identifier.bySeparator` can be asked to split at one).
+- **Decoding UTF-8** goes through `string::from_bytes_utf8`, the JDK's own decoder (`new String(bytes, UTF_8)`, which Netty's `ByteBuf.toString` runs). It replaces malformed input with U+FFFD differently from `String::from_utf8_lossy`: an encoded surrogate (`ED A0 80`) is one replacement, not three, and so is one cut short at the end (`ED A0`). Encoding a Rust string is its own bytes: Java writes a lone surrogate as `?`, and a Rust string can't hold one.
+- **`byte[]`** is `Vec<i8>` or `&[i8]`, so reading an element sign-extends like Java's.
+- **`new T[size]`** throws `NegativeArraySizeException` for a negative size. Check it before `vec![…; size as usize]`, which would try to allocate.
+- **Shift amounts.** Java masks an int's shift to 5 bits and a long's to 6, and Rust's `<<` panics past the width, so a shift that can reach it is `wrapping_shl` (`VarInt.read`'s sixth byte shifts by 35, which is 3).
 - **Same in both:** `(int)` casts from floating point (they saturate, and NaN becomes 0, like `as`), and float `%` (fmod).
 - **Transcendental functions.**
   - On x86-64, HotSpot computes `Math.sin/cos/tan/log/log10/exp/pow` (and `tanh`, `cbrt`) with its own assembly, based on Intel's libm. The interpreter and both JITs call the same stubs. Functions without that (`asin`, `acos`, `atan2`, `hypot`, …) fall back to `StrictMath`, which runs the JDK's Java port of fdlibm, ported in `src/java/lang/fd_libm.rs`. The `libm` crate is no substitute: it ports musl, whose `atan2` differs from fdlibm's on one in eight random inputs. Nor is std's `f64::hypot` (glibc's), which gets 249 of the 8,253 `Math.hypot` goldens wrong.

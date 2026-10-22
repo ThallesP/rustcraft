@@ -9,6 +9,9 @@ import java.lang.reflect.Array;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -194,6 +197,59 @@ final class Values {
         }
     };
 
+    // Arrays are mutable (readBytes and readFixedSizeLongArray write into theirs), so each call gets its own copy:
+    // empty, short, and long enough for a two-byte VarInt length.
+    private static final Generator BYTE_ARRAYS = new JomlValues.Mutable<byte[]>(
+        List.of(new byte[0], new byte[]{0}, new byte[]{-1}, new byte[]{1, 2, 3}, new byte[16], fill(new byte[200], (byte)0x5a)),
+        random -> {
+            byte[] bytes = new byte[random.nextInt(4) == 0 ? 128 + random.nextInt(200) : random.nextInt(21)];
+            random.nextBytes(bytes);
+            return bytes;
+        },
+        byte[]::clone,
+        bytes -> (JsonArray)encode(bytes, byte[].class)
+    );
+
+    private static final Generator INT_ARRAYS = new JomlValues.Mutable<int[]>(
+        List.of(new int[0], new int[]{0}, new int[]{-1}, new int[]{Integer.MIN_VALUE, Integer.MAX_VALUE, 0, 1, 127, 128, 16383, 16384, 2097152, 268435456}),
+        random -> {
+            int[] ints = new int[random.nextInt(9)];
+            for (int i = 0; i < ints.length; i++) {
+                ints[i] = (Integer)INTS.random(random);
+            }
+            return ints;
+        },
+        int[]::clone,
+        ints -> (JsonArray)encode(ints, int[].class)
+    );
+
+    private static final Generator LONG_ARRAYS = new JomlValues.Mutable<long[]>(
+        List.of(new long[0], new long[]{0L}, new long[]{-1L, Long.MIN_VALUE, Long.MAX_VALUE}, new long[5]),
+        random -> {
+            long[] longs = new long[random.nextInt(7)];
+            for (int i = 0; i < longs.length; i++) {
+                longs[i] = (Long)LONGS.random(random);
+            }
+            return longs;
+        },
+        long[]::clone,
+        longs -> (JsonArray)encode(longs, long[].class)
+    );
+
+    // The offline player's, and any bits.
+    private static final Generator UUIDS = new Simple(
+        List.<Object>of(new UUID(0L, 0L), new UUID(-1L, -1L), new UUID(Long.MIN_VALUE, Long.MAX_VALUE), NetworkValues.offlinePlayer()),
+        random -> new UUID(random.nextLong(), random.nextLong()),
+        value -> encode(value, UUID.class)
+    );
+
+    // Only UTF-8: the game's packets use nothing else.
+    private static final Generator CHARSETS = new Simple(
+        List.<Object>of(StandardCharsets.UTF_8),
+        random -> StandardCharsets.UTF_8,
+        value -> new JsonPrimitive(((Charset)value).name())
+    );
+
     // Axis's six constants, by name. Axis.of isn't covered: nothing in the game calls it.
     private static final Map<Axis, String> AXIS_NAMES = Map.of(
         Axis.XN, "XN", Axis.XP, "XP", Axis.YN, "YN", Axis.YP, "YP", Axis.ZN, "ZN", Axis.ZP, "ZP"
@@ -217,6 +273,12 @@ final class Values {
         Map.entry(char.class, CHARS),
         Map.entry(boolean.class, BOOLEANS),
         Map.entry(String.class, STRINGS),
+        Map.entry(CharSequence.class, STRINGS),
+        Map.entry(byte[].class, BYTE_ARRAYS),
+        Map.entry(int[].class, INT_ARRAYS),
+        Map.entry(long[].class, LONG_ARRAYS),
+        Map.entry(UUID.class, UUIDS),
+        Map.entry(Charset.class, CHARSETS),
         Map.entry(RandomSource.class, RANDOM_SOURCES),
         Map.entry(Axis.class, AXES)
     );
@@ -235,6 +297,9 @@ final class Values {
         }
         if (generator == null) {
             generator = MathValues.generator(type);
+        }
+        if (generator == null) {
+            generator = NetworkValues.generator(type);
         }
         return generator != null ? generator : CoreValues.generator(type);
     }
@@ -261,7 +326,7 @@ final class Values {
         ) {
             return true;
         }
-        if (JomlValues.canEncode(type) || MathValues.canEncode(type) || CoreValues.canEncode(type)) {
+        if (JomlValues.canEncode(type) || MathValues.canEncode(type) || NetworkValues.canEncode(type) || CoreValues.canEncode(type)) {
             return true;
         }
         // Their elements are encoded by their own class.
@@ -356,6 +421,9 @@ final class Values {
         if (MathValues.canEncode(type)) {
             return MathValues.encode(value);
         }
+        if (NetworkValues.canEncode(type)) {
+            return NetworkValues.encode(value);
+        }
         if (CoreValues.canEncode(type)) {
             return CoreValues.encode(value);
         }
@@ -418,6 +486,11 @@ final class Values {
 
     static float parseFloat(final JsonElement bits) {
         return Float.intBitsToFloat(Integer.parseUnsignedInt(bits.getAsString(), 16));
+    }
+
+    private static byte[] fill(final byte[] bytes, final byte value) {
+        Arrays.fill(bytes, value);
+        return bytes;
     }
 
     // NaN payloads never change game behaviour, so random bit patterns use the canonical NaN.

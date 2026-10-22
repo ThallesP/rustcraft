@@ -38,6 +38,7 @@ final class InstanceSuite implements Suite {
     private final Map<String, List<Object[]>> extraInputs = new HashMap<>();
     private final Map<String, Predicate<Object[]>> domains = new HashMap<>();
     private final Set<String> inherited = new LinkedHashSet<>();
+    private Class<?> wrapped;
     private boolean fields;
 
     /** Big library classes (JOML's Matrix4f has hundreds of methods) list the members the port covers. */
@@ -85,6 +86,15 @@ final class InstanceSuite implements Suite {
         return this;
     }
 
+    /**
+     * Leaves out the methods that override one of the parent's, for a class that wraps another and forwards its API to
+     * it (FriendlyByteBuf to Netty's ByteBuf), whose own suite covers them.
+     */
+    InstanceSuite withoutOverridesOf(final Class<?> parent) {
+        this.wrapped = parent;
+        return this;
+    }
+
     @Override
     public String name() {
         return this.type.getName();
@@ -129,12 +139,22 @@ final class InstanceSuite implements Suite {
         Arrays.stream(this.type.getDeclaredMethods())
             .filter(method -> Modifier.isPublic(method.getModifiers()))
             .filter(method -> !method.isSynthetic() && !method.isBridge())
+            .filter(method -> this.wrapped == null || Modifier.isStatic(method.getModifiers()) || !overrides(this.wrapped, method))
             .forEach(members::add);
         Arrays.stream(this.type.getMethods())
             .filter(method -> method.getDeclaringClass() != this.type && this.inherited.contains(descriptor(method)))
             .forEach(members::add);
         members.sort(Comparator.comparing(InstanceSuite::descriptor));
         return members;
+    }
+
+    private static boolean overrides(final Class<?> parent, final Method method) {
+        try {
+            parent.getMethod(method.getName(), method.getParameterTypes());
+            return true;
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
     }
 
     private static String descriptor(final Executable member) {

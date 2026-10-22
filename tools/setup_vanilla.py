@@ -3,7 +3,8 @@
 
 Downloads the client and server jars plus the client's libraries, decompiles the
 client with Vineflower, adds the sources of the libraries the port translates too
-(JOML), extracts its bundled resources and runs the server's data generator.
+(JOML, and Netty's buffers), extracts its bundled resources and runs the server's data
+generator.
 Everything lands in vanilla/, which is gitignored: Mojang's code and assets can't
 be redistributed.
 
@@ -37,7 +38,7 @@ VINEFLOWER_SHA256 = "1dfcfe974395734fa467ce620661c7623d05ba83670de0529b1fbd63ff5
 VINEFLOWER_URL = f"https://repo1.maven.org/maven2/org/vineflower/vineflower/{VINEFLOWER_VERSION}/vineflower-{VINEFLOWER_VERSION}.jar"
 MAVEN_CENTRAL = "https://repo1.maven.org/maven2/"
 # Libraries the port translates like the game's own classes, from their published sources.
-SOURCE_LIBRARIES = {"org.joml:joml"}
+SOURCE_LIBRARIES = {"org.joml:joml", "io.netty:netty-buffer"}
 
 
 # Adoptium's API answers 403 to urllib's default User-Agent.
@@ -81,7 +82,8 @@ def fetch_text(url):
 
 
 # Puts a library's sources next to the decompiled game, so src/org/joml/matrix4f.rs reads
-# side by side with vanilla/<version>/src/org/joml/Matrix4f.java.
+# side by side with vanilla/<version>/src/org/joml/Matrix4f.java, and src/io/netty/buffer/
+# with vanilla/<version>/src/io/netty/buffer/.
 def add_library_sources(library, source_dir):
     artifact = library["downloads"]["artifact"]
     central_sha1 = fetch_text(MAVEN_CENTRAL + artifact["path"] + ".sha1")

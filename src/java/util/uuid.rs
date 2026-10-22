@@ -28,9 +28,16 @@ mod golden {
     use serde_json::Value;
 
     use super::UUID;
-    use crate::golden::Encode;
+    use crate::golden::{Decode, Encode, elements};
 
     // Vanilla writes a UUID as [most, least].
+    impl Decode for UUID {
+        fn decode(value: &Value) -> Self {
+            let [most, least] = elements(value);
+            UUID::new(i64::decode(most), i64::decode(least))
+        }
+    }
+
     impl Encode for UUID {
         fn encode(&self) -> Value {
             Value::from(vec![self.most_sig_bits, self.least_sig_bits])

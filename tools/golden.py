@@ -33,11 +33,15 @@ def main():
     sources = sorted(SOURCE_DIR.rglob("*.java"))
     subprocess.run([jdk_bin / "javac", "-d", classes_dir, "-cp", os.pathsep.join(map(str, classpath)), *sources], check=True)
 
-    # Run inside vanilla/, since loading game classes makes log4j create logs/ in the working directory.
+    # Run inside vanilla/, since loading game classes makes log4j create logs/ in the working directory. Cases never
+    # release the buffers Netty hands back (ByteBuf.readBytes), so its leak detector would only log noise.
     output_dir = VERSION_DIR / "golden"
     shutil.rmtree(output_dir, ignore_errors=True)
     subprocess.run(
-        [jdk_bin / "java", "-cp", os.pathsep.join(map(str, [classes_dir, *classpath])), "rustcraft.golden.Golden", output_dir],
+        [
+            jdk_bin / "java", "-Dio.netty.leakDetection.level=disabled", "-cp", os.pathsep.join(map(str, [classes_dir, *classpath])),
+            "rustcraft.golden.Golden", output_dir,
+        ],
         cwd=VERSION_DIR,
         check=True,
     )

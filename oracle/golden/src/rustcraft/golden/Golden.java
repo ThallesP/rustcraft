@@ -5,7 +5,10 @@ import com.mojang.math.GivensParameters;
 import com.mojang.math.MatrixUtil;
 import com.mojang.math.OctahedralGroup;
 import com.mojang.math.Transformation;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -17,6 +20,10 @@ import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.Utf8String;
+import net.minecraft.network.VarInt;
+import net.minecraft.network.VarLong;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
@@ -378,7 +385,82 @@ public final class Golden {
             .extraInputs("equals(Ljava/lang/Object;)Z", identifierPairs())
             .extraInputs("compareTo(Lnet/minecraft/resources/Identifier;)I", identifierPairs())
             .extraInputs("isAllowedInIdentifier(C)Z", everyChar())
-            .extraInputs("validPathChar(C)Z", everyChar())
+            .extraInputs("validPathChar(C)Z", everyChar()),
+        new StaticSuite(VarInt.class)
+            .extraInputs("getByteSize(I)I", varIntBoundaries(false))
+            .extraInputs("write(Lio/netty/buffer/ByteBuf;I)Lio/netty/buffer/ByteBuf;", varIntBoundaries(true))
+            .extraInputs("read(Lio/netty/buffer/ByteBuf;)I", varIntEncodings(false)),
+        new StaticSuite(VarLong.class)
+            .extraInputs("getByteSize(J)I", varLongBoundaries(false))
+            .extraInputs("write(Lio/netty/buffer/ByteBuf;J)Lio/netty/buffer/ByteBuf;", varLongBoundaries(true))
+            .extraInputs("read(Lio/netty/buffer/ByteBuf;)J", varIntEncodings(true)),
+        new StaticSuite(Utf8String.class)
+            .extraInputs("read(Lio/netty/buffer/ByteBuf;I)Ljava/lang/String;", utfReadLimits())
+            .extraInputs("write(Lio/netty/buffer/ByteBuf;Ljava/lang/CharSequence;I)V", utfWriteLimits()),
+        // Netty's buffer, as Unpooled.buffer makes it: the methods the client calls on a ByteBuf.
+        new InstanceSuite(
+            ByteBuf.class,
+            "capacity()I", "maxCapacity()I", "readerIndex()I", "readerIndex(I)Lio/netty/buffer/ByteBuf;", "writerIndex()I",
+            "writerIndex(I)Lio/netty/buffer/ByteBuf;", "setIndex(II)Lio/netty/buffer/ByteBuf;", "clear()Lio/netty/buffer/ByteBuf;",
+            "isReadable()Z", "isReadable(I)Z", "isWritable()Z", "isWritable(I)Z", "readableBytes()I", "writableBytes()I",
+            "maxWritableBytes()I", "markReaderIndex()Lio/netty/buffer/ByteBuf;", "resetReaderIndex()Lio/netty/buffer/ByteBuf;",
+            "markWriterIndex()Lio/netty/buffer/ByteBuf;", "resetWriterIndex()Lio/netty/buffer/ByteBuf;",
+            "ensureWritable(I)Lio/netty/buffer/ByteBuf;",
+            "readBoolean()Z", "readByte()B", "readUnsignedByte()S", "readShort()S", "readUnsignedShort()I", "readInt()I",
+            "readUnsignedInt()J", "readLong()J", "readChar()C", "readFloat()F", "readDouble()D",
+            "readBytes(I)Lio/netty/buffer/ByteBuf;", "readBytes([B)Lio/netty/buffer/ByteBuf;", "readBytes([BII)Lio/netty/buffer/ByteBuf;",
+            "skipBytes(I)Lio/netty/buffer/ByteBuf;",
+            "writeBoolean(Z)Lio/netty/buffer/ByteBuf;", "writeByte(I)Lio/netty/buffer/ByteBuf;", "writeShort(I)Lio/netty/buffer/ByteBuf;",
+            "writeInt(I)Lio/netty/buffer/ByteBuf;", "writeLong(J)Lio/netty/buffer/ByteBuf;", "writeChar(I)Lio/netty/buffer/ByteBuf;",
+            "writeFloat(F)Lio/netty/buffer/ByteBuf;", "writeDouble(D)Lio/netty/buffer/ByteBuf;",
+            "writeBytes([B)Lio/netty/buffer/ByteBuf;", "writeBytes([BII)Lio/netty/buffer/ByteBuf;",
+            "writeBytes(Lio/netty/buffer/ByteBuf;)Lio/netty/buffer/ByteBuf;", "writeBytes(Lio/netty/buffer/ByteBuf;II)Lio/netty/buffer/ByteBuf;",
+            "toString(IILjava/nio/charset/Charset;)Ljava/lang/String;"
+        )
+            .extraInputs("readerIndex(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
+            .extraInputs("writerIndex(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
+            .extraInputs("setIndex(II)Lio/netty/buffer/ByteBuf;", bufferIndexes(2))
+            .extraInputs("isReadable(I)Z", bufferIndexes(1))
+            .extraInputs("isWritable(I)Z", bufferIndexes(1))
+            .extraInputs("ensureWritable(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
+            .extraInputs("readBytes(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
+            .extraInputs("skipBytes(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
+            .extraInputs("toString(IILjava/nio/charset/Charset;)Ljava/lang/String;", bufferRanges())
+            .extraInputs("writeFloat(F)Lio/netty/buffer/ByteBuf;", withBuffers(firsts(floatNaNs()), true))
+            .extraInputs("writeDouble(D)Lio/netty/buffer/ByteBuf;", withBuffers(firsts(doubleNaNs()), true))
+            .extraInputs("readBytes([BII)Lio/netty/buffer/ByteBuf;", arrayRanges())
+            .extraInputs("writeBytes([BII)Lio/netty/buffer/ByteBuf;", arrayRanges())
+            .extraInputs("writeBytes(Lio/netty/buffer/ByteBuf;II)Lio/netty/buffer/ByteBuf;", sourceRanges())
+            // Vanilla grows the buffer before it finds the source too short, so a length near 2^30 allocates a gigabyte.
+            .where("ensureWritable(I)Lio/netty/buffer/ByteBuf;", args -> growsLittle((ByteBuf)args[0], (Integer)args[1]))
+            .where("writeBytes([BII)Lio/netty/buffer/ByteBuf;", args -> growsLittle((ByteBuf)args[0], (Integer)args[3]))
+            .where("writeBytes(Lio/netty/buffer/ByteBuf;II)Lio/netty/buffer/ByteBuf;", args -> growsLittle((ByteBuf)args[0], (Integer)args[3])),
+        // The methods FriendlyByteBuf adds. The ones overriding ByteBuf's forward to the buffer it wraps.
+        InstanceSuite.every(FriendlyByteBuf.class)
+            .withoutOverridesOf(ByteBuf.class)
+            .extraInputs("writeVarInt(I)Lnet/minecraft/network/FriendlyByteBuf;", friendly(varIntBoundaries(true)))
+            .extraInputs("writeVarLong(J)Lnet/minecraft/network/FriendlyByteBuf;", friendly(varLongBoundaries(true)))
+            .extraInputs("readVarInt()I", friendly(varIntEncodings(false)))
+            .extraInputs("readVarLong()J", friendly(varIntEncodings(true)))
+            .extraInputs("readUtf()Ljava/lang/String;", friendly(longStrings(false)))
+            .extraInputs("writeUtf(Ljava/lang/String;)Lnet/minecraft/network/FriendlyByteBuf;", friendly(longStrings(true)))
+            .extraInputs("readUtf(I)Ljava/lang/String;", friendly(utfReadLimits()))
+            .extraInputs("writeUtf(Ljava/lang/String;I)Lnet/minecraft/network/FriendlyByteBuf;", friendly(utfWriteLimits()))
+            .extraInputs("readIdentifier()Lnet/minecraft/resources/Identifier;", friendly(identifierBuffers()))
+            .extraInputs("readByteArray()[B", friendly(byteArrays(false)))
+            .extraInputs("readByteArray(I)[B", friendly(byteArrays(true)))
+            .extraInputs("readByteArray(Lio/netty/buffer/ByteBuf;)[B", byteArrays(false))
+            .extraInputs("readByteArray(Lio/netty/buffer/ByteBuf;I)[B", byteArrays(true))
+            .extraInputs("readVarIntArray()[I", friendly(varIntArrays(false)))
+            .extraInputs("readVarIntArray(I)[I", friendly(varIntArrays(true)))
+            .extraInputs("readLongArray()[J", friendly(longArrays()))
+            .extraInputs("readLongArray(Lio/netty/buffer/ByteBuf;)[J", longArrays())
+            .extraInputs("readFixedSizeLongArray([J)[J", friendly(fixedLongArrays()))
+            .extraInputs("readFixedSizeLongArray(Lio/netty/buffer/ByteBuf;[J)[J", fixedLongArrays())
+            // A length prefix in the millions makes vanilla allocate that many bytes before it finds the buffer shorter.
+            .where("readByteArray(I)[B", args -> allocatesLittle(args[0], (Integer)args[1]))
+            .where("readByteArray(Lio/netty/buffer/ByteBuf;I)[B", args -> allocatesLittle(args[0], (Integer)args[1]))
+            .where("readVarIntArray(I)[I", args -> allocatesLittle(args[0], (Integer)args[1]))
     );
 
     public static void main(final String[] args) throws IOException {
@@ -1774,6 +1856,299 @@ public final class Golden {
         }
         for (int c : new int[]{0xd800, 0xdbff, 0xdc00, 0xdfff, 0xfffe, 0xffff}) {
             inputs.add(new Object[]{(char)c});
+        }
+        return inputs;
+    }
+
+    // How far a buffer may grow for a case: a length that overflows the writer index throws before growing anything.
+    private static boolean growsLittle(final ByteBuf buffer, final int length) {
+        return length <= 1 << 16 || buffer.writerIndex() + length < 0;
+    }
+
+    // Whether reading the array at the buffer's reader index allocates little: its length prefix is small, past the
+    // maximum (which throws first), or not a whole VarInt.
+    private static boolean allocatesLittle(final Object buffer, final int maxSize) {
+        Integer size = NetworkValues.leadingVarInt(buffer);
+        return size == null || size <= 1 << 16 || size > maxSize;
+    }
+
+    // The same inputs with each buffer wrapped in a FriendlyByteBuf, for its instance methods.
+    private static List<Object[]> friendly(final List<Object[]> inputs) {
+        List<Object[]> wrapped = new ArrayList<>();
+        for (Object[] input : inputs) {
+            Object[] copy = input.clone();
+            copy[0] = new FriendlyByteBuf((ByteBuf)input[0]);
+            wrapped.add(copy);
+        }
+        return wrapped;
+    }
+
+    // The buffer edges and random buffers, for inputs worked out from each buffer's indexes.
+    private static List<ByteBuf> sampleBuffers(final long seed, final int randomBuffers) {
+        Random random = new Random(seed);
+        List<ByteBuf> buffers = new ArrayList<>();
+        NetworkValues.BUFFER.edges().forEach(edge -> buffers.add((ByteBuf)edge));
+        for (int i = 0; i < randomBuffers; i++) {
+            buffers.add(NetworkValues.randomBuffer(random));
+        }
+        return buffers;
+    }
+
+    // Every value whose VarInt (or VarLong) is one byte longer than the one before's, its neighbours, and its negation.
+    private static List<Object[]> varIntBoundaries(final boolean withBuffer) {
+        List<Integer> values = new ArrayList<>(List.of(0, -1, Integer.MIN_VALUE, Integer.MAX_VALUE));
+        for (int bits = 7; bits < 32; bits += 7) {
+            values.addAll(List.of((1 << bits) - 1, 1 << bits, (1 << bits) + 1, -(1 << bits)));
+        }
+        return withBuffers(values, withBuffer);
+    }
+
+    private static List<Object[]> varLongBoundaries(final boolean withBuffer) {
+        List<Long> values = new ArrayList<>(List.of(0L, -1L, Long.MIN_VALUE, Long.MAX_VALUE));
+        for (int bits = 7; bits < 64; bits += 7) {
+            values.addAll(List.of((1L << bits) - 1, 1L << bits, (1L << bits) + 1, -(1L << bits)));
+        }
+        return withBuffers(values, withBuffer);
+    }
+
+    // The first argument of each input, like the NaNs with other payloads, which writeFloat writes as they are.
+    private static List<Object> firsts(final List<Object[]> inputs) {
+        return inputs.stream().map(input -> input[0]).toList();
+    }
+
+    // Each value alone, or written to the game's default buffer and to a full one, which has to grow.
+    private static List<Object[]> withBuffers(final List<?> values, final boolean withBuffer) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Object value : values) {
+            if (withBuffer) {
+                inputs.add(new Object[]{Unpooled.buffer(), value});
+                inputs.add(new Object[]{NetworkValues.buffer(0, 1, NetworkValues.bytes(1, 2, 3)), value});
+            } else {
+                inputs.add(new Object[]{value});
+            }
+        }
+        return inputs;
+    }
+
+    // VarInts (or VarLongs) of every length up to one past the longest, with any data bits, an overlong zero last byte
+    // a quarter of the time, and another field after them half the time.
+    private static List<Object[]> varIntEncodings(final boolean varLong) {
+        Random random = new Random(varLong ? 82 : 81);
+        int longest = varLong ? 10 : 5;
+        List<Object[]> inputs = new ArrayList<>();
+        for (int length = 1; length <= longest + 1; length++) {
+            for (int i = 0; i < 40; i++) {
+                byte[] encoding = new byte[length];
+                for (int b = 0; b < length - 1; b++) {
+                    encoding[b] = (byte)(0x80 | random.nextInt(0x80));
+                }
+                encoding[length - 1] = (byte)(random.nextInt(4) == 0 ? 0 : random.nextInt(0x80));
+                byte[] after = random.nextBoolean() ? NetworkValues.randomField(random) : new byte[0];
+                inputs.add(new Object[]{NetworkValues.buffer(random.nextInt(4), 0, NetworkValues.concat(encoding, after))});
+            }
+        }
+        return inputs;
+    }
+
+    // Strings whose UTF-16 length and UTF-8 size differ, and malformed UTF-8 whose replacement characters count
+    // differently, read with a maximum around each limit: the length, the size over 3 (the most bytes a char takes), and
+    // ones whose triple overflows.
+    private static List<Object[]> utfReadLimits() {
+        List<byte[]> payloads = new ArrayList<>();
+        for (String string : utfLimitStrings()) {
+            payloads.add(string.getBytes(StandardCharsets.UTF_8));
+        }
+        payloads.addAll(List.of(NetworkValues.bytes(0xed, 0xa0, 0x80), NetworkValues.bytes(0x80, 0x80, 0x80), NetworkValues.bytes(0xf0, 0x9f, 0x98)));
+        List<Object[]> inputs = new ArrayList<>();
+        for (byte[] payload : payloads) {
+            String decoded = new String(payload, StandardCharsets.UTF_8);
+            int length = decoded.length();
+            int thirds = (payload.length + 2) / 3;
+            for (int max : new int[]{length - 1, length, length + 1, thirds - 1, thirds, 0, -1, 1 << 30, 715827882, 715827883, Integer.MAX_VALUE}) {
+                inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.lengthPrefixed(payload)), max});
+            }
+        }
+        return inputs;
+    }
+
+    private static List<Object[]> utfWriteLimits() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (String string : utfLimitStrings()) {
+            for (int max : new int[]{string.length() - 1, string.length(), string.length() + 1, 0, -1, 1 << 30, 715827882, 715827883, Integer.MAX_VALUE}) {
+                inputs.add(new Object[]{NetworkValues.buffer(0, 0, new byte[0]), string, max});
+            }
+        }
+        return inputs;
+    }
+
+    // Strings at readUtf's and writeUtf's limit of 32767 units and one past it, in characters of one, two and three
+    // bytes (three bytes a unit fill the 98301 bytes the limit allows), and in supplementary characters.
+    private static List<Object[]> longStrings(final boolean write) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (String string : List.of("a".repeat(32767), "a".repeat(32768), "é".repeat(32767), "€".repeat(32767), "€".repeat(32768), "😀".repeat(16384))) {
+            inputs.add(write ? new Object[]{Unpooled.buffer(), string} : new Object[]{NetworkValues.buffer(0, 0, NetworkValues.utf(string))});
+        }
+        return inputs;
+    }
+
+    private static List<String> utfLimitStrings() {
+        return List.of("", "a", "abc", "é", "ééé", "😀", "😀😀", "a😀", "١٢٣", "\u0000", "minecraft:stone", "x".repeat(200), "é".repeat(100));
+    }
+
+    // Identifiers as readIdentifier finds them: valid ones, with and without a namespace, and ones that break a rule.
+    private static List<Object[]> identifierBuffers() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (String id : List.of("minecraft:stone", "stone", "realms:x", ":stone", "minecraft:", "", ":", "Minecraft:stone", "a:b:c", "a/b:c", "😀", "minecraft:block/stone", "..:x")) {
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.utf(id))});
+        }
+        return inputs;
+    }
+
+    // Byte arrays with their length, one longer than the bytes left, or negative, read with maximums around the length.
+    private static List<Object[]> byteArrays(final boolean withMax) {
+        Random random = new Random(83);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int size : new int[]{0, 1, 5, 200}) {
+            byte[] payload = new byte[size];
+            random.nextBytes(payload);
+            for (byte[] bytes : List.of(NetworkValues.lengthPrefixed(payload), NetworkValues.concat(NetworkValues.varInt(size + 1), payload), NetworkValues.concat(NetworkValues.varInt(-1), payload))) {
+                if (withMax) {
+                    for (int max : new int[]{size - 1, size, size + 1, 0, -1, Integer.MAX_VALUE}) {
+                        inputs.add(new Object[]{NetworkValues.buffer(0, 0, bytes), max});
+                    }
+                } else {
+                    inputs.add(new Object[]{NetworkValues.buffer(0, 0, bytes)});
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // VarInt arrays with their count, one more than there are, or negative, read with maximums around the count.
+    private static List<Object[]> varIntArrays(final boolean withMax) {
+        Random random = new Random(84);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int count : new int[]{0, 1, 3, 9}) {
+            byte[] values = new byte[0];
+            for (int i = 0; i < count; i++) {
+                values = NetworkValues.concat(values, NetworkValues.varInt((Integer)Values.INTS.random(random)));
+            }
+            for (int prefix : new int[]{count, count + 1, -1}) {
+                byte[] bytes = NetworkValues.concat(NetworkValues.varInt(prefix), values);
+                if (withMax) {
+                    for (int max : new int[]{count - 1, count, count + 1, 0, -1, Integer.MAX_VALUE}) {
+                        inputs.add(new Object[]{NetworkValues.buffer(0, 0, bytes), max});
+                    }
+                } else {
+                    inputs.add(new Object[]{NetworkValues.buffer(0, 0, bytes)});
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // Long arrays with their count, one more than the longs left (which readLongArray checks), or negative.
+    private static List<Object[]> longArrays() {
+        Random random = new Random(85);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int count : new int[]{0, 1, 2, 5}) {
+            byte[] longs = new byte[8 * count];
+            random.nextBytes(longs);
+            for (int prefix : new int[]{count, count + 1, -1}) {
+                for (int extra : new int[]{0, 7}) {
+                    inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(NetworkValues.varInt(prefix), longs, new byte[extra]))});
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // Buffers of whole and partial longs, read into arrays of every length up to one past them.
+    private static List<Object[]> fixedLongArrays() {
+        Random random = new Random(86);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int bytes : new int[]{0, 8, 12, 24}) {
+            byte[] longs = new byte[bytes];
+            random.nextBytes(longs);
+            for (int length = 0; length <= bytes / 8 + 1; length++) {
+                long[] output = new long[length];
+                Arrays.fill(output, 0x5555555555555555L);
+                inputs.add(new Object[]{NetworkValues.buffer(0, 0, longs), output});
+            }
+        }
+        return inputs;
+    }
+
+    // Indexes around a buffer's: negative, zero, its reader and writer indexes, its capacity, one past each, and the
+    // most an int holds, one or two at a time.
+    private static List<Object[]> bufferIndexes(final int arity) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (ByteBuf buffer : sampleBuffers(87, 40)) {
+            int[] indexes = {
+                -1, 0, buffer.readerIndex(), buffer.readerIndex() + 1, buffer.writerIndex(), buffer.writerIndex() + 1,
+                buffer.capacity(), buffer.capacity() + 1, buffer.readableBytes(), buffer.readableBytes() + 1, Integer.MAX_VALUE
+            };
+            for (int first : indexes) {
+                if (arity == 1) {
+                    inputs.add(new Object[]{buffer, first});
+                    continue;
+                }
+                for (int second : indexes) {
+                    inputs.add(new Object[]{buffer, first, second});
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // Ranges of a buffer's array for toString: its readable bytes, all its capacity, empty at the end, one past the end,
+    // and negative starts and lengths, which the decoder checks against the capacity rather than the writer index.
+    private static List<Object[]> bufferRanges() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (ByteBuf buffer : sampleBuffers(88, 40)) {
+            int[][] ranges = {
+                {buffer.readerIndex(), buffer.readableBytes()}, {0, buffer.capacity()}, {0, buffer.writerIndex()},
+                {buffer.capacity(), 0}, {buffer.capacity(), 1}, {0, buffer.capacity() + 1}, {-1, 1}, {1, -1}, {-1, 0}
+            };
+            for (int[] range : ranges) {
+                inputs.add(new Object[]{buffer, range[0], range[1], StandardCharsets.UTF_8});
+            }
+        }
+        return inputs;
+    }
+
+    // Arrays and ranges of them: all of it, all but the first byte, empty at the end, and ranges past either end.
+    private static List<Object[]> arrayRanges() {
+        Random random = new Random(89);
+        List<Object[]> inputs = new ArrayList<>();
+        for (ByteBuf buffer : sampleBuffers(90, 40)) {
+            byte[] array = new byte[random.nextInt(12)];
+            random.nextBytes(array);
+            int[][] ranges = {
+                {0, array.length}, {1, array.length - 1}, {array.length, 0}, {array.length, 1}, {0, array.length + 1},
+                {-1, 1}, {0, -1}, {0, buffer.readableBytes()}
+            };
+            for (int[] range : ranges) {
+                inputs.add(new Object[]{buffer, array, range[0], range[1]});
+            }
+        }
+        return inputs;
+    }
+
+    // Source buffers and ranges of their arrays, which writeBytes checks against the source's capacity.
+    private static List<Object[]> sourceRanges() {
+        Random random = new Random(91);
+        List<ByteBuf> buffers = sampleBuffers(92, 40);
+        List<Object[]> inputs = new ArrayList<>();
+        for (ByteBuf buffer : buffers) {
+            ByteBuf source = buffers.get(random.nextInt(buffers.size()));
+            int[][] ranges = {
+                {source.readerIndex(), source.readableBytes()}, {0, source.capacity()}, {source.capacity(), 0},
+                {source.capacity(), 1}, {-1, 1}, {0, -1}
+            };
+            for (int[] range : ranges) {
+                inputs.add(new Object[]{buffer, source, range[0], range[1]});
+            }
         }
         return inputs;
     }
