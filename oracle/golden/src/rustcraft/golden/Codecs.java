@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -53,14 +54,16 @@ final class Codecs {
 
     /**
      * The codec a field or a method's result is, when its buffer and values have generators, or null. Its values are a
-     * class's, since a generic one's generator wouldn't know the type arguments (an Optional of what).
+     * class's, since a generic one's generator wouldn't know the type arguments (an Optional of what). A buffer that's a
+     * type variable is its bound's (DiscardedPayload.codec's {@code T extends FriendlyByteBuf}).
      */
     static Codec codecOf(final Type type) {
         if (!(type instanceof ParameterizedType parameterized) || parameterized.getRawType() != StreamCodec.class) {
             return null;
         }
         Type[] arguments = parameterized.getActualTypeArguments();
-        if (!(arguments[0] instanceof Class<?> buffer) || NetworkValues.generator(buffer) == null) {
+        Type bufferType = arguments[0] instanceof TypeVariable<?> variable ? variable.getBounds()[0] : arguments[0];
+        if (!(bufferType instanceof Class<?> buffer) || NetworkValues.generator(buffer) == null) {
             return null;
         }
         if (!(arguments[1] instanceof Class<?> valueType) || Values.generator(valueType) == null || !Values.canEncode(valueType)) {

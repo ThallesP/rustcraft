@@ -7,8 +7,10 @@ import io.netty.buffer.Unpooled;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.RecordComponent;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -26,6 +28,19 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
+import net.minecraft.network.protocol.common.CommonPacketTypes;
+import net.minecraft.network.protocol.common.ServerboundClientInformationPacket;
+import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
+import net.minecraft.network.protocol.common.ServerboundKeepAlivePacket;
+import net.minecraft.network.protocol.common.ServerboundPongPacket;
+import net.minecraft.network.protocol.common.ServerboundResourcePackPacket;
+import net.minecraft.network.protocol.common.custom.BrandPayload;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.network.protocol.common.custom.DiscardedPayload;
+import net.minecraft.network.protocol.configuration.ConfigurationPacketTypes;
+import net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket;
+import net.minecraft.network.protocol.configuration.ServerboundFinishConfigurationPacket;
+import net.minecraft.network.protocol.configuration.ServerboundSelectKnownPacks;
 import net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket;
 import net.minecraft.network.protocol.cookie.CookiePacketTypes;
 import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
@@ -46,6 +61,11 @@ import net.minecraft.network.protocol.login.custom.CustomQueryPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ClientInformation;
+import net.minecraft.server.level.ParticleStatus;
+import net.minecraft.server.packs.repository.KnownPack;
+import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.player.ChatVisiblity;
 
 /**
  * Arguments and values of the protocols. A PacketFlow, ConnectionProtocol or ClientIntent is its constant's name, and a
@@ -55,7 +75,9 @@ import net.minecraft.resources.Identifier;
  * {@code [id, flow, [[type, networkId], …]]}, and a bound protocol {@code [id, flow]}: ProtocolSuite gives its codec cases.
  * The custom queries' payloads are records like packets, and a payload declared as its interface is encoded by its own
  * class. Each argument is its own copy of a packet or payload, made of copies of its fields: a record compares an array
- * component by reference, which a JSON value can't show.
+ * component by reference, which a JSON value can't show. A custom packet payload declared as its interface can be any of
+ * several classes, so it's {@code [class, fields]}, the class's simple name first ({@code ["BrandPayload", ["vanilla"]]}).
+ * The records packets hold (ClientInformation, KnownPack) are their components like any record.
  *
  * <p>A packet listener records what's called on it: it starts as {@code []}, and its {@code after} slot is the calls,
  * each {@code [method, argument…]}, so a packet's {@code handle} shows which handler it calls with what.
@@ -64,8 +86,13 @@ final class PacketValues {
     static final Values.Generator PACKET_FLOW = new CoreValues.Constants<>(PacketFlow.class);
     static final Values.Generator CONNECTION_PROTOCOL = new CoreValues.Constants<>(ConnectionProtocol.class);
     static final Values.Generator CLIENT_INTENT = new CoreValues.Constants<>(ClientIntent.class);
+    static final Values.Generator CHAT_VISIBLITY = new CoreValues.Constants<>(ChatVisiblity.class);
+    static final Values.Generator HUMANOID_ARM = new CoreValues.Constants<>(HumanoidArm.class);
+    static final Values.Generator PARTICLE_STATUS = new CoreValues.Constants<>(ParticleStatus.class);
+    static final Values.Generator RESOURCE_PACK_ACTION = new CoreValues.Constants<>(ServerboundResourcePackPacket.Action.class);
 
     private static final Values.Generator INTS = Values.generator(int.class);
+    private static final Values.Generator LONGS = Values.generator(long.class);
     private static final Values.Generator STRINGS = Values.generator(String.class);
     private static final Values.Generator BOOLEANS = Values.generator(boolean.class);
     private static final Values.Generator BYTE_ARRAYS = Values.generator(byte[].class);
@@ -77,7 +104,10 @@ final class PacketValues {
         HandshakePacketTypes.CLIENT_INTENTION, LoginPacketTypes.CLIENTBOUND_CUSTOM_QUERY, LoginPacketTypes.CLIENTBOUND_LOGIN_FINISHED,
         LoginPacketTypes.CLIENTBOUND_HELLO, LoginPacketTypes.CLIENTBOUND_LOGIN_COMPRESSION, LoginPacketTypes.CLIENTBOUND_LOGIN_DISCONNECT,
         LoginPacketTypes.SERVERBOUND_CUSTOM_QUERY_ANSWER, LoginPacketTypes.SERVERBOUND_HELLO, LoginPacketTypes.SERVERBOUND_KEY,
-        LoginPacketTypes.SERVERBOUND_LOGIN_ACKNOWLEDGED, CookiePacketTypes.CLIENTBOUND_COOKIE_REQUEST, CookiePacketTypes.SERVERBOUND_COOKIE_RESPONSE
+        LoginPacketTypes.SERVERBOUND_LOGIN_ACKNOWLEDGED, CookiePacketTypes.CLIENTBOUND_COOKIE_REQUEST, CookiePacketTypes.SERVERBOUND_COOKIE_RESPONSE,
+        CommonPacketTypes.SERVERBOUND_CLIENT_INFORMATION, CommonPacketTypes.SERVERBOUND_CUSTOM_PAYLOAD, CommonPacketTypes.SERVERBOUND_KEEP_ALIVE,
+        CommonPacketTypes.SERVERBOUND_PONG, CommonPacketTypes.SERVERBOUND_RESOURCE_PACK, ConfigurationPacketTypes.SERVERBOUND_ACCEPT_CODE_OF_CONDUCT,
+        ConfigurationPacketTypes.SERVERBOUND_FINISH_CONFIGURATION, ConfigurationPacketTypes.SERVERBOUND_SELECT_KNOWN_PACKS
     );
     static final Values.Generator PACKET_TYPE = new Values.Simple(
         PORTED_TYPES.stream()
@@ -115,11 +145,42 @@ final class PacketValues {
         random -> (byte[])BYTE_ARRAYS.random(random), byte[]::clone, bytes -> (JsonArray)BYTE_ARRAYS.encode(bytes)
     );
 
+    // A client's language, and around readUtf(16)'s limit in characters of one, two and four bytes.
+    private static final Values.Generator LANGUAGES = strings(
+        "en_us", "", "pt_br", "a".repeat(16), "a".repeat(17), "é".repeat(16), "😀".repeat(8), "😀".repeat(8) + "a"
+    );
+    // Render distances, and past a byte, which writeByte cuts to 8 bits and readByte reads signed.
+    private static final Values.Generator VIEW_DISTANCES = new Values.Simple(
+        List.of(2, 4, 12, 32, 0, -1, 127, 128, 255, 256, Integer.MIN_VALUE, Integer.MAX_VALUE), INTS::random, INTS::encode
+    );
+    // The skin's parts that show (every part is 127), and past a byte, which readUnsignedByte reads unsigned.
+    private static final Values.Generator MODEL_CUSTOMISATIONS = new Values.Simple(
+        List.of(0, 127, 1, 64, 128, 255, 256, -1, Integer.MIN_VALUE, Integer.MAX_VALUE), INTS::random, INTS::encode
+    );
+    // The vanilla pack, a mod's, and around STRING_UTF8's limit of 32767.
+    private static final Values.Generator PACK_NAMESPACES = strings("minecraft", "fabric", "", "Minecraft", "a".repeat(32767), "a".repeat(32768));
+    private static final Values.Generator PACK_IDS = strings("core", "", "😀".repeat(16383) + "a", "😀".repeat(16384));
+    private static final Values.Generator PACK_VERSIONS = strings("26.3", "", "1.0.0", "a".repeat(32767), "a".repeat(32768));
+    // A client's brand, and around readUtf()'s limit of 32767.
+    private static final Values.Generator BRANDS = strings("vanilla", "fabric", "", "a".repeat(32767), "a".repeat(32768), "😀".repeat(16384));
+    // The scenario's marker, the brand's (which a DiscardedPayload can have too), and any identifiers.
+    private static final Values.Generator PAYLOAD_IDS = new Values.Simple(
+        Stream.concat(
+            Stream.of(Identifier.fromNamespaceAndPath("rustcraft", "scenario_start"), Identifier.withDefaultNamespace("brand"), Identifier.withDefaultNamespace("register")),
+            IDENTIFIERS.edges().stream()
+        ).toList(),
+        IDENTIFIERS::random,
+        IDENTIFIERS::encode
+    );
+
     private static final Map<Class<?>, Values.Generator> PACKETS = new LinkedHashMap<>();
-    // The generators of the payloads packets hold, by their class and by their interface.
+    // The generators of the payloads packets hold, by their class and by their interface, and of the other records they
+    // hold.
     private static final Map<Class<?>, Values.Generator> PAYLOADS = new HashMap<>();
     // The fields each packet class that isn't a record is encoded as.
     private static final Map<Class<?>, List<Field>> FIELDS = new LinkedHashMap<>();
+    // A ServerboundSelectKnownPacks' packs.
+    private static final Values.Generator KNOWN_PACK_LISTS;
 
     static {
         // The only payloads vanilla reads: what it doesn't know, kept as the query's identifier and nothing else.
@@ -130,6 +191,29 @@ final class PacketValues {
         PAYLOADS.put(CustomQueryAnswerPayload.class, Codecs.nullableOf(answers));
         PAYLOADS.put(DiscardedQueryPayload.class, queries);
         PAYLOADS.put(CustomQueryPayload.class, queries);
+        Values.Generator brands = values(BrandPayload.class, fields -> new BrandPayload((String)fields[0]), List.of(), BRANDS);
+        Values.Generator discarded = values(DiscardedPayload.class, fields -> new DiscardedPayload((Identifier)fields[0]), List.of(), PAYLOAD_IDS);
+        PAYLOADS.put(BrandPayload.class, brands);
+        PAYLOADS.put(DiscardedPayload.class, discarded);
+        PAYLOADS.put(CustomPacketPayload.class, new AnyPayload(List.of(brands, discarded)));
+        PAYLOADS.put(
+            CustomPacketPayload.Type.class, values(CustomPacketPayload.Type.class, fields -> new CustomPacketPayload.Type<>((Identifier)fields[0]), List.of(), PAYLOAD_IDS)
+        );
+        Values.Generator clientInformation = values(
+            ClientInformation.class,
+            fields -> new ClientInformation(
+                (String)fields[0], (Integer)fields[1], (ChatVisiblity)fields[2], (Boolean)fields[3], (Integer)fields[4], (HumanoidArm)fields[5],
+                (Boolean)fields[6], (Boolean)fields[7], (ParticleStatus)fields[8]
+            ),
+            List.of(), LANGUAGES, VIEW_DISTANCES, CHAT_VISIBLITY, BOOLEANS, MODEL_CUSTOMISATIONS, HUMANOID_ARM, BOOLEANS, BOOLEANS, PARTICLE_STATUS
+        );
+        PAYLOADS.put(ClientInformation.class, clientInformation);
+        Values.Generator knownPacks = values(
+            KnownPack.class, fields -> new KnownPack((String)fields[0], (String)fields[1], (String)fields[2]), List.of(), PACK_NAMESPACES, PACK_IDS,
+            PACK_VERSIONS
+        );
+        PAYLOADS.put(KnownPack.class, knownPacks);
+        KNOWN_PACK_LISTS = knownPackLists(knownPacks);
 
         packet(
             ClientIntentionPacket.class, fields -> new ClientIntentionPacket((Integer)fields[0], (String)fields[1], (Integer)fields[2], (ClientIntent)fields[3]),
@@ -175,6 +259,26 @@ final class PacketValues {
             ClientboundStoreCookiePacket.class, fields -> new ClientboundStoreCookiePacket((Identifier)fields[0], (byte[])fields[1]), List.of(),
             IDENTIFIERS, COOKIES
         );
+        packet(
+            ServerboundClientInformationPacket.class, fields -> new ServerboundClientInformationPacket((ClientInformation)fields[0]), List.of(),
+            clientInformation
+        );
+        packet(
+            ServerboundCustomPayloadPacket.class, fields -> new ServerboundCustomPayloadPacket((CustomPacketPayload)fields[0]), List.of(),
+            PAYLOADS.get(CustomPacketPayload.class)
+        );
+        packet(ServerboundFinishConfigurationPacket.class, fields -> ServerboundFinishConfigurationPacket.INSTANCE, List.of());
+        packet(ServerboundKeepAlivePacket.class, fields -> new ServerboundKeepAlivePacket((Long)fields[0]), List.of("id"), LONGS);
+        packet(ServerboundPongPacket.class, fields -> new ServerboundPongPacket((Integer)fields[0]), List.of("id"), INTS);
+        packet(
+            ServerboundResourcePackPacket.class,
+            fields -> new ServerboundResourcePackPacket((UUID)fields[0], (ServerboundResourcePackPacket.Action)fields[1]), List.of(), UUIDS,
+            RESOURCE_PACK_ACTION
+        );
+        packet(
+            ServerboundSelectKnownPacks.class, fields -> new ServerboundSelectKnownPacks(knownPackList(fields[0])), List.of(), KNOWN_PACK_LISTS
+        );
+        packet(ServerboundAcceptCodeOfConductPacket.class, fields -> ServerboundAcceptCodeOfConductPacket.INSTANCE, List.of());
     }
 
     private PacketValues() {
@@ -190,6 +294,18 @@ final class PacketValues {
         if (type == ClientIntent.class) {
             return CLIENT_INTENT;
         }
+        if (type == ChatVisiblity.class) {
+            return CHAT_VISIBLITY;
+        }
+        if (type == HumanoidArm.class) {
+            return HUMANOID_ARM;
+        }
+        if (type == ParticleStatus.class) {
+            return PARTICLE_STATUS;
+        }
+        if (type == ServerboundResourcePackPacket.Action.class) {
+            return RESOURCE_PACK_ACTION;
+        }
         if (type == PacketType.class) {
             return PACKET_TYPE;
         }
@@ -197,6 +313,12 @@ final class PacketValues {
             return new Listener(type);
         }
         return PACKETS.containsKey(type) ? PACKETS.get(type) : PAYLOADS.get(type);
+    }
+
+    /** The only parameterized arguments with a generator of their own here: a ServerboundSelectKnownPacks' packs. */
+    static Values.Generator generator(final ParameterizedType type) {
+        boolean packs = type.getRawType() == List.class && type.getActualTypeArguments()[0] == KnownPack.class;
+        return packs ? KNOWN_PACK_LISTS : null;
     }
 
     static boolean canEncode(final Class<?> type) {
@@ -217,6 +339,8 @@ final class PacketValues {
             // Declared as their interface, so encoded by their own class.
             case CustomQueryAnswerPayload payload -> Values.encode(payload, payload.getClass());
             case CustomQueryPayload payload -> Values.encode(payload, payload.getClass());
+            // Declared as their interface, which several classes implement.
+            case CustomPacketPayload payload -> AnyPayload.tagged(payload);
             case ProtocolInfo<?> protocol -> {
                 JsonArray array = new JsonArray();
                 array.add(Values.encode(protocol.id(), ConnectionProtocol.class));
@@ -339,6 +463,78 @@ final class PacketValues {
             return values;
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    // Lists of packs like Codecs.listOf's, and the most ServerboundSelectKnownPacks' codec takes (64) and one more.
+    private static Values.Generator knownPackLists(final Values.Generator packs) {
+        Values.Generator lists = Codecs.listOf(packs);
+        List<Object> edges = new ArrayList<>(lists.edges());
+        for (int count : new int[]{64, 65}) {
+            List<Object> list = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                list.add(new KnownPack("minecraft", "pack" + i, "26.3"));
+            }
+            edges.add(list);
+        }
+        return new Values.Generator() {
+            @Override
+            public List<Object> edges() {
+                return edges;
+            }
+
+            @Override
+            public Object random(final Random random) {
+                return lists.random(random);
+            }
+
+            @Override
+            public JsonElement encode(final Object spec) {
+                return lists.encode(spec);
+            }
+
+            @Override
+            public Object instantiate(final Object spec) {
+                return lists.instantiate(spec);
+            }
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<KnownPack> knownPackList(final Object list) {
+        return (List<KnownPack>)list;
+    }
+
+    /**
+     * Payloads declared as CustomPacketPayload, any of the generators': {@code [class, fields]}, by the class's simple
+     * name, since a DiscardedPayload can have a BrandPayload's identifier.
+     */
+    private record AnyPayload(List<Values.Generator> payloads) implements Values.Generator {
+        static JsonElement tagged(final CustomPacketPayload payload) {
+            JsonArray array = new JsonArray();
+            array.add(payload.getClass().getSimpleName());
+            array.add(Values.encode(payload, payload.getClass()));
+            return array;
+        }
+
+        @Override
+        public List<Object> edges() {
+            return this.payloads.stream().flatMap(generator -> generator.edges().stream()).toList();
+        }
+
+        @Override
+        public Object random(final Random random) {
+            return this.payloads.get(random.nextInt(this.payloads.size())).random(random);
+        }
+
+        @Override
+        public JsonElement encode(final Object spec) {
+            return tagged((CustomPacketPayload)spec);
+        }
+
+        @Override
+        public Object instantiate(final Object spec) {
+            return PAYLOADS.get(spec.getClass()).instantiate(spec);
         }
     }
 

@@ -49,6 +49,18 @@ import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
 import net.minecraft.network.protocol.common.CommonPacketTypes;
+import net.minecraft.network.protocol.common.ServerboundClientInformationPacket;
+import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
+import net.minecraft.network.protocol.common.ServerboundKeepAlivePacket;
+import net.minecraft.network.protocol.common.ServerboundPongPacket;
+import net.minecraft.network.protocol.common.ServerboundResourcePackPacket;
+import net.minecraft.network.protocol.common.custom.BrandPayload;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.network.protocol.common.custom.DiscardedPayload;
+import net.minecraft.network.protocol.configuration.ConfigurationPacketTypes;
+import net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket;
+import net.minecraft.network.protocol.configuration.ServerboundFinishConfigurationPacket;
+import net.minecraft.network.protocol.configuration.ServerboundSelectKnownPacks;
 import net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket;
 import net.minecraft.network.protocol.cookie.CookiePacketTypes;
 import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
@@ -69,10 +81,15 @@ import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ClientInformation;
+import net.minecraft.server.level.ParticleStatus;
+import net.minecraft.server.packs.repository.KnownPack;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.ByIdMap;
 import net.minecraft.util.Mth;
 import net.minecraft.util.StringRepresentable;
+import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.player.ChatVisiblity;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.phys.AABB;
@@ -134,6 +151,9 @@ public final class Golden {
     private static final String READ_BY_ID = "readById(Ljava/util/function/IntFunction;)Ljava/lang/Object;";
     private static final String WRITE_BY_ID = "writeById(Ljava/util/function/ToIntFunction;Ljava/lang/Object;)Lnet/minecraft/network/FriendlyByteBuf;";
     private static final String READ_WITH_COUNT = "readWithCount(Ljava/util/function/Consumer;)V";
+    private static final String READ_ENUM = "readEnum(Ljava/lang/Class;)Ljava/lang/Enum;";
+    private static final String WRITE_ENUM = "writeEnum(Ljava/lang/Enum;)Lnet/minecraft/network/FriendlyByteBuf;";
+    private static final String DISCARDED_CODEC = "codec(Lnet/minecraft/resources/Identifier;I)Lnet/minecraft/network/codec/StreamCodec;";
     private static final String CONTINUOUS =
         "continuous(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;)Ljava/util/function/IntFunction;";
     // A record's hashCode adds up its components', and an enum constant's is its identity hash.
@@ -607,7 +627,11 @@ public final class Golden {
             .extraInputs(READ_WITH_COUNT + "[readUtf]", friendly(written(99, Codecs.listOf(STRINGS), (FriendlyByteBuf buffer, List<String> values) -> {
                 buffer.writeVarInt(values.size());
                 values.forEach(buffer::writeUtf);
-            }))),
+            })))
+            // A resource pack response's action, by its ordinal.
+            .given(READ_ENUM, "ServerboundResourcePackPacket.Action", ServerboundResourcePackPacket.Action.class)
+            .extraInputs(READ_ENUM + "[ServerboundResourcePackPacket.Action]", friendly(written(105, IDS, FriendlyByteBuf::writeVarInt)))
+            .given(WRITE_ENUM, "ServerboundResourcePackPacket.Action", Values.generator(ServerboundResourcePackPacket.Action.class)),
         // The codecs ByteBufCodecs hands out. The ones made from other codecs or functions get the game's kinds of them.
         new CodecSuite(ByteBufCodecs.class)
             .codec(OPTIONAL, "VAR_INT", leading -> ByteBufCodecs.optional(ByteBufCodecs.VAR_INT), bufferCodec(Codecs.optionalOf(INTS), Optional.class))
@@ -817,6 +841,66 @@ public final class Golden {
                 }))
             ),
         new StaticSuite(CommonPacketTypes.class),
+        // The configuration protocol's serverbound packets, which the client sends after login, and what they hold.
+        new StaticSuite(ConfigurationPacketTypes.class),
+        InstanceSuite.every(ChatVisiblity.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/entity/player/ChatVisiblity;", names(ChatVisiblity.values())),
+        InstanceSuite.every(HumanoidArm.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/entity/HumanoidArm;", names(HumanoidArm.values())),
+        InstanceSuite.every(ParticleStatus.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/server/level/ParticleStatus;", names(ParticleStatus.values())),
+        // Its reader's constructor reads what write writes, which doesn't stop the language at 16 characters like it does.
+        // createDefault reads Player.DEFAULT_MAIN_HAND, and Player's class needs a bootstrapped game.
+        InstanceSuite.every(ClientInformation.class)
+            .exclude("hashCode()I", ENUM_IN_RECORD)
+            .exclude("createDefault()Lnet/minecraft/server/level/ClientInformation;", "reads Player's constant, whose class needs a bootstrapped game")
+            .extraInputs(
+                "<init>(Lnet/minecraft/network/FriendlyByteBuf;)V",
+                friendly(written(106, Values.generator(ClientInformation.class), (FriendlyByteBuf buffer, ClientInformation information) -> information.write(buffer)))
+            ),
+        InstanceSuite.every(ServerboundClientInformationPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        // The payloads: what a custom_payload packet's identifier names, and a fallback for any other identifier.
+        new CodecSuite(CustomPacketPayload.class)
+            .codec(
+                "codec(Lnet/minecraft/network/codec/StreamMemberEncoder;Lnet/minecraft/network/codec/StreamDecoder;)Lnet/minecraft/network/codec/StreamCodec;",
+                "writeUtf, readUtf",
+                leading -> CustomPacketPayload.<FriendlyByteBuf, BrandPayload>codec(
+                    (payload, output) -> output.writeUtf(payload.brand()), input -> new BrandPayload(input.readUtf())
+                ),
+                new Codecs.Codec(NetworkValues.FRIENDLY_BUFFER, Values.generator(BrandPayload.class), BrandPayload.class)
+            )
+            .codec(
+                "codec(Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload$FallbackProvider;Ljava/util/List;)Lnet/minecraft/network/codec/StreamCodec;",
+                "DiscardedPayload.codec(id, 32767), [BrandPayload]",
+                leading -> CustomPacketPayload.<FriendlyByteBuf>codec(
+                    id -> DiscardedPayload.codec(id, 32767), List.of(new CustomPacketPayload.TypeAndCodec<>(BrandPayload.TYPE, BrandPayload.STREAM_CODEC))
+                ),
+                new Codecs.Codec(NetworkValues.FRIENDLY_BUFFER, Values.generator(CustomPacketPayload.class), CustomPacketPayload.class)
+            )
+            .codec(
+                "codec(Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload$FallbackProvider;Ljava/util/List;)Lnet/minecraft/network/codec/StreamCodec;",
+                "DiscardedPayload.codec(id, 0), []", leading -> CustomPacketPayload.<FriendlyByteBuf>codec(id -> DiscardedPayload.codec(id, 0), List.of()),
+                new Codecs.Codec(NetworkValues.FRIENDLY_BUFFER, Values.generator(CustomPacketPayload.class), CustomPacketPayload.class)
+            ),
+        InstanceSuite.every(CustomPacketPayload.Type.class),
+        InstanceSuite.every(BrandPayload.class),
+        // Its codec skips the rest of the buffer, so it also reads buffers as long as the maximum, and a byte either side.
+        InstanceSuite.every(DiscardedPayload.class).extraInputs(DISCARDED_CODEC + ".decode", discardedPayloads()),
+        InstanceSuite.every(ServerboundCustomPayloadPacket.class).extraInputs("STREAM_CODEC.decode", customPayloads()),
+        // The game's version isn't set outside the game, so vanilla(String) would only throw.
+        InstanceSuite.every(KnownPack.class)
+            .exclude("vanilla(Ljava/lang/String;)Lnet/minecraft/server/packs/repository/KnownPack;", "needs the game's version, which only the game sets"),
+        InstanceSuite.every(ServerboundSelectKnownPacks.class),
+        InstanceSuite.every(ServerboundFinishConfigurationPacket.class),
+        InstanceSuite.every(ServerboundAcceptCodeOfConductPacket.class),
+        InstanceSuite.every(ServerboundKeepAlivePacket.class),
+        InstanceSuite.every(ServerboundPongPacket.class),
+        InstanceSuite.every(ServerboundResourcePackPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        InstanceSuite.every(ServerboundResourcePackPacket.Action.class)
+            .extraInputs(
+                "valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/common/ServerboundResourcePackPacket$Action;",
+                names(ServerboundResourcePackPacket.Action.values())
+            ),
         // What a ServerboundHelloPacket's hashCode and toString use, and what makes an offline player's UUID.
         new InstanceSuite(UUID.class, "hashCode()I", "toString()Ljava/lang/String;", "nameUUIDFromBytes([B)Ljava/util/UUID;")
             .extraInputs("nameUUIDFromBytes([B)Ljava/util/UUID;", offlinePlayerNames())
@@ -2291,6 +2375,38 @@ public final class Golden {
                 buffer.writeIdentifier(Identifier.withDefaultNamespace("query"));
             }
             buffer.writeBytes(new byte[size]);
+            inputs.add(new Object[]{new FriendlyByteBuf(NetworkValues.buffer(0, 0, NetworkValues.readable(buffer)))});
+        }
+        return inputs;
+    }
+
+    // A DiscardedPayload's codec, with maximums around 0, a byte, and a custom payload's 32767, reading buffers of the
+    // maximum's length and a byte either side.
+    private static List<Object[]> discardedPayloads() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int max : new int[]{0, 1, 255, 32767}) {
+            for (int length = Math.max(0, max - 1); length <= max + 1; length++) {
+                Object buffer = new FriendlyByteBuf(NetworkValues.buffer(0, 0, new byte[length]));
+                inputs.add(new Object[]{Identifier.fromNamespaceAndPath("rustcraft", "scenario_start"), max, buffer});
+            }
+        }
+        return inputs;
+    }
+
+    // Custom payload packets the codec's own encodings never hold: a discarded payload of the most the packet takes
+    // (32767 bytes) and a byte more, and brands longer than readUtf's 32767, written without the limit.
+    private static List<Object[]> customPayloads() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int size : new int[]{32767, 32768}) {
+            FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+            buffer.writeIdentifier(Identifier.fromNamespaceAndPath("rustcraft", "scenario_start"));
+            buffer.writeBytes(new byte[size]);
+            inputs.add(new Object[]{new FriendlyByteBuf(NetworkValues.buffer(0, 0, NetworkValues.readable(buffer)))});
+        }
+        for (String brand : new String[]{"a".repeat(32768), "😀".repeat(16384), "😀".repeat(16384) + "a"}) {
+            FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+            buffer.writeIdentifier(BrandPayload.TYPE.id());
+            Utf8String.write(buffer, brand, Integer.MAX_VALUE);
             inputs.add(new Object[]{new FriendlyByteBuf(NetworkValues.buffer(0, 0, NetworkValues.readable(buffer)))});
         }
         return inputs;

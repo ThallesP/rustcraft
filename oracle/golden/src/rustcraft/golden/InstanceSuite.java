@@ -29,8 +29,9 @@ import java.util.function.Predicate;
  * public ones and its constants for the game's own. Each case calls one method on a fresh receiver, which is
  * {@code args[0]}; {@code after[0]} is the receiver's state after the call, and the other slots hold any argument the
  * method wrote to, unless it's the returned object. Constructors are {@code <init>} cases whose result is the new
- * object. Static methods get cases like a StaticSuite's, without a receiver. A member taking codecs or functions gets
- * cases for the instances listed with given(), like CodecSuite's.
+ * object. Static methods get cases like a StaticSuite's, without a receiver, and one making a stream codec from generated
+ * arguments gets codec cases like CodecSuite's (DiscardedPayload.codec). A member taking codecs or functions gets cases
+ * for the instances listed with given(), like CodecSuite's.
  */
 final class InstanceSuite implements Suite {
     private static final int RANDOM_CASES = 500;
@@ -121,7 +122,8 @@ final class InstanceSuite implements Suite {
      * they're named by the member's descriptor and the label, {@code readOptional(…)Ljava/util/Optional;[VAR_INT]}.
      * {@code arguments} has one entry per parameter: the instance itself, which isn't in {@code args}, or a generator
      * for an argument generated like any other (the values the instance writes). The receiver comes first as always,
-     * and extra inputs and domains go by the cases' name. A result declared as an Object is encoded by its own class.
+     * and extra inputs and domains go by the cases' name. A result declared as an Object or an Enum is encoded by its own
+     * class.
      */
     InstanceSuite given(final String member, final String label, final Object... arguments) {
         this.given.computeIfAbsent(member, m -> new ArrayList<>()).add(new Given(label, arguments));
@@ -154,6 +156,20 @@ final class InstanceSuite implements Suite {
                     written.add(name);
                     this.writeCases(writer, member, name, this.withReceiver(member, instance.arguments()));
                 }
+                continue;
+            }
+
+            List<Type> argumentTypes = this.argumentTypes(member);
+            Codecs.Codec codec = member instanceof Method method && Modifier.isStatic(method.getModifiers())
+                ? Codecs.codecOf(method.getGenericReturnType())
+                : null;
+            if (codec != null && argumentTypes.stream().allMatch(type -> Values.generator(type) != null)) {
+                Values.Generator[] leading = argumentTypes.stream().map(Values::generator).toArray(Values.Generator[]::new);
+                written.add(descriptor + ".decode");
+                Codecs.writeCodec(
+                    writer, descriptor, leading, args -> ((Method)member).invoke(null, args), codec, spec -> true,
+                    this.extraInputs.getOrDefault(descriptor + ".decode", List.of())
+                );
                 continue;
             }
 
@@ -324,9 +340,9 @@ final class InstanceSuite implements Suite {
         }
     }
 
-    // A generic result (readNullable's) by its own class, an enum constant by its enum's.
+    // A generic result (readNullable's, readEnum's) by its own class, an enum constant by its enum's.
     private static Class<?> encodedAs(final Object result, final Class<?> returnType) {
-        if (returnType != Object.class || result == null) {
+        if ((returnType != Object.class && returnType != Enum.class) || result == null) {
             return returnType;
         }
         return result instanceof Enum<?> constant ? constant.getDeclaringClass() : result.getClass();

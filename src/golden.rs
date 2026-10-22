@@ -727,6 +727,29 @@ impl Golden {
         );
     }
 
+    /// Like `check_codec_from`, for a codec made from two arguments (`DiscardedPayload.codec`'s
+    /// identifier and maximum).
+    pub fn check_codec_from2<A1, A2, C: StreamCodec>(&self, name: &str, make: impl Fn(A1, A2) -> C)
+    where
+        A1: Decode + Encode + Clone + 'static,
+        A2: Decode + Encode + Clone + 'static,
+        C::Buffer: Decode + Encode + 'static,
+        C::Value: Decode + Encode + 'static,
+    {
+        self.check_mut(
+            &format!("{name}.decode"),
+            |first: &mut A1, second: &mut A2, input: &mut C::Buffer| {
+                make(first.clone(), second.clone()).decode(input)
+            },
+        );
+        self.check_mut(
+            &format!("{name}.encode"),
+            |first: &mut A1, second: &mut A2, output: &mut C::Buffer, value: &mut C::Value| {
+                make(first.clone(), second.clone()).encode(output, value)
+            },
+        );
+    }
+
     /// Checks an `IntFunction`, which `make` makes inside each checked call: `{name}.apply`
     /// cases apply it to the id in `args[0]`.
     pub fn check_function<T, F>(&self, name: &str, make: impl Fn() -> F)

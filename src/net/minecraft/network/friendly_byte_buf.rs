@@ -4,9 +4,9 @@
 //! - the codecs' readers and writers (`readWithCodec`, `readWithCodecTrusted`, `writeWithCodec`,
 //!   `readLenientJsonWithCodec`, `writeJsonWithCodec`), which wait for DataFixerUpper;
 //! - `readEither` and `writeEither`, which wait for DataFixerUpper's `Either`;
-//! - `readEnum` and `writeEnum`, and `readEnumSet` and `writeEnumSet`, whose `Class` and `Enum`
-//!   arguments the golden harness can't generate yet, and the `BitSet` ones (`readBitSet`,
-//!   `writeBitSet`, `readFixedBitSet`, `writeFixedBitSet`), which wait for `java.util.BitSet`;
+//! - `readEnumSet` and `writeEnumSet`, whose `Class` argument the golden harness can't generate
+//!   yet, and which need `java.util.BitSet` like the `BitSet` ones (`readBitSet`, `writeBitSet`,
+//!   `readFixedBitSet`, `writeFixedBitSet`);
 //! - `readChunkPos` and `writeChunkPos`, which wait for `ChunkPos`; `readGlobalPos`,
 //!   `writeGlobalPos`, `readResourceKey`, `writeResourceKey` and `readRegistryKey`, which wait
 //!   for `ResourceKey`; and `readNbt` and `writeNbt`, which wait for NBT.
@@ -17,11 +17,13 @@
 //!
 //! The readers and writers taking a `StreamDecoder<? super FriendlyByteBuf, T>` take one of any
 //! buffer this one is `AsMut` of, like the codecs (PORTING.md). A value Java lets be null, or
-//! passes as an `Optional`, is an `Option`.
+//! passes as an `Optional`, is an `Option`. `readEnum(Class)` takes the enum as a type argument,
+//! `read_enum::<Action>()`.
 
 use std::ops::{Deref, DerefMut};
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
+use crate::java::lang::r#enum::Enum;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::network::codec::stream_decoder::StreamDecoder;
@@ -331,6 +333,25 @@ impl FriendlyByteBuf {
         output.write_float(value.w);
     }
 
+    /// A VarInt ordinal. Panics on one past the constants, or negative, where Java throws
+    /// `ArrayIndexOutOfBoundsException`.
+    pub fn read_enum<T: Enum>(&mut self) -> T {
+        let ordinal = self.read_var_int();
+        *usize::try_from(ordinal)
+            .ok()
+            .and_then(|index| T::ENUM_CONSTANTS.get(index))
+            .unwrap_or_else(|| {
+                panic!(
+                    "ArrayIndexOutOfBoundsException: Index {ordinal} out of bounds for length {}",
+                    T::ENUM_CONSTANTS.len()
+                )
+            })
+    }
+
+    pub fn write_enum(&mut self, value: &impl Enum) -> &mut FriendlyByteBuf {
+        self.write_var_int(value.ordinal())
+    }
+
     /// A VarInt id, turned into the value it stands for.
     pub fn read_by_id<T>(&mut self, converter: impl Fn(i32) -> T) -> T {
         let id = self.read_var_int();
@@ -488,6 +509,7 @@ mod tests {
     use crate::net::minecraft::core::position::Position;
     use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
     use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
+    use crate::net::minecraft::network::protocol::common::serverbound_resource_pack_packet::Action;
     use crate::net::minecraft::network::utf8_string::Utf8String;
     use crate::net::minecraft::resources::identifier::Identifier;
     use crate::net::minecraft::world::level::block::rotation::Rotation;
@@ -530,14 +552,12 @@ mod tests {
             golden.pending(name, "waits for DataFixerUpper's Either");
         }
         for name in [
-            "readEnum(Ljava/lang/Class;)Ljava/lang/Enum;",
-            "writeEnum(Ljava/lang/Enum;)Lnet/minecraft/network/FriendlyByteBuf;",
             "readEnumSet(Ljava/lang/Class;)Ljava/util/EnumSet;",
             "writeEnumSet(Ljava/util/EnumSet;Ljava/lang/Class;)V",
         ] {
             golden.pending(
                 name,
-                "vanilla can't generate a Class or an Enum argument yet",
+                "vanilla can't generate a Class argument yet, and it waits for java.util.BitSet",
             );
         }
         for name in [
@@ -813,6 +833,14 @@ mod tests {
             |output: &mut ByteBuf, value: &mut Quaternionf| {
                 FriendlyByteBuf::write_quaternion_to(output, value)
             },
+        );
+        golden.check_method(
+            "readEnum(Ljava/lang/Class;)Ljava/lang/Enum;[ServerboundResourcePackPacket.Action]",
+            |this: &mut FriendlyByteBuf| this.read_enum::<Action>(),
+        );
+        golden.check_method(
+            "writeEnum(Ljava/lang/Enum;)Lnet/minecraft/network/FriendlyByteBuf;[ServerboundResourcePackPacket.Action]",
+            |this: &mut FriendlyByteBuf, value: Action| this.write_enum(&value).clone(),
         );
         golden.check_method(
             "readById(Ljava/util/function/IntFunction;)Ljava/lang/Object;[Direction.BY_ID]",
