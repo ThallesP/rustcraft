@@ -19,4 +19,5 @@ pub mod quaternionf;
 pub mod rounding_mode;
 pub mod vector2f;
 pub mod vector3f;
+pub mod vector3i;
 pub mod vector4f;

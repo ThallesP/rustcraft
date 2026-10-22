@@ -22,7 +22,7 @@ import java.util.function.Predicate;
 /** Covers every public static method and constant of a class by reflection. */
 final class StaticSuite implements Suite {
     private static final int RANDOM_CASES = 500;
-    private static final int MAX_EDGE_PRODUCT = 2048;
+    static final int MAX_EDGE_PRODUCT = 2048;
 
     private final Class<?> type;
     private final Map<String, List<Object[]>> extraInputs = new HashMap<>();
@@ -175,10 +175,7 @@ final class StaticSuite implements Suite {
 
     // The full cartesian product of edges when it's small, otherwise each edge once in each position.
     static List<Object[]> edgeTuples(final Values.Generator[] generators, final Random random) {
-        long product = 1;
-        for (Values.Generator generator : generators) {
-            product = Math.min(product * generator.edges().size(), MAX_EDGE_PRODUCT + 1);
-        }
+        long product = edgeProduct(generators);
 
         List<Object[]> tuples = new ArrayList<>();
         if (product <= MAX_EDGE_PRODUCT) {
@@ -205,6 +202,15 @@ final class StaticSuite implements Suite {
             }
         }
         return tuples;
+    }
+
+    /** How many combinations of edges there are, capped just above the most edgeTuples takes in full. */
+    static long edgeProduct(final Values.Generator[] generators) {
+        long product = 1;
+        for (Values.Generator generator : generators) {
+            product = Math.min(product * generator.edges().size(), MAX_EDGE_PRODUCT + 1);
+        }
+        return product;
     }
 
     static Object[] randomTuple(final Values.Generator[] generators, final Random random) {

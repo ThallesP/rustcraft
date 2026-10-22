@@ -9,6 +9,7 @@
 //! copy of it: each of these reads all of `this` before writing `dest`. `translate` has a body of
 //! its own, and `rotation_around` reads back what it wrote, so they're ported on `&mut self`.
 
+use crate::java::lang::float::Float;
 use crate::org::joml::math::Math;
 use crate::org::joml::matrix3x2f::Matrix3x2f;
 use crate::org::joml::matrix4fc::{
@@ -50,20 +51,11 @@ impl Default for Matrix4f {
 /// and NaN equals NaN, and the properties don't count.
 impl PartialEq for Matrix4f {
     fn eq(&self, other: &Matrix4f) -> bool {
-        self.fields().map(float_to_int_bits) == other.fields().map(float_to_int_bits)
+        self.fields().map(Float::float_to_int_bits) == other.fields().map(Float::float_to_int_bits)
     }
 }
 
 impl Eq for Matrix4f {}
-
-// Float.floatToIntBits: the bits, with every NaN made the canonical one.
-fn float_to_int_bits(value: f32) -> i32 {
-    if value.is_nan() {
-        0x7fc00000
-    } else {
-        value.to_bits() as i32
-    }
-}
 
 macro_rules! getters {
     ($($field:ident),*) => {$(
@@ -215,7 +207,9 @@ impl Matrix4f {
     /// Like `Float.hashCode` of each component in turn: every NaN hashes the same.
     pub fn hash_code(&self) -> i32 {
         self.fields().iter().fold(1i32, |result, &m| {
-            result.wrapping_mul(31).wrapping_add(float_to_int_bits(m))
+            result
+                .wrapping_mul(31)
+                .wrapping_add(Float::float_to_int_bits(m))
         })
     }
 

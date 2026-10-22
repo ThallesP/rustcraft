@@ -1,16 +1,17 @@
 //! net/minecraft/util/Mth.java
 //!
 //! Not ported yet, until the types they take are: getInt (NumberUtils, which parses non-ASCII
-//! digits), getSeed(Vec3i), rayIntersectsAABB, lerp(double, Vec3, Vec3) and mulAndTruncate
-//! (commons-lang Fraction).
+//! digits), rayIntersectsAABB and mulAndTruncate (commons-lang Fraction).
 
 use std::f64::consts::PI as PI_F64;
 use std::sync::LazyLock;
 
 use crate::java::lang::math::Math;
 use crate::java::util::uuid::UUID;
+use crate::net::minecraft::core::vec3i::Vec3i;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::random_source::{self, RandomSource};
+use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::joml::quaternionf::Quaternionf;
 use crate::org::joml::vector3f::Vector3f;
 
@@ -358,6 +359,11 @@ impl Mth {
         num - Mth::lfloor(num) as f64
     }
 
+    pub fn get_seed_vec3i(vec: &Vec3i) -> i64 {
+        #[allow(deprecated)]
+        Mth::get_seed(vec.get_x(), vec.get_y(), vec.get_z())
+    }
+
     /// `x * 3129871` is an int multiply that wraps before it's widened to long.
     #[deprecated]
     pub fn get_seed(x: i32, y: i32, z: i32) -> i64 {
@@ -545,6 +551,14 @@ impl Mth {
             alpha3,
             Mth::lerp2_f32(alpha1, alpha2, x000, x100, x010, x110),
             Mth::lerp2_f32(alpha1, alpha2, x001, x101, x011, x111),
+        )
+    }
+
+    pub fn lerp_vec3(alpha: f64, p1: &Vec3, p2: &Vec3) -> Vec3 {
+        Vec3::new(
+            Mth::lerp_f64(alpha, p1.x, p2.x),
+            Mth::lerp_f64(alpha, p1.y, p2.y),
+            Mth::lerp_f64(alpha, p1.z, p2.z),
         )
     }
 
@@ -845,6 +859,8 @@ impl Mth {
 mod tests {
     use super::Mth;
     use crate::golden::{Golden, STREAM_LIMIT};
+    use crate::net::minecraft::core::vec3i::Vec3i;
+    use crate::net::minecraft::world::phys::vec3::Vec3;
     use crate::org::joml::quaternionf::Quaternionf;
     use crate::org::joml::vector3f::Vector3f;
 
@@ -1011,9 +1027,17 @@ mod tests {
             "getInt(Ljava/lang/String;I)I",
             "needs Integer.parseInt, which takes non-ASCII digits",
         );
-        golden.pending("getSeed(Lnet/minecraft/core/Vec3i;)J", "Vec3i isn't ported");
-        golden.pending("rayIntersectsAABB(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/AABB;)Z", "Vec3 and AABB aren't ported");
-        golden.pending("lerp(DLnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;", "Vec3 isn't ported");
+        golden.check("getSeed(Lnet/minecraft/core/Vec3i;)J", |vec: Vec3i| {
+            Mth::get_seed_vec3i(&vec)
+        });
+        golden.pending(
+            "rayIntersectsAABB(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/AABB;)Z",
+            "AABB isn't ported",
+        );
+        golden.check(
+            "lerp(DLnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;",
+            |alpha, p1: Vec3, p2: Vec3| Mth::lerp_vec3(alpha, &p1, &p2),
+        );
         golden.check(
             "rotationAroundAxis(Lorg/joml/Vector3fc;Lorg/joml/Quaternionf;Lorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
             |axis: Vector3f, rotation: Quaternionf, mut result: Quaternionf| {

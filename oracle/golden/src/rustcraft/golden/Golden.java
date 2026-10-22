@@ -3,16 +3,24 @@ package rustcraft.golden;
 import com.mojang.math.Axis;
 import com.mojang.math.GivensParameters;
 import com.mojang.math.MatrixUtil;
+import com.mojang.math.OctahedralGroup;
 import com.mojang.math.Transformation;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Random;
+import net.minecraft.core.Direction;
+import net.minecraft.core.Vec3i;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
+import net.minecraft.util.StringRepresentable;
 import net.minecraft.world.level.levelgen.RandomSupport;
+import net.minecraft.world.phys.Vec2;
+import net.minecraft.world.phys.Vec3;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix3f;
 import org.joml.Matrix3x2f;
@@ -21,6 +29,7 @@ import org.joml.Matrix4fc;
 import org.joml.Quaternionf;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
+import org.joml.Vector3i;
 import org.joml.Vector4f;
 
 /** Writes vanilla's answers for the Rust golden tests, one JSON Lines file per class. See TESTING.md. */
@@ -233,7 +242,49 @@ public final class Golden {
             .extraInputs("equals(Ljava/lang/Object;)Z", transformationEqualsInputs())
             .extraInputs("slerp(Lcom/mojang/math/Transformation;F)Lcom/mojang/math/Transformation;", transformationSlerpInputs()),
         new PoseStackSuite(),
-        new ProjectionSuite()
+        new ProjectionSuite(),
+        new StaticSuite(Float.class)
+            .only("floatToIntBits(F)I", "hashCode(F)I")
+            .extraInputs("floatToIntBits(F)I", floatNaNs())
+            .extraInputs("hashCode(F)I", floatNaNs()),
+        new StaticSuite(Double.class)
+            .only("doubleToLongBits(D)J", "hashCode(D)I")
+            .extraInputs("doubleToLongBits(D)J", doubleNaNs())
+            .extraInputs("hashCode(D)I", doubleNaNs()),
+        new InstanceSuite(Vector3i.class, "<init>(III)V", "set(III)Lorg/joml/Vector3i;", "get(I)I", "setComponent(II)Lorg/joml/Vector3i;"),
+        InstanceSuite.every(Vec3i.class)
+            .extraInputs("closerThan(Lnet/minecraft/core/Vec3i;D)Z", distanceTies(0))
+            .extraInputs("closerToCenterThan(Lnet/minecraft/core/Position;D)Z", distanceTies(1)),
+        InstanceSuite.every(Direction.class)
+            .extraInputs("byName(Ljava/lang/String;)Lnet/minecraft/core/Direction;", names(Direction.values()))
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/core/Direction;", names(Direction.values()))
+            .extraInputs("getNearest(IIILnet/minecraft/core/Direction;)Lnet/minecraft/core/Direction;", nearestInputs(false))
+            .extraInputs("getNearest(Lnet/minecraft/core/Vec3i;Lnet/minecraft/core/Direction;)Lnet/minecraft/core/Direction;", nearestInputs(true))
+            .extraInputs("getApproximateNearest(FFF)Lnet/minecraft/core/Direction;", approximateNearestInputs(0))
+            .extraInputs("getApproximateNearest(DDD)Lnet/minecraft/core/Direction;", approximateNearestInputs(1))
+            .extraInputs("getApproximateNearest(Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/core/Direction;", approximateNearestInputs(2))
+            .extraInputs("fromYRot(D)Lnet/minecraft/core/Direction;", yRotBoundaries())
+            .extraInputs("isFacingAngle(F)Z", facingAngles())
+            .extraInputs("rotate(Lorg/joml/Matrix4fc;Lnet/minecraft/core/Direction;)Lnet/minecraft/core/Direction;", modelRotations())
+            .extraInputs("axisStepOrder(Lnet/minecraft/world/phys/Vec3;)Lcom/google/common/collect/ImmutableList;", axisStepOrderTies()),
+        InstanceSuite.every(Direction.Axis.class)
+            .extraInputs("byName(Ljava/lang/String;)Lnet/minecraft/core/Direction$Axis;", names(Direction.Axis.values()))
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/core/Direction$Axis;", names(Direction.Axis.values()))
+            .extraInputs("test(Lnet/minecraft/core/Direction;)Z", nullDirections(Direction.Axis.values())),
+        InstanceSuite.every(Direction.AxisDirection.class)
+            .extraInputs(
+                "valueOf(Ljava/lang/String;)Lnet/minecraft/core/Direction$AxisDirection;", names(Direction.AxisDirection.values())
+            ),
+        InstanceSuite.every(Direction.Plane.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/core/Direction$Plane;", names(Direction.Plane.values()))
+            .extraInputs("test(Lnet/minecraft/core/Direction;)Z", nullDirections(Direction.Plane.values())),
+        InstanceSuite.every(Vec3.class)
+            .extraInputs("closerThan(Lnet/minecraft/core/Position;D)Z", distanceTies(2))
+            .extraInputs("closerThan(Lnet/minecraft/world/phys/Vec3;DD)Z", distanceTies(3))
+            .extraInputs("normalize()Lnet/minecraft/world/phys/Vec3;", normalizeThresholds())
+            .extraInputs("directionFromRotation(FF)Lnet/minecraft/world/phys/Vec3;", lookRotations()),
+        InstanceSuite.every(Vec2.class)
+            .extraInputs("normalized()Lnet/minecraft/world/phys/Vec2;", normalizedThresholds())
     );
 
     public static void main(final String[] args) throws IOException {
@@ -711,6 +762,218 @@ public final class Golden {
         return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
             - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
             + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    }
+
+    // NaNs other than the canonical one, quiet and signalling, of either sign, which floatToIntBits makes canonical.
+    private static List<Object[]> floatNaNs() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int bits : new int[]{0x7f800001, 0x7fc00001, 0x7fffffff, 0xff800001, 0xffc00000, 0xffffffff}) {
+            inputs.add(new Object[]{Float.intBitsToFloat(bits)});
+        }
+        return inputs;
+    }
+
+    private static List<Object[]> doubleNaNs() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (long bits : new long[]{0x7ff0000000000001L, 0x7ff8000000000001L, 0x7fffffffffffffffL, 0xfff0000000000001L, 0xfff8000000000000L, -1L}) {
+            inputs.add(new Object[]{Double.longBitsToDouble(bits)});
+        }
+        return inputs;
+    }
+
+    // An enum's names as byName takes them (serialized, lower case) and as valueOf does (the constant's), in other cases,
+    // and ones neither knows.
+    private static List<Object[]> names(final Enum<?>[] constants) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Enum<?> constant : constants) {
+            String name = constant.name();
+            String serialized = constant instanceof StringRepresentable representable ? representable.getSerializedName() : name.toLowerCase(Locale.ROOT);
+            inputs.add(new Object[]{name});
+            inputs.add(new Object[]{serialized});
+            inputs.add(new Object[]{name.charAt(0) + name.substring(1).toLowerCase(Locale.ROOT)});
+            inputs.add(new Object[]{" " + serialized});
+        }
+        inputs.add(new Object[]{"minecraft:north"});
+        inputs.add(new Object[]{"null"});
+        return inputs;
+    }
+
+    // Small vectors, so two or three components often tie for the largest, with every fallback, null included.
+    private static List<Object[]> nearestInputs(final boolean vec3i) {
+        Random random = new Random(18);
+        List<Direction> fallbacks = new ArrayList<>(Arrays.asList(Direction.values()));
+        fallbacks.add(null);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 700; i++) {
+            int x = random.nextInt(7) - 3;
+            int y = random.nextInt(7) - 3;
+            int z = random.nextInt(7) - 3;
+            Direction fallback = fallbacks.get(i % fallbacks.size());
+            inputs.add(vec3i ? new Object[]{new Vec3i(x, y, z), fallback} : new Object[]{x, y, z, fallback});
+        }
+        return inputs;
+    }
+
+    // Every vector made of components that tie, are too small for the dot product to pass Float.MIN_VALUE (which is
+    // positive, so nothing beats NORTH unless it's above it), or are infinite or NaN, as floats, doubles or a Vec3.
+    private static List<Object[]> approximateNearestInputs(final int kind) {
+        float[] floats = {0.0F, -0.0F, 1.0F, -1.0F, Float.MIN_VALUE, -Float.MIN_VALUE, 2.0F * Float.MIN_VALUE, Float.POSITIVE_INFINITY, Float.NaN};
+        double[] doubles = {0.0, -0.0, 1.0, -1.0, Double.MIN_VALUE, 0x1.0p-149, 0x1.8p-149, 1.0E300, Double.NaN};
+        List<Object[]> inputs = new ArrayList<>();
+        for (int x = 0; x < 9; x++) {
+            for (int y = 0; y < 9; y++) {
+                for (int z = 0; z < 9; z++) {
+                    inputs.add(switch (kind) {
+                        case 0 -> new Object[]{floats[x], floats[y], floats[z]};
+                        case 1 -> new Object[]{doubles[x], doubles[y], doubles[z]};
+                        default -> new Object[]{new Vec3(doubles[x], doubles[y], doubles[z])};
+                    });
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // Every multiple of 45 degrees from -720 to 720, where fromYRot switches direction, and an ulp either side.
+    private static List<Object[]> yRotBoundaries() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int k = -16; k <= 16; k++) {
+            double angle = k * 45.0;
+            inputs.add(new Object[]{Math.nextDown(angle)});
+            inputs.add(new Object[]{angle});
+            inputs.add(new Object[]{Math.nextUp(angle)});
+        }
+        return inputs;
+    }
+
+    // Each direction facing every degree of a turn and a bit, and the quarter turns where the dot product is about 0.
+    private static List<Object[]> facingAngles() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Direction direction : Direction.values()) {
+            for (int degrees = -450; degrees <= 450; degrees++) {
+                inputs.add(new Object[]{direction, (float)degrees});
+            }
+            for (int k = -4; k <= 4; k++) {
+                float angle = k * 90.0F;
+                inputs.add(new Object[]{direction, Math.nextDown(angle)});
+                inputs.add(new Object[]{direction, Math.nextUp(angle)});
+            }
+        }
+        return inputs;
+    }
+
+    // BlockModelRotation's matrices, one per OctahedralGroup, which UnbakedCuboidGeometry turns faces' cull directions by.
+    private static List<Object[]> modelRotations() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (OctahedralGroup group : OctahedralGroup.values()) {
+            for (Direction direction : Direction.values()) {
+                inputs.add(new Object[]{new Matrix4f(group.transformation()), direction});
+            }
+        }
+        return inputs;
+    }
+
+    // Movements whose x and z are as large as each other, of either sign.
+    private static List<Object[]> axisStepOrderTies() {
+        Random random = new Random(19);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            double a = i % 10 == 0 ? 0.0 : (random.nextDouble() * 2.0 - 1.0) * 4.0;
+            inputs.add(new Object[]{new Vec3(a, random.nextDouble() - 0.5, random.nextBoolean() ? a : -a)});
+        }
+        return inputs;
+    }
+
+    private static List<Object[]> nullDirections(final Object[] receivers) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Object receiver : receivers) {
+            inputs.add(new Object[]{receiver, null});
+        }
+        return inputs;
+    }
+
+    // Two points exactly as far apart as the distance they're checked against, or an ulp of the distance either side, which
+    // the strict comparisons tell apart: blocks (kind 0), a block and a point that far from its center (1), points (2),
+    // and points as far apart horizontally and vertically as the cylinder's radius and half height (3).
+    private static List<Object[]> distanceTies(final int kind) {
+        Random random = new Random(22 + kind);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            Vec3i block = CoreValues.randomVec3i(random);
+            block = new Vec3i(block.getX() % 1000000, block.getY() % 1000, block.getZ() % 1000000);
+            Vec3 point = new Vec3(block.getX() + random.nextInt(8) / 8.0, block.getY() + random.nextInt(8) / 8.0, block.getZ() + random.nextInt(8) / 8.0);
+            int apart = random.nextInt(64) - 32;
+            int axis = random.nextInt(3);
+            double distance = Math.abs(apart);
+            distance = switch (random.nextInt(4)) {
+                case 0 -> Math.nextDown(distance);
+                case 1 -> Math.nextUp(distance);
+                default -> distance;
+            };
+            inputs.add(switch (kind) {
+                case 0 -> new Object[]{block, block.relative(Direction.Axis.VALUES[axis], apart), distance};
+                case 1 -> new Object[]{block, Vec3.atCenterOf(block).with(Direction.Axis.VALUES[axis], Vec3.atCenterOf(block).get(Direction.Axis.VALUES[axis]) + apart), distance};
+                case 2 -> new Object[]{point, point.with(Direction.Axis.VALUES[axis], point.get(Direction.Axis.VALUES[axis]) + apart), distance};
+                default -> {
+                    int up = random.nextInt(8) - 4;
+                    double height = random.nextBoolean() ? Math.abs(up) : Math.abs(up) + random.nextInt(2) * 0.5;
+                    Direction.Axis horizontal = random.nextBoolean() ? Direction.Axis.X : Direction.Axis.Z;
+                    Vec3 other = point.with(horizontal, point.get(horizontal) + apart).add(0.0, up, 0.0);
+                    yield new Object[]{point, other, distance, height};
+                }
+            });
+        }
+        return inputs;
+    }
+
+    // Vectors whose length is within a few ulps of normalize's threshold, (double)1.0E-5F, either side of it, first along an
+    // axis, where the length comes out exactly (the square root of a rounded square is the number again).
+    private static List<Object[]> normalizeThresholds() {
+        Random random = new Random(20);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int ulps = -2; ulps <= 2; ulps++) {
+            double length = 1.0E-5F;
+            for (int step = ulps; step != 0; step -= Integer.signum(step)) {
+                length = step > 0 ? Math.nextUp(length) : Math.nextDown(length);
+            }
+            for (Direction direction : Direction.values()) {
+                inputs.add(new Object[]{direction.getUnitVec3().scale(length)});
+            }
+        }
+        for (int i = 0; i < 500; i++) {
+            Vec3 unit = Vec3.directionFromRotation((random.nextFloat() * 2.0F - 1.0F) * 90.0F, (random.nextFloat() * 2.0F - 1.0F) * 180.0F);
+            double length = 1.0E-5F;
+            for (int ulps = random.nextInt(9) - 4; ulps != 0; ulps -= Integer.signum(ulps)) {
+                length = ulps > 0 ? Math.nextUp(length) : Math.nextDown(length);
+            }
+            inputs.add(new Object[]{new Vec3(unit.x * length, unit.y * length, unit.z * length)});
+        }
+        return inputs;
+    }
+
+    private static List<Object[]> normalizedThresholds() {
+        Random random = new Random(21);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            float angle = random.nextFloat() * 2.0F * (float)Math.PI;
+            float length = 1.0E-4F;
+            for (int ulps = random.nextInt(9) - 4; ulps != 0; ulps -= Integer.signum(ulps)) {
+                length = ulps > 0 ? Math.nextUp(length) : Math.nextDown(length);
+            }
+            inputs.add(new Object[]{new Vec2((float)Math.cos(angle) * length, (float)Math.sin(angle) * length)});
+        }
+        return inputs;
+    }
+
+    // The walk scenario's looks, and every whole x rotation (up and down) at y rotations around the circle.
+    private static List<Object[]> lookRotations() {
+        List<Object[]> inputs = new ArrayList<>();
+        inputs.add(new Object[]{0.0F, 0.0F});
+        inputs.add(new Object[]{30.0F, 90.0F});
+        for (int xRot = -90; xRot <= 90; xRot++) {
+            inputs.add(new Object[]{(float)xRot, (xRot + 90) * 2.0F - 180.0F});
+        }
+        return inputs;
     }
 
     private static double sign(final Random random) {

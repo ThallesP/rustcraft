@@ -21,11 +21,11 @@ import java.util.Random;
 import java.util.Set;
 
 /**
- * Covers chosen constructors and instance methods of a value class by reflection. Each case calls one method on a
- * fresh receiver, which is {@code args[0]}; {@code after[0]} is the receiver's state after the call, and the other
- * slots hold any argument the method wrote to, unless it's the returned object. Constructors are {@code <init>}
- * cases whose result is the new object. Static methods listed with them (a record's factories) get cases like a
- * StaticSuite's, without a receiver.
+ * Covers the constructors and methods of a value class by reflection: chosen ones for big library classes, or all its
+ * public ones and its constants for the game's own. Each case calls one method on a fresh receiver, which is
+ * {@code args[0]}; {@code after[0]} is the receiver's state after the call, and the other slots hold any argument the
+ * method wrote to, unless it's the returned object. Constructors are {@code <init>} cases whose result is the new
+ * object. Static methods get cases like a StaticSuite's, without a receiver.
  */
 final class InstanceSuite implements Suite {
     private static final int RANDOM_CASES = 500;
@@ -37,8 +37,20 @@ final class InstanceSuite implements Suite {
 
     /** Big library classes (JOML's Matrix4f has hundreds of methods) list the members the port covers. */
     InstanceSuite(final Class<?> type, final String... members) {
+        this(type, new LinkedHashSet<>(Arrays.asList(members)));
+    }
+
+    private InstanceSuite(final Class<?> type, final Set<String> only) {
         this.type = type;
-        this.only = new LinkedHashSet<>(Arrays.asList(members));
+        this.only = only;
+    }
+
+    /**
+     * Every public constructor and method the class declares, and its constants. A member whose arguments have no
+     * generator or whose result has no encoder is written as skipped, which the port's test has to mark pending.
+     */
+    static InstanceSuite every(final Class<?> type) {
+        return new InstanceSuite(type, (Set<String>)null).withFields();
     }
 
     /** More cases for a member, each the receiver's spec (none for a constructor or static method) followed by the arguments'. */
@@ -67,13 +79,22 @@ final class InstanceSuite implements Suite {
         Set<String> written = new HashSet<>();
         for (Executable member : this.members()) {
             String descriptor = descriptor(member);
-            if (this.only.contains(descriptor)) {
-                written.add(descriptor);
+            if (this.only != null && !this.only.contains(descriptor)) {
+                continue;
+            }
+
+            written.add(descriptor);
+            String reason = this.unsupportedReason(member);
+            if (reason == null) {
                 this.writeCases(writer, member, descriptor);
+            } else if (this.only == null) {
+                writer.skipped(descriptor, reason);
+            } else {
+                throw new IllegalStateException(descriptor + ": " + reason);
             }
         }
 
-        Set<String> missing = new HashSet<>(this.only);
+        Set<String> missing = new HashSet<>(this.only == null ? Set.of() : this.only);
         missing.addAll(this.extraInputs.keySet());
         missing.removeAll(written);
         if (!missing.isEmpty()) {
@@ -95,32 +116,49 @@ final class InstanceSuite implements Suite {
         return member instanceof Method method ? Descriptors.of(method) : Descriptors.of((Constructor<?>)member);
     }
 
+    // The receiver's type first, unless it's a constructor or a static method. equals(Object) compares with another
+    // object of the same class.
+    private List<Class<?>> argumentTypes(final Executable member) {
+        List<Class<?>> types = new ArrayList<>();
+        if (!(member instanceof Constructor<?>) && !Modifier.isStatic(member.getModifiers())) {
+            types.add(this.type);
+        }
+        for (Class<?> type : member.getParameterTypes()) {
+            types.add(type == Object.class ? this.type : type);
+        }
+        return types;
+    }
+
+    private Class<?> returnType(final Executable member) {
+        return member instanceof Method method ? method.getReturnType() : this.type;
+    }
+
+    private String unsupportedReason(final Executable member) {
+        Class<?> returnType = this.returnType(member);
+        if (returnType != void.class && !Values.canEncode(returnType)) {
+            return "no encoder for " + returnType.getName();
+        }
+        for (Class<?> type : this.argumentTypes(member)) {
+            if (Values.generator(type) == null) {
+                return "no generator for " + type.getName();
+            }
+        }
+        return null;
+    }
+
     private void writeCases(final GoldenWriter writer, final Executable member, final String descriptor) throws IOException {
         boolean constructor = member instanceof Constructor<?>;
         boolean receiver = !constructor && !Modifier.isStatic(member.getModifiers());
-        List<Class<?>> types = new ArrayList<>();
-        if (receiver) {
-            types.add(this.type);
-        }
-        types.addAll(Arrays.asList(member.getParameterTypes()));
-        Values.Generator[] generators = new Values.Generator[types.size()];
-        for (int i = 0; i < generators.length; i++) {
-            // equals(Object) compares with another object of the same class.
-            Class<?> type = types.get(i) == Object.class ? this.type : types.get(i);
-            generators[i] = Values.generator(type);
-            if (generators[i] == null) {
-                throw new IllegalStateException(descriptor + ": no generator for " + types.get(i).getName());
-            }
-        }
-        Class<?> returnType = constructor ? this.type : ((Method)member).getReturnType();
-        if (returnType != void.class && !Values.canEncode(returnType)) {
-            throw new IllegalStateException(descriptor + ": no encoder for " + returnType.getName());
-        }
+        Values.Generator[] generators = this.argumentTypes(member).stream().map(Values::generator).toArray(Values.Generator[]::new);
+        Class<?> returnType = this.returnType(member);
 
         Random random = new Random(descriptor.hashCode());
         List<Object[]> specs = new ArrayList<>(StaticSuite.edgeTuples(generators, random));
         specs.addAll(this.extraInputs.getOrDefault(descriptor, List.of()));
-        if (generators.length > 0) {
+        // When every argument is an enum, the edges were every combination already.
+        boolean exhaustive = Arrays.stream(generators).allMatch(Values.Generator::exhaustive)
+            && StaticSuite.edgeProduct(generators) <= StaticSuite.MAX_EDGE_PRODUCT;
+        if (generators.length > 0 && !exhaustive) {
             for (int i = 0; i < RANDOM_CASES; i++) {
                 specs.add(StaticSuite.randomTuple(generators, random));
             }

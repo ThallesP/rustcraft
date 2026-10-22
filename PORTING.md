@@ -13,6 +13,7 @@ How Java becomes Rust in this repo. The port should read side by side with `vani
   - What they add, when they differ by arity: `next_int_bounded`, `length3_f64`.
   - The golden test is the mapping table: each `golden.check` line pairs a JVM descriptor with its Rust function.
 - Constructors are `new`. Overloaded constructors follow the same rule (`from_seed128bit`).
+- A Rust module named like its parent (`net/minecraft/util/Util.java` → `util::util`) keeps the name, with `#[allow(clippy::module_inception)]` on its `mod`.
 - JDK behaviour the game depends on lives under `src/java/`, mirroring the JDK's packages (`java::lang::math::Math`, `java::util::uuid::UUID`).
 - HotSpot code the JDK runs instead of Java follows the same rule under the class that calls it: `src/hotspot/cpu/x86/stubGenerator_x86_64_sin.cpp` → `src/java/lang/math/hotspot_x86/stub_generator_x86_64_sin.rs`. Assembly ports one call per instruction (`__ mulsd(xmm1, xmm0);` → `xmm1.mulsd(xmm0);`) on the register model in `hotspot_x86/assembler.rs`, and keeps OpenJDK's GPLv2 notices. A stub whose jumps nest becomes `if`s (sin); one that jumps back and forth between its blocks becomes a loop with one `match` arm per label, in the C++'s order, and a `jmp!` macro for its jumps (pow). `python3 tools/hotspot_port_check.py` checks that each port has its stub's instructions in the same order; CI runs it.
 - Anything not ported yet is named in the file's header comment and marked pending in its golden test.
@@ -32,9 +33,13 @@ Which ones the client calls comes from its bytecode: `javap -c -p` over every cl
 
 ## Object model
 
-- Interfaces become traits. An interface-typed value becomes `Box<dyn Trait>` when owned and `&mut dyn Trait` when borrowed.
+- Interfaces become traits. An interface-typed value becomes `Box<dyn Trait>` when owned and `&mut dyn Trait` (or `&dyn Trait`, like a `Position`) when borrowed.
+- An enum becomes a Rust enum. When its constants take constructor arguments (`Direction`'s data values, name, axis and normal), those live in a static table indexed by the constant, one line per constant like Java's. Its nested enums live in its module (`direction::Axis`). `values()` is a `VALUES` const and `values()`, and `valueOf` is `value_of`, which panics where Java throws.
+- `toString` becomes `Display`, so `to_string()` works. `equals` becomes `PartialEq`: derived when Rust compares the fields the way Java does (ints, or floats with `==` in `Vec2`), written out when it doesn't (`Vec3` compares with `Double.compare`, so -0.0 differs from 0.0 and NaN equals NaN). `hashCode` is `hash_code()`, with `java::lang::float::Float` and `java::lang::double::Double` for floats' bits. A Java `equals` that returns true for the same object first only differs for a NaN component, where Rust has no identity to check.
+- An argument Java lets be null is an `Option` (`Direction.getNearest`'s fallback, `Direction.Axis.test`).
 - An interface implemented only by its own constants becomes an enum (`Axis::XP`; `Axis.of` would make another, but nothing calls it). Its overloads that differ by type get the type (`rotate_matrix4f`).
 - A class that extends another to add state holds its parent as a field and derefs to it: `Matrix4fStack` is the `Matrix4f` it derefs to, plus the saved copies.
+- Immutable value classes (`Vec3i`, `Vec3`) are `Copy` structs whose methods take `&self` and return new values. Where Java returns `this` (`offset(0, 0, 0)`), the port returns a copy, which is the same value. A getter handing out a shared read-only object (`Direction.getUnitVec3f`'s `Vector3fc`) returns a `&'static` reference.
 - A getter that hands out a mutable object (`PoseStack.last()`) becomes `last()` returning `&` and `last_mut()` returning `&mut`. So does one whose read-only view a caller casts back and writes to: `MatrixUtil.checkProperty` adds properties to the `Matrix4fc` that `Transformation.getMatrix()` hands out, so `PoseStack.mulPose(Transformation)` takes `&mut Transformation` and goes through `get_matrix_mut()`.
 - State a getter works out on first use (`Transformation`'s decomposition) lives in a `OnceLock`, so the getter takes `&self`. Cloning such an object stands for copying a Java reference to it when nothing else about it changes: the lazy state comes out the same whenever it's worked out.
 - A constant the game compares by reference (`rotation != Transformation.IDENTITY`) carries a private flag that only the constant sets and its clones keep.

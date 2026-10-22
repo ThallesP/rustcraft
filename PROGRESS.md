@@ -4,17 +4,45 @@ The loop's memory: newest entries first. Each step adds an entry and rewrites "N
 
 ## Next
 
-Milestone 2, part 1: the core value types, `Vec3`, `Vec3i`, `BlockPos`, `Direction` (with `Direction.Axis` and `AxisDirection`), `AABB` and `Identifier`, each with an `InstanceSuite` and generators like the game's values (block positions near the walk scenario's, entity boxes, unit directions). Run the bytecode scan (PORTING.md) first to list the methods the client calls on them. `Direction` needs JOML's `Vector3i` and `Quaternionf.rotateX/Y/Z` (`getRotation`), and `Vec3` needs `Vector3f`.
+Milestone 2, part 2: `BlockPos` with `BlockPos.MutableBlockPos`, then `AABB` and `Identifier`, each with `InstanceSuite.every` and generators like the game's values.
 
-Then Minecraft's `Frustum` on top of `FrustumIntersection` (it needs `AABB` and `BoundingBox`), `PoseStack.translate(Vec3)`, and `BlockMath` (`Quaternionf.rotateX/Y`, `Direction.getApproximateNearest`), which `BlockModelRotation` builds its face transformations with. When block models and render states come, settle how they hold shared `Transformation`s: Java's `mulPose(Transformation)` and `BlockMath.getFaceTransformation` add properties to a shared transformation's own matrix (static ones like `TheEndPortalRenderer.TRANSFORMATION` included), so every holder sees them, and that changes which shortcuts later JOML calls take.
+- `BlockPos` extends `Vec3i` without adding state: in Rust it holds its `Vec3i` and derefs to it, and its overrides (`offset`, `relative`, `above`…) return `BlockPos`. `MutableBlockPos` adds the setters, through `Vec3i`'s protected `setX/Y/Z`. It needs two small enums, `Rotation` (`rotate`) and `AxisCycle` (`MutableBlockPos.set`). Its generators: `Vec3i`'s blocks, plus the packing limits (x and z ±33554431, y ±2047) for `asLong`, `of` and `getX(J)`. Its iterables (`betweenClosed`, `withinManhattan`, `spiralAround`, `betweenCornersInDirection`, `randomBetweenClosed`…) hand out one `MutableBlockPos` over and over, so the harness has to encode each element as it comes, like an `Iterator`'s. `betweenClosed(AABB)` and the `BoundingBox` overloads come with those classes.
+- `AABB` needs `BlockPos`, `Vec3`, `Direction` and `Vector3f` (`BoundingBox` only for `of(BoundingBox)`). Generators: entity boxes (0.6 by 1.8 around the walk scenario's positions), block shapes, boxes that touch or overlap by an ulp, and rays for `clip`.
+- `Identifier`: parsing and validation, with `IdentifierException`. `read(StringReader)` can wait for brigadier.
 
-`ProjectionType.applyLayeringTransform` and `VertexSorting` come with the renderer. `log10` (one call site, `Options`) and `cbrt` (one, `ClientExplosionTracker`) are small HotSpot stubs; port them when those classes come. The client never calls `Math.exp`. ARGB's `Vector3f` and `Vector4f` methods have golden cases (its `pending_rest` covers them) and can be ported whenever ARGB is next touched.
+Then Minecraft's `Frustum` on top of `FrustumIntersection` (it needs `AABB` and `BoundingBox`), `PoseStack.translate(Vec3)` (appended to `PoseStackSuite`'s programs), and `BlockMath` (`Quaternionf.rotateX/Y`, `Direction.getApproximateNearest`), which `BlockModelRotation` builds its face transformations with. When block models and render states come, settle how they hold shared `Transformation`s: Java's `mulPose(Transformation)` and `BlockMath.getFaceTransformation` add properties to a shared transformation's own matrix (static ones like `TheEndPortalRenderer.TRANSFORMATION` included), so every holder sees them, and that changes which shortcuts later JOML calls take.
+
+`ProjectionType.applyLayeringTransform` and `VertexSorting` come with the renderer. `log10` (one call site, `Options`) and `cbrt` (one, `ClientExplosionTracker`) are small HotSpot stubs; port them when those classes come. The client never calls `Math.exp`. ARGB's `Vector3f`, `Vector4f` and `Vec3` methods have golden cases (its `pending_rest` covers them) and can be ported whenever ARGB is next touched. `Vec3.toString` needs Java's `Double.toString` (shortest digits, but a one-digit answer may become a closer two-digit one, and its own exponent format), which only logs and error messages print so far.
 
 ## Needs Thalles
 
 - **Licence of the code translated from OpenJDK and JOML.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22: Vec3i, Direction, Vec3 and Vec2
+
+- Ported and checked against vanilla, milestone 2's first slice. The bytecode scan (PORTING.md) shows the client calling nearly every method of these classes, so each is ported whole, apart from what waits for other types:
+  - `Vec3i`: 41 members, all but the codecs (28,808 cases). The protected setters come with `MutableBlockPos`.
+  - `Direction` (42 members, 18,304 cases) with its nested `Axis` (17, 3,383), `AxisDirection` (6, 543) and `Plane` (9, 2,091). Pending: the codecs and `BY_ID`, and `orderedByNearest` and `getFacingAxis`, which take an `Entity`.
+  - `Vec3`: 56 members (42,128 cases). Pending: the codecs, and `toString`, which needs Java's `Double.toString`.
+  - `Vec2`: 13 members (10,809 cases).
+  - `Mth.getSeed(Vec3i)` and `Mth.lerp(double, Vec3, Vec3)`, un-pended (1,087 cases).
+  - JOML's `Vector3i`: the 4 methods the client calls (2,474 cases).
+  - `java.lang.Float.floatToIntBits` and `hashCode`, `Double.doubleToLongBits` and `hashCode` (2,184 cases, other NaN payloads included), which `Matrix4f`'s `equals` and `hashCode` now use too.
+  - `Util.getRandom`, `shuffledCopy` and `shuffle`, checked through `Direction`'s and `Plane`'s random cases.
+- Golden harness:
+  - `InstanceSuite.every(Class)` covers every public constructor, method and constant a class declares, and writes the ones without a generator or encoder as skipped, so the port's test has to mark them pending.
+  - New `CoreValues`: enum constants by name, `EnumSet<Direction.Axis>`, `Vec3i`, `Vec3` (also for `Position`) and `Vec2`, generated like the game's values (TESTING.md). Collections, streams and iterators are encoded as arrays of their elements. When every argument is an enum, there are no random cases: the edges are every combination already.
+  - Extra inputs where results flip: points exactly as far apart as a strict `<` distance check's distance (and an ulp either side), lengths at `normalize`'s threshold, ties for `getNearest` and `axisStepOrder`, subnormal and NaN dot products for `getApproximateNearest`, `fromYRot`'s multiples of 45 degrees, every degree of `isFacingAngle`, and `BlockModelRotation`'s 48 matrices for `Direction.rotate`.
+  - `golden.rs`: `encode_names!` encodes an enum by its constants' names, a `Vec` decodes from an array, and a `LegacyRandomSource` argument decodes from its seed and encodes as its next `nextLong()`, so `check_mut` checks instance methods that draw from one (`Vec3.offsetRandom`, `Plane.getRandomDirection`).
+- Found:
+  - `Direction.getApproximateNearest` starts from `Float.MIN_VALUE`, the smallest positive float: a zero or NaN vector gives `NORTH`, and a subnormal dot product beats it.
+  - `Vec3.normalize` compares with `1.0E-5F` widened to a double (`9.999999747378752E-6`), which the bytecode shows.
+  - x86's own NaN (`0.0 / 0.0`) is negative, unlike Java's canonical one, so `Vec3` and `Vec2` edges include one: their `hashCode` must canonicalize it.
+- Mutations (42, run once and not committed): 41 fail the goldens. The other one is equivalent: `>>` for `>>>` in `Double.hashCode`, whose cast to int keeps only the low half. `<=` for `<` in `normalize` survived the first inputs, since no length came out exactly at the threshold. Along an axis it does, and that mutation fails 6 cases now.
+- With NaNs normalized, every line of the other golden files is identical to before, except where the new types made skipped entries checkable: `Mth`'s `getSeed(Vec3i)` and `lerp(double, Vec3, Vec3)`, `ARGB.color(Vec3)` (under ARGB's `pending_rest`), and `Mth.rayIntersectsAABB`'s skip reason, which names `AABB` now.
+- Evidence: `cargo test --workspace` passes 68 tests, including 34 golden suites (58 and 24 before). fmt, clippy and the port check are clean.
 
 ### 2026-10-22: Transformation, GivensParameters, MatrixUtil's decompositions and fdlibm's hypot
 

@@ -112,6 +112,18 @@ impl Encode for String {
     }
 }
 
+/// Any JSON array, like an `EnumSet`'s constants.
+impl<T: Decode> Decode for Vec<T> {
+    fn decode(value: &Value) -> Self {
+        value
+            .as_array()
+            .unwrap_or_else(|| panic!("expected an array, got {value}"))
+            .iter()
+            .map(T::decode)
+            .collect()
+    }
+}
+
 impl<T: Encode> Encode for Vec<T> {
     fn encode(&self) -> Value {
         self.iter().map(Encode::encode).collect()
@@ -267,6 +279,46 @@ macro_rules! encode_fields {
 }
 
 pub(crate) use encode_fields;
+
+/// Encodes an enum as its constants' names, the way vanilla encodes them:
+/// `encode_names!(Direction { DOWN, UP, NORTH, SOUTH, WEST, EAST });`.
+macro_rules! encode_names {
+    ($type:ident { $($constant:ident),* $(,)? }) => {
+        impl $crate::golden::Decode for $type {
+            fn decode(value: &serde_json::Value) -> Self {
+                match value.as_str() {
+                    $(Some(stringify!($constant)) => $type::$constant,)*
+                    _ => panic!("expected a {} constant, got {value}", stringify!($type)),
+                }
+            }
+        }
+
+        impl $crate::golden::Encode for $type {
+            fn encode(&self) -> serde_json::Value {
+                serde_json::Value::from(match self {
+                    $($type::$constant => stringify!($constant),)*
+                })
+            }
+        }
+    };
+}
+
+pub(crate) use encode_names;
+
+/// A `RandomSource` argument of a method checked with `check_mut`, like `Vec3.offsetRandom`'s:
+/// vanilla passes a `LegacyRandomSource` seeded with the arg, and records its next `nextLong()`
+/// after the call.
+impl Decode for LegacyRandomSource {
+    fn decode(value: &Value) -> Self {
+        LegacyRandomSource::new(i64::decode(value))
+    }
+}
+
+impl Encode for LegacyRandomSource {
+    fn encode(&self) -> Value {
+        Value::from(self.clone().next_long())
+    }
+}
 
 /// Raw JSON, for hand-written suites like RandomSource's programs. A `{"throws": …}` object
 /// matches any other, since Rust panics carry no Java exception class.

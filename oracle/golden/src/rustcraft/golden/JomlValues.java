@@ -22,6 +22,8 @@ import org.joml.Vector2f;
 import org.joml.Vector2fc;
 import org.joml.Vector3f;
 import org.joml.Vector3fc;
+import org.joml.Vector3i;
+import org.joml.Vector3ic;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
 
@@ -29,7 +31,7 @@ import org.joml.Vector4fc;
  * Arguments and receivers of JOML's types, encoded as their fields in declaration order: a Vector2f is {@code [x, y]},
  * a Vector3f {@code [x, y, z]}, a Vector4f and a Quaternionf {@code [x, y, z, w]}, a Matrix3x2f
  * {@code [m00, m01, m10, m11, m20, m21]}, a Matrix3f {@code [m00, m01, …, m22]}, a Matrix4f
- * {@code [m00, m01, …, m33, properties]}, and a FrustumIntersection its 24 plane components
+ * {@code [m00, m01, …, m33, properties]}, a Vector3i {@code [x, y, z]} (ints), and a FrustumIntersection its 24 plane components
  * {@code [nxX, nxY, nxZ, nxW, pxX, …, pzW]} followed by its {@code planes} array of six Vector4f. Matrix4f's methods take
  * shortcuts based on its properties, so they're part of its state, and every matrix here gets them from JOML itself,
  * the way the game's do.
@@ -62,6 +64,23 @@ final class JomlValues {
         JomlValues::randomVector3f,
         Vector3f::new,
         vector -> floats(vector.x(), vector.y(), vector.z())
+    );
+
+    // Block positions and offsets, like Vec3i.toMutable's, and any ints.
+    static final Values.Generator VECTOR3I = new Mutable<>(
+        List.of(
+            new Vector3i(), new Vector3i(1, 0, 0), new Vector3i(0, -1, 0), new Vector3i(0, -61, 0), new Vector3i(-30000000, 320, 30000000),
+            new Vector3i(Integer.MIN_VALUE, Integer.MAX_VALUE, -1)
+        ),
+        random -> new Vector3i((Integer)Values.INTS.random(random), (Integer)Values.INTS.random(random), (Integer)Values.INTS.random(random)),
+        Vector3i::new,
+        vector -> {
+            JsonArray array = new JsonArray();
+            array.add(vector.x());
+            array.add(vector.y());
+            array.add(vector.z());
+            return array;
+        }
     );
 
     static final Values.Generator VECTOR4F = new Mutable<>(
@@ -216,6 +235,9 @@ final class JomlValues {
         if (type == Vector4f.class || type == Vector4fc.class) {
             return VECTOR4F;
         }
+        if (type == Vector3i.class || type == Vector3ic.class) {
+            return VECTOR3I;
+        }
         if (type == Quaternionf.class || type == Quaternionfc.class) {
             return QUATERNIONF;
         }
@@ -239,6 +261,7 @@ final class JomlValues {
             case FrustumIntersection frustum -> FRUSTUM_INTERSECTION.encode(frustum);
             case Vector3fc vector -> VECTOR3F.encode(vector);
             case Vector4fc vector -> VECTOR4F.encode(vector);
+            case Vector3ic vector -> VECTOR3I.encode(vector);
             case Quaternionfc quaternion -> QUATERNIONF.encode(quaternion);
             case Matrix3fc matrix -> MATRIX3F.encode(matrix);
             case Matrix4fc matrix -> MATRIX4F.encode(matrix);

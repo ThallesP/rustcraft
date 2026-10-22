@@ -7,12 +7,15 @@ import com.google.gson.JsonPrimitive;
 import com.mojang.math.Axis;
 import java.lang.reflect.Array;
 import java.lang.reflect.RecordComponent;
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 
@@ -43,6 +46,11 @@ final class Values {
         default JsonElement after(final Object spec, final Object instance) {
             return null;
         }
+
+        /** Whether the edges are every value there is (an enum's constants), so random draws add nothing. */
+        default boolean exhaustive() {
+            return false;
+        }
     }
 
     // Random draws pick an edge one time in eight, so edges also meet random partners.
@@ -58,7 +66,7 @@ final class Values {
         }
     }
 
-    private static final Generator INTS = new Simple(
+    static final Generator INTS = new Simple(
         List.<Object>of(
             0, 1, -1, 2, -2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 45, 90, -90, 180, -180, 255, 256, 359, 360, 361, -360,
             65535, 65536, 1 << 30, Integer.MIN_VALUE, Integer.MIN_VALUE + 1, Integer.MAX_VALUE, Integer.MAX_VALUE - 1
@@ -101,7 +109,7 @@ final class Values {
         value -> new JsonPrimitive(floatBits((Float)value))
     );
 
-    private static final Generator DOUBLES = new Simple(
+    static final Generator DOUBLES = new Simple(
         List.<Object>of(
             0.0, -0.0, 1.0, -1.0, 0.5, -0.5, 0.25, 2.0, -2.0, 0.1, 1.0E-5, -1.0E-5, 1.0E-7, 1.0E-300, 0.9999999999999999,
             1.0000000000000002, 6.0, 45.0, 90.0, -90.0, 180.0, -180.0, 270.0, 360.0, -360.0, 720.0, 3000.0, 1.0E6, -1.0E6, 1.0E15,
@@ -222,7 +230,10 @@ final class Values {
         if (generator == null) {
             generator = JomlValues.generator(type);
         }
-        return generator != null ? generator : MathValues.generator(type);
+        if (generator == null) {
+            generator = MathValues.generator(type);
+        }
+        return generator != null ? generator : CoreValues.generator(type);
     }
 
     static boolean canEncode(final Class<?> type) {
@@ -232,7 +243,11 @@ final class Values {
         if (type.isPrimitive() || BOXES.contains(type) || type == String.class || type == UUID.class || type == IntStream.class) {
             return true;
         }
-        if (JomlValues.canEncode(type) || MathValues.canEncode(type)) {
+        if (JomlValues.canEncode(type) || MathValues.canEncode(type) || CoreValues.canEncode(type)) {
+            return true;
+        }
+        // Their elements are encoded by their own class.
+        if (Collection.class.isAssignableFrom(type) || Stream.class.isAssignableFrom(type) || Iterator.class.isAssignableFrom(type)) {
             return true;
         }
         if (type.isArray()) {
@@ -283,6 +298,15 @@ final class Values {
             ((IntStream)value).limit(STREAM_LIMIT).forEach(array::add);
             return array;
         }
+        if (Collection.class.isAssignableFrom(type)) {
+            return encodeElements(((Collection<?>)value).iterator());
+        }
+        if (Stream.class.isAssignableFrom(type)) {
+            return encodeElements(((Stream<?>)value).limit(STREAM_LIMIT).iterator());
+        }
+        if (Iterator.class.isAssignableFrom(type)) {
+            return encodeElements((Iterator<?>)value);
+        }
         if (type.isArray()) {
             JsonArray array = new JsonArray();
             for (int i = 0; i < Array.getLength(value); i++) {
@@ -307,7 +331,21 @@ final class Values {
         if (MathValues.canEncode(type)) {
             return MathValues.encode(value);
         }
+        if (CoreValues.canEncode(type)) {
+            return CoreValues.encode(value);
+        }
         throw new IllegalArgumentException("no encoder for " + type.getName());
+    }
+
+    // The elements of a collection, stream or iterator, each by its own class, up to STREAM_LIMIT of them.
+    private static JsonArray encodeElements(final Iterator<?> elements) {
+        JsonArray array = new JsonArray();
+        for (int i = 0; i < STREAM_LIMIT && elements.hasNext(); i++) {
+            Object element = elements.next();
+            Class<?> type = element instanceof Enum<?> constant ? constant.getDeclaringClass() : element.getClass();
+            array.add(encode(element, type));
+        }
+        return array;
     }
 
     static String floatBits(final float value) {
