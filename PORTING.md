@@ -17,6 +17,17 @@ How Java becomes Rust in this repo. The port should read side by side with `vani
 - HotSpot code the JDK runs instead of Java follows the same rule under the class that calls it: `src/hotspot/cpu/x86/stubGenerator_x86_64_sin.cpp` → `src/java/lang/math/hotspot_x86/stub_generator_x86_64_sin.rs`. Assembly ports one call per instruction (`__ mulsd(xmm1, xmm0);` → `xmm1.mulsd(xmm0);`) on the register model in `hotspot_x86/assembler.rs`, and keeps OpenJDK's GPLv2 notices. A stub whose jumps nest becomes `if`s (sin); one that jumps back and forth between its blocks becomes a loop with one `match` arm per label, in the C++'s order, and a `jmp!` macro for its jumps (pow). `python3 tools/hotspot_port_check.py` checks that each port has its stub's instructions in the same order; CI runs it.
 - Anything not ported yet is named in the file's header comment and marked pending in its golden test.
 
+## Libraries
+
+Libraries whose classes the game's math runs through are ported like the game, from their published sources, which `tools/setup_vanilla.py` puts next to the decompiled game (`vanilla/<version>/src/org/joml/Matrix4f.java` → `src/org/joml/matrix4f.rs`). So far that's JOML, the vector and matrix library. Its classes have hundreds of methods, so only the ones the client calls are ported, and the golden suite lists them.
+
+- JOML's read-only interfaces (`Matrix4fc`, `Vector3fc`, …) are only implemented by its own classes, so they become shared references (`&Matrix4f`), and their constants live in their module (`matrix4fc::PROPERTY_IDENTITY`).
+- Constructors: the no-argument one is `new()`, the one taking the fields is `from_xyz`/`from_xyzw`/`from_values`, and copies are `from_<type>` (`Matrix3f::from_matrix4f`).
+- Overloads taking components instead of a vector get `_xyz` (`add_xyz`), a scalar `_scalar`, an axis and angle `_axis`/`_axis_xyz` (`rotate_axis(angle, &axis)`), another type its name (`mul_matrix3f`).
+- A method that writes to a `dest` argument gets `_into` and returns `dest` (`invert_into(&mut dest)`). Its fluent overload passes `this` as `dest` and returns `&mut Self`. Rust can't alias the two, so the fluent one writes into `self` from a copy of it, which is only the same as JOML when JOML reads all of `this` before writing `dest`. Check that it does. Where JOML gives the fluent overload a body of its own (`Matrix4f.translate`), or a method reads back what it just wrote (`rotationAround`), port it on `&mut self` as it is. The golden suite checks both overloads.
+- `Matrix4f` keeps JOML's `properties`, which methods take shortcuts on. The shortcuts can give different bits than the full computation (`identity()` leaves an identity with -0.0 in it alone), so they're part of the port, and of the encoded state.
+- JOML's `Math.fma` is `a * b + c`, rounded twice: the fused `java.lang.Math.fma` needs `-Djoml.useMathFma`, which the game doesn't set. Never use `mul_add`.
+
 ## Object model
 
 - Interfaces become traits. An interface-typed value becomes `Box<dyn Trait>` when owned and `&mut dyn Trait` when borrowed.
@@ -40,7 +51,7 @@ The golden tests caught each of these, or exist to catch them.
 - **Strings** are UTF-16. `String.hashCode` runs over UTF-16 units (`JavaString::hash_code`), and lengths and indices count UTF-16 units too.
 - **Same in both:** `(int)` casts from floating point (they saturate, and NaN becomes 0, like `as`), and float `%` (fmod).
 - **Transcendental functions.**
-  - On x86-64, HotSpot computes `Math.sin/cos/tan/log/log10/exp/pow` (and `tanh`, `cbrt`) with its own assembly, based on Intel's libm. The interpreter and both JITs call the same stubs. Functions without that (`asin`, `acos`, `atan`, …) fall back to `StrictMath`, which is fdlibm (the `libm` crate ports fdlibm).
+  - On x86-64, HotSpot computes `Math.sin/cos/tan/log/log10/exp/pow` (and `tanh`, `cbrt`) with its own assembly, based on Intel's libm. The interpreter and both JITs call the same stubs. Functions without that (`asin`, `acos`, `atan2`, …) fall back to `StrictMath`, which runs the JDK's Java port of fdlibm, ported in `src/java/lang/fd_libm.rs`. The `libm` crate is no substitute: it ports musl, whose `atan2` differs from fdlibm's on one in eight random inputs.
   - glibc and fdlibm differ from the HotSpot routines in the last bit on some inputs. Vanilla itself gives different results on ARM.
   - Every call goes through `java::lang::Math`. `sin`, `cos`, `tan`, `log` and `pow` run ports of HotSpot's stubs (`src/java/lang/math/hotspot_x86/`). Port the others the same way when the game first calls them.
   - HotSpot's `log` and `pow` pick a table entry with `rcpps`, an approximate reciprocal that Intel and AMD implement differently, so `Math.log` and `Math.pow` can differ in the last bit between CPUs. The port runs the same instruction and matches vanilla on the machine both run on; a correctly rounded reciprocal instead puts 17 in 10 million results one ulp off. Only compare vanilla's outputs with the port's from the same kind of CPU.

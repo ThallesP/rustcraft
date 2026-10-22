@@ -163,9 +163,9 @@ final class StaticSuite implements Suite {
             Watchdog.begin(descriptor + " " + args);
             try {
                 Object result = method.invoke(null, instances);
-                writer.result(descriptor, args, Values.encode(result, method.getReturnType()), after(generators, instances));
+                writer.result(descriptor, args, Values.encode(result, method.getReturnType()), after(generators, spec, instances, result));
             } catch (InvocationTargetException e) {
-                writer.threw(descriptor, args, e.getCause(), after(generators, instances));
+                writer.threw(descriptor, args, e.getCause(), after(generators, spec, instances, null));
             } catch (IllegalAccessException e) {
                 throw new IllegalStateException(e);
             } finally {
@@ -175,7 +175,7 @@ final class StaticSuite implements Suite {
     }
 
     // The full cartesian product of edges when it's small, otherwise each edge once in each position.
-    private static List<Object[]> edgeTuples(final Values.Generator[] generators, final Random random) {
+    static List<Object[]> edgeTuples(final Values.Generator[] generators, final Random random) {
         long product = 1;
         for (Values.Generator generator : generators) {
             product = Math.min(product * generator.edges().size(), MAX_EDGE_PRODUCT + 1);
@@ -208,7 +208,7 @@ final class StaticSuite implements Suite {
         return tuples;
     }
 
-    private static Object[] randomTuple(final Values.Generator[] generators, final Random random) {
+    static Object[] randomTuple(final Values.Generator[] generators, final Random random) {
         Object[] tuple = new Object[generators.length];
         for (int i = 0; i < generators.length; i++) {
             tuple[i] = generators[i].random(random);
@@ -216,11 +216,12 @@ final class StaticSuite implements Suite {
         return tuple;
     }
 
-    private static JsonArray after(final Values.Generator[] generators, final Object[] instances) {
+    // One slot per argument. The returned object is already the result, so it gets no slot.
+    static JsonArray after(final Values.Generator[] generators, final Object[] specs, final Object[] instances, final Object result) {
         JsonArray after = new JsonArray();
         boolean any = false;
         for (int i = 0; i < generators.length; i++) {
-            JsonElement state = generators[i].after(instances[i]);
+            JsonElement state = instances[i] == result ? null : generators[i].after(specs[i], instances[i]);
             any |= state != null;
             after.add(state);
         }

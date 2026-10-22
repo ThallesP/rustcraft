@@ -7,6 +7,7 @@
 
 pub mod java;
 pub mod net;
+pub mod org;
 
 #[cfg(test)]
 mod golden;

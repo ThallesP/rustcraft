@@ -1,8 +1,8 @@
 //! net/minecraft/util/Mth.java
 //!
 //! Not ported yet, until the types they take are: getInt (NumberUtils, which parses non-ASCII
-//! digits), getSeed(Vec3i), rayIntersectsAABB, lerp(double, Vec3, Vec3), rotationAroundAxis
-//! (JOML), mulAndTruncate (commons-lang Fraction), and the X/Y/Z_AXIS vectors.
+//! digits), getSeed(Vec3i), rayIntersectsAABB, lerp(double, Vec3, Vec3) and mulAndTruncate
+//! (commons-lang Fraction).
 
 use std::f64::consts::PI as PI_F64;
 use std::sync::LazyLock;
@@ -11,6 +11,8 @@ use crate::java::lang::math::Math;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::random_source::{self, RandomSource};
+use crate::org::joml::quaternionf::Quaternionf;
+use crate::org::joml::vector3f::Vector3f;
 
 const UUID_VERSION: i64 = 61440;
 const UUID_VERSION_TYPE_4: i64 = 16384;
@@ -48,6 +50,9 @@ impl Mth {
     pub const EPSILON: f32 = 1.0E-5;
     /// `sqrt(2.0F)` in vanilla, which rounds to the same float.
     pub const SQRT_OF_TWO: f32 = std::f32::consts::SQRT_2;
+    pub const Y_AXIS: Vector3f = Vector3f::from_xyz(0.0, 1.0, 0.0);
+    pub const X_AXIS: Vector3f = Vector3f::from_xyz(1.0, 0.0, 0.0);
+    pub const Z_AXIS: Vector3f = Vector3f::from_xyz(0.0, 0.0, 1.0);
 
     pub fn sin(i: f64) -> f32 {
         SIN[(((i * SIN_SCALE) as i64) & SIN_MASK) as usize]
@@ -818,12 +823,30 @@ impl Mth {
                 || clamped_origin.wrapping_add(current_distance) <= upper_bound
         })
     }
+
+    pub fn rotation_around_axis<'a>(
+        axis: &Vector3f,
+        rotation: &Quaternionf,
+        result: &'a mut Quaternionf,
+    ) -> &'a mut Quaternionf {
+        let projected_length = axis.dot_xyz(rotation.x, rotation.y, rotation.z);
+        result
+            .set_xyzw(
+                axis.x * projected_length,
+                axis.y * projected_length,
+                axis.z * projected_length,
+                rotation.w,
+            )
+            .normalize()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Mth;
     use crate::golden::{Golden, STREAM_LIMIT};
+    use crate::org::joml::quaternionf::Quaternionf;
+    use crate::org::joml::vector3f::Vector3f;
 
     #[test]
     #[allow(deprecated)]
@@ -991,14 +1014,19 @@ mod tests {
         golden.pending("getSeed(Lnet/minecraft/core/Vec3i;)J", "Vec3i isn't ported");
         golden.pending("rayIntersectsAABB(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/AABB;)Z", "Vec3 and AABB aren't ported");
         golden.pending("lerp(DLnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;", "Vec3 isn't ported");
-        golden.pending("rotationAroundAxis(Lorg/joml/Vector3fc;Lorg/joml/Quaternionf;Lorg/joml/Quaternionf;)Lorg/joml/Quaternionf;", "JOML isn't ported");
+        golden.check(
+            "rotationAroundAxis(Lorg/joml/Vector3fc;Lorg/joml/Quaternionf;Lorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
+            |axis: Vector3f, rotation: Quaternionf, mut result: Quaternionf| {
+                *Mth::rotation_around_axis(&axis, &rotation, &mut result)
+            },
+        );
         golden.pending(
             "mulAndTruncate(Lorg/apache/commons/lang3/math/Fraction;I)I",
             "commons-lang Fraction isn't ported",
         );
-        golden.pending("X_AXIS", "JOML isn't ported");
-        golden.pending("Y_AXIS", "JOML isn't ported");
-        golden.pending("Z_AXIS", "JOML isn't ported");
+        golden.field("X_AXIS", Mth::X_AXIS);
+        golden.field("Y_AXIS", Mth::Y_AXIS);
+        golden.field("Z_AXIS", Mth::Z_AXIS);
         golden.finish();
     }
 }

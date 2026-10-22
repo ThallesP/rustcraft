@@ -2,7 +2,12 @@
 
 mod hotspot_x86;
 
+use crate::java::lang::fd_libm;
+
 pub struct Math;
+
+const DEGREES_TO_RADIANS: f64 = 0.017453292519943295;
+const RADIANS_TO_DEGREES: f64 = 57.29577951308232;
 
 impl Math {
     /// Wraps on `i32::MIN` instead of panicking.
@@ -117,9 +122,79 @@ impl Math {
         hotspot_x86::libm_pow(a, b)
     }
 
-    /// HotSpot has no assembly for asin, so it's StrictMath's fdlibm, which the libm crate ports too.
+    /// HotSpot has no assembly for asin, acos or atan2, so they're StrictMath's, which runs
+    /// the JDK's Java port of fdlibm.
     pub fn asin(a: f64) -> f64 {
-        libm::asin(a)
+        fd_libm::Asin::compute(a)
+    }
+
+    pub fn acos(a: f64) -> f64 {
+        fd_libm::Acos::compute(a)
+    }
+
+    pub fn atan2(y: f64, x: f64) -> f64 {
+        fd_libm::Atan2::compute(y, x)
+    }
+
+    pub fn to_radians(angdeg: f64) -> f64 {
+        angdeg * DEGREES_TO_RADIANS
+    }
+
+    pub fn to_degrees(angrad: f64) -> f64 {
+        angrad * RADIANS_TO_DEGREES
+    }
+
+    /// Rounds half to even, like `round_ties_even`.
+    pub fn rint(a: f64) -> f64 {
+        a.round_ties_even()
+    }
+
+    /// floor(a + 1/2) without rounding the sum, and saturating like a cast.
+    pub fn round_f32(a: f32) -> i32 {
+        let int_bits = a.to_bits() as i32;
+        let biased_exp = (int_bits & 0x7F800000) >> 23;
+        let shift = (24 - 2 + 127) - biased_exp;
+        if (shift & -32) == 0 {
+            let mut r = (int_bits & 0x007FFFFF) | (0x007FFFFF + 1);
+            if int_bits < 0 {
+                r = -r;
+            }
+            ((r >> shift) + 1) >> 1
+        } else {
+            a as i32
+        }
+    }
+
+    pub fn round_f64(a: f64) -> i64 {
+        let long_bits = a.to_bits() as i64;
+        let biased_exp = (long_bits & 0x7FF0000000000000) >> 52;
+        let shift = (53 - 2 + 1023) - biased_exp;
+        if (shift & -64) == 0 {
+            let mut r = (long_bits & 0x000FFFFFFFFFFFFF) | (0x000FFFFFFFFFFFFF + 1);
+            if long_bits < 0 {
+                r = -r;
+            }
+            ((r >> shift) + 1) >> 1
+        } else {
+            a as i64
+        }
+    }
+
+    /// Unlike `f32::signum`, zeros and NaN come back as they are.
+    pub fn signum_f32(f: f32) -> f32 {
+        if f == 0.0 || f.is_nan() {
+            f
+        } else {
+            1.0f32.copysign(f)
+        }
+    }
+
+    pub fn signum_f64(d: f64) -> f64 {
+        if d == 0.0 || d.is_nan() {
+            d
+        } else {
+            1.0f64.copysign(d)
+        }
     }
 }
 
@@ -150,7 +225,16 @@ mod tests {
         golden.check("log(D)D", Math::log);
         golden.check("pow(DD)D", Math::pow);
         golden.check("asin(D)D", Math::asin);
+        golden.check("acos(D)D", Math::acos);
+        golden.check("atan2(DD)D", Math::atan2);
         golden.check("sqrt(D)D", f64::sqrt);
+        golden.check("toRadians(D)D", Math::to_radians);
+        golden.check("toDegrees(D)D", Math::to_degrees);
+        golden.check("rint(D)D", Math::rint);
+        golden.check("round(F)I", Math::round_f32);
+        golden.check("round(D)J", Math::round_f64);
+        golden.check("signum(F)F", Math::signum_f32);
+        golden.check("signum(D)D", Math::signum_f64);
         golden.finish();
     }
 }

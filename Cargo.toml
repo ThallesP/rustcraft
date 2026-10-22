@@ -9,7 +9,6 @@ description = "Minecraft Java Edition client, ported to Rust"
 publish = false
 
 [dependencies]
-libm = "0.2"
 md-5 = "0.10"
 
 [dev-dependencies]

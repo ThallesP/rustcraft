@@ -123,6 +123,48 @@ impl<T: Encode> Encode for Vec<T> {
     }
 }
 
+/// What a method returning `void` returns.
+impl Encode for () {
+    fn encode(&self) -> Value {
+        Value::Null
+    }
+}
+
+/// The elements of a fixed-size JSON array, e.g. an object encoded as its fields.
+pub fn elements<const N: usize>(value: &Value) -> &[Value; N] {
+    value
+        .as_array()
+        .and_then(|array| <&[Value; N]>::try_from(array.as_slice()).ok())
+        .unwrap_or_else(|| panic!("expected an array of {N}, got {value}"))
+}
+
+/// Encodes a struct as the JSON array of the listed fields, the way vanilla encodes JOML's
+/// objects: `encode_fields!(Vector3f { x: f32, y: f32, z: f32 });`. Use it in the struct's own
+/// test module, which can see its private fields.
+macro_rules! encode_fields {
+    ($type:ty { $($field:ident: $field_type:ty),* $(,)? }) => {
+        impl $crate::golden::Decode for $type {
+            fn decode(value: &serde_json::Value) -> Self {
+                let [$($field),*] = $crate::golden::elements(value);
+                Self { $($field: <$field_type as $crate::golden::Decode>::decode($field)),* }
+            }
+        }
+
+        impl $crate::golden::Encode for $type {
+            fn encode(&self) -> serde_json::Value {
+                serde_json::Value::from(vec![$($crate::golden::Encode::encode(&self.$field)),*])
+            }
+
+            fn matches(&self, expected: &serde_json::Value) -> bool {
+                let [$($field),*] = $crate::golden::elements(expected);
+                true $(&& $crate::golden::Encode::matches(&self.$field, $field))*
+            }
+        }
+    };
+}
+
+pub(crate) use encode_fields;
+
 /// Raw JSON, for hand-written suites like RandomSource's programs. A `{"throws": …}` object
 /// matches any other, since Rust panics carry no Java exception class.
 impl Decode for Value {
@@ -158,6 +200,12 @@ pub trait Call<Args> {
     fn call(&self, args: &[Value]) -> Box<dyn Encode>;
 }
 
+/// An instance method with its receiver first, e.g. `|m: &mut Matrix4f, x: f32, y: f32, z: f32|
+/// *m.translate(x, y, z)` for `translate(FFF)Lorg/joml/Matrix4f;`.
+pub trait CallMethod<This, Args> {
+    fn call(&self, this: &mut This, args: &[Value]) -> Box<dyn Encode>;
+}
+
 /// A function taking a `RandomSource` first. Vanilla passes a `LegacyRandomSource` seeded with
 /// the first arg and records its next `nextLong()` after the call, which must match too.
 pub trait CallWithRandom<Args> {
@@ -178,6 +226,21 @@ macro_rules! calls {
                     panic!("expected {} arguments, got {}", names.len(), args.len());
                 };
                 Box::new(self($($type::decode($value)),*))
+            }
+        }
+
+        impl<Function, This, Return, $($type),*> CallMethod<This, ($($type,)*)> for Function
+        where
+            Function: Fn(&mut This, $($type),*) -> Return,
+            Return: Encode + 'static,
+            $($type: Decode,)*
+        {
+            fn call(&self, this: &mut This, args: &[Value]) -> Box<dyn Encode> {
+                let [$($value),*] = args else {
+                    let names: &[&str] = &[$(stringify!($value)),*];
+                    panic!("expected {} arguments, got {}", names.len(), args.len());
+                };
+                Box::new(self(this, $($type::decode($value)),*))
             }
         }
 
@@ -210,6 +273,11 @@ calls!(A a, B b, C c, D d, E e, F f, G g, H h);
 calls!(A a, B b, C c, D d, E e, F f, G g, H h, I i);
 calls!(A a, B b, C c, D d, E e, F f, G g, H h, I i, J j);
 calls!(A a, B b, C c, D d, E e, F f, G g, H h, I i, J j, K k);
+calls!(A a, B b, C c, D d, E e, F f, G g, H h, I i, J j, K k, L l);
+calls!(A a, B b, C c, D d, E e, F f, G g, H h, I i, J j, K k, L l, M m);
+calls!(A a, B b, C c, D d, E e, F f, G g, H h, I i, J j, K k, L l, M m, N n);
+calls!(A a, B b, C c, D d, E e, F f, G g, H h, I i, J j, K k, L l, M m, N n, O o);
+calls!(A a, B b, C c, D d, E e, F f, G g, H h, I i, J j, K k, L l, M m, N n, O o, P p);
 
 pub struct Golden {
     class: String,
@@ -313,14 +381,32 @@ impl Golden {
     }
 
     pub fn check<Args>(&self, method: &str, function: impl Call<Args>) {
-        self.check_cases(method, |case| (catch(|| function.call(&case.args)), None));
+        self.check_cases(method, |case| {
+            (catch(|| function.call(&case.args)), Vec::new())
+        });
     }
 
     pub fn check_random<Args>(&self, method: &str, function: impl CallWithRandom<Args>) {
         self.check_cases(method, |case| {
             let mut random = LegacyRandomSource::new(i64::decode(&case.args[0]));
             let outcome = catch(|| function.call(&mut random, &case.args[1..]));
-            (outcome, Some(random.next_long()))
+            (
+                outcome,
+                vec![Box::new(random.next_long()) as Box<dyn Encode>],
+            )
+        });
+    }
+
+    /// Checks an instance method on the receiver in `args[0]`, which must also end up in
+    /// vanilla's state afterwards (`after[0]`).
+    pub fn check_method<This, Args>(&self, method: &str, function: impl CallMethod<This, Args>)
+    where
+        This: Decode + Encode + 'static,
+    {
+        self.check_cases(method, |case| {
+            let mut this = This::decode(&case.args[0]);
+            let outcome = catch(|| function.call(&mut this, &case.args[1..]));
+            (outcome, vec![Box::new(this) as Box<dyn Encode>])
         });
     }
 
@@ -366,10 +452,12 @@ impl Golden {
         self.entries.get(name)
     }
 
+    /// `run` returns the outcome and what it can see of the arguments afterwards, from the first
+    /// on, to compare with vanilla's `after`. Vanilla recording more than that fails the case.
     fn check_cases(
         &self,
         method: &str,
-        mut run: impl FnMut(&Case) -> (Result<Box<dyn Encode>, String>, Option<i64>),
+        mut run: impl FnMut(&Case) -> (Result<Box<dyn Encode>, String>, Vec<Box<dyn Encode>>),
     ) {
         let cases = match self.entry(method) {
             Some(Entry::Cases(cases)) => cases,
@@ -406,14 +494,25 @@ impl Golden {
                 )),
                 _ => {}
             }
-            if let (Some(after), Some(expected)) =
-                (after, case.after.as_ref().and_then(|after| after.first()))
-                && !after.matches(expected)
-            {
-                problems.push(format!(
-                    "random afterwards: expected nextLong {}, got {after}",
-                    show(expected)
-                ));
+            let expected_after = case.after.as_deref().unwrap_or_default();
+            for (index, actual) in after.iter().enumerate() {
+                match expected_after.get(index) {
+                    Some(expected) if actual.matches(expected) => {}
+                    Some(expected) => problems.push(format!(
+                        "after[{index}]: expected {}, got {}",
+                        show(expected),
+                        show(&actual.encode())
+                    )),
+                    None => problems.push(format!("after[{index}]: vanilla recorded nothing")),
+                }
+            }
+            for (index, expected) in expected_after.iter().enumerate().skip(after.len()) {
+                if !expected.is_null() {
+                    problems.push(format!(
+                        "after[{index}]: vanilla recorded {}, which this check can't see",
+                        show(expected)
+                    ));
+                }
             }
             if !problems.is_empty() {
                 mismatches.push(format!(

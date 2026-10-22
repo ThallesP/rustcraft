@@ -48,6 +48,14 @@ Static methods are covered by reflection. Every public static method whose param
 
 A `RandomSource` argument is a `LegacyRandomSource` seeded with the argument. Its next `nextLong()` after the call is recorded in `after` (one slot per argument), so how many values a method draws must match too. Stateful classes get hand-written suites (`RandomSourceSuite`).
 
+Value types (JOML's so far) get an `InstanceSuite`, which covers the constructors and instance methods it lists the same way. A case calls one method on a fresh receiver, which is `args[0]`, and `after[0]` is the receiver's state afterwards. Any other argument the method wrote to gets its state in `after` too, unless it's the returned object, which `result` already shows. A constructor is an `<init>` case whose result is the new object. The port checks them with `golden.check_method`, which fails a case when vanilla recorded an `after` slot the check can't see.
+
+JOML objects are encoded as their fields in declaration order: a `Vector3f` is `[x, y, z]`, a `Quaternionf` `[x, y, z, w]`, a `Matrix3f` `[m00, m01, …, m22]`, and a `Matrix4f` `[m00, m01, …, m33, properties]`. The receivers and arguments come from JOML itself (identities, translations, rotations, scales, the camera's projections, products of those, and matrices built from components, NaN and infinities included), so their properties are ones the game's matrices can have.
+
+```json
+{"method":"translate(FFF)Lorg/joml/Matrix4f;","args":[["3f800000",…,"3f800000",30],"3f000000","c2700000","3f000000"],"after":[[…,26],null,null,null],"result":[…,26]}
+```
+
 ```json
 {"field":"PI","value":"40490fdb"}
 {"method":"sin(D)F","args":["3ff0000000000000"],"result":"3f57695c"}

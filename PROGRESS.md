@@ -4,15 +4,36 @@ The loop's memory: newest entries first. Each step adds an entry and rewrites "N
 
 ## Next
 
-Milestone 1, exact math: JOML. The client builds its projection, view and model matrices with JOML 1.10.9's `Matrix4f`, `Vector3f` and `Quaternionf` (MIT, in `vanilla/libraries/org/joml/`), and also uses `Vector4f`, `Matrix3f` and `Vector2f`. Port them to `src/org/joml/` the way PORTING.md ports Minecraft's classes, from JOML's own sources (the `-sources.jar` of the version the client pins, fetched into `vanilla/`, not committed). The golden harness only covers static methods so far, so add a hand-written suite like `RandomSourceSuite` that runs sequences of instance calls (`perspective`, `lookAt`, `rotate`, `mul`, `translate`, `transformPosition`…) and records the resulting fields as floats. Start with the methods `GameRenderer`, `Camera` and `PoseStack` call. Check how JOML's `Math` routes `sin`/`cos`/`tan` (it has its own fast paths behind `Options.FASTMATH`).
+Milestone 1, JOML, part 2: Mojang's math on top of what's ported. Port `com.mojang.math.Axis`, `MatrixUtil` (`isPureTranslation`, `checkPropertyRaw`…), `com.mojang.blaze3d.vertex.PoseStack` with its `Pose`, and `Projection.getMatrix` (which swaps near and far), plus the JOML they still need: `Matrix4fStack` (`pushMatrix`/`popMatrix`) and `Vector4f`. `PoseStack` is stateful, so give it a hand-written suite of push/pop/translate/scale/rotate/mulPose programs like `RandomSourceSuite`, recording `last().pose()`, `normal()` and `trustedNormals` after each op. Add each JOML method to its `InstanceSuite` list as it's ported. After that: `Matrix3x2f`/`Matrix3x2fStack` for the GUI, and `FrustumIntersection` with Minecraft's `Frustum` for chunk culling.
 
-`log10` (one call site, `Options`) and `cbrt` (one, `ClientExplosionTracker`) are small HotSpot stubs; port them when those classes come. The client never calls `Math.exp`.
+`log10` (one call site, `Options`) and `cbrt` (one, `ClientExplosionTracker`) are small HotSpot stubs; port them when those classes come. The client never calls `Math.exp`. ARGB's `Vector3f` methods now have golden cases (its `pending_rest` covers them) and can be ported whenever ARGB is next touched.
 
 ## Needs Thalles
 
-- **Licence of the HotSpot port.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too. Not blocking. Decide before the repo or any build goes public.
+- **Licence of the code translated from OpenJDK and JOML.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22: JOML's Math, Vector3f, Quaternionf, Matrix3f and Matrix4f
+
+- The golden harness covers instance methods now. `InstanceSuite` (oracle/golden/) calls the constructors and instance methods it lists by reflection. The receiver is `args[0]`, `after[0]` is its state afterwards, and any other argument the method wrote to gets a slot unless it's the returned object. On the Rust side, `golden.check_method` compares all of that and fails a case when vanilla recorded a slot the check can't see. `encode_fields!` turns a struct into its JSON. TESTING.md has the format.
+  - JOML's receivers and arguments come from JOML itself (`JomlValues`): identities (one with -0.0 in it, which still counts as the identity), translations, rotations, scales, the camera's reversed-depth perspective, the GUI's ortho, products of those, matrices built from components, NaN and infinities, and random transforms composed of one to four steps.
+- Ported from JOML 1.10.9's sources into `src/org/joml/` (PORTING.md has a new section on libraries). `tools/setup_vanilla.py` fetches the sources jar from Maven Central, checks that Maven's binary jar is the one Mojang ships (same SHA-1), and unpacks it next to the decompiled game.
+  - `Math`: 74 of its 76 methods, and its constants. `exp` is pending (HotSpot's stub isn't ported, and the client never calls it); `random` is clock-seeded.
+  - `Matrix4fc`'s 20 constants.
+  - The methods `Camera`, `PoseStack`, `Axis`, `Projection` and `GameRenderer` call, with what they call: 37 on `Vector3f`, 25 on `Quaternionf`, 31 on `Matrix3f`, 59 on `Matrix4f` (104,118 cases between them).
+- Found:
+  - JOML's fast trig (`-Djoml.fastmath`) and fused `fma` (`-Djoml.useMathFma`) are off unless the JVM is told otherwise, and the game doesn't. So JOML's trig goes through HotSpot's stubs, and its `fma` is `a * b + c`, rounded twice.
+  - `Matrix4f.rotateAround(q, x, y, z, dest)` on an identity matrix writes and returns `this`, and leaves `dest` alone. Ported as is.
+  - `Matrix4f`'s property shortcuts change bits: `identity()` keeps an identity's -0.0. Dropping that shortcut fails `identity` and `invert`.
+  - `Math.roundLongUsing`'s half modes round to an int, so they saturate at the int range.
+- `java.lang.Math` gained `acos`, `atan2`, `rint`, `round(F)`, `round(D)`, `signum(F)`, `signum(D)`, `toRadians` and `toDegrees`, all checked. With the libm crate, `atan2` got 76 of its 2,181 cases wrong: the crate ports musl, which returns ±pi/2 for |y/x| > 2^64 where fdlibm adds half of pi's low part. Ported the JDK's `FdLibm` `Asin`, `Acos`, `Atan` and `Atan2` into `src/java/lang/fd_libm.rs` instead, and dropped the libm dependency.
+- `Mth`: un-pended and checked `rotationAroundAxis` and `X_AXIS`/`Y_AXIS`/`Z_AXIS`.
+- In the other golden files, only the JOML entries vanilla used to skip changed (in `Mth` and `ARGB`). Every other line is byte-identical to before.
+- Extra evidence, run once and not committed:
+  - 12.3 million random `asin`/`acos`/`atan2` inputs from vanilla's JDK (10M with C2, 2M C1 only, 300k `-Xint`), compared with a release build of the port: 0 mismatches. The libm crate's `atan2` gets 12.6% of them wrong.
+  - Mutations that each fail the goldens: `identity()` without its shortcut, `translate` keeping `PROPERTY_PERSPECTIVE`, `rotateAround` writing `dest` on an identity, `mulProject` without its identity shortcut, and a `normalize()` that leaves the receiver alone.
+- Evidence: `cargo test --workspace` passes 46 tests, including 12 golden suites (6 before). fmt, clippy and the port check are clean.
 
 ### 2026-10-22: HotSpot's tan and pow
 

@@ -2,9 +2,10 @@
 """Fetch a vanilla Minecraft version and turn it into a porting reference.
 
 Downloads the client and server jars plus the client's libraries, decompiles the
-client with Vineflower, extracts its bundled resources and runs the server's data
-generator. Everything lands in vanilla/, which is gitignored: Mojang's code and
-assets can't be redistributed.
+client with Vineflower, adds the sources of the libraries the port translates too
+(JOML), extracts its bundled resources and runs the server's data generator.
+Everything lands in vanilla/, which is gitignored: Mojang's code and assets can't
+be redistributed.
 
     python3 tools/setup_vanilla.py           # the version pinned in MINECRAFT_VERSION
     python3 tools/setup_vanilla.py 26.4      # another version, e.g. to diff an update
@@ -34,6 +35,9 @@ ADOPTIUM_URL = "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?archit
 VINEFLOWER_VERSION = "1.12.0"
 VINEFLOWER_SHA256 = "1dfcfe974395734fa467ce620661c7623d05ba83670de0529b1fbd63ff548b9d"
 VINEFLOWER_URL = f"https://repo1.maven.org/maven2/org/vineflower/vineflower/{VINEFLOWER_VERSION}/vineflower-{VINEFLOWER_VERSION}.jar"
+MAVEN_CENTRAL = "https://repo1.maven.org/maven2/"
+# Libraries the port translates like the game's own classes, from their published sources.
+SOURCE_LIBRARIES = {"org.joml:joml"}
 
 
 # Adoptium's API answers 403 to urllib's default User-Agent.
@@ -69,6 +73,26 @@ def download(url, destination, algorithm, expected):
         partial.unlink()
         raise SystemExit(f"{algorithm} mismatch for {url}: expected {expected}, got {actual}")
     partial.replace(destination)
+
+
+def fetch_text(url):
+    with open_url(url) as response:
+        return response.read().decode().split()[0]
+
+
+# Puts a library's sources next to the decompiled game, so src/org/joml/matrix4f.rs reads
+# side by side with vanilla/<version>/src/org/joml/Matrix4f.java.
+def add_library_sources(library, source_dir):
+    artifact = library["downloads"]["artifact"]
+    central_sha1 = fetch_text(MAVEN_CENTRAL + artifact["path"] + ".sha1")
+    if central_sha1 != artifact["sha1"]:
+        raise SystemExit(f"{library['name']} on Maven Central isn't the jar Mojang ships, so its sources may not match")
+
+    sources_path = artifact["path"].removesuffix(".jar") + "-sources.jar"
+    sources_jar = LIBRARIES_DIR / sources_path
+    download(MAVEN_CENTRAL + sources_path, sources_jar, "sha1", fetch_text(MAVEN_CENTRAL + sources_path + ".sha1"))
+    with zipfile.ZipFile(sources_jar) as jar:
+        jar.extractall(source_dir, [name for name in jar.namelist() if name.endswith(".java")])
 
 
 def resolve_version(version_id):
@@ -195,6 +219,9 @@ def main():
     java = ensure_jdk(version["javaVersion"]["majorVersion"])
     if not args.skip_decompile:
         decompile(java, ensure_vineflower(), client_jar, libraries, version_dir / "src")
+        for library in version["libraries"]:
+            if library["name"].rsplit(":", 1)[0] in SOURCE_LIBRARIES:
+                add_library_sources(library, version_dir / "src")
     extract_resources(client_jar, version_dir / "resources")
     run_data_generator(java, server_jar, version_dir)
     print(f"done: {version_dir}")

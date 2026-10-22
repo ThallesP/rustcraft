@@ -1,5 +1,6 @@
 package rustcraft.golden;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.stream.Collectors;
@@ -12,6 +13,11 @@ final class Descriptors {
     static String of(final Method method) {
         String parameters = Arrays.stream(method.getParameterTypes()).map(Descriptors::of).collect(Collectors.joining());
         return method.getName() + "(" + parameters + ")" + of(method.getReturnType());
+    }
+
+    static String of(final Constructor<?> constructor) {
+        String parameters = Arrays.stream(constructor.getParameterTypes()).map(Descriptors::of).collect(Collectors.joining());
+        return "<init>(" + parameters + ")V";
     }
 
     static String of(final Class<?> type) {

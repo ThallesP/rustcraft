@@ -35,8 +35,11 @@ final class Values {
             return spec;
         }
 
-        /** State of the argument after the call that must also match, e.g. how far a RandomSource advanced. */
-        default JsonElement after(final Object instance) {
+        /**
+         * State of the argument after the call that must also match, e.g. how far a RandomSource advanced, or null
+         * when there's nothing to match.
+         */
+        default JsonElement after(final Object spec, final Object instance) {
             return null;
         }
     }
@@ -80,7 +83,7 @@ final class Values {
         value -> new JsonPrimitive((Long)value)
     );
 
-    private static final Generator FLOATS = new Simple(
+    static final Generator FLOATS = new Simple(
         List.<Object>of(
             0.0F, -0.0F, 1.0F, -1.0F, 0.5F, -0.5F, 0.25F, 2.0F, -2.0F, 0.1F, 1.0E-5F, -1.0E-5F, 1.0E-7F, 0.99999994F, 1.0000001F,
             6.0F, 45.0F, 90.0F, -90.0F, 180.0F, -180.0F, 179.99998F, 270.0F, 360.0F, -360.0F, 720.0F, 1.0E6F, -1.0E6F,
@@ -174,7 +177,7 @@ final class Values {
         }
 
         @Override
-        public JsonElement after(final Object instance) {
+        public JsonElement after(final Object spec, final Object instance) {
             return new JsonPrimitive(((RandomSource)instance).nextLong());
         }
     };
@@ -201,7 +204,8 @@ final class Values {
     }
 
     static Generator generator(final Class<?> type) {
-        return GENERATORS.get(type);
+        Generator generator = GENERATORS.get(type);
+        return generator != null ? generator : JomlValues.generator(type);
     }
 
     static boolean canEncode(final Class<?> type) {
@@ -209,6 +213,9 @@ final class Values {
             return false;
         }
         if (type.isPrimitive() || BOXES.contains(type) || type == String.class || type == UUID.class || type == IntStream.class) {
+            return true;
+        }
+        if (JomlValues.canEncode(type)) {
             return true;
         }
         if (type.isArray()) {
@@ -276,6 +283,9 @@ final class Values {
                 }
             }
             return array;
+        }
+        if (JomlValues.canEncode(type)) {
+            return JomlValues.encode(value);
         }
         throw new IllegalArgumentException("no encoder for " + type.getName());
     }
