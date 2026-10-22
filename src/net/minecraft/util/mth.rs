@@ -1,7 +1,7 @@
 //! net/minecraft/util/Mth.java
 //!
 //! Not ported yet, until the types they take are: getInt (NumberUtils, which parses non-ASCII
-//! digits), rayIntersectsAABB and mulAndTruncate (commons-lang Fraction).
+//! digits) and mulAndTruncate (commons-lang Fraction).
 
 use std::f64::consts::PI as PI_F64;
 use std::sync::LazyLock;
@@ -11,6 +11,7 @@ use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::vec3i::Vec3i;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::random_source::{self, RandomSource};
+use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::joml::quaternionf::Quaternionf;
 use crate::org::joml::vector3f::Vector3f;
@@ -389,6 +390,47 @@ impl Mth {
 
     pub fn inverse_lerp_f32(value: f32, min: f32, max: f32) -> f32 {
         (value - min) / (max - min)
+    }
+
+    /// Separating axis tests: the box's three axes first, then the ray's direction crossed with
+    /// each of them (Andrew Woo's). Only the last test is strict both ways round.
+    pub fn ray_intersects_aabb(ray_start: &Vec3, ray_dir: &Vec3, aabb: &AABB) -> bool {
+        let center_x = (aabb.min_x + aabb.max_x) * 0.5;
+        let box_extent_x = (aabb.max_x - aabb.min_x) * 0.5;
+        let diff_x = ray_start.x - center_x;
+        if diff_x.abs() > box_extent_x && diff_x * ray_dir.x >= 0.0 {
+            return false;
+        }
+
+        let center_y = (aabb.min_y + aabb.max_y) * 0.5;
+        let box_extent_y = (aabb.max_y - aabb.min_y) * 0.5;
+        let diff_y = ray_start.y - center_y;
+        if diff_y.abs() > box_extent_y && diff_y * ray_dir.y >= 0.0 {
+            return false;
+        }
+
+        let center_z = (aabb.min_z + aabb.max_z) * 0.5;
+        let box_extent_z = (aabb.max_z - aabb.min_z) * 0.5;
+        let diff_z = ray_start.z - center_z;
+        if diff_z.abs() > box_extent_z && diff_z * ray_dir.z >= 0.0 {
+            return false;
+        }
+
+        let andrew_woo_diff_x = ray_dir.x.abs();
+        let andrew_woo_diff_y = ray_dir.y.abs();
+        let andrew_woo_diff_z = ray_dir.z.abs();
+        let f = ray_dir.y * diff_z - ray_dir.z * diff_y;
+        if f.abs() > box_extent_y * andrew_woo_diff_z + box_extent_z * andrew_woo_diff_y {
+            return false;
+        }
+
+        let f = ray_dir.z * diff_x - ray_dir.x * diff_z;
+        if f.abs() > box_extent_x * andrew_woo_diff_z + box_extent_z * andrew_woo_diff_x {
+            return false;
+        }
+
+        let f = ray_dir.x * diff_y - ray_dir.y * diff_x;
+        f.abs() < box_extent_x * andrew_woo_diff_y + box_extent_y * andrew_woo_diff_x
     }
 
     // A lookup-table atan2. Out-of-range table indexes panic where vanilla throws.
@@ -860,6 +902,7 @@ mod tests {
     use super::Mth;
     use crate::golden::{Golden, STREAM_LIMIT};
     use crate::net::minecraft::core::vec3i::Vec3i;
+    use crate::net::minecraft::world::phys::aabb::AABB;
     use crate::net::minecraft::world::phys::vec3::Vec3;
     use crate::org::joml::quaternionf::Quaternionf;
     use crate::org::joml::vector3f::Vector3f;
@@ -1030,9 +1073,11 @@ mod tests {
         golden.check("getSeed(Lnet/minecraft/core/Vec3i;)J", |vec: Vec3i| {
             Mth::get_seed_vec3i(&vec)
         });
-        golden.pending(
+        golden.check(
             "rayIntersectsAABB(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/AABB;)Z",
-            "AABB isn't ported",
+            |ray_start: Vec3, ray_dir: Vec3, aabb: AABB| {
+                Mth::ray_intersects_aabb(&ray_start, &ray_dir, &aabb)
+            },
         );
         golden.check(
             "lerp(DLnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;",

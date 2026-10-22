@@ -9,6 +9,8 @@ import java.lang.reflect.Executable;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -140,14 +142,20 @@ final class InstanceSuite implements Suite {
     }
 
     // The receiver's type first, unless it's a constructor or a static method. equals(Object) compares with another
-    // object of the same class.
-    private List<Class<?>> argumentTypes(final Executable member) {
-        List<Class<?>> types = new ArrayList<>();
+    // object of the same class. A parameterized type stays one, so its elements can pick the generator (List<AABB>).
+    private List<Type> argumentTypes(final Executable member) {
+        List<Type> types = new ArrayList<>();
         if (!(member instanceof Constructor<?>) && !Modifier.isStatic(member.getModifiers())) {
             types.add(this.type);
         }
-        for (Class<?> type : member.getParameterTypes()) {
-            types.add(type == Object.class ? this.type : type);
+        Class<?>[] raw = member.getParameterTypes();
+        Type[] generic = member.getGenericParameterTypes();
+        for (int i = 0; i < raw.length; i++) {
+            if (raw[i] == Object.class) {
+                types.add(this.type);
+            } else {
+                types.add(generic.length == raw.length && generic[i] instanceof ParameterizedType ? generic[i] : raw[i]);
+            }
         }
         return types;
     }
@@ -161,9 +169,10 @@ final class InstanceSuite implements Suite {
         if (returnType != void.class && !Values.canEncode(returnType)) {
             return "no encoder for " + returnType.getName();
         }
-        for (Class<?> type : this.argumentTypes(member)) {
+        for (Type type : this.argumentTypes(member)) {
             if (Values.generator(type) == null) {
-                return "no generator for " + type.getName();
+                Class<?> raw = type instanceof ParameterizedType parameterized ? (Class<?>)parameterized.getRawType() : (Class<?>)type;
+                return "no generator for " + raw.getName();
             }
         }
         return null;

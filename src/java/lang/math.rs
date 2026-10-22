@@ -200,6 +200,27 @@ impl Math {
             1.0f64.copysign(d)
         }
     }
+
+    /// The next double toward positive infinity. -0.0 becomes 0.0 first, so its next is
+    /// `Double.MIN_VALUE`.
+    pub fn next_up_f64(d: f64) -> f64 {
+        if d < f64::INFINITY {
+            let transducer = (d + 0.0).to_bits() as i64;
+            f64::from_bits(transducer.wrapping_add(if transducer >= 0 { 1 } else { -1 }) as u64)
+        } else {
+            d
+        }
+    }
+
+    pub fn next_down_f64(d: f64) -> f64 {
+        if d.is_nan() || d == f64::NEG_INFINITY {
+            d
+        } else if d == 0.0 {
+            -f64::from_bits(1)
+        } else {
+            f64::from_bits((d.to_bits() as i64).wrapping_add(if d > 0.0 { -1 } else { 1 }) as u64)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -240,6 +261,8 @@ mod tests {
         golden.check("round(D)J", Math::round_f64);
         golden.check("signum(F)F", Math::signum_f32);
         golden.check("signum(D)D", Math::signum_f64);
+        golden.check("nextUp(D)D", Math::next_up_f64);
+        golden.check("nextDown(D)D", Math::next_down_f64);
         golden.finish();
     }
 }

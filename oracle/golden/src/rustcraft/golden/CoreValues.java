@@ -4,6 +4,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonPrimitive;
+import java.lang.reflect.Field;
+import java.lang.reflect.ParameterizedType;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -15,13 +17,20 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Position;
 import net.minecraft.core.Vec3i;
 import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3f;
 
 /**
  * Arguments and receivers of the game's core value types. A Vec3i is {@code [x, y, z]} (ints), and so are a BlockPos and
  * a MutableBlockPos, a Vec3 {@code [x, y, z]} (doubles), a Vec2 {@code [x, y]} (floats), an enum constant its name
- * ({@code "NORTH"}), and an {@code EnumSet<Direction.Axis>} the names of its axes in order.
+ * ({@code "NORTH"}), and an {@code EnumSet<Direction.Axis>} the names of its axes in order. An AABB is
+ * {@code [minX, minY, minZ, maxX, maxY, maxZ]} (doubles), a list of them an array, an AABB.Builder its fields
+ * {@code [minX, minY, minZ, maxX, maxY, maxZ, defined]} (floats and a boolean), and a BlockHitResult its fields
+ * {@code [location, direction, blockPos, miss, inside, worldBorderHit]}, HitResult's first.
  */
 final class CoreValues {
     static final Values.Generator DIRECTION = new Constants<>(Direction.class);
@@ -32,6 +41,13 @@ final class CoreValues {
     static final Values.Generator AXIS_CYCLE = new Constants<>(AxisCycle.class);
     static final Values.Generator ROTATION = new Constants<>(Rotation.class);
     static final Values.Generator TRAVERSAL_NODE_STATUS = new Constants<>(BlockPos.TraversalNodeStatus.class);
+    static final Values.Generator HIT_RESULT_TYPE = new Constants<>(HitResult.Type.class);
+
+    // Width and height of entities: the player standing, crouching and swimming, an item, an arrow, a minecart.
+    private static final float[][] ENTITY_SIZES = {
+        {0.6F, 1.8F}, {0.6F, 1.5F}, {0.6F, 0.6F}, {0.25F, 0.25F}, {0.5F, 0.5F}, {0.98F, 0.7F}
+    };
+    private static final List<Field> BUILDER_FIELDS = builderFields();
 
     private static final List<Vec3i> VEC3I_EDGES = List.of(
         Vec3i.ZERO, new Vec3i(1, 0, 0), new Vec3i(0, 1, 0), new Vec3i(0, 0, 1), new Vec3i(-1, 0, 0), new Vec3i(0, -1, 0),
@@ -99,6 +115,80 @@ final class CoreValues {
         vec -> JomlValues.floats(vec.x, vec.y)
     );
 
+    // Whole blocks and blocks' shapes (Block.box's sixteenths: a slab, a carpet, a fence post), the player's box at the
+    // walk scenario's spawn and the block it stands on, the empty box an item model without extents gets, and boxes that
+    // are flat, endless, as wide as doubles go, a subnormal across, or NaN (of both signs). AABB is immutable, but each
+    // call gets its own copy, so equals never takes its `this == o` shortcut.
+    static final Values.Generator BOX = new JomlValues.Mutable<>(
+        List.of(
+            new AABB(0.0, 0.0, 0.0, 1.0, 1.0, 1.0), new AABB(new BlockPos(0, -61, 0)), entityBox(0.6F, 1.8F, new Vec3(0.5, -60.0, 0.5)),
+            new AABB(0.0, 0.0, 0.0, 1.0, 0.5, 1.0), new AABB(0.0, 0.0, 0.0, 1.0, 0.0625, 1.0), new AABB(0.375, 0.0, 0.375, 0.625, 1.0, 0.625),
+            new AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), new AABB(-0.0, -0.0, -0.0, 0.0, 0.0, 0.0), new AABB(0.0, -60.0, 0.0, 1.0, -60.0, 1.0),
+            new AABB(2.9999999E7, 319.0, -3.0E7, 3.0E7, 320.0, -2.9999999E7),
+            new AABB(Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY),
+            new AABB(-Double.MAX_VALUE, 0.0, 0.0, Double.MAX_VALUE, 1.0, 1.0), new AABB(0.0, 0.0, 0.0, Double.MIN_VALUE, Double.MIN_VALUE, Double.MIN_VALUE),
+            new AABB(Double.NaN, 0.0, 0.0, 1.0, 1.0, 1.0), new AABB(0.0, 0.0, Double.longBitsToDouble(0xfff8000000000000L), 1.0, 1.0, 1.0)
+        ),
+        CoreValues::randomBox,
+        CoreValues::copyBox,
+        box -> doubles(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)
+    );
+
+    // A block's shape as VoxelShape.toAabbs gives it (none, a whole block, a slab, stairs, a fence with two arms), relative
+    // to the block, or any boxes. A List<AABB> and an Iterable<AABB> are both lists.
+    static final Values.Generator BOX_LIST = new JomlValues.Mutable<List<AABB>>(
+        List.of(
+            List.of(), List.of(new AABB(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)), List.of(new AABB(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)),
+            List.of(new AABB(0.0, 0.0, 0.0, 1.0, 0.5, 1.0), new AABB(0.0, 0.5, 0.5, 1.0, 1.0, 1.0)),
+            List.of(new AABB(0.375, 0.0, 0.375, 0.625, 1.0, 0.625), new AABB(0.4375, 0.375, 0.0, 0.5625, 0.9375, 0.375), new AABB(0.625, 0.375, 0.4375, 1.0, 0.9375, 0.5625))
+        ),
+        CoreValues::randomBoxes,
+        boxes -> boxes.stream().map(CoreValues::copyBox).toList(),
+        boxes -> {
+            JsonArray array = new JsonArray();
+            boxes.forEach(box -> array.add(BOX.encode(box)));
+            return array;
+        }
+    );
+
+    // Empty (an item model without extents), one point, and the corners of a camera's near plane, the way
+    // Frustum.getNearPlaneBounds and ItemStackRenderState.getModelBoundingBox use it, and any points. Each call gets
+    // its own builder with the same fields.
+    static final Values.Generator BOX_BUILDER = new JomlValues.Mutable<>(
+        List.of(
+            builder(), builder(new Vector3f()), builder(new Vector3f(-0.0F, -0.0F, -0.0F)), builder(new Vector3f(0.5F, -60.0F, 0.5F), new Vector3f(-0.5F, 1.0F, 2.0F)),
+            builder(new Vector3f(Float.NaN, 0.0F, 1.0F)), builder(new Vector3f(1.0F, 2.0F, 3.0F), new Vector3f(Float.NaN, 0.0F, 1.0F)),
+            builder(new Vector3f(Float.NEGATIVE_INFINITY, 0.0F, 0.0F), new Vector3f(Float.POSITIVE_INFINITY, 0.0F, 0.0F))
+        ),
+        CoreValues::randomBuilder,
+        CoreValues::copyBuilder,
+        CoreValues::encodeBuilder
+    );
+
+    // Picks of blocks, misses, hits from inside a block and on the world border, like the ones the game makes and
+    // BlockHitResult's STREAM_CODEC reads.
+    static final Values.Generator BLOCK_HIT_RESULT = new JomlValues.Mutable<>(
+        List.of(
+            new BlockHitResult(new Vec3(0.5, -60.0, 0.5), Direction.UP, new BlockPos(0, -61, 0), false),
+            BlockHitResult.miss(new Vec3(0.5, -55.0, 4.5), Direction.SOUTH, new BlockPos(0, -55, 4)),
+            new BlockHitResult(new Vec3(1.0, -59.5, 0.25), Direction.WEST, new BlockPos(1, -60, 0), true),
+            new BlockHitResult(new Vec3(3.0E7, 64.0, 0.5), Direction.EAST, new BlockPos(29999999, 64, 0), false, true),
+            BlockHitResult.miss(new Vec3(Double.NaN, 0.0, 0.0), Direction.DOWN, BlockPos.ZERO).hitBorder()
+        ),
+        CoreValues::randomBlockHitResult,
+        CoreValues::copyBlockHitResult,
+        hit -> {
+            JsonArray array = new JsonArray();
+            array.add(VEC3.encode(hit.getLocation()));
+            array.add(hit.getDirection().name());
+            array.add(BLOCK_POS.encode(hit.getBlockPos()));
+            array.add(hit.getType() == HitResult.Type.MISS);
+            array.add(hit.isInside());
+            array.add(hit.isWorldBorderHit());
+            return array;
+        }
+    );
+
     private CoreValues() {
     }
 
@@ -143,7 +233,26 @@ final class CoreValues {
         if (type == Vec2.class) {
             return VEC2;
         }
+        if (type == AABB.class) {
+            return BOX;
+        }
+        if (type == AABB.Builder.class) {
+            return BOX_BUILDER;
+        }
+        if (type == HitResult.Type.class) {
+            return HIT_RESULT_TYPE;
+        }
+        // Entities aren't ported, so a BlockHitResult is the only HitResult.
+        if (type == BlockHitResult.class || type == HitResult.class) {
+            return BLOCK_HIT_RESULT;
+        }
         return null;
+    }
+
+    /** The only parameterized arguments with a generator of their own: AABB.collidedAlongVector's and AABB.clip's boxes. */
+    static Values.Generator generator(final ParameterizedType type) {
+        boolean boxes = type.getActualTypeArguments().length == 1 && type.getActualTypeArguments()[0] == AABB.class;
+        return boxes && (type.getRawType() == List.class || type.getRawType() == Iterable.class) ? BOX_LIST : null;
     }
 
     static boolean canEncode(final Class<?> type) {
@@ -157,6 +266,9 @@ final class CoreValues {
             case Vec3i vec -> VEC3I.encode(vec);
             case Vec3 vec -> VEC3.encode(vec);
             case Vec2 vec -> VEC2.encode(vec);
+            case AABB box -> BOX.encode(box);
+            case AABB.Builder builder -> BOX_BUILDER.encode(builder);
+            case BlockHitResult hit -> BLOCK_HIT_RESULT.encode(hit);
             default -> throw new IllegalArgumentException("no encoder for " + value.getClass().getName());
         };
     }
@@ -275,6 +387,136 @@ final class CoreValues {
             case 1 -> new Vec2(random.nextFloat() * 2.0F - 1.0F, random.nextFloat() * 2.0F - 1.0F);
             default -> new Vec2((Float)Values.FLOATS.random(random), (Float)Values.FLOATS.random(random));
         };
+    }
+
+    // Entities around the walk scenario's spawn, standing on a block or anywhere, blocks' shapes at blocks, whole blocks,
+    // boxes between any two Vec3s, and any doubles.
+    static AABB randomBox(final Random random) {
+        return switch (random.nextInt(5)) {
+            case 0 -> {
+                float[] size = ENTITY_SIZES[random.nextInt(ENTITY_SIZES.length)];
+                double y = random.nextDouble() * 384.0 - 64.0;
+                Vec3 feet = new Vec3((random.nextDouble() * 2.0 - 1.0) * 80.0, random.nextBoolean() ? Math.floor(y) : y, (random.nextDouble() * 2.0 - 1.0) * 80.0);
+                yield entityBox(size[0], size[1], feet);
+            }
+            case 1 -> blockShape(random).move(randomBlockPos(random));
+            case 2 -> new AABB(randomBlockPos(random));
+            case 3 -> new AABB(randomVec3(random), randomVec3(random));
+            default -> new AABB(
+                (Double)Values.DOUBLES.random(random), (Double)Values.DOUBLES.random(random), (Double)Values.DOUBLES.random(random),
+                (Double)Values.DOUBLES.random(random), (Double)Values.DOUBLES.random(random), (Double)Values.DOUBLES.random(random)
+            );
+        };
+    }
+
+    /** EntityDimensions.makeBoundingBox: the half width and the height are floats, added to the feet's doubles. */
+    static AABB entityBox(final float width, final float height, final Vec3 feet) {
+        float w = width / 2.0F;
+        return new AABB(feet.x - w, feet.y, feet.z - w, feet.x + w, feet.y + height, feet.z + w);
+    }
+
+    static AABB randomEntityBox(final Random random, final Vec3 feet) {
+        float[] size = ENTITY_SIZES[random.nextInt(ENTITY_SIZES.length)];
+        return entityBox(size[0], size[1], feet);
+    }
+
+    /** One of a block's shapes relative to the block, in sixteenths like Block.box's, which doubles hold exactly. */
+    static AABB blockShape(final Random random) {
+        int[] from = new int[3];
+        int[] to = new int[3];
+        for (int axis = 0; axis < 3; axis++) {
+            from[axis] = random.nextInt(16);
+            to[axis] = from[axis] + 1 + random.nextInt(16 - from[axis]);
+        }
+        return new AABB(from[0] / 16.0, from[1] / 16.0, from[2] / 16.0, to[0] / 16.0, to[1] / 16.0, to[2] / 16.0);
+    }
+
+    private static List<AABB> randomBoxes(final Random random) {
+        List<AABB> boxes = new ArrayList<>();
+        boolean shape = random.nextBoolean();
+        for (int count = random.nextInt(5); count > 0; count--) {
+            boxes.add(shape ? blockShape(random) : randomBox(random));
+        }
+        return List.copyOf(boxes);
+    }
+
+    private static AABB copyBox(final AABB box) {
+        return new AABB(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+    }
+
+    static AABB.Builder builder(final Vector3f... points) {
+        AABB.Builder builder = new AABB.Builder();
+        for (Vector3f point : points) {
+            builder.include(point);
+        }
+        return builder;
+    }
+
+    private static AABB.Builder randomBuilder(final Random random) {
+        Vector3f[] points = new Vector3f[random.nextInt(9)];
+        for (int i = 0; i < points.length; i++) {
+            points[i] = random.nextBoolean() ? JomlValues.randomVector3f(random) : (Vector3f)JomlValues.VECTOR3F.random(random);
+        }
+        return builder(points);
+    }
+
+    private static AABB.Builder copyBuilder(final AABB.Builder builder) {
+        AABB.Builder copy = new AABB.Builder();
+        try {
+            for (Field field : BUILDER_FIELDS) {
+                field.set(copy, field.get(builder));
+            }
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException(e);
+        }
+        return copy;
+    }
+
+    private static JsonArray encodeBuilder(final AABB.Builder builder) {
+        JsonArray array = new JsonArray();
+        try {
+            for (Field field : BUILDER_FIELDS) {
+                array.add(field.getType() == boolean.class ? new JsonPrimitive(field.getBoolean(builder)) : new JsonPrimitive(Values.floatBits(field.getFloat(builder))));
+            }
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException(e);
+        }
+        return array;
+    }
+
+    // Its private fields in declaration order.
+    private static List<Field> builderFields() {
+        List<Field> fields = new ArrayList<>();
+        for (String name : new String[]{"minX", "minY", "minZ", "maxX", "maxY", "maxZ", "defined"}) {
+            try {
+                Field field = AABB.Builder.class.getDeclaredField(name);
+                field.setAccessible(true);
+                fields.add(field);
+            } catch (NoSuchFieldException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        return fields;
+    }
+
+    private static BlockHitResult randomBlockHitResult(final Random random) {
+        Vec3 location = randomVec3(random);
+        Direction direction = Direction.values()[random.nextInt(6)];
+        BlockPos pos = random.nextBoolean() ? BlockPos.containing(location) : randomBlockPos(random);
+        return switch (random.nextInt(4)) {
+            case 0 -> random.nextBoolean() ? BlockHitResult.miss(location, direction, pos) : BlockHitResult.miss(location, direction, pos).hitBorder();
+            case 1 -> new BlockHitResult(location, direction, pos, random.nextBoolean());
+            default -> new BlockHitResult(location, direction, pos, random.nextBoolean(), random.nextBoolean());
+        };
+    }
+
+    // A miss is never inside a block: only the private constructor could make one.
+    private static BlockHitResult copyBlockHitResult(final BlockHitResult hit) {
+        if (hit.getType() == HitResult.Type.MISS) {
+            BlockHitResult miss = BlockHitResult.miss(hit.getLocation(), hit.getDirection(), hit.getBlockPos());
+            return hit.isWorldBorderHit() ? miss.hitBorder() : miss;
+        }
+        return new BlockHitResult(hit.getLocation(), hit.getDirection(), hit.getBlockPos(), hit.isInside(), hit.isWorldBorderHit());
     }
 
     private static JsonArray ints(final int... values) {

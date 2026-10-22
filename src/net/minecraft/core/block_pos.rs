@@ -1,9 +1,8 @@
 //! net/minecraft/core/BlockPos.java
 //!
 //! Not ported yet: the codecs (`CODEC` and `STREAM_CODEC`), which wait for DataFixerUpper and
-//! the network buffers; the overloads taking an `AABB` (`betweenClosed`, `betweenClosedStream`,
-//! `betweenCornersInDirection`) or a `BoundingBox` (`betweenClosedStream`), which come with those
-//! classes; and `breadthFirstTraversal`, which only the server's blocks call (`SpongeBlock`,
+//! the network buffers; `betweenClosedStream(BoundingBox)`, which comes with `BoundingBox`; and
+//! `breadthFirstTraversal`, which only the server's blocks call (`SpongeBlock`,
 //! `CreakingHeartBlockEntity`).
 //!
 //! `BlockPos` extends `Vec3i` without adding state, so it holds its `Vec3i` and derefs to it, and
@@ -23,6 +22,7 @@ use crate::net::minecraft::core::vec3i::Vec3i;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::rotation::Rotation;
+use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 
 /// A block's position. Java's `equals` and `hashCode` are `Vec3i`'s.
@@ -479,7 +479,16 @@ impl BlockPos {
         })
     }
 
-    pub fn between_closed(a: &BlockPos, b: &BlockPos) -> impl Iterator<Item = BlockPos> {
+    /// The blocks containing the box's corners and every block between them. A max side on a
+    /// block's face takes in the block past it.
+    pub fn between_closed_aabb(r#box: &AABB) -> impl Iterator<Item = BlockPos> {
+        let start_pos = BlockPos::containing_xyz(r#box.min_x, r#box.min_y, r#box.min_z);
+        let end_pos = BlockPos::containing_xyz(r#box.max_x, r#box.max_y, r#box.max_z);
+        BlockPos::between_closed(&start_pos, &end_pos)
+    }
+
+    /// Holds on to neither block, so the corners can be temporaries (`between_closed_aabb`'s).
+    pub fn between_closed(a: &BlockPos, b: &BlockPos) -> impl Iterator<Item = BlockPos> + use<> {
         BlockPos::between_closed_xyz(
             a.get_x().min(b.get_x()),
             a.get_y().min(b.get_y()),
@@ -493,6 +502,18 @@ impl BlockPos {
     /// Java's `Stream` of `betweenClosed`.
     pub fn between_closed_stream(a: &BlockPos, b: &BlockPos) -> impl Iterator<Item = BlockPos> {
         BlockPos::between_closed(a, b)
+    }
+
+    /// Like `between_closed_aabb`, without sorting the corners, which a box has in order already.
+    pub fn between_closed_stream_aabb(r#box: &AABB) -> impl Iterator<Item = BlockPos> {
+        BlockPos::between_closed_stream_xyz(
+            Mth::floor_f64(r#box.min_x),
+            Mth::floor_f64(r#box.min_y),
+            Mth::floor_f64(r#box.min_z),
+            Mth::floor_f64(r#box.max_x),
+            Mth::floor_f64(r#box.max_y),
+            Mth::floor_f64(r#box.max_z),
+        )
     }
 
     pub fn between_closed_stream_xyz(
@@ -626,6 +647,31 @@ impl BlockPos {
             leg_index = leg_index.wrapping_add(1);
             Some(cursor)
         })
+    }
+
+    /// The blocks containing the box's corners and every block between them, in the order
+    /// `between_corners_in_direction_xyz` walks them.
+    pub fn between_corners_in_direction_aabb(
+        aabb: &AABB,
+        direction: &Vec3,
+    ) -> impl Iterator<Item = BlockPos> {
+        let min_corner = aabb.get_min_position();
+        let first_corner_x = Mth::floor_f64(min_corner.x());
+        let first_corner_y = Mth::floor_f64(min_corner.y());
+        let first_corner_z = Mth::floor_f64(min_corner.z());
+        let max_corner = aabb.get_max_position();
+        let second_corner_x = Mth::floor_f64(max_corner.x());
+        let second_corner_y = Mth::floor_f64(max_corner.y());
+        let second_corner_z = Mth::floor_f64(max_corner.z());
+        BlockPos::between_corners_in_direction_xyz(
+            first_corner_x,
+            first_corner_y,
+            first_corner_z,
+            second_corner_x,
+            second_corner_y,
+            second_corner_z,
+            direction,
+        )
     }
 
     pub fn between_corners_in_direction(
@@ -1009,6 +1055,7 @@ mod tests {
     use crate::net::minecraft::core::vec3i::Vec3i;
     use crate::net::minecraft::util::random_source::RandomSource;
     use crate::net::minecraft::world::level::block::rotation::Rotation;
+    use crate::net::minecraft::world::phys::aabb::AABB;
     use crate::net::minecraft::world::phys::vec3::Vec3;
 
     // Both are [x, y, z], like the Vec3i they hold.
@@ -1060,18 +1107,6 @@ mod tests {
         let golden = Golden::load("net.minecraft.core.BlockPos");
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
         golden.pending("STREAM_CODEC", "waits for the network buffers");
-        golden.pending(
-            "betweenClosed(Lnet/minecraft/world/phys/AABB;)Ljava/lang/Iterable;",
-            "waits for AABB",
-        );
-        golden.pending(
-            "betweenClosedStream(Lnet/minecraft/world/phys/AABB;)Ljava/util/stream/Stream;",
-            "waits for AABB",
-        );
-        golden.pending(
-            "betweenCornersInDirection(Lnet/minecraft/world/phys/AABB;Lnet/minecraft/world/phys/Vec3;)Ljava/lang/Iterable;",
-            "waits for AABB",
-        );
         golden.pending(
             "betweenClosedStream(Lnet/minecraft/world/level/levelgen/structure/BoundingBox;)Ljava/util/stream/Stream;",
             "waits for BoundingBox",
@@ -1258,6 +1293,20 @@ mod tests {
         golden.check(
             "betweenClosed(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;)Ljava/lang/Iterable;",
             |a: BlockPos, b: BlockPos| first(BlockPos::between_closed(&a, &b)),
+        );
+        golden.check(
+            "betweenClosed(Lnet/minecraft/world/phys/AABB;)Ljava/lang/Iterable;",
+            |r#box: AABB| first(BlockPos::between_closed_aabb(&r#box)),
+        );
+        golden.check(
+            "betweenClosedStream(Lnet/minecraft/world/phys/AABB;)Ljava/util/stream/Stream;",
+            |r#box: AABB| first(BlockPos::between_closed_stream_aabb(&r#box)),
+        );
+        golden.check(
+            "betweenCornersInDirection(Lnet/minecraft/world/phys/AABB;Lnet/minecraft/world/phys/Vec3;)Ljava/lang/Iterable;",
+            |aabb: AABB, direction: Vec3| {
+                first(BlockPos::between_corners_in_direction_aabb(&aabb, &direction))
+            },
         );
         golden.check(
             "betweenClosedStream(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;)Ljava/util/stream/Stream;",

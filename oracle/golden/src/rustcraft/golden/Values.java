@@ -6,11 +6,14 @@ import com.google.gson.JsonNull;
 import com.google.gson.JsonPrimitive;
 import com.mojang.math.Axis;
 import java.lang.reflect.Array;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
+import java.lang.reflect.Type;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 import java.util.function.Function;
@@ -236,11 +239,26 @@ final class Values {
         return generator != null ? generator : CoreValues.generator(type);
     }
 
+    /**
+     * Like generator(Class), except that a parameterized type can pick its elements' generator: a List or Iterable of AABBs
+     * is a list of boxes. Any other parameterized type gets its raw class's generator.
+     */
+    static Generator generator(final Type type) {
+        if (type instanceof ParameterizedType parameterized) {
+            Generator generator = CoreValues.generator(parameterized);
+            return generator != null ? generator : generator((Class<?>)parameterized.getRawType());
+        }
+        return generator((Class<?>)type);
+    }
+
     static boolean canEncode(final Class<?> type) {
         if (type == void.class) {
             return false;
         }
-        if (type.isPrimitive() || BOXES.contains(type) || type == String.class || type == UUID.class || type == IntStream.class) {
+        if (
+            type.isPrimitive() || BOXES.contains(type) || type == String.class || type == UUID.class || type == IntStream.class
+                || type == Optional.class
+        ) {
             return true;
         }
         if (JomlValues.canEncode(type) || MathValues.canEncode(type) || CoreValues.canEncode(type)) {
@@ -295,6 +313,10 @@ final class Values {
             array.add(uuid.getMostSignificantBits());
             array.add(uuid.getLeastSignificantBits());
             return array;
+        }
+        // An empty Optional is null, like an argument a method lets be null. The value is encoded by its own class.
+        if (type == Optional.class) {
+            return ((Optional<?>)value).map(present -> encode(present, present.getClass())).orElse(JsonNull.INSTANCE);
         }
         if (type == IntStream.class) {
             JsonArray array = new JsonArray();

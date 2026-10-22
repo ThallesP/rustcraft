@@ -22,6 +22,9 @@ import net.minecraft.util.Mth;
 import net.minecraft.util.StringRepresentable;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.RandomSupport;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 import org.joml.FrustumIntersection;
@@ -47,6 +50,7 @@ public final class Golden {
             .extraInputs("sin(D)F", sinTableInputs(0))
             .extraInputs("cos(D)F", sinTableInputs(-16384))
             .extraInputs("atan2(DD)D", atan2Inputs())
+            .extraInputs("rayIntersectsAABB(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/AABB;)Z", clipRays(3))
             // Steps by 2π until the difference is in range, which never ends once 2π is below the float's precision.
             .where("rotLerpRad(FFF)F", args -> !(Math.abs((Float)args[2] - (Float)args[1]) >= 0x1p26F)),
         new StaticSuite(ARGB.class),
@@ -59,7 +63,7 @@ public final class Golden {
                 "floorDiv(II)I", "floorDiv(JJ)J", "floorMod(II)I", "floorMod(JJ)J",
                 "sin(D)D", "cos(D)D", "tan(D)D", "asin(D)D", "log(D)D", "pow(DD)D", "sqrt(D)D",
                 "acos(D)D", "atan2(DD)D", "rint(D)D", "round(F)I", "round(D)J", "signum(F)F", "signum(D)D",
-                "toRadians(D)D", "toDegrees(D)D", "hypot(DD)D"
+                "toRadians(D)D", "toDegrees(D)D", "hypot(DD)D", "nextUp(D)D", "nextDown(D)D"
             )
             .extraInputs("sin(D)D", trigInputs(1, -253, 16))
             .extraInputs("cos(D)D", trigInputs(2, -253, 16))
@@ -319,12 +323,44 @@ public final class Golden {
             .extraInputs("betweenCornersInDirection(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/Vec3;)Ljava/lang/Iterable;", cornerWalks(true))
             .extraInputs("betweenCornersInDirection(IIIIIILnet/minecraft/world/phys/Vec3;)Ljava/lang/Iterable;", cornerWalks(false))
             .extraInputs("randomBetweenClosed(Lnet/minecraft/util/RandomSource;IIIIIII)Ljava/lang/Iterable;", randomBoxes(false))
-            .extraInputs("randomInCube(Lnet/minecraft/util/RandomSource;ILnet/minecraft/core/BlockPos;I)Ljava/lang/Iterable;", randomBoxes(true)),
+            .extraInputs("randomInCube(Lnet/minecraft/util/RandomSource;ILnet/minecraft/core/BlockPos;I)Ljava/lang/Iterable;", randomBoxes(true))
+            .extraInputs("betweenClosed(Lnet/minecraft/world/phys/AABB;)Ljava/lang/Iterable;", blockAlignedBoxes(0))
+            .extraInputs("betweenClosedStream(Lnet/minecraft/world/phys/AABB;)Ljava/util/stream/Stream;", blockAlignedBoxes(0))
+            .extraInputs("betweenCornersInDirection(Lnet/minecraft/world/phys/AABB;Lnet/minecraft/world/phys/Vec3;)Ljava/lang/Iterable;", blockAlignedBoxes(1)),
         InstanceSuite.every(BlockPos.MutableBlockPos.class)
             .inherited("toString()Ljava/lang/String;")
             .extraInputs("set(J)Lnet/minecraft/core/BlockPos$MutableBlockPos;", packedInputs(3)),
         InstanceSuite.every(BlockPos.TraversalNodeStatus.class)
-            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/core/BlockPos$TraversalNodeStatus;", names(BlockPos.TraversalNodeStatus.values()))
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/core/BlockPos$TraversalNodeStatus;", names(BlockPos.TraversalNodeStatus.values())),
+        InstanceSuite.every(AABB.class)
+            .extraInputs("encapsulatingFullBlocks(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/AABB;", limitBlockPairs())
+            .extraInputs("contract(DDD)Lnet/minecraft/world/phys/AABB;", signedZeroMoves(false))
+            .extraInputs("expandTowards(DDD)Lnet/minecraft/world/phys/AABB;", signedZeroMoves(false))
+            .extraInputs("expandTowards(Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/AABB;", signedZeroMoves(true))
+            .extraInputs("equals(Ljava/lang/Object;)Z", boxEqualsInputs())
+            .extraInputs("intersects(Lnet/minecraft/world/phys/AABB;)Z", touchingBoxes(0))
+            .extraInputs("intersect(Lnet/minecraft/world/phys/AABB;)Lnet/minecraft/world/phys/AABB;", touchingBoxes(0))
+            .extraInputs("minmax(Lnet/minecraft/world/phys/AABB;)Lnet/minecraft/world/phys/AABB;", touchingBoxes(0))
+            .extraInputs("distanceToSqr(Lnet/minecraft/world/phys/AABB;)D", touchingBoxes(0))
+            .extraInputs("intersects(DDDDDD)Z", touchingBoxes(1))
+            .extraInputs("intersects(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;)Z", touchingBoxes(2))
+            .extraInputs("intersects(Lnet/minecraft/core/BlockPos;)Z", touchingBoxes(3))
+            .extraInputs("contains(Lnet/minecraft/world/phys/Vec3;)Z", facePoints(0))
+            .extraInputs("contains(DDD)Z", facePoints(1))
+            .extraInputs("distanceToSqr(Lnet/minecraft/world/phys/Vec3;)D", facePoints(0))
+            .extraInputs("clip(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;)Ljava/util/Optional;", clipRays(0))
+            .extraInputs("clip(DDDDDDLnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;)Ljava/util/Optional;", clipRays(1))
+            .extraInputs(
+                "clip(Ljava/lang/Iterable;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/BlockHitResult;",
+                clipRays(2)
+            )
+            .extraInputs("collidedAlongVector(Lnet/minecraft/world/phys/Vec3;Ljava/util/List;)Z", collisionPaths()),
+        InstanceSuite.every(AABB.Builder.class),
+        // A BlockHitResult is the only HitResult so far: an EntityHitResult needs entities.
+        InstanceSuite.every(HitResult.class),
+        InstanceSuite.every(HitResult.Type.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/phys/HitResult$Type;", names(HitResult.Type.values())),
+        InstanceSuite.every(BlockHitResult.class)
     );
 
     public static void main(final String[] args) throws IOException {
@@ -1220,6 +1256,447 @@ public final class Golden {
             }
         }
         return inputs;
+    }
+
+    // Each box against a copy of itself, and against a copy with one side an ulp away, or a zero or NaN of the other sign:
+    // equals compares each side with Double.compare, which tells those apart (and any NaN from a number).
+    private static List<Object[]> boxEqualsInputs() {
+        Random random = new Random(50);
+        List<Object> edges = CoreValues.BOX.edges();
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 400; i++) {
+            AABB box = i < edges.size() ? (AABB)edges.get(i) : CoreValues.randomBox(random);
+            inputs.add(new Object[]{box, box});
+            double[] sides = sides(box);
+            int side = random.nextInt(6);
+            double value = sides[side];
+            if (Double.isNaN(value)) {
+                sides[side] = Double.doubleToRawLongBits(value) < 0 ? Double.NaN : Double.longBitsToDouble(0xfff8000000000000L);
+            } else if (value == 0.0) {
+                sides[side] = -value;
+            } else {
+                sides[side] = random.nextBoolean() ? Math.nextUp(value) : Math.nextDown(value);
+            }
+            inputs.add(new Object[]{box, new AABB(sides[0], sides[1], sides[2], sides[3], sides[4], sides[5])});
+        }
+        return inputs;
+    }
+
+    // Blocks whose coordinates are at the int limits, where the far side's int sum wraps, or near them or zero.
+    private static List<Object[]> limitBlockPairs() {
+        Random random = new Random(63);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            BlockPos a = limitBlock(random);
+            inputs.add(new Object[]{a, random.nextBoolean() ? a : limitBlock(random)});
+        }
+        return inputs;
+    }
+
+    // Moves with zeros of both signs, NaN and small steps, on boxes with -0.0 and 0.0 sides, where whether a zero counts as
+    // moving decides the sign of the side it moves.
+    private static List<Object[]> signedZeroMoves(final boolean vec3) {
+        double[] components = {0.0, -0.0, Double.NaN, 1.0, -1.0, 1.0E-300};
+        List<AABB> boxes = List.of(
+            new AABB(-0.0, -0.0, -0.0, 0.0, 0.0, 0.0), new AABB(-0.0, -0.0, -0.0, -0.0, -0.0, -0.0), new AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            new AABB(-1.0, -0.0, 0.0, -0.0, 0.0, 1.0)
+        );
+        List<Object[]> inputs = new ArrayList<>();
+        for (AABB box : boxes) {
+            for (double x : components) {
+                for (double y : components) {
+                    for (double z : components) {
+                        inputs.add(vec3 ? new Object[]{box, new Vec3(x, y, z)} : new Object[]{box, x, y, z});
+                    }
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // Boxes like the game's whose sides meet along an axis, overlap by an ulp, or are an ulp apart, and along another axis
+    // too now and then: an entity on a block, against a wall or under a ceiling, and boxes side by side. Kind 0 passes
+    // the other box (either one may be the receiver), 1 its sides, 2 two of its corners (either way round along each
+    // axis), and 3 the block.
+    private static List<Object[]> touchingBoxes(final int kind) {
+        Random random = new Random(51 + kind);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 600; i++) {
+            BlockPos pos = switch (random.nextInt(4)) {
+                case 0 -> limitBlock(random);
+                case 1 -> CoreValues.randomBlockPos(random);
+                default -> nearSpawn(random);
+            };
+            AABB other = kind == 3 || random.nextBoolean() ? new AABB(pos) : CoreValues.randomBox(random);
+            Vec3 center = other.getCenter();
+            Vec3 feet = new Vec3(center.x + spread(random), other.minY + spread(random), center.z + spread(random));
+            AABB box = CoreValues.randomEntityBox(random, feet);
+            int axis = random.nextInt(3);
+            box = meeting(box, other, axis, random);
+            if (random.nextInt(3) == 0) {
+                box = meeting(box, other, (axis + 1 + random.nextInt(2)) % 3, random);
+            }
+
+            double[] sides = sides(other);
+            inputs.add(switch (kind) {
+                case 0 -> random.nextBoolean() ? new Object[]{box, other} : new Object[]{other, box};
+                case 1 -> new Object[]{box, sides[0], sides[1], sides[2], sides[3], sides[4], sides[5]};
+                case 2 -> {
+                    double[] a = new double[3];
+                    double[] b = new double[3];
+                    for (int j = 0; j < 3; j++) {
+                        boolean swap = random.nextBoolean();
+                        a[j] = swap ? sides[j + 3] : sides[j];
+                        b[j] = swap ? sides[j] : sides[j + 3];
+                    }
+                    yield new Object[]{box, new Vec3(a[0], a[1], a[2]), new Vec3(b[0], b[1], b[2])};
+                }
+                default -> new Object[]{box, pos};
+            });
+        }
+        return inputs;
+    }
+
+    // The box moved along the axis so one of its sides is on the other's opposite side, or an ulp either way. Its size
+    // along the axis is kept as nearly as doubles allow.
+    private static AABB meeting(final AABB box, final AABB other, final int axis, final Random random) {
+        double[] sides = sides(box);
+        double[] others = sides(other);
+        double size = sides[axis + 3] - sides[axis];
+        int ulps = random.nextInt(3) - 1;
+        if (random.nextBoolean()) {
+            sides[axis] = ulps(others[axis + 3], ulps);
+            sides[axis + 3] = sides[axis] + size;
+        } else {
+            sides[axis + 3] = ulps(others[axis], ulps);
+            sides[axis] = sides[axis + 3] - size;
+        }
+        return new AABB(sides[0], sides[1], sides[2], sides[3], sides[4], sides[5]);
+    }
+
+    // Points on a box's sides (contains takes its min sides in and its max sides out), an ulp either side, in the middle and
+    // outside, for any box. Kind 0 passes a Vec3, 1 the coordinates.
+    private static List<Object[]> facePoints(final int kind) {
+        Random random = new Random(55 + kind);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 600; i++) {
+            AABB box = CoreValues.randomBox(random);
+            double[] sides = sides(box);
+            double[] point = new double[3];
+            for (int axis = 0; axis < 3; axis++) {
+                double min = sides[axis];
+                double max = sides[axis + 3];
+                point[axis] = switch (random.nextInt(8)) {
+                    case 0 -> min;
+                    case 1 -> ulps(min, random.nextBoolean() ? 1 : -1);
+                    case 2 -> max;
+                    case 3 -> ulps(max, random.nextBoolean() ? 1 : -1);
+                    case 4 -> min - 1.0;
+                    case 5 -> max + 1.0;
+                    default -> Mth.lerp(random.nextDouble(), min, max);
+                };
+            }
+            inputs.add(kind == 0 ? new Object[]{box, new Vec3(point[0], point[1], point[2])} : new Object[]{box, point[0], point[1], point[2]});
+        }
+        return inputs;
+    }
+
+    // Rays like the game's picks and projectiles: from near a block along a look vector, as far as the block interaction
+    // range (4.5) or the entity one (3) or 20 blocks, aimed at a box's center, a point inside it, a corner, an edge or a
+    // side, or at a corner along a diagonal, where two sides are hit at the same scale. Also rays along an axis that pass a
+    // side at clipPoint's 1.0E-7 margin, or an ulp either side of it, rays that start inside a box or on a side, end on a
+    // side or move less than the 1.0E-7 that counts as moving along an axis, and rays of length 0. The boxes are a block's
+    // shapes at the block. Kind 0 passes the box, 1 its sides, 2 the block's shapes relative to it and the block, and 3 a
+    // ray's start and direction (Mth.rayIntersectsAABB).
+    private static List<Object[]> clipRays(final int kind) {
+        Random random = new Random(57 + kind);
+        List<Object> shapes = CoreValues.BOX_LIST.edges();
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 2000; i++) {
+            BlockPos pos = random.nextInt(4) == 0 ? CoreValues.randomBlockPos(random) : nearSpawn(random);
+            @SuppressWarnings("unchecked")
+            List<AABB> shape = switch (random.nextInt(3)) {
+                case 0 -> (List<AABB>)shapes.get(1 + random.nextInt(shapes.size() - 1));
+                case 1 -> List.of(CoreValues.blockShape(random));
+                default -> List.of(CoreValues.blockShape(random), CoreValues.blockShape(random));
+            };
+            AABB box = shape.get(random.nextInt(shape.size())).move(pos);
+            Vec3[] ray = ray(box, random);
+            if (random.nextInt(8) == 0) {
+                Object[] threshold = thresholdRay(random);
+                pos = (BlockPos)threshold[0];
+                shape = List.of(new AABB(0.0, 0.0, 0.0, 1.0, 1.0, 1.0));
+                box = new AABB(pos);
+                ray = new Vec3[]{(Vec3)threshold[1], (Vec3)threshold[2]};
+            }
+            double[] sides = sides(box);
+            inputs.add(switch (kind) {
+                case 0 -> new Object[]{box, ray[0], ray[1]};
+                case 1 -> new Object[]{sides[0], sides[1], sides[2], sides[3], sides[4], sides[5], ray[0], ray[1]};
+                case 2 -> new Object[]{random.nextInt(50) == 0 ? List.of() : shape, ray[0], ray[1], pos};
+                default -> new Object[]{ray[0], ray[1].subtract(ray[0]), box};
+            });
+        }
+
+        // Rays along an axis that pass one of the other axes' sides at clipPoint's 1.0E-7 margin, give or take two ulps,
+        // where the order the margin is added in decides whether they hit.
+        Random margins = new Random(70 + kind);
+        for (int i = 0; i < 1000; i++) {
+            BlockPos pos = margins.nextInt(4) == 0 ? CoreValues.randomBlockPos(margins) : nearSpawn(margins);
+            AABB shape = CoreValues.blockShape(margins);
+            AABB box = shape.move(pos);
+            double[] sides = sides(box);
+            int axis = margins.nextInt(3);
+            int edge = (axis + 1 + margins.nextInt(2)) % 3;
+            double[] point = new double[3];
+            for (int other = 0; other < 3; other++) {
+                point[other] = Mth.lerp(margins.nextDouble(), sides[other], sides[other + 3]);
+            }
+            point[edge] = margins.nextBoolean() ? ulps(sides[edge] - 1.0E-7, margins.nextInt(5) - 2) : ulps(sides[edge + 3] + 1.0E-7, margins.nextInt(5) - 2);
+            double sign = margins.nextBoolean() ? 1.0 : -1.0;
+            point[axis] = sign > 0.0 ? sides[axis] - 0.5 : sides[axis + 3] + 0.5;
+            Vec3 from = new Vec3(point[0], point[1], point[2]);
+            Vec3 to = from.with(Direction.Axis.VALUES[axis], point[axis] + sign * 2.0);
+            inputs.add(switch (kind) {
+                case 0 -> new Object[]{box, from, to};
+                case 1 -> new Object[]{sides[0], sides[1], sides[2], sides[3], sides[4], sides[5], from, to};
+                case 2 -> new Object[]{List.of(shape), from, to, pos};
+                default -> new Object[]{from, to.subtract(from), box};
+            });
+        }
+        return inputs;
+    }
+
+    // A ray that moves 1.0E-7 along an axis, an ulp more or an ulp less, through a whole block's side at 0, so it counts as
+    // moving along the axis or doesn't: it starts and ends half of that either side of the side, which doubles hold exactly
+    // near 0. Along the other axes it stays over the side, and now and then starts at -0.0, where the end's sign decides the
+    // sign of the hit. Returns the block, the ray's start and its end.
+    private static Object[] thresholdRay(final Random random) {
+        int axis = random.nextInt(3);
+        boolean positive = random.nextBoolean();
+        double[] moves = {1.0E-7, Math.nextUp(1.0E-7), Math.nextDown(1.0E-7)};
+        double half = moves[random.nextInt(moves.length)] / 2.0;
+        BlockPos near = nearSpawn(random);
+        int[] block = {near.getX(), near.getY(), near.getZ()};
+        double[] from = new double[3];
+        double[] to = new double[3];
+        for (int other = 0; other < 3; other++) {
+            if (other == axis) {
+                block[other] = positive ? 0 : -1;
+                from[other] = positive ? -half : half;
+                to[other] = -from[other];
+            } else if (random.nextInt(3) == 0) {
+                double[] ends = {-0.0, 0.0, -Double.MIN_VALUE, Double.MIN_VALUE};
+                block[other] = random.nextBoolean() ? 0 : -1;
+                from[other] = -0.0;
+                to[other] = ends[random.nextInt(ends.length)];
+            } else {
+                from[other] = block[other] + random.nextDouble();
+                to[other] = random.nextBoolean() ? from[other] : from[other] + (random.nextDouble() - 0.5) * 0.5;
+            }
+        }
+        return new Object[]{new BlockPos(block[0], block[1], block[2]), new Vec3(from[0], from[1], from[2]), new Vec3(to[0], to[1], to[2])};
+    }
+
+    // A ray's start and end around a box.
+    private static Vec3[] ray(final AABB box, final Random random) {
+        double[] sides = sides(box);
+        double[] reaches = {4.5, 3.0, 20.0, 1.0};
+        double reach = reaches[random.nextInt(reaches.length)];
+        Vec3 look = Vec3.directionFromRotation((random.nextFloat() * 2.0F - 1.0F) * 90.0F, (random.nextFloat() * 2.0F - 1.0F) * 180.0F);
+        switch (random.nextInt(8)) {
+            case 0, 1 -> {
+                Vec3 aim = aim(sides, random);
+                Vec3 from = aim.subtract(look.scale(random.nextDouble() * reach));
+                return new Vec3[]{from, from.add(look.scale(reach))};
+            }
+            case 2 -> {
+                // At a corner along a diagonal, from a whole number of blocks away, so both sides' scales come out the same.
+                double[] corner = new double[3];
+                double[] diagonal = new double[3];
+                for (int axis = 0; axis < 3; axis++) {
+                    boolean max = random.nextBoolean();
+                    corner[axis] = max ? sides[axis + 3] : sides[axis];
+                    diagonal[axis] = axis == 2 && random.nextBoolean() ? 0.0 : max ? -1.0 : 1.0;
+                }
+                double distance = 1 + random.nextInt(3);
+                Vec3 direction = new Vec3(diagonal[0], diagonal[1], diagonal[2]);
+                Vec3 from = new Vec3(corner[0], corner[1], corner[2]).subtract(direction.scale(distance));
+                return new Vec3[]{from, from.add(direction.scale(distance * 2.0))};
+            }
+            case 3 -> {
+                // Along an axis, passing the other axes' sides at the margin, or an ulp either side of it.
+                int axis = random.nextInt(3);
+                double[] point = new double[3];
+                for (int other = 0; other < 3; other++) {
+                    point[other] = switch (random.nextInt(4)) {
+                        case 0 -> ulps(sides[other] - 1.0E-7, random.nextInt(3) - 1);
+                        case 1 -> ulps(sides[other + 3] + 1.0E-7, random.nextInt(3) - 1);
+                        case 2 -> random.nextBoolean() ? sides[other] : sides[other + 3];
+                        default -> Mth.lerp(random.nextDouble(), sides[other], sides[other + 3]);
+                    };
+                }
+                double sign = random.nextBoolean() ? 1.0 : -1.0;
+                point[axis] = sign > 0.0 ? sides[axis] - 1.0 - random.nextDouble() : sides[axis + 3] + 1.0 + random.nextDouble();
+                Vec3 from = new Vec3(point[0], point[1], point[2]);
+                return new Vec3[]{from, from.with(Direction.Axis.VALUES[axis], from.get(Direction.Axis.VALUES[axis]) + sign * reach)};
+            }
+            case 4 -> {
+                // From inside, or from a side, into the box or out of it.
+                Vec3 from = random.nextBoolean() ? aim(sides, random) : new Vec3(sides[0], Mth.lerp(0.5, sides[1], sides[4]), Mth.lerp(0.5, sides[2], sides[5]));
+                return new Vec3[]{from, from.add(random.nextBoolean() ? look.scale(reach) : new Vec3(1.0, 0.0, 0.0))};
+            }
+            case 5 -> {
+                // Ending on a side.
+                Vec3 to = new Vec3(sides[0], Mth.lerp(random.nextDouble(), sides[1], sides[4]), Mth.lerp(random.nextDouble(), sides[2], sides[5]));
+                return new Vec3[]{to.subtract(random.nextBoolean() ? new Vec3(1.0, 0.0, 0.0) : look.scale(reach)), to};
+            }
+            case 6 -> {
+                // Moving about 1.0E-7 or less along some axes.
+                double[] tiny = {1.0E-7, -1.0E-7, Math.nextUp(1.0E-7), -Math.nextUp(1.0E-7), Math.nextDown(1.0E-7), 0.0, -0.0};
+                Vec3 from = aim(sides, random).subtract(look);
+                double[] delta = {look.x * 2.0, look.y * 2.0, look.z * 2.0};
+                for (int axis = 0; axis < 3; axis++) {
+                    if (random.nextBoolean()) {
+                        delta[axis] = tiny[random.nextInt(tiny.length)];
+                    }
+                }
+                return new Vec3[]{from, from.add(delta[0], delta[1], delta[2])};
+            }
+            default -> {
+                Vec3 at = random.nextBoolean() ? aim(sides, random) : CoreValues.randomVec3(random);
+                return new Vec3[]{at, random.nextBoolean() ? at : CoreValues.randomVec3(random)};
+            }
+        }
+    }
+
+    // The box's center, a point inside it, one of its corners, a point on an edge, or a point on a side.
+    private static Vec3 aim(final double[] sides, final Random random) {
+        int kind = random.nextInt(5);
+        double[] point = new double[3];
+        int free = random.nextInt(3);
+        for (int axis = 0; axis < 3; axis++) {
+            double min = sides[axis];
+            double max = sides[axis + 3];
+            boolean onSide = kind == 2 || kind == 3 && axis != free || kind == 4 && axis == free;
+            point[axis] = kind == 0 ? Mth.lerp(0.5, min, max) : onSide ? random.nextBoolean() ? min : max : Mth.lerp(random.nextDouble(), min, max);
+        }
+        return new Vec3(point[0], point[1], point[2]);
+    }
+
+    // Entities moving like the game's (walking, falling, a projectile's step, toward a box, or about 1.0E-7 along an axis)
+    // past a fluid's box (a block with its fluid's height, the only list the game passes) or a block's shapes, starting or
+    // ending inside one of them inflated by half the entity, passing through it, or missing it, and entities against one.
+    private static List<Object[]> collisionPaths() {
+        Random random = new Random(61);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 600; i++) {
+            BlockPos pos = random.nextInt(4) == 0 ? CoreValues.randomBlockPos(random) : nearSpawn(random);
+            List<AABB> boxes = new ArrayList<>();
+            if (random.nextBoolean()) {
+                boxes.add(new AABB(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1, pos.getY() + (1 + random.nextInt(9)) / 9.0F, pos.getZ() + 1));
+            } else {
+                for (int count = 1 + random.nextInt(3); count > 0; count--) {
+                    boxes.add(CoreValues.blockShape(random).move(pos));
+                }
+            }
+            Vec3 feet = Vec3.atBottomCenterOf(pos).add(spread(random), spread(random), spread(random));
+            AABB box = CoreValues.randomEntityBox(random, feet);
+            AABB target = boxes.get(random.nextInt(boxes.size()));
+            // Against the box, where its center is on the side of the box inflated by half of it, give or take 1.0E-7.
+            if (random.nextInt(3) == 0) {
+                box = meeting(box, target, random.nextInt(3), random);
+            }
+            double[] tiny = {1.0E-7, Math.nextDown(1.0E-7), 5.0E-8, 2.0E-7};
+            Vec3 vector = switch (random.nextInt(6)) {
+                case 0 -> new Vec3((random.nextDouble() * 2.0 - 1.0) * 0.3, random.nextBoolean() ? 0.0 : -0.0784000015258789, (random.nextDouble() * 2.0 - 1.0) * 0.3);
+                case 1 -> new Vec3(0.0, -random.nextDouble() * 3.92, 0.0);
+                case 2 -> Vec3.directionFromRotation((random.nextFloat() * 2.0F - 1.0F) * 90.0F, (random.nextFloat() * 2.0F - 1.0F) * 180.0F).scale(3.0);
+                case 3 -> target.getCenter().subtract(box.getCenter()).scale(random.nextDouble() * 2.0);
+                case 4 -> Vec3.ZERO.with(Direction.Axis.VALUES[random.nextInt(3)], tiny[random.nextInt(tiny.length)] * (random.nextBoolean() ? 1.0 : -1.0));
+                default -> Vec3.ZERO;
+            };
+            inputs.add(new Object[]{box, vector, List.copyOf(boxes)});
+        }
+
+        // Moves from outside onto the min side of the box inflated by half the entity, which contains takes in and clip
+        // doesn't (the move ends there, at a scale of 1). The center and the side are in the same binade, so the move
+        // adds back to the side exactly.
+        while (inputs.size() < 800) {
+            BlockPos pos = nearSpawn(random);
+            AABB target = random.nextBoolean() ? new AABB(pos) : CoreValues.blockShape(random).move(pos);
+            Direction.Axis axis = Direction.Axis.VALUES[random.nextInt(3)];
+            AABB box = CoreValues.randomEntityBox(random, Vec3.atBottomCenterOf(pos).add(spread(random), spread(random), spread(random)));
+            AABB inflated = target.inflate(box.getXsize() * 0.5 - 1.0E-7, box.getYsize() * 0.5 - 1.0E-7, box.getZsize() * 0.5 - 1.0E-7);
+            Vec3 center = inflated.getCenter();
+            box = box.move(center.subtract(box.getCenter())).move(Vec3.ZERO.with(axis, -(inflated.max(axis) - inflated.min(axis)) * 0.5 - random.nextDouble() * 0.5));
+            Vec3 from = box.getCenter();
+            Vec3 vector = Vec3.ZERO.with(axis, inflated.min(axis) - from.get(axis));
+            if (!inflated.contains(from) && from.add(vector).get(axis) == inflated.min(axis) && inflated.contains(from.add(vector))) {
+                inputs.add(new Object[]{box, vector, List.of(target)});
+            }
+        }
+        return inputs;
+    }
+
+    // Boxes up to 5 blocks across whose sides are on blocks' faces, an ulp or 1.0E-7 inside or outside them, or anywhere in
+    // a block, like entities' boxes and the ones nextDeflated and deflate give. Kind 0 passes the box, 1 also a direction
+    // to walk it in, like cornerWalks'.
+    private static List<Object[]> blockAlignedBoxes(final int kind) {
+        Random random = new Random(62 + kind);
+        double[] components = {0.0, -0.0, 1.0, -1.0, 0.5, -0.5, Double.NaN};
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            BlockPos pos = random.nextBoolean() ? nearSpawn(random) : CoreValues.randomBlockPos(random);
+            double[] sides = new double[6];
+            for (int side = 0; side < 6; side++) {
+                double face = pos.get(Direction.Axis.VALUES[side % 3]) + (side < 3 ? 0.0 : random.nextInt(6));
+                sides[side] = switch (random.nextInt(6)) {
+                    case 0 -> face + random.nextDouble();
+                    case 1 -> face + 1.0E-7;
+                    case 2 -> face - 1.0E-7;
+                    case 3 -> ulps(face, random.nextBoolean() ? 1 : -1);
+                    default -> face;
+                };
+            }
+            AABB box = new AABB(sides[0], sides[1], sides[2], sides[3], sides[4], sides[5]);
+            Vec3 direction = random.nextBoolean()
+                ? CoreValues.randomVec3(random)
+                : new Vec3(components[random.nextInt(7)], components[random.nextInt(7)], components[random.nextInt(7)]);
+            inputs.add(kind == 0 ? new Object[]{box} : new Object[]{box, direction});
+        }
+        return inputs;
+    }
+
+    // A block with each coordinate at an int limit, next to one, or near zero.
+    private static BlockPos limitBlock(final Random random) {
+        int[] coordinates = {Integer.MAX_VALUE, Integer.MAX_VALUE - 1, Integer.MIN_VALUE, 0, -1};
+        return new BlockPos(
+            coordinates[random.nextInt(coordinates.length)], coordinates[random.nextInt(coordinates.length)], coordinates[random.nextInt(coordinates.length)]
+        );
+    }
+
+    // A block within the walk scenario's render distance of its spawn, at a height near the ground.
+    private static BlockPos nearSpawn(final Random random) {
+        return new BlockPos(random.nextInt(129) - 64, random.nextInt(17) - 68, random.nextInt(129) - 64);
+    }
+
+    // Up to a block and a half either way, in sixteenths now and then, so boxes overlap, meet or miss.
+    private static double spread(final Random random) {
+        return random.nextBoolean() ? (random.nextInt(49) - 24) / 16.0 : (random.nextDouble() * 2.0 - 1.0) * 1.5;
+    }
+
+    private static double[] sides(final AABB box) {
+        return new double[]{box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ};
+    }
+
+    // The value moved by that many ulps, up or down.
+    private static double ulps(final double value, final int ulps) {
+        double moved = value;
+        for (int step = ulps; step != 0; step -= Integer.signum(step)) {
+            moved = step > 0 ? Math.nextUp(moved) : Math.nextDown(moved);
+        }
+        return moved;
     }
 
     private static double sign(final Random random) {
