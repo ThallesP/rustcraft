@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use crate::net::minecraft::core::id_map::IdMap;
+
 /// Things numbered by id, both ways: `Block.BLOCK_STATE_REGISTRY` numbers every block state.
 pub struct IdMapper<T> {
     next_id: i32,
@@ -62,6 +64,20 @@ impl<T: Copy + Eq + Hash> IdMapper<T> {
 
     pub fn size(&self) -> i32 {
         self.t_to_id.len() as i32
+    }
+}
+
+impl<T: Copy + Eq + Hash> IdMap<T> for IdMapper<T> {
+    fn get_id(&self, thing: &T) -> i32 {
+        IdMapper::get_id(self, *thing)
+    }
+
+    fn by_id(&self, id: i32) -> Option<T> {
+        IdMapper::by_id(self, id)
+    }
+
+    fn size(&self) -> i32 {
+        IdMapper::size(self)
     }
 }
 

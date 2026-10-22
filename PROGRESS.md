@@ -44,15 +44,17 @@ Then this brief's third part, not started: a `ResourceManager` over `vanilla/<ve
 
 ### world
 
-The block state registry is in: every block and state with vanilla's ids, values and what each state keeps from its `Properties`. Next, the chunk data the renderer and physics read:
-- `PalettedContainer` with its `Strategy` and `PalettedContainerFactory` (the block states' and biomes' bits per entry, and where each palette gives way to the next), `SingleValuePalette`, `LinearPalette`, `HashMapPalette` (`CrudeIncrementalIntIdentityHashBiMap`), `GlobalPalette` over `Block.BLOCK_STATE_REGISTRY`, and `SimpleBitStorage` and `ZeroBitStorage` (`DIVIDE_MAGIC`): `read` from a buffer, `get` and `getAll`.
-- `LevelChunkSection.read` and `ClientboundLevelChunkPacketData`'s section buffer (and its heightmaps and block entities), tested on the `level_chunk_with_light` payloads in `vanilla/26.3/oracle/walk/capture.jsonl`, with vanilla's own decoding of the same bytes as the goldens. The biomes' palettes need the biome registry's size, which the configuration's registry data gives the client.
-- Then `ClientLevel`'s chunk storage (`ClientChunkCache`, `LevelChunk`) and light (`LevelLightEngine` and the light packets' data).
+The block state registry and the paletted containers are in. Next, the rest of the chunk data the renderer and physics read:
+- `LevelChunkSection` (`read`, `write`, `recalcBlockCounts`, with the fluid states the counts need) and the world-data packets: `ClientboundLevelChunkPacketData` (heightmaps, the section buffer, block entities), `ClientboundLevelChunkWithLightPacket` and `ClientboundLightUpdatePacketData` (`java.util.BitSet` with `ByteBufCodecs.BIT_SET`, which is a byte array in 26.3, and the light arrays as `DataLayer`s), the light, forget, block update, section update and biomes packets, wired into `GameProtocols` and `ClientPacketListener` in place of their `Unported` stand-ins. Tested on the `level_chunk_with_light` payloads of `vanilla/26.3/oracle/walk/capture.jsonl` (decoded by vanilla's classes as the goldens, whatever their count and order, since the capture will be re-recorded) and on generated sections. The biomes' palettes need the synchronized biome registry, whose `Holder`s get handed out a lot: make them cheap to copy.
+- Then `ClientChunkCache` and its `Storage`, `LevelChunk`'s client side, `ClientLevel`'s block access and the light the server sends, behind `BlockGetter`/`BlockAndTintGetter` traits for the renderer.
+
+Block shapes now belong to the player track (`net/minecraft/world/phys/shapes/`, see its notes), so they're not this track's next step.
 
 Left from the registry, for when what needs them comes:
 - The blocks' shapes (`VoxelShape`, `Shapes`, each class's `getShape`, `getCollisionShape` and `getOcclusionShape`), which `initCache`'s `isSolid`, `isSolidRender`, occlusion shapes, `propagatesSkylightDown`, `getLightDampening` and `useShapeForLightOcclusion` need, and so do the default `isRedstoneConductor`, `isSuffocating` and `isViewBlocking` and `NEAR_PLANE_INTERSECTS_OUTLINE`. `BlockSuites` records only what the port can check, so add those methods to its state suite when they come (the `Block` suite already checks which predicate each block has).
 - Fluids (`Fluid`, `FluidState`, `Fluids`, `getFluidState`), which `LiquidBlock` stands in for with `Fluids`' constants; `SoundType`, `isValidSpawn` and `requiredFeatures`, which `Blocks`' registrations leave out; the offset function (`getOffset`, each class's `getMaxHorizontalOffset`), of which only `hasOffsetFunction` is ported.
 - Each class's behaviour, its fields and its constructor arguments that don't decide its states, which its header names. The class files and `Blocks`' registrations were written from the Java by a one-off translation script, not committed; port each class's behaviour by hand when it comes.
+- `PalettedContainer`'s disk format (`codecRW`, `codecRO`, `pack`, `unpack`), which the client doesn't read.
 
 ## Needs Thalles
 
@@ -60,6 +62,23 @@ Left from the registry, for when what needs them comes:
 - **Licence of the code translated from OpenJDK, JOML, Netty and Guava.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception, `string::from_bytes_utf8` from the JDK's `String.java`, and `src/java/util/hash_map.rs`, `src/java/util/hash_set.rs` and `src/java/io/` from `HashMap.java`, `HashSet.java`, `DataInput.java`, `DataOutput.java`, `DataInputStream.java`, `DataOutputStream.java` and `ModifiedUtf.java`, the same, which keep their notices. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. `src/io/netty/` comes from Netty, Apache 2.0, and keeps its notice, saying the files were translated and changed; a distribution has to carry the licence too. So does `src/com/google/`, from Guava, also Apache 2.0. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too, and Apache 2.0 code isn't compatible with GPLv2 only. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22 (world): Paletted containers, the bit storages and palettes a chunk section keeps its blocks and biomes in
+
+- Ported and checked against vanilla, the chunk data's first slice:
+  - `BitStorage`, `SimpleBitStorage` (`MAGIC`'s divide-by-multiply, its three constructors, `get`, `set`, `getAndSet`, `fill`, `getAll`, `unpack`; 2,677 cases, every bits per entry from 1 to 32, and every index of storages of 4096) and `ZeroBitStorage` (745).
+  - `CrudeIncrementalIntIdentityHashBiMap` (160 programs) and `IdMap`, which `IdMapper` implements.
+  - `Palette`, `PaletteResize`, `SingleValuePalette`, `LinearPalette`, `HashMapPalette`, `GlobalPalette`, `MissingPaletteEntryException`, `Configuration`, `Strategy` (the block states' and the biomes') and `PalettedContainer`: 1,989 programs on the block states' registry and on biome registries of 1 to 129 stand-ins, through every resize from a single value to the global palette, reading buffers made for every bits per entry a byte can say, and vanilla's own writes, byte for byte.
+  - `Unpooled.wrappedBuffer(byte[])`.
+- Design (PORTING.md, "Chunks"): a container is generic in its values, shares its strategy and registry in `Arc`s, and holds its palette and storage as enums that dispatch with a `match`, since `get` is every block lookup. A full palette's call back to its container (`onResize`) is noted by the handler it's given and done once `idFor` returns.
+- Found:
+  - `CrudeIncrementalIntIdentityHashBiMap.addMapping` onto an id another key has leaves both keys in the table, and which one `byId` keeps once the table grows goes by their identity hashes, so it changes from run to run: the suite's first version did it, and 51 of 160 programs came out different in the port. Vanilla never does it (palettes only `add`), so the suite runs its programs against a shadow map as it makes them and only maps ids no key has. Likewise a hash map palette whose buffer repeats an entry: which copy `getId` finds changes once the table grows.
+  - `SimpleBitStorage.fill` writes the value into the bits past each long's last whole value too (cut off at the top), so a 5-bit storage's longs end in 4 bits of junk that `write` sends.
+  - A global palette's storage takes the bits the registry needs, whatever the buffer said: a block section that says 9 or -128 bits reads 16-bit longs and writes back 16. A biome registry of one entry has a global palette of 0 bits, which writes no palette, so it reads back as a single value palette.
+  - Java's `SingleValuePalette.copy()` and `ZeroBitStorage.copy()` hand back themselves, so a container's copy shares its single value palette, and reading into one (which sets the value in place) changes the other. The renderer's `SectionCopy` copies a section's states while the server may send the chunk again, which vanilla reads into the same sections. The port copies the palette; nothing checks the sharing.
+- Mutations (2, run once and not committed): a hash map palette resizing one entry late fails 45 of 1,989 programs. Reading into fresh data instead of reusing the data of the same configuration passes: the two differ only after a read that throws halfway, which ends a program (and drops the chunk in the game).
+- The new goldens add 29 MB (`PalettedContainer` 17 MB, `SimpleBitStorage` 10 MB) and come out byte-identical from two runs.
+- Evidence: `cargo test --workspace` passes 241 tests, the 4 new suites among them; fmt, clippy and the port check are clean.
 
 ### 2026-10-22 (net): Gate 1 green: the oracle client sends what an unmodded client sends, and `check-join`
 

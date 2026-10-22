@@ -4,6 +4,7 @@ pub mod direction;
 pub mod front_and_top;
 pub mod global_pos;
 pub mod holder;
+pub mod id_map;
 pub mod id_mapper;
 pub mod position;
 pub mod registries;

@@ -1,9 +1,13 @@
 pub mod argb;
+pub mod bit_storage;
 pub mod by_id_map;
+pub mod crude_incremental_int_identity_hash_bi_map;
 pub mod delegate_data_output;
 pub mod mth;
 pub mod random_source;
+pub mod simple_bit_storage;
 pub mod string_representable;
 // Java's net/minecraft/util/Util.java.
 #[allow(clippy::module_inception)]
 pub mod util;
+pub mod zero_bit_storage;

@@ -1,6 +1,8 @@
 //! io/netty/buffer/Unpooled.java
 //!
-//! Only the heap buffers: `buffer()` and `buffer(int)`.
+//! Only the heap buffers: `buffer()`, `buffer(int)` and `wrappedBuffer(byte[])`. Java's wrapped
+//! buffer shares the array it wraps, so writing to either shows in the other; the port's owns it,
+//! which is the same while only the buffer is used, as the chunk packets use theirs.
 
 /*
  * Copyright 2012 The Netty Project
@@ -34,4 +36,15 @@ pub fn buffer_initial_capacity(initial_capacity: i32) -> ByteBuf {
         initial_capacity,
         AbstractByteBufAllocator::DEFAULT_MAX_CAPACITY,
     )
+}
+
+/// `wrappedBuffer(byte[])`: the array, all of it readable, which can't grow. An empty one is
+/// `EMPTY_BUFFER`.
+pub fn wrapped_buffer(array: Vec<i8>) -> ByteBuf {
+    if array.is_empty() {
+        ByteBuf::empty()
+    } else {
+        let length = array.len() as i32;
+        ByteBuf::from_array(array, length)
+    }
 }

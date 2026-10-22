@@ -280,6 +280,34 @@ impl Encode for Thrown {
     }
 }
 
+/// Bytes as lowercase hex, the way the golden files write them.
+pub fn hex(bytes: &[i8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{:02x}", *byte as u8))
+        .collect()
+}
+
+/// Bytes from their hex.
+pub fn unhex(hex: &str) -> Vec<i8> {
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex") as i8)
+        .collect()
+}
+
+/// What a buffer holds from its reader index to its writer index.
+pub fn readable(buffer: &crate::io::netty::buffer::byte_buf::ByteBuf) -> Vec<i8> {
+    let mut bytes = vec![0; buffer.readable_bytes() as usize];
+    buffer.get_bytes_array(
+        buffer.reader_index(),
+        &mut bytes,
+        0,
+        buffer.readable_bytes(),
+    );
+    bytes
+}
+
 /// The elements of a fixed-size JSON array, e.g. an object encoded as its fields.
 pub fn elements<const N: usize>(value: &Value) -> &[Value; N] {
     value
