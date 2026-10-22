@@ -2,6 +2,8 @@
 
 # rustcraft
 
+The Minecraft Java Edition client (26.3), ported to Rust file by file from the decompiled game and checked against the real game at every step.
+
 Created in [T3 Code](https://t3.codes).
 
 ## The prompt
@@ -16,22 +18,32 @@ This project started from this prompt:
 >
 > what do you think here?
 
-## Vanilla reference
+## How it fits together
 
-The port is translated from the vanilla Java client. Fetch and decompile it with:
+- **The port** lives in `src/`, mirroring Java's packages: `src/net/minecraft/util/mth.rs` is `net/minecraft/util/Mth.java`. [PORTING.md](PORTING.md) has the translation rules, including the places where Java and Rust disagree on numbers.
+- **Vanilla is the oracle.** The real game runs alongside the port and the outputs get compared, from single functions up to screenshots. [TESTING.md](TESTING.md) has the layers and file formats.
+- **Mojang's code and assets stay out of git.** `tools/setup_vanilla.py` downloads and decompiles them into `vanilla/`, which is gitignored, because they can't be redistributed. The Rust translation is derived from that code too, so think twice before making this repository public.
+
+## Getting started
+
+Needs Python 3.12+, Rust, about 2 GB of disk, and `xvfb` for the oracle client. The scripts download their own JDK.
 
 ```sh
-python3 tools/setup_vanilla.py          # latest release
-python3 tools/setup_vanilla.py 26.3     # a specific version
+python3 tools/setup_vanilla.py          # download, decompile, run the data generator
+python3 tools/golden.py                 # record vanilla's answers for the golden tests
+cargo test                              # check the port against them
+python3 tools/oracle_client.py run walk # replay a scenario in the real client
 ```
 
-This needs Python 3.12+ and about 2 GB of disk. It downloads its own JDK and [Vineflower](https://github.com/Vineflower/vineflower), and everything lands in `vanilla/` (gitignored, because Mojang's code and assets can't be redistributed):
+`MINECRAFT_VERSION` pins the game version. Pass another version to `setup_vanilla.py` to study an update next to it.
 
-| Path | Contents |
+| Path | What it is |
 | --- | --- |
-| `vanilla/<version>/src/` | Decompiled client (it includes the integrated server) |
-| `vanilla/<version>/resources/` | Assets and data bundled in the client jar |
-| `vanilla/<version>/generated/` | Data generator output: `reports/` has block states, registries, packet ids and commands |
-| `vanilla/<version>/client.jar`, `server.jar` | The original jars, for running the real game as a test oracle |
-| `vanilla/libraries/` | The client's libraries (LWJGL, Netty, fastutil, DFU…) |
-| `vanilla/toolchain/` | The JDK the version requires, and Vineflower |
+| `src/` | The port. `src/java/` holds JDK behaviour the game relies on (`Math`, `String.hashCode`, `UUID`). |
+| `oracle/golden/` | Java harness that calls real game methods and records the answers |
+| `oracle/client/` | Fabric mod that drives the real client headless: tick traces and screenshots |
+| `oracle/scenarios/` | Scripted inputs both clients replay |
+| `tools/packet-proxy/` | Records client ↔ server traffic with each packet decoded |
+| `tools/oracle-diff/` | Compares traces, packet captures and screenshots between two runs |
+| `tools/*.py` | Setup, golden recording, vanilla server and oracle client runners |
+| `vanilla/` (gitignored) | Decompiled source, assets, data reports, jars, JDK, oracle outputs |

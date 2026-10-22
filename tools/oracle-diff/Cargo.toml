@@ -1,0 +1,10 @@
+[package]
+name = "oracle-diff"
+version = "0.1.0"
+edition = "2024"
+description = "Compares vanilla and port outputs: tick traces, packet captures and screenshots"
+publish = false
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = "1"

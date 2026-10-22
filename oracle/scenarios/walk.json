@@ -1,0 +1,15 @@
+{
+  "world": { "seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival" },
+  "player": { "pos": [0.5, -60.0, 0.5], "y_rot": 0.0, "x_rot": 0.0 },
+  "options": { "window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4 },
+  "steps": [
+    { "screenshot": "spawn" },
+    { "ticks": 20, "keys": ["forward"] },
+    { "ticks": 1, "keys": ["forward", "jump"] },
+    { "ticks": 15, "keys": ["forward"] },
+    { "ticks": 20, "keys": ["forward", "sprint"] },
+    { "ticks": 10, "keys": ["left", "sneak"] },
+    { "ticks": 10, "keys": [], "look": [90.0, 30.0] },
+    { "screenshot": "after-walk" }
+  ]
+}

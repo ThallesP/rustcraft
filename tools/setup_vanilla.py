@@ -6,8 +6,9 @@ client with Vineflower, extracts its bundled resources and runs the server's dat
 generator. Everything lands in vanilla/, which is gitignored: Mojang's code and
 assets can't be redistributed.
 
-    python3 tools/setup_vanilla.py           # latest release
-    python3 tools/setup_vanilla.py 26.3      # a specific version
+    python3 tools/setup_vanilla.py           # the version pinned in MINECRAFT_VERSION
+    python3 tools/setup_vanilla.py 26.4      # another version, e.g. to diff an update
+    python3 tools/setup_vanilla.py --skip-decompile   # just what the golden tests need (CI)
 """
 
 import argparse
@@ -26,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VANILLA_DIR = ROOT / "vanilla"
 TOOLCHAIN_DIR = VANILLA_DIR / "toolchain"
 LIBRARIES_DIR = VANILLA_DIR / "libraries"
+PINNED_VERSION = (ROOT / "MINECRAFT_VERSION").read_text().strip()
 
 VERSION_MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 ADOPTIUM_URL = "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture={arch}&image_type=jdk&os=linux&vendor=eclipse"
@@ -71,7 +73,6 @@ def download(url, destination, algorithm, expected):
 
 def resolve_version(version_id):
     manifest = fetch_json(VERSION_MANIFEST_URL)
-    version_id = version_id or manifest["latest"]["release"]
     entry = next((version for version in manifest["versions"] if version["id"] == version_id), None)
     if entry is None:
         raise SystemExit(f"unknown version {version_id}")
@@ -165,7 +166,8 @@ def run_data_generator(java, server_jar, version_dir):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("version", nargs="?", help="Minecraft version id (default: latest release)")
+    parser.add_argument("version", nargs="?", default=PINNED_VERSION, help=f"Minecraft version id (default: {PINNED_VERSION})")
+    parser.add_argument("--skip-decompile", action="store_true", help="skip the slow decompile, e.g. in CI")
     args = parser.parse_args()
 
     version = resolve_version(args.version)
@@ -188,11 +190,11 @@ def main():
         path = LIBRARIES_DIR / artifact["path"]
         download(artifact["url"], path, "sha1", artifact["sha1"])
         libraries.append(path)
+    (version_dir / "classpath.txt").write_text("".join(f"{library}\n" for library in libraries))
 
     java = ensure_jdk(version["javaVersion"]["majorVersion"])
-    vineflower = ensure_vineflower()
-
-    decompile(java, vineflower, client_jar, libraries, version_dir / "src")
+    if not args.skip_decompile:
+        decompile(java, ensure_vineflower(), client_jar, libraries, version_dir / "src")
     extract_resources(client_jar, version_dir / "resources")
     run_data_generator(java, server_jar, version_dir)
     print(f"done: {version_dir}")

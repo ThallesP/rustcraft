@@ -1,0 +1,40 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+// tools/oracle_client.py passes the scenario, output directory and optional server as -Poracle.*
+loom {
+    runs {
+        oracle {
+            client()
+            configName = 'Oracle'
+            runDir = 'run'
+            ideConfigGenerated = false
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=rustcraft-oracle'
+            vmArg "-Drustcraft.oracle.scenario=${findProperty('oracle.scenario') ?: ''}"
+            vmArg "-Drustcraft.oracle.out=${findProperty('oracle.out') ?: ''}"
+            vmArg "-Drustcraft.oracle.server=${findProperty('oracle.server') ?: ''}"
+            programArgs '--username', 'rustcraft', '--graphicsBackend', 'opengl'
+        }
+    }
+}
+
+processResources {
+    def version = project.version
+    inputs.property 'version', version
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+}

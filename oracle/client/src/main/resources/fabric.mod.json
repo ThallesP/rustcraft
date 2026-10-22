@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "rustcraft-oracle",
+  "version": "${version}",
+  "name": "rustcraft oracle client",
+  "description": "Replays rustcraft scenarios in the vanilla client and records what it does.",
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": ["rustcraft.oracle.client.OracleGameTest"]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "26.3",
+    "fabric-client-gametest-api-v1": "*"
+  }
+}

@@ -1,0 +1,21 @@
+[workspace]
+members = [".", "tools/packet-proxy", "tools/oracle-diff"]
+
+[package]
+name = "rustcraft"
+version = "0.1.0"
+edition = "2024"
+description = "Minecraft Java Edition client, ported to Rust"
+publish = false
+
+[dependencies]
+libm = "0.2"
+md-5 = "0.10"
+
+[dev-dependencies]
+serde_json = "1"
+
+# The port itself stays unoptimized with overflow checks, so an int overflow that Java would
+# wrap panics in the golden tests instead of passing silently. Dependencies are optimized.
+[profile.dev.package."*"]
+opt-level = 3
