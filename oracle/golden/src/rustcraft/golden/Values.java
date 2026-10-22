@@ -60,11 +60,28 @@ final class Values {
         }
     }
 
-    // Random draws pick an edge one time in eight, so edges also meet random partners.
+    /** The longest encoding of an edge that random draws pick (see draw). */
+    static final int MAX_DRAWN_EDGE = 16384;
+
+    /**
+     * A random draw of a generator with these edges: an edge one time in eight, so edges also meet random partners, and
+     * otherwise a fresh value. An edge whose encoding is longer than MAX_DRAWN_EDGE characters gets a fresh value instead:
+     * it holds a string at a codec's limit of 32767 units (a KnownPack's parts, a brand, a property's value). The edges
+     * cover each of those, and drawn at random they only came back in most random lists and pairs
+     * (ServerboundSelectKnownPacks' file was 1.4 GB of them).
+     */
+    static <T> T draw(final List<T> edges, final Function<Random, T> fresh, final Function<T, JsonElement> encoder, final Random random) {
+        if (random.nextInt(8) != 0) {
+            return fresh.apply(random);
+        }
+        T edge = edges.get(random.nextInt(edges.size()));
+        return encoder.apply(edge).toString().length() <= MAX_DRAWN_EDGE ? edge : fresh.apply(random);
+    }
+
     record Simple(List<Object> edges, Function<Random, Object> fresh, Function<Object, JsonElement> encoder) implements Generator {
         @Override
         public Object random(final Random random) {
-            return random.nextInt(8) == 0 ? this.edges.get(random.nextInt(this.edges.size())) : this.fresh.apply(random);
+            return draw(this.edges, this.fresh, this.encoder, random);
         }
 
         @Override

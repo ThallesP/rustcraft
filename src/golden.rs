@@ -7,7 +7,8 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
@@ -581,17 +582,20 @@ impl Golden {
             .join(include_str!("../MINECRAFT_VERSION").trim())
             .join("golden")
             .join(format!("{class}.jsonl"));
-        let text = fs::read_to_string(&path).unwrap_or_else(|error| {
+        let file = File::open(&path).unwrap_or_else(|error| {
             panic!(
                 "can't read {}: {error}. Run `python3 tools/golden.py` first.",
                 path.display()
             )
         });
 
+        // Line by line, so the file's text and its parsed cases are never in memory together.
         let mut entries = BTreeMap::new();
-        for line in text.lines() {
+        for line in BufReader::new(file).lines() {
+            let line =
+                line.unwrap_or_else(|error| panic!("can't read {}: {error}", path.display()));
             let mut object: serde_json::Map<String, Value> =
-                serde_json::from_str(line).expect("golden lines are JSON objects");
+                serde_json::from_str(&line).expect("golden lines are JSON objects");
             if let Some(Value::String(field)) = object.remove("field") {
                 entries.insert(
                     field,

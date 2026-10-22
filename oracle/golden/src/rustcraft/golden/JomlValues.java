@@ -283,7 +283,7 @@ final class JomlValues {
 
         @Override
         public Object random(final Random random) {
-            return random.nextInt(8) == 0 ? this.edgeList.get(random.nextInt(this.edgeList.size())) : this.fresh.apply(random);
+            return Values.draw(this.edgeList, this.fresh, this::encode, random);
         }
 
         @SuppressWarnings("unchecked")
