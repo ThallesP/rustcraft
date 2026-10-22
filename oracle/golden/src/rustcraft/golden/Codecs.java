@@ -66,6 +66,13 @@ final class Codecs {
         if (!(bufferType instanceof Class<?> buffer) || NetworkValues.generator(buffer) == null) {
             return null;
         }
+        // An Optional of a class's values (OPTIONAL_COMPOUND_TAG's) is empty a quarter of the time.
+        if (
+            arguments[1] instanceof ParameterizedType optional && optional.getRawType() == Optional.class
+                && optional.getActualTypeArguments()[0] instanceof Class<?> present && Values.generator(present) != null
+        ) {
+            return new Codec(NetworkValues.generator(buffer), optionalOf(Values.generator(present)), Optional.class);
+        }
         if (!(arguments[1] instanceof Class<?> valueType) || Values.generator(valueType) == null || !Values.canEncode(valueType)) {
             return null;
         }

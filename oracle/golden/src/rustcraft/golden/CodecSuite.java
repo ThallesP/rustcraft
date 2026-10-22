@@ -63,7 +63,10 @@ final class CodecSuite implements Suite {
         return this;
     }
 
-    /** Drops decode inputs, each the leading arguments and the buffer, like StaticSuite.where. */
+    /**
+     * Drops decode inputs, each the leading arguments and the buffer, like StaticSuite.where: a method's by its
+     * descriptor, and a codec constant N's under {@code N.decode}.
+     */
     CodecSuite whereDecode(final String method, final Predicate<Object[]> domain) {
         this.decodeDomains.put(method, domain);
         return this;
@@ -76,7 +79,7 @@ final class CodecSuite implements Suite {
 
     @Override
     public void write(final GoldenWriter writer) throws IOException {
-        Set<String> written = new HashSet<>(StaticSuite.writeFields(this.type, writer, this.extraInputs));
+        Set<String> written = new HashSet<>(StaticSuite.writeFields(this.type, writer, this.extraInputs, this.decodeDomains));
 
         List<String> plain = new ArrayList<>();
         for (Method method : this.methods()) {

@@ -323,6 +323,9 @@ final class Values {
         if (generator == null) {
             generator = ProfileValues.generator(type);
         }
+        if (generator == null) {
+            generator = NbtValues.generator(type);
+        }
         return generator != null ? generator : CoreValues.generator(type);
     }
 
@@ -354,7 +357,7 @@ final class Values {
         }
         if (
             JomlValues.canEncode(type) || MathValues.canEncode(type) || NetworkValues.canEncode(type) || PacketValues.canEncode(type)
-                || ProfileValues.canEncode(type) || CoreValues.canEncode(type)
+                || ProfileValues.canEncode(type) || NbtValues.canEncode(type) || CoreValues.canEncode(type)
         ) {
             return true;
         }
@@ -421,6 +424,10 @@ final class Values {
             JsonArray array = new JsonArray();
             ((IntStream)value).limit(STREAM_LIMIT).forEach(array::add);
             return array;
+        }
+        // Before collections, since a ListTag is a List and a CollectionTag an Iterable.
+        if (NbtValues.canEncode(type)) {
+            return NbtValues.encode(value);
         }
         if (Collection.class.isAssignableFrom(type)) {
             return encodeElements(((Collection<?>)value).iterator());

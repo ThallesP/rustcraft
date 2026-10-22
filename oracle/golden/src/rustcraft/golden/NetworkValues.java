@@ -199,7 +199,7 @@ final class NetworkValues {
     }
 
     // A fresh heap buffer with the same array, indexes and marks.
-    private static ByteBuf copy(final ByteBuf buffer) {
+    static ByteBuf copy(final ByteBuf buffer) {
         byte[] array = array(buffer);
         ByteBuf copy = Unpooled.buffer(array.length);
         copy.writeBytes(array);
@@ -221,7 +221,7 @@ final class NetworkValues {
         return array;
     }
 
-    private static byte[] array(final ByteBuf buffer) {
+    static byte[] array(final ByteBuf buffer) {
         byte[] array = new byte[buffer.capacity()];
         buffer.getBytes(0, array);
         return array;

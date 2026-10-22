@@ -139,7 +139,7 @@ final class InstanceSuite implements Suite {
     public void write(final GoldenWriter writer) throws IOException {
         Set<String> written = new HashSet<>();
         if (this.fields) {
-            written.addAll(StaticSuite.writeFields(this.type, writer, this.extraInputs));
+            written.addAll(StaticSuite.writeFields(this.type, writer, this.extraInputs, this.domains));
         }
 
         for (Executable member : this.members()) {

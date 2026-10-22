@@ -37,6 +37,12 @@ Netty:
 - `ByteBuf` is one struct: AbstractByteBuf's indexes and bounds checks over UnpooledHeapByteBuf's array, read and written big-endian (`src/io/netty/buffer/byte_buf.rs`). The game only sees `ByteBuf`'s API, and Netty's other buffers (pooled, direct, composite, slices) only differ in where the bytes live and how they grow. Its capacity is the array's length, and grows like `Unpooled.buffer()`'s (`AbstractByteBufAllocator.calculateNewCapacity`), which the golden suite checks. `retain` and `release` are Rust's ownership, and `alloc()` is the one allocator.
 - A getter and its setter overload (`readerIndex()` and `readerIndex(int)`, `capacity()` and `capacity(int)`) become `reader_index` and `set_reader_index`. Overloads by argument type get the type: `readBytes(int)` is `read_bytes`, `readBytes(byte[])` `read_bytes_array`, `readBytes(byte[], int, int)` `read_bytes_array_range`, and `writeBytes(ByteBuf)` `write_bytes_buf`.
 - A call that throws halfway leaves the buffer as Java's does: `writeBytes(byte[], int, int)` grows the array before it checks the source's range, and `VarInt.read` has consumed the bytes it read when it throws. The golden cases record the buffer after a throw too.
+- `ByteBufInputStream` and `ByteBufOutputStream`, which the game reads and writes NBT through, borrow the buffer for as long as they live, and implement `java::io`'s `DataInput` and `DataOutput`. Making an input stream marks the buffer's reader index, as Java's constructor does.
+
+The JDK:
+
+- `java.util.HashMap` is ported with its table (`src/java/util/hash_map.rs`), since a map's iteration order is behaviour wherever the game writes what it iterates: a `CompoundTag` writes its tags in its map's order. A table is a `Vec` of bins, each a `Vec` of its entries in their linked order, grown and split like `resize`, and `new HashMap<>(map)` sizes its table for the size, like Java's. Its tree bins (a bin of 9 in a table of 64 or more) aren't ported yet and panic.
+- `java.io.DataInput` and `DataOutput` are traits of the methods NBT calls, and `DataInputStream.readUTF` and `DataOutputStream.writeUTF` (modified UTF-8) are functions every implementation calls, like Java's.
 
 Guava:
 
@@ -65,6 +71,11 @@ Guava:
 - An interface that fills in another interface's methods with defaults (`BitRandomSource`) becomes functions that implementors forward to. A Rust trait can't provide another trait's methods.
 - A back-reference, i.e. an object pointing at its owner, becomes a parameter. `MarsagliaPolarGaussian` holds its `RandomSource` in Java; in Rust, the owner passes itself in.
 - Concurrency guards that `&mut self` already rules out, such as an AtomicLong checked by a ThreadingDetector, become plain fields.
+- A sealed interface whose classes the game tells apart with `instanceof` becomes an enum with a variant holding each class's struct (`Tag::Compound(CompoundTag)`), and the methods every class implements dispatch through it. Interfaces between it and the classes (`NumericTag`, `CollectionTag`) are traits the classes implement, and their `instanceof` is a method of the enum (`as_numeric_tag()`).
+- Overloads adding an accounter get `_accounted` (`NbtIo.read(DataInput, NbtAccounter)` is `read_accounted`, `FriendlyByteBuf.readNbt(NbtAccounter)` `read_nbt_accounted`), ones adding a count `_count` (`TagType.skip(DataInput, int, NbtAccounter)`, `NbtAccounter.accountBytes(long, long)`), and `ListTag.add(int, Tag)` is `add_at`, next to the `add(Tag)` it inherits from `AbstractList`.
+- An interface each class implements in an anonymous class held in a constant, and a factory for other ones (`TagType`: each tag's `TYPE`, and `createInvalid(id)`), becomes an enum of them, `Copy` and compared like Java's references (`TagType::Invalid(id)`). Its methods call the class's code (`ByteTag::load`).
+- Java's `finally` that has to run when the body throws becomes a guard whose `Drop` does it: `NbtAccounter::push_depth_until_dropped` pops the depth even when a load panics, which leaves the accounter as Java's. What a guard does in `drop` must not panic, which would abort a thread that's already panicking.
+- A getter that hands out a value it holds, which Java shares by reference, lends it here (`CompoundTag.getCompound` returns `Option<&CompoundTag>`), and one that makes a new value when there's none (`getCompoundOrEmpty`) returns a `Cow`. Callers changing what they got from such a getter are settled when one comes.
 - Deep class hierarchies (`Entity → LivingEntity → Mob → …`) get settled when the first entity is ported. The plan: entities live in an arena and are addressed by ID, the parent class is embedded as a field, and overridden methods become trait methods.
 
 ## Codecs
@@ -115,6 +126,7 @@ The golden tests caught each of these, or exist to catch them.
 - **`clamp`:** Rust's `i32::clamp` panics when min > max and Java's doesn't. Write `max(min).min(max)`.
 - **NaN bits:** `Float.floatToIntBits` turns every NaN into the canonical one. `floatToRawIntBits` is `to_bits`.
 - **Strings** are UTF-16. `String.hashCode` runs over UTF-16 units (`JavaString::hash_code`), and lengths and indices count UTF-16 units too. `String.compareTo` returns the difference of the first units that differ, or of the lengths (`JavaString::compare_to`), not just its sign, and beyond the BMP its order isn't code point order. A `char` is a `u16`, since a Rust `char` can't hold half of a surrogate pair (`Identifier.bySeparator` can be asked to split at one).
+- **Modified UTF-8** (`DataInput.readUTF`, NBT's strings) can decode to a lone surrogate, which Java's strings hold and Rust's can't: the port reads one as U+FFFD. The golden files can't hold one either (they're UTF-8), so that isn't checked, and the harness keeps encoded surrogates out of what it reads unless they come in pairs.
 - **Decoding UTF-8** goes through `string::from_bytes_utf8`, the JDK's own decoder (`new String(bytes, UTF_8)`, which Netty's `ByteBuf.toString` runs). It replaces malformed input with U+FFFD differently from `String::from_utf8_lossy`: an encoded surrogate (`ED A0 80`) is one replacement, not three, and so is one cut short at the end (`ED A0`). Encoding a Rust string is its own bytes: Java writes a lone surrogate as `?`, and a Rust string can't hold one.
 - **`byte[]`** is `Vec<i8>` or `&[i8]`, so reading an element sign-extends like Java's.
 - **`new T[size]`** throws `NegativeArraySizeException` for a negative size. Check it before `vec![…; size as usize]`, which would try to allocate.

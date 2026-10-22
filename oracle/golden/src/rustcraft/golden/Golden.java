@@ -35,6 +35,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.Vec3i;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtAccounter;
+import net.minecraft.nbt.NbtIo;
+import net.minecraft.nbt.Tag;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.LpVec3;
@@ -153,6 +157,8 @@ public final class Golden {
     private static final String READ_WITH_COUNT = "readWithCount(Ljava/util/function/Consumer;)V";
     private static final String READ_ENUM = "readEnum(Ljava/lang/Class;)Ljava/lang/Enum;";
     private static final String WRITE_ENUM = "writeEnum(Ljava/lang/Enum;)Lnet/minecraft/network/FriendlyByteBuf;";
+    private static final Values.Generator TAGS = Values.generator(Tag.class);
+    private static final String TAG_CODEC = "tagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;";
     private static final String DISCARDED_CODEC = "codec(Lnet/minecraft/resources/Identifier;I)Lnet/minecraft/network/codec/StreamCodec;";
     private static final String CONTINUOUS =
         "continuous(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;)Ljava/util/function/IntFunction;";
@@ -631,7 +637,21 @@ public final class Golden {
             // A resource pack response's action, by its ordinal.
             .given(READ_ENUM, "ServerboundResourcePackPacket.Action", ServerboundResourcePackPacket.Action.class)
             .extraInputs(READ_ENUM + "[ServerboundResourcePackPacket.Action]", friendly(written(105, IDS, FriendlyByteBuf::writeVarInt)))
-            .given(WRITE_ENUM, "ServerboundResourcePackPacket.Action", Values.generator(ServerboundResourcePackPacket.Action.class)),
+            .given(WRITE_ENUM, "ServerboundResourcePackPacket.Action", Values.generator(ServerboundResourcePackPacket.Action.class))
+            // What writeNbt writes, which the readers also read.
+            .extraInputs("readNbt()Lnet/minecraft/nbt/CompoundTag;", friendly(NbtSuites.nbtBuffers(214)))
+            .extraInputs("readNbt(Lio/netty/buffer/ByteBuf;)Lnet/minecraft/nbt/CompoundTag;", NbtSuites.nbtBuffers(215))
+            .extraInputs("readNbt(Lnet/minecraft/nbt/NbtAccounter;)Lnet/minecraft/nbt/Tag;", friendly(NbtSuites.accountedNbtBuffers(216)))
+            .extraInputs("readNbt(Lio/netty/buffer/ByteBuf;Lnet/minecraft/nbt/NbtAccounter;)Lnet/minecraft/nbt/Tag;", NbtSuites.accountedNbtBuffers(218))
+            // An accounter with more than the default quota reading a count in the billions would allocate an array that long.
+            .where(
+                "readNbt(Lnet/minecraft/nbt/NbtAccounter;)Lnet/minecraft/nbt/Tag;",
+                args -> NbtValues.readsLittle(((FriendlyByteBuf)args[0]).unwrap(), (NbtAccounter)args[1], NbtIo::readAnyTag)
+            )
+            .where(
+                "readNbt(Lio/netty/buffer/ByteBuf;Lnet/minecraft/nbt/NbtAccounter;)Lnet/minecraft/nbt/Tag;",
+                args -> NbtValues.readsLittle((ByteBuf)args[0], (NbtAccounter)args[1], NbtIo::readAnyTag)
+            ),
         // The codecs ByteBufCodecs hands out. The ones made from other codecs or functions get the game's kinds of them.
         new CodecSuite(ByteBufCodecs.class)
             .codec(OPTIONAL, "VAR_INT", leading -> ByteBufCodecs.optional(ByteBufCodecs.VAR_INT), bufferCodec(Codecs.optionalOf(INTS), Optional.class))
@@ -680,6 +700,23 @@ public final class Golden {
                 "idMapper(Ljava/util/function/IntFunction;Ljava/util/function/ToIntFunction;)Lnet/minecraft/network/codec/StreamCodec;",
                 "Direction::from3DDataValue, Direction::get3DDataValue",
                 leading -> ByteBufCodecs.idMapper(Direction::from3DDataValue, Direction::get3DDataValue), bufferCodec(DIRECTIONS, Direction.class)
+            )
+            // The NBT codecs with the accounters the game gives them: the click action's 32 KiB and 16 deep, and a trusted one.
+            // A trusted codec reading a count in the billions from random bytes would allocate an array that long.
+            .whereDecode("TRUSTED_TAG.decode", args -> NbtValues.readsLittle((ByteBuf)args[0], null, NbtIo::readAnyTag))
+            .whereDecode("TRUSTED_COMPOUND_TAG.decode", args -> NbtValues.readsLittle((ByteBuf)args[0], null, NbtIo::readAnyTag))
+            .whereDecode(
+                "compoundTagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;",
+                args -> NbtValues.readsLittle((ByteBuf)args[0], null, NbtIo::readAnyTag)
+            )
+            .codec(TAG_CODEC, "new NbtAccounter(32768L, 16)", leading -> ByteBufCodecs.tagCodec(() -> new NbtAccounter(32768L, 16)), bufferCodec(TAGS, Tag.class))
+            .codec(
+                "optionalTagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;", "new NbtAccounter(32768L, 16)",
+                leading -> ByteBufCodecs.optionalTagCodec(() -> new NbtAccounter(32768L, 16)), bufferCodec(Codecs.optionalOf(TAGS), Optional.class)
+            )
+            .codec(
+                "compoundTagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;", "NbtAccounter::unlimitedHeap",
+                leading -> ByteBufCodecs.compoundTagCodec(NbtAccounter::unlimitedHeap), bufferCodec(Values.generator(CompoundTag.class), CompoundTag.class)
             )
             // A length prefix in the millions makes vanilla allocate that many bytes before it finds the buffer shorter.
             .whereDecode("byteArray(I)Lnet/minecraft/network/codec/StreamCodec;", args -> allocatesLittle(args[1], (Integer)args[0]))
@@ -911,7 +948,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : SUITES) {
+        for (Suite suite : Stream.concat(SUITES.stream(), NbtSuites.suites().stream()).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }

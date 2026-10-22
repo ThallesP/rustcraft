@@ -9,7 +9,7 @@
 //!   `readFixedBitSet`, `writeFixedBitSet`);
 //! - `readChunkPos` and `writeChunkPos`, which wait for `ChunkPos`; `readGlobalPos`,
 //!   `writeGlobalPos`, `readResourceKey`, `writeResourceKey` and `readRegistryKey`, which wait
-//!   for `ResourceKey`; and `readNbt` and `writeNbt`, which wait for NBT.
+//!   for `ResourceKey`.
 //!
 //! The methods overriding `ByteBuf`'s forward to the buffer it wraps, which it derefs to. Java
 //! throws Netty's `DecoderException` and `EncoderException`, and `NegativeArraySizeException` for
@@ -23,9 +23,16 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
+use crate::io::netty::buffer::byte_buf_input_stream::ByteBufInputStream;
+use crate::io::netty::buffer::byte_buf_output_stream::ByteBufOutputStream;
 use crate::java::lang::r#enum::Enum;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::nbt::compound_tag::CompoundTag;
+use crate::net::minecraft::nbt::end_tag::EndTag;
+use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
+use crate::net::minecraft::nbt::nbt_io::NbtIo;
+use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::network::codec::stream_decoder::StreamDecoder;
 use crate::net::minecraft::network::codec::stream_encoder::StreamEncoder;
 use crate::net::minecraft::network::utf8_string::Utf8String;
@@ -407,6 +414,48 @@ impl FriendlyByteBuf {
         self
     }
 
+    /// A tag as `NbtIo.writeAnyTag` writes it, an `EndTag` for none.
+    pub fn write_nbt(&mut self, tag: Option<&Tag>) -> &mut FriendlyByteBuf {
+        FriendlyByteBuf::write_nbt_to(&mut self.source, tag);
+        self
+    }
+
+    /// `writeNbt(ByteBuf, Tag)`.
+    pub fn write_nbt_to(output: &mut ByteBuf, tag: Option<&Tag>) {
+        let tag = tag.unwrap_or(&Tag::End(EndTag::INSTANCE));
+        NbtIo::write_any_tag(tag, &mut ByteBufOutputStream::new(output));
+    }
+
+    /// A compound, or none for an `EndTag`, within the default quota. Another tag panics where
+    /// Java throws `DecoderException`.
+    pub fn read_nbt(&mut self) -> Option<CompoundTag> {
+        FriendlyByteBuf::read_nbt_from(&mut self.source)
+    }
+
+    /// `readNbt(ByteBuf)`.
+    pub fn read_nbt_from(input: &mut ByteBuf) -> Option<CompoundTag> {
+        match FriendlyByteBuf::read_nbt_from_accounted(input, &mut NbtAccounter::default_quota()) {
+            None => None,
+            Some(Tag::Compound(compound)) => Some(compound),
+            Some(_) => panic!("Not a compound tag"),
+        }
+    }
+
+    /// `readNbt(ByteBuf, NbtAccounter)`: a tag as `NbtIo.readAnyTag` reads it, or none for an
+    /// `EndTag`. Reading it marks the buffer's reader index (`ByteBufInputStream`).
+    pub fn read_nbt_from_accounted(
+        input: &mut ByteBuf,
+        accounter: &mut NbtAccounter,
+    ) -> Option<Tag> {
+        let tag = NbtIo::read_any_tag(&mut ByteBufInputStream::new(input), accounter);
+        if tag.get_id() == 0 { None } else { Some(tag) }
+    }
+
+    /// `readNbt(NbtAccounter)`.
+    pub fn read_nbt_accounted(&mut self, accounter: &mut NbtAccounter) -> Option<Tag> {
+        FriendlyByteBuf::read_nbt_from_accounted(&mut self.source, accounter)
+    }
+
     /// Up to `MAX_STRING_LENGTH` UTF-16 units.
     pub fn read_utf(&mut self) -> String {
         self.read_utf_max(32767)
@@ -507,6 +556,8 @@ mod tests {
     use crate::net::minecraft::core::block_pos::BlockPos;
     use crate::net::minecraft::core::direction::Direction;
     use crate::net::minecraft::core::position::Position;
+    use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
+    use crate::net::minecraft::nbt::tag::Tag;
     use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
     use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
     use crate::net::minecraft::network::protocol::common::serverbound_resource_pack_packet::Action;
@@ -587,16 +638,36 @@ mod tests {
         ] {
             golden.pending(name, "waits for ResourceKey");
         }
-        for name in [
+        golden.check_method(
             "readNbt()Lnet/minecraft/nbt/CompoundTag;",
+            |this: &mut FriendlyByteBuf| this.read_nbt(),
+        );
+        golden.check_mut(
             "readNbt(Lio/netty/buffer/ByteBuf;)Lnet/minecraft/nbt/CompoundTag;",
+            FriendlyByteBuf::read_nbt_from,
+        );
+        golden.check_mut(
             "readNbt(Lnet/minecraft/nbt/NbtAccounter;)Lnet/minecraft/nbt/Tag;",
+            |this: &mut FriendlyByteBuf, accounter: &mut NbtAccounter| {
+                this.read_nbt_accounted(accounter)
+            },
+        );
+        golden.check_mut(
             "readNbt(Lio/netty/buffer/ByteBuf;Lnet/minecraft/nbt/NbtAccounter;)Lnet/minecraft/nbt/Tag;",
+            FriendlyByteBuf::read_nbt_from_accounted,
+        );
+        golden.check_mut(
             "writeNbt(Lnet/minecraft/nbt/Tag;)Lnet/minecraft/network/FriendlyByteBuf;",
+            |this: &mut FriendlyByteBuf, tag: &mut Option<Tag>| {
+                this.write_nbt(tag.as_ref()).clone()
+            },
+        );
+        golden.check_mut(
             "writeNbt(Lio/netty/buffer/ByteBuf;Lnet/minecraft/nbt/Tag;)V",
-        ] {
-            golden.pending(name, "waits for NBT");
-        }
+            |output: &mut ByteBuf, tag: &mut Option<Tag>| {
+                FriendlyByteBuf::write_nbt_to(output, tag.as_ref())
+            },
+        );
         golden.field("MAX_STRING_LENGTH", FriendlyByteBuf::MAX_STRING_LENGTH);
         golden.field(
             "MAX_COMPONENT_STRING_LENGTH",

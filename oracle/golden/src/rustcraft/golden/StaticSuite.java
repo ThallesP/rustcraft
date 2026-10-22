@@ -96,15 +96,17 @@ final class StaticSuite implements Suite {
      * cases, and an IntFunction whose values can be encoded gets apply cases (see Codecs).
      */
     static void writeFields(final Class<?> type, final GoldenWriter writer) throws IOException {
-        writeFields(type, writer, Map.of());
+        writeFields(type, writer, Map.of(), Map.of());
     }
 
     /**
-     * Like writeFields, with more buffers for a codec named N to decode under {@code N.decode}. Returns the names of the
-     * codecs' cases ({@code N.decode}) it wrote.
+     * Like writeFields, with more buffers for a codec named N to decode under {@code N.decode}, and the buffers it
+     * decodes kept to a domain under the same name. Returns the names of the codecs' cases ({@code N.decode}) it wrote.
      */
-    static Set<String> writeFields(final Class<?> type, final GoldenWriter writer, final Map<String, List<Object[]>> extraDecodes)
-        throws IOException {
+    static Set<String> writeFields(
+        final Class<?> type, final GoldenWriter writer, final Map<String, List<Object[]>> extraDecodes,
+        final Map<String, Predicate<Object[]>> decodeDomains
+    ) throws IOException {
         Set<String> codecs = new HashSet<>();
         Field[] fields = type.getFields();
         Arrays.sort(fields, Comparator.comparing(Field::getName));
@@ -128,7 +130,7 @@ final class StaticSuite implements Suite {
                 String decode = field.getName() + ".decode";
                 codecs.add(decode);
                 Codecs.writeCodec(
-                    writer, field.getName(), new Values.Generator[0], leading -> value, codec, spec -> true,
+                    writer, field.getName(), new Values.Generator[0], leading -> value, codec, decodeDomains.getOrDefault(decode, spec -> true),
                     extraDecodes.getOrDefault(decode, List.of())
                 );
             } else if (function != null) {

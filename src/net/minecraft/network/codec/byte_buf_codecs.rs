@@ -2,9 +2,6 @@
 //!
 //! Not ported yet:
 //! - `BIT_SET` and `fixedBitSet`, which wait for `java.util.BitSet`;
-//! - the NBT codecs (`TAG`, `TRUSTED_TAG`, `COMPOUND_TAG`, `TRUSTED_COMPOUND_TAG`,
-//!   `OPTIONAL_COMPOUND_TAG`, `tagCodec`, `optionalTagCodec` and `compoundTagCodec`), which wait
-//!   for NBT;
 //! - the ones made from DataFixerUpper's codecs (`fromCodec`, `fromCodecTrusted` and the
 //!   `fromCodecWithRegistries` ones), and `lenientJson`, which waits for Gson;
 //! - `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
@@ -26,6 +23,9 @@ use crate::com::mojang::authlib::properties::property_map::PropertyMap;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::util::array_list::ArrayList;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
+use crate::net::minecraft::nbt::compound_tag::CompoundTag;
+use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
+use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec, StreamCodec};
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::network::utf8_string::Utf8String;
@@ -165,6 +165,35 @@ static LONG_ARRAY: StaticStreamCodec<ByteBuf, Vec<i64>> = LazyLock::new(|| {
 static STRING_UTF8: StaticStreamCodec<ByteBuf, String> =
     LazyLock::new(|| Box::new(ByteBufCodecs::string_utf8(32767)));
 
+static TAG: StaticStreamCodec<ByteBuf, Tag> =
+    LazyLock::new(|| Box::new(ByteBufCodecs::tag_codec(NbtAccounter::default_quota)));
+
+static TRUSTED_TAG: StaticStreamCodec<ByteBuf, Tag> =
+    LazyLock::new(|| Box::new(ByteBufCodecs::tag_codec(NbtAccounter::unlimited_heap)));
+
+static COMPOUND_TAG: StaticStreamCodec<ByteBuf, CompoundTag> = LazyLock::new(|| {
+    Box::new(ByteBufCodecs::compound_tag_codec(
+        NbtAccounter::default_quota,
+    ))
+});
+
+static TRUSTED_COMPOUND_TAG: StaticStreamCodec<ByteBuf, CompoundTag> = LazyLock::new(|| {
+    Box::new(ByteBufCodecs::compound_tag_codec(
+        NbtAccounter::unlimited_heap,
+    ))
+});
+
+static OPTIONAL_COMPOUND_TAG: StaticStreamCodec<ByteBuf, Option<CompoundTag>> =
+    LazyLock::new(|| {
+        Box::new(stream_codec::of(
+            |output: &mut ByteBuf, value: &Option<CompoundTag>| {
+                let tag = value.clone().map(Tag::Compound);
+                FriendlyByteBuf::write_nbt_to(output, tag.as_ref());
+            },
+            FriendlyByteBuf::read_nbt_from,
+        ))
+    });
+
 static VECTOR3F: StaticStreamCodec<ByteBuf, Vector3f> = LazyLock::new(|| {
     Box::new(stream_codec::of(
         FriendlyByteBuf::write_vector3f_to,
@@ -276,6 +305,13 @@ impl ByteBufCodecs {
     pub const BYTE_ARRAY: &'static StaticStreamCodec<ByteBuf, Vec<i8>> = &BYTE_ARRAY;
     pub const LONG_ARRAY: &'static StaticStreamCodec<ByteBuf, Vec<i64>> = &LONG_ARRAY;
     pub const STRING_UTF8: &'static StaticStreamCodec<ByteBuf, String> = &STRING_UTF8;
+    pub const TAG: &'static StaticStreamCodec<ByteBuf, Tag> = &TAG;
+    pub const TRUSTED_TAG: &'static StaticStreamCodec<ByteBuf, Tag> = &TRUSTED_TAG;
+    pub const COMPOUND_TAG: &'static StaticStreamCodec<ByteBuf, CompoundTag> = &COMPOUND_TAG;
+    pub const TRUSTED_COMPOUND_TAG: &'static StaticStreamCodec<ByteBuf, CompoundTag> =
+        &TRUSTED_COMPOUND_TAG;
+    pub const OPTIONAL_COMPOUND_TAG: &'static StaticStreamCodec<ByteBuf, Option<CompoundTag>> =
+        &OPTIONAL_COMPOUND_TAG;
     pub const VECTOR3F: &'static StaticStreamCodec<ByteBuf, Vector3f> = &VECTOR3F;
     pub const QUATERNIONF: &'static StaticStreamCodec<ByteBuf, Quaternionf> = &QUATERNIONF;
     pub const CONTAINER_ID: &'static StaticStreamCodec<ByteBuf, i32> = &CONTAINER_ID;
@@ -312,6 +348,54 @@ impl ByteBufCodecs {
                 Utf8String::write(output, value, max_string_length);
             },
             move |input: &mut ByteBuf| Utf8String::read(input, max_string_length),
+        )
+    }
+
+    /// A tag as `FriendlyByteBuf.readNbt` reads it, with an accounter of its own for each read,
+    /// or none for an `EndTag`.
+    pub fn optional_tag_codec(
+        accounter: impl Fn() -> NbtAccounter + Send + Sync + 'static,
+    ) -> impl StreamCodec<Buffer = ByteBuf, Value = Option<Tag>> {
+        stream_codec::of(
+            |output: &mut ByteBuf, value: &Option<Tag>| {
+                FriendlyByteBuf::write_nbt_to(output, value.as_ref());
+            },
+            move |input: &mut ByteBuf| {
+                FriendlyByteBuf::read_nbt_from_accounted(input, &mut accounter())
+            },
+        )
+    }
+
+    /// A tag, panicking for an `EndTag` either way, where Java throws `DecoderException` and
+    /// `EncoderException`.
+    pub fn tag_codec(
+        accounter: impl Fn() -> NbtAccounter + Send + Sync + 'static,
+    ) -> impl StreamCodec<Buffer = ByteBuf, Value = Tag> {
+        stream_codec::of(
+            |output: &mut ByteBuf, value: &Tag| {
+                assert!(
+                    !matches!(value, Tag::End(_)),
+                    "Expected non-null compound tag"
+                );
+                FriendlyByteBuf::write_nbt_to(output, Some(value));
+            },
+            move |input: &mut ByteBuf| {
+                FriendlyByteBuf::read_nbt_from_accounted(input, &mut accounter())
+                    .expect("Expected non-null compound tag")
+            },
+        )
+    }
+
+    /// `tag_codec`'s, panicking for a tag that isn't a compound.
+    pub fn compound_tag_codec(
+        accounter: impl Fn() -> NbtAccounter + Send + Sync + 'static,
+    ) -> impl StreamCodec<Buffer = ByteBuf, Value = CompoundTag> {
+        ByteBufCodecs::tag_codec(accounter).map(
+            |tag| match tag {
+                Tag::Compound(compound_tag) => compound_tag,
+                _ => panic!("Not a compound tag"),
+            },
+            |compound_tag: &CompoundTag| Tag::Compound(compound_tag.clone()),
         )
     }
 
@@ -571,6 +655,7 @@ mod tests {
     use crate::io::netty::buffer::byte_buf::ByteBuf;
     use crate::java::util::array_list::ArrayList;
     use crate::net::minecraft::core::direction::Direction;
+    use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
     use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
 
     const CODEC: &str = "Lnet/minecraft/network/codec/StreamCodec;";
@@ -584,18 +669,6 @@ mod tests {
             "fixedBitSet(I)Lnet/minecraft/network/codec/StreamCodec;",
             "waits for java.util.BitSet",
         );
-        for name in [
-            "TAG",
-            "TRUSTED_TAG",
-            "COMPOUND_TAG",
-            "TRUSTED_COMPOUND_TAG",
-            "OPTIONAL_COMPOUND_TAG",
-            "tagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;",
-            "optionalTagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;",
-            "compoundTagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;",
-        ] {
-            golden.pending(name, "waits for NBT");
-        }
         for name in [
             "fromCodec(Lcom/mojang/serialization/Codec;)Lnet/minecraft/network/codec/StreamCodec;",
             "fromCodec(Lcom/mojang/serialization/Codec;Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;",
@@ -670,6 +743,29 @@ mod tests {
         golden.check_codec("BYTE_ARRAY", || ByteBufCodecs::BYTE_ARRAY);
         golden.check_codec("LONG_ARRAY", || ByteBufCodecs::LONG_ARRAY);
         golden.check_codec("STRING_UTF8", || ByteBufCodecs::STRING_UTF8);
+        golden.check_codec("TAG", || ByteBufCodecs::TAG);
+        golden.check_codec("TRUSTED_TAG", || ByteBufCodecs::TRUSTED_TAG);
+        golden.check_codec("COMPOUND_TAG", || ByteBufCodecs::COMPOUND_TAG);
+        golden.check_codec("TRUSTED_COMPOUND_TAG", || {
+            ByteBufCodecs::TRUSTED_COMPOUND_TAG
+        });
+        golden.check_codec("OPTIONAL_COMPOUND_TAG", || {
+            ByteBufCodecs::OPTIONAL_COMPOUND_TAG
+        });
+        golden.check_codec(
+            &format!(
+                "tagCodec(Ljava/util/function/Supplier;){CODEC}[new NbtAccounter(32768L, 16)]"
+            ),
+            || ByteBufCodecs::tag_codec(|| NbtAccounter::new(32768, 16)),
+        );
+        golden.check_codec(
+            &format!("optionalTagCodec(Ljava/util/function/Supplier;){CODEC}[new NbtAccounter(32768L, 16)]"),
+            || ByteBufCodecs::optional_tag_codec(|| NbtAccounter::new(32768, 16)),
+        );
+        golden.check_codec(
+            &format!("compoundTagCodec(Ljava/util/function/Supplier;){CODEC}[NbtAccounter::unlimitedHeap]"),
+            || ByteBufCodecs::compound_tag_codec(NbtAccounter::unlimited_heap),
+        );
         golden.check_codec("VECTOR3F", || ByteBufCodecs::VECTOR3F);
         golden.check_codec("QUATERNIONF", || ByteBufCodecs::QUATERNIONF);
         golden.check_codec("CONTAINER_ID", || ByteBufCodecs::CONTAINER_ID);

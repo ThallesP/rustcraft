@@ -13,3 +13,9 @@ impl HashCode for String {
         JavaString::hash_code(self.as_str())
     }
 }
+
+impl HashCode for str {
+    fn hash_code(&self) -> i32 {
+        JavaString::hash_code(self)
+    }
+}
