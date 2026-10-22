@@ -5,7 +5,8 @@
 //!   `readLenientJsonWithCodec`, `writeJsonWithCodec`), which wait for DataFixerUpper;
 //! - the ones taking a stream codec or a function (`readWithCount`, `readOptional`,
 //!   `writeOptional`, `readEither`, `writeEither`, `readNullable`, `writeNullable`, `readById`,
-//!   `writeById`), which come with `StreamCodec`;
+//!   `writeById`), whose arguments the golden suite doesn't list instances of yet, like
+//!   `ByteBufCodecs`' (`readEither` and `writeEither` also wait for DataFixerUpper's `Either`);
 //! - `readEnum` and `writeEnum`, and `readEnumSet` and `writeEnumSet`, whose `Class` and `Enum`
 //!   arguments the golden harness can't generate yet, and the `BitSet` ones (`readBitSet`,
 //!   `writeBitSet`, `readFixedBitSet`, `writeFixedBitSet`), which wait for `java.util.BitSet`;
@@ -345,6 +346,19 @@ impl DerefMut for FriendlyByteBuf {
     }
 }
 
+/// For the codecs: a codec of a `ByteBuf` or a `FriendlyByteBuf` works on this one.
+impl AsMut<ByteBuf> for FriendlyByteBuf {
+    fn as_mut(&mut self) -> &mut ByteBuf {
+        &mut self.source
+    }
+}
+
+impl AsMut<FriendlyByteBuf> for FriendlyByteBuf {
+    fn as_mut(&mut self) -> &mut FriendlyByteBuf {
+        self
+    }
+}
+
 /// `new T[size]`, which throws `NegativeArraySizeException` for a negative size.
 fn new_array<T: Clone + Default>(size: i32) -> Vec<T> {
     assert!(size >= 0, "NegativeArraySizeException: {size}");
@@ -404,7 +418,7 @@ mod tests {
         ] {
             golden.pending(
                 name,
-                "takes a stream codec or a function, which come with StreamCodec",
+                "takes a stream codec or a function, whose instances the golden suite doesn't list yet",
             );
         }
         for name in [

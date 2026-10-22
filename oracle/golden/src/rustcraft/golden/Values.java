@@ -17,6 +17,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Random;
 import java.util.UUID;
 import java.util.function.Function;
@@ -250,6 +251,13 @@ final class Values {
         value -> new JsonPrimitive(((Charset)value).name())
     );
 
+    // OPTIONAL_VAR_INT's values: empty, or any int (of(-1) writes the 0 that empty writes, and of(MAX_VALUE) wraps).
+    private static final Generator OPTIONAL_INTS = new Simple(
+        List.<Object>of(OptionalInt.empty(), OptionalInt.of(0), OptionalInt.of(-1), OptionalInt.of(1), OptionalInt.of(Integer.MAX_VALUE), OptionalInt.of(Integer.MIN_VALUE)),
+        random -> random.nextInt(4) == 0 ? OptionalInt.empty() : OptionalInt.of((Integer)INTS.random(random)),
+        value -> encode(value, OptionalInt.class)
+    );
+
     // Axis's six constants, by name. Axis.of isn't covered: nothing in the game calls it.
     private static final Map<Axis, String> AXIS_NAMES = Map.of(
         Axis.XN, "XN", Axis.XP, "XP", Axis.YN, "YN", Axis.YP, "YP", Axis.ZN, "ZN", Axis.ZP, "ZP"
@@ -266,12 +274,20 @@ final class Values {
         Map.entry(int.class, INTS),
         Map.entry(Integer.class, INTS),
         Map.entry(long.class, LONGS),
+        Map.entry(Long.class, LONGS),
         Map.entry(float.class, FLOATS),
+        Map.entry(Float.class, FLOATS),
         Map.entry(double.class, DOUBLES),
+        Map.entry(Double.class, DOUBLES),
         Map.entry(byte.class, BYTES),
+        Map.entry(Byte.class, BYTES),
         Map.entry(short.class, SHORTS),
+        Map.entry(Short.class, SHORTS),
         Map.entry(char.class, CHARS),
+        Map.entry(Character.class, CHARS),
         Map.entry(boolean.class, BOOLEANS),
+        Map.entry(Boolean.class, BOOLEANS),
+        Map.entry(OptionalInt.class, OPTIONAL_INTS),
         Map.entry(String.class, STRINGS),
         Map.entry(CharSequence.class, STRINGS),
         Map.entry(byte[].class, BYTE_ARRAYS),
@@ -322,7 +338,7 @@ final class Values {
         }
         if (
             type.isPrimitive() || BOXES.contains(type) || type == String.class || type == UUID.class || type == IntStream.class
-                || type == Optional.class
+                || type == Optional.class || type == OptionalInt.class
         ) {
             return true;
         }
@@ -382,6 +398,11 @@ final class Values {
         // An empty Optional is null, like an argument a method lets be null. The value is encoded by its own class.
         if (type == Optional.class) {
             return ((Optional<?>)value).map(present -> encode(present, present.getClass())).orElse(JsonNull.INSTANCE);
+        }
+        // Like an Optional: the int, or null.
+        if (type == OptionalInt.class) {
+            OptionalInt optional = (OptionalInt)value;
+            return optional.isPresent() ? new JsonPrimitive(optional.getAsInt()) : JsonNull.INSTANCE;
         }
         if (type == IntStream.class) {
             JsonArray array = new JsonArray();

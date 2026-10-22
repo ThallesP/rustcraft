@@ -229,9 +229,8 @@ final class NetworkValues {
 
     /** The VarInt at the buffer's reader index, or null when there's no whole one, without moving the buffer. */
     static Integer leadingVarInt(final Object buffer) {
-        ByteBuf source = buffer instanceof FriendlyByteBuf friendly ? friendly.unwrap() : (ByteBuf)buffer;
         try {
-            return VarInt.read(source.duplicate());
+            return VarInt.read(unwrap(buffer).duplicate());
         } catch (RuntimeException e) {
             return null;
         }
@@ -307,10 +306,21 @@ final class NetworkValues {
         return bytes;
     }
 
-    private static byte[] readable(final ByteBuf buffer) {
+    /** The readable bytes, read. */
+    static byte[] readable(final ByteBuf buffer) {
         byte[] bytes = new byte[buffer.readableBytes()];
         buffer.readBytes(bytes);
         return bytes;
+    }
+
+    /** A buffer of the generator's kind (a ByteBuf, or a FriendlyByteBuf around one), holding the bytes. */
+    static Object bufferLike(final Values.Generator generator, final int slack, final byte[] bytes) {
+        ByteBuf buffer = buffer(slack, 0, bytes);
+        return generator == FRIENDLY_BUFFER ? new FriendlyByteBuf(buffer) : buffer;
+    }
+
+    static ByteBuf unwrap(final Object buffer) {
+        return buffer instanceof FriendlyByteBuf friendly ? friendly.unwrap() : (ByteBuf)buffer;
     }
 
     private static Field indexField(final String name) {

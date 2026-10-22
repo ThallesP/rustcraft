@@ -2,6 +2,8 @@
 
 mod hotspot_x86;
 
+use std::cmp::Ordering;
+
 use crate::java::lang::fd_libm;
 
 pub struct Math;
@@ -201,6 +203,19 @@ impl Math {
         }
     }
 
+    /// `clamp(double, double, double)`. Panics where Java throws `IllegalArgumentException`: on a
+    /// NaN bound, or `min` above `max`, which 0.0 is above -0.0.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    pub fn clamp_f64(value: f64, min: f64, max: f64) -> f64 {
+        if !(min < max) {
+            assert!(!min.is_nan(), "min is NaN");
+            assert!(!max.is_nan(), "max is NaN");
+            assert!(min.total_cmp(&max) != Ordering::Greater, "{min} > {max}");
+        }
+
+        Math::min_f64(max, Math::max_f64(value, min))
+    }
+
     /// The next double toward positive infinity. -0.0 becomes 0.0 first, so its next is
     /// `Double.MIN_VALUE`.
     pub fn next_up_f64(d: f64) -> f64 {
@@ -263,6 +278,7 @@ mod tests {
         golden.check("signum(D)D", Math::signum_f64);
         golden.check("nextUp(D)D", Math::next_up_f64);
         golden.check("nextDown(D)D", Math::next_down_f64);
+        golden.check("clamp(DDD)D", Math::clamp_f64);
         golden.finish();
     }
 }

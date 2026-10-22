@@ -1,7 +1,6 @@
 //! net/minecraft/resources/Identifier.java
 //!
-//! Not ported yet: the codecs (`CODEC`, `STREAM_CODEC`) and `read(String)`, which wait for
-//! DataFixerUpper and the network buffers; `ERROR_INVALID`, `read(StringReader)` and
+//! Not ported yet: `CODEC` and `read(String)`, which wait for DataFixerUpper; `ERROR_INVALID`, `read(StringReader)` and
 //! `readNonEmpty`, which wait for brigadier; `withPath(UnaryOperator)`, which the golden harness
 //! can't generate an argument for; and `resolveAgainst(Path)`, which comes with resource loading.
 //!
@@ -11,8 +10,12 @@
 //! so they aren't ported either.
 
 use std::fmt;
+use std::sync::LazyLock;
 
+use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::string::JavaString;
+use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
+use crate::net::minecraft::network::codec::stream_codec::{StaticStreamCodec, StreamCodec};
 
 /// A namespaced name, `namespace:path`, like `minecraft:block/stone`. Every one that exists is
 /// valid, so its parts are ASCII.
@@ -22,7 +25,16 @@ pub struct Identifier {
     path: String,
 }
 
+// As a string `parse` takes, so one without a namespace is `minecraft`'s.
+static STREAM_CODEC: StaticStreamCodec<ByteBuf, Identifier> = LazyLock::new(|| {
+    Box::new(ByteBufCodecs::STRING_UTF8.map(
+        |identifier: String| Identifier::parse(&identifier),
+        Identifier::to_string,
+    ))
+});
+
 impl Identifier {
+    pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, Identifier> = &STREAM_CODEC;
     pub const NAMESPACE_SEPARATOR: u16 = b':' as u16;
     pub const DEFAULT_NAMESPACE: &str = "minecraft";
     pub const REALMS_NAMESPACE: &str = "realms";
@@ -272,7 +284,7 @@ mod tests {
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.resources.Identifier");
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
-        golden.pending("STREAM_CODEC", "waits for the network buffers");
+        golden.check_codec("STREAM_CODEC", || Identifier::STREAM_CODEC);
         golden.pending("ERROR_INVALID", "waits for brigadier");
         golden.pending(
             "read(Ljava/lang/String;)Lcom/mojang/serialization/DataResult;",

@@ -1,13 +1,16 @@
 //! net/minecraft/core/Vec3i.java
 //!
-//! Not ported yet: the codecs (`CODEC`, `STREAM_CODEC` and `offsetCodec`), which wait for
-//! DataFixerUpper and the network buffers.
+//! Not ported yet: `CODEC` and `offsetCodec`, which wait for DataFixerUpper's codecs.
 
 use std::fmt;
+use std::sync::LazyLock;
 
+use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::math::Math;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::position::Position;
+use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
+use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec};
 use crate::net::minecraft::util::mth::Mth;
 use crate::org::joml::vector3i::Vector3i;
 
@@ -20,7 +23,21 @@ pub struct Vec3i {
     z: i32,
 }
 
+// Each coordinate in a VarInt.
+static STREAM_CODEC: StaticStreamCodec<ByteBuf, Vec3i> = LazyLock::new(|| {
+    Box::new(stream_codec::composite3(
+        ByteBufCodecs::VAR_INT,
+        Vec3i::get_x,
+        ByteBufCodecs::VAR_INT,
+        Vec3i::get_y,
+        ByteBufCodecs::VAR_INT,
+        Vec3i::get_z,
+        Vec3i::new,
+    ))
+});
+
 impl Vec3i {
+    pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, Vec3i> = &STREAM_CODEC;
     pub const ZERO: Vec3i = Vec3i::new(0, 0, 0);
 
     pub const fn new(x: i32, y: i32, z: i32) -> Vec3i {
@@ -323,7 +340,7 @@ mod tests {
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.core.Vec3i");
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
-        golden.pending("STREAM_CODEC", "waits for the network buffers");
+        golden.check_codec("STREAM_CODEC", || Vec3i::STREAM_CODEC);
         golden.pending(
             "offsetCodec(I)Lcom/mojang/serialization/Codec;",
             "waits for DataFixerUpper's codecs",

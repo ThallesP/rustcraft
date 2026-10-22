@@ -1,11 +1,12 @@
 //! net/minecraft/world/phys/BlockHitResult.java
-//!
-//! Not ported yet: `STREAM_CODEC`, which waits for the network buffers.
 
 use std::ops::Deref;
+use std::sync::LazyLock;
 
+use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec, StreamCodec};
 use crate::net::minecraft::world::phys::hit_result::{HitResult, Type};
 use crate::net::minecraft::world::phys::vec3::Vec3;
 
@@ -29,7 +30,46 @@ impl Deref for BlockHitResult {
     }
 }
 
+// The block, the side, where on the block as floats, and the flags. A miss is read as a hit.
+static STREAM_CODEC: StaticStreamCodec<ByteBuf, BlockHitResult> = LazyLock::new(|| {
+    Box::new(stream_codec::of(
+        |output: &mut ByteBuf, block_hit: &BlockHitResult| {
+            let block_pos = block_hit.get_block_pos();
+            BlockPos::STREAM_CODEC.encode(output, &block_pos);
+            Direction::STREAM_CODEC.encode(output, &block_hit.get_direction());
+            let location = block_hit.get_location();
+            output.write_float((location.x - f64::from(block_pos.get_x())) as f32);
+            output.write_float((location.y - f64::from(block_pos.get_y())) as f32);
+            output.write_float((location.z - f64::from(block_pos.get_z())) as f32);
+            output.write_boolean(block_hit.is_inside());
+            output.write_boolean(block_hit.is_world_border_hit());
+        },
+        |input: &mut ByteBuf| {
+            let pos = BlockPos::STREAM_CODEC.decode(input);
+            let face = Direction::STREAM_CODEC.decode(input);
+            let click_x = input.read_float();
+            let click_y = input.read_float();
+            let click_z = input.read_float();
+            let inside = input.read_boolean();
+            let world_border = input.read_boolean();
+            BlockHitResult::from_world_border_hit(
+                &Vec3::new(
+                    f64::from(pos.get_x()) + f64::from(click_x),
+                    f64::from(pos.get_y()) + f64::from(click_y),
+                    f64::from(pos.get_z()) + f64::from(click_z),
+                ),
+                face,
+                &pos,
+                inside,
+                world_border,
+            )
+        },
+    ))
+});
+
 impl BlockHitResult {
+    pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, BlockHitResult> = &STREAM_CODEC;
+
     pub fn miss(location: &Vec3, direction: Direction, pos: &BlockPos) -> BlockHitResult {
         BlockHitResult::from_miss(true, location, direction, pos, false, false)
     }
@@ -198,7 +238,7 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.world.phys.BlockHitResult");
-        golden.pending("STREAM_CODEC", "waits for the network buffers");
+        golden.check_codec("STREAM_CODEC", || BlockHitResult::STREAM_CODEC);
         golden.check(
             "miss(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/core/Direction;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/BlockHitResult;",
             |location: Vec3, direction, pos: BlockPos| {

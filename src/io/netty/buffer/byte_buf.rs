@@ -555,6 +555,14 @@ impl ByteBuf {
     }
 }
 
+/// A buffer is itself, for the codecs: a codec of a `ByteBuf` works on any buffer that is
+/// `AsMut<ByteBuf>`, like Java's `StreamCodec<? super B, T>` (see `StreamCodec`).
+impl AsMut<ByteBuf> for ByteBuf {
+    fn as_mut(&mut self) -> &mut ByteBuf {
+        self
+    }
+}
+
 fn check_index_bounds(reader_index: i32, writer_index: i32, capacity: i32) {
     assert!(
         reader_index >= 0 && reader_index <= writer_index && writer_index <= capacity,

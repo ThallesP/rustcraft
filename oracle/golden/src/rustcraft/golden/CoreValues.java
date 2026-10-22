@@ -17,6 +17,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Position;
 import net.minecraft.core.Vec3i;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.ByIdMap;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -44,6 +45,7 @@ final class CoreValues {
     static final Values.Generator ROTATION = new Constants<>(Rotation.class);
     static final Values.Generator TRAVERSAL_NODE_STATUS = new Constants<>(BlockPos.TraversalNodeStatus.class);
     static final Values.Generator HIT_RESULT_TYPE = new Constants<>(HitResult.Type.class);
+    static final Values.Generator OUT_OF_BOUNDS_STRATEGY = new Constants<>(ByIdMap.OutOfBoundsStrategy.class);
 
     // Width and height of entities: the player standing, crouching and swimming, an item, an arrow, a minecart.
     private static final float[][] ENTITY_SIZES = {
@@ -263,6 +265,9 @@ final class CoreValues {
         }
         if (type == HitResult.Type.class) {
             return HIT_RESULT_TYPE;
+        }
+        if (type == ByIdMap.OutOfBoundsStrategy.class) {
+            return OUT_OF_BOUNDS_STRATEGY;
         }
         if (type == Identifier.class) {
             return IDENTIFIER;

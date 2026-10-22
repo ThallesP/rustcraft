@@ -1,5 +1,6 @@
 package rustcraft.golden;
 
+import com.google.gson.JsonPrimitive;
 import com.mojang.math.Axis;
 import com.mojang.math.GivensParameters;
 import com.mojang.math.MatrixUtil;
@@ -8,6 +9,8 @@ import com.mojang.math.Transformation;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import java.io.IOException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,17 +18,24 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Random;
+import java.util.UUID;
+import java.util.function.Function;
 import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.LpVec3;
 import net.minecraft.network.Utf8String;
 import net.minecraft.network.VarInt;
 import net.minecraft.network.VarLong;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
+import net.minecraft.util.ByIdMap;
 import net.minecraft.util.Mth;
 import net.minecraft.util.StringRepresentable;
 import net.minecraft.world.level.block.Rotation;
@@ -53,6 +63,21 @@ public final class Golden {
     // assembly get this many extra inputs each, spread over every path through the assembly.
     private static final int INTRINSIC_INPUTS = 20000;
 
+    private static final Values.Generator INTS = Values.generator(int.class);
+    private static final Values.Generator FLOATS = Values.generator(float.class);
+    private static final Values.Generator BOOLEANS = Values.generator(boolean.class);
+    private static final Values.Generator STRINGS = Values.generator(String.class);
+    private static final Values.Generator DIRECTIONS = Values.generator(Direction.class);
+    // Sizes of fixed-size lists, mostly ones a random list has. Larger ones can't be read from a random buffer, and
+    // ArrayList's constructor rejects a negative one.
+    private static final Values.Generator SIZES = new Values.Simple(
+        List.of(-1, 0, 1, 2, 3, 4, 7, 140, 65536), random -> random.nextInt(7), value -> new JsonPrimitive((Integer)value)
+    );
+    private static final String OPTIONAL = "optional(Lnet/minecraft/network/codec/StreamCodec;)Lnet/minecraft/network/codec/StreamCodec;";
+    private static final String CONTINUOUS =
+        "continuous(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;)Ljava/util/function/IntFunction;";
+    private static final String SPARSE = "sparse(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/function/IntFunction;";
+
     private static final List<Suite> SUITES = List.of(
         new StaticSuite(Mth.class)
             .extraInputs("sin(D)F", sinTableInputs(0))
@@ -71,14 +96,15 @@ public final class Golden {
                 "floorDiv(II)I", "floorDiv(JJ)J", "floorMod(II)I", "floorMod(JJ)J",
                 "sin(D)D", "cos(D)D", "tan(D)D", "asin(D)D", "log(D)D", "pow(DD)D", "sqrt(D)D",
                 "acos(D)D", "atan2(DD)D", "rint(D)D", "round(F)I", "round(D)J", "signum(F)F", "signum(D)D",
-                "toRadians(D)D", "toDegrees(D)D", "hypot(DD)D", "nextUp(D)D", "nextDown(D)D"
+                "toRadians(D)D", "toDegrees(D)D", "hypot(DD)D", "nextUp(D)D", "nextDown(D)D", "clamp(DDD)D"
             )
             .extraInputs("sin(D)D", trigInputs(1, -253, 16))
             .extraInputs("cos(D)D", trigInputs(2, -253, 16))
             .extraInputs("tan(D)D", trigInputs(5, -40, 13))
             .extraInputs("log(D)D", logInputs())
             .extraInputs("pow(DD)D", powInputs())
-            .extraInputs("hypot(DD)D", hypotInputs()),
+            .extraInputs("hypot(DD)D", hypotInputs())
+            .extraInputs("clamp(DDD)D", clampInputs()),
         new StringSuite(),
         // JOML's own fast paths are off (no -Djoml.fastmath), so its trig goes through java.lang.Math.
         new StaticSuite(org.joml.Math.class).exclude("random()D", "seeded from the clock"),
@@ -460,13 +486,130 @@ public final class Golden {
             // A length prefix in the millions makes vanilla allocate that many bytes before it finds the buffer shorter.
             .where("readByteArray(I)[B", args -> allocatesLittle(args[0], (Integer)args[1]))
             .where("readByteArray(Lio/netty/buffer/ByteBuf;I)[B", args -> allocatesLittle(args[0], (Integer)args[1]))
-            .where("readVarIntArray(I)[I", args -> allocatesLittle(args[0], (Integer)args[1]))
+            .where("readVarIntArray(I)[I", args -> allocatesLittle(args[0], (Integer)args[1])),
+        // The codecs ByteBufCodecs hands out. The ones made from other codecs or functions get the game's kinds of them.
+        new CodecSuite(ByteBufCodecs.class)
+            .codec(OPTIONAL, "VAR_INT", leading -> ByteBufCodecs.optional(ByteBufCodecs.VAR_INT), bufferCodec(Codecs.optionalOf(INTS), Optional.class))
+            .codec(OPTIONAL, "STRING_UTF8", leading -> ByteBufCodecs.optional(ByteBufCodecs.STRING_UTF8), bufferCodec(Codecs.optionalOf(STRINGS), Optional.class))
+            .codec(
+                "collection(Ljava/util/function/IntFunction;Lnet/minecraft/network/codec/StreamCodec;)Lnet/minecraft/network/codec/StreamCodec;",
+                "ArrayList::new, VAR_INT", leading -> ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.VAR_INT), bufferCodec(Codecs.listOf(INTS), List.class)
+            )
+            .codec(
+                "collection(Ljava/util/function/IntFunction;Lnet/minecraft/network/codec/StreamCodec;I)Lnet/minecraft/network/codec/StreamCodec;",
+                "ArrayList::new, STRING_UTF8", leading -> ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8, (Integer)leading[0]),
+                bufferCodec(Codecs.listOf(STRINGS), List.class), INTS
+            )
+            .codec(
+                "collection(Ljava/util/function/IntFunction;)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;", "ArrayList::new, VAR_INT",
+                leading -> ByteBufCodecs.VAR_INT.apply(ByteBufCodecs.collection(ArrayList::new)), bufferCodec(Codecs.listOf(INTS), List.class)
+            )
+            .codec(
+                "collection(Ljava/util/function/IntFunction;I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;", "ArrayList::new, VAR_INT",
+                leading -> ByteBufCodecs.VAR_INT.apply(ByteBufCodecs.collection(ArrayList::new, (Integer)leading[0])),
+                bufferCodec(Codecs.listOf(INTS), List.class), INTS
+            )
+            .codec(
+                "list()Lnet/minecraft/network/codec/StreamCodec$CodecOperation;", "Direction.STREAM_CODEC",
+                leading -> Direction.STREAM_CODEC.apply(ByteBufCodecs.list()), bufferCodec(Codecs.listOf(DIRECTIONS), List.class)
+            )
+            .codec(
+                "list(I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;", "STRING_UTF8",
+                leading -> ByteBufCodecs.STRING_UTF8.apply(ByteBufCodecs.list((Integer)leading[0])), bufferCodec(Codecs.listOf(STRINGS), List.class), INTS
+            )
+            .codec(
+                "fixedSizeCollection(Ljava/util/function/IntFunction;Lnet/minecraft/network/codec/StreamCodec;I)Lnet/minecraft/network/codec/StreamCodec;",
+                "ArrayList::new, VAR_INT", leading -> ByteBufCodecs.fixedSizeCollection(ArrayList::new, ByteBufCodecs.VAR_INT, (Integer)leading[0]),
+                bufferCodec(Codecs.listOf(INTS), List.class), SIZES
+            )
+            .codec(
+                "fixedSizeCollection(Ljava/util/function/IntFunction;I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;", "ArrayList::new, FLOAT",
+                leading -> ByteBufCodecs.FLOAT.apply(ByteBufCodecs.fixedSizeCollection(ArrayList::new, (Integer)leading[0])),
+                bufferCodec(Codecs.listOf(FLOATS), List.class), SIZES
+            )
+            .codec(
+                "fixedSizeList(I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;", "BOOL",
+                leading -> ByteBufCodecs.BOOL.apply(ByteBufCodecs.fixedSizeList((Integer)leading[0])), bufferCodec(Codecs.listOf(BOOLEANS), List.class), SIZES
+            )
+            .codec(
+                "idMapper(Ljava/util/function/IntFunction;Ljava/util/function/ToIntFunction;)Lnet/minecraft/network/codec/StreamCodec;",
+                "Direction::from3DDataValue, Direction::get3DDataValue",
+                leading -> ByteBufCodecs.idMapper(Direction::from3DDataValue, Direction::get3DDataValue), bufferCodec(DIRECTIONS, Direction.class)
+            )
+            // A length prefix in the millions makes vanilla allocate that many bytes before it finds the buffer shorter.
+            .whereDecode("byteArray(I)Lnet/minecraft/network/codec/StreamCodec;", args -> allocatesLittle(args[1], (Integer)args[0])),
+        // StreamCodec's factories and combinators, each given the game's kinds of codecs and functions.
+        composites(new CodecSuite(StreamCodec.class))
+            .codec(
+                "of(Lnet/minecraft/network/codec/StreamEncoder;Lnet/minecraft/network/codec/StreamDecoder;)Lnet/minecraft/network/codec/StreamCodec;",
+                "writeUUID, readUUID", leading -> StreamCodec.<ByteBuf, UUID>of(FriendlyByteBuf::writeUUID, FriendlyByteBuf::readUUID),
+                bufferCodec(Values.generator(UUID.class), UUID.class)
+            )
+            .codec(
+                "ofMember(Lnet/minecraft/network/codec/StreamMemberEncoder;Lnet/minecraft/network/codec/StreamDecoder;)Lnet/minecraft/network/codec/StreamCodec;",
+                "writeIdentifier, readIdentifier",
+                leading -> StreamCodec.<FriendlyByteBuf, Identifier>ofMember((id, output) -> output.writeIdentifier(id), FriendlyByteBuf::readIdentifier),
+                new Codecs.Codec(NetworkValues.FRIENDLY_BUFFER, Values.generator(Identifier.class), Identifier.class)
+            )
+            .codec("unit(Ljava/lang/Object;)Lnet/minecraft/network/codec/StreamCodec;", "NORTH", leading -> StreamCodec.unit(Direction.NORTH), bufferCodec(DIRECTIONS, Direction.class))
+            .codec(
+                "apply(Lnet/minecraft/network/codec/StreamCodec$CodecOperation;)Lnet/minecraft/network/codec/StreamCodec;", "VAR_INT, optional",
+                leading -> ByteBufCodecs.VAR_INT.apply(ByteBufCodecs::optional), bufferCodec(Codecs.optionalOf(INTS), Optional.class)
+            )
+            .codec(
+                "map(Ljava/util/function/Function;Ljava/util/function/Function;)Lnet/minecraft/network/codec/StreamCodec;", "BYTE, unpackDegrees, packDegrees",
+                leading -> ByteBufCodecs.BYTE.map(Mth::unpackDegrees, Mth::packDegrees), bufferCodec(FLOATS, Float.class)
+            )
+            .codec(
+                "cast()Lnet/minecraft/network/codec/StreamCodec;", "VAR_INT", leading -> ByteBufCodecs.VAR_INT.<FriendlyByteBuf>cast(),
+                new Codecs.Codec(NetworkValues.FRIENDLY_BUFFER, INTS, Integer.class)
+            ),
+        // ByIdMap's maps by the game's ids, with every strategy for ids out of range, and ones it refuses to make.
+        new CodecSuite(ByIdMap.class)
+            .function(
+                CONTINUOUS, "get3DDataValue, values()",
+                leading -> ByIdMap.continuous(Direction::get3DDataValue, Direction.values(), (ByIdMap.OutOfBoundsStrategy)leading[0]), Direction.class,
+                Values.generator(ByIdMap.OutOfBoundsStrategy.class)
+            )
+            .function(
+                CONTINUOUS, "get2DDataValue, values()",
+                leading -> ByIdMap.continuous(Direction::get2DDataValue, Direction.values(), (ByIdMap.OutOfBoundsStrategy)leading[0]), Direction.class,
+                Values.generator(ByIdMap.OutOfBoundsStrategy.class)
+            )
+            .function(
+                CONTINUOUS, "get3DDataValue, []",
+                leading -> ByIdMap.continuous(Direction::get3DDataValue, new Direction[0], (ByIdMap.OutOfBoundsStrategy)leading[0]), Direction.class,
+                Values.generator(ByIdMap.OutOfBoundsStrategy.class)
+            )
+            .function(
+                SPARSE, "get2DDataValue, [NORTH, EAST, SOUTH, WEST], UP",
+                leading -> ByIdMap.sparse(
+                    Direction::get2DDataValue, new Direction[]{Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST}, Direction.UP
+                ),
+                Direction.class
+            )
+            .function(
+                SPARSE, "get2DDataValue, values(), UP", leading -> ByIdMap.sparse(Direction::get2DDataValue, Direction.values(), Direction.UP), Direction.class
+            )
+            .function(SPARSE, "get2DDataValue, [], UP", leading -> ByIdMap.sparse(Direction::get2DDataValue, new Direction[0], Direction.UP), Direction.class),
+        InstanceSuite.every(ByIdMap.OutOfBoundsStrategy.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;", names(ByIdMap.OutOfBoundsStrategy.values())),
+        new StaticSuite(LpVec3.class)
+            .extraInputs("write(Lio/netty/buffer/ByteBuf;Lnet/minecraft/world/phys/Vec3;)V", lpWrites())
+            .extraInputs("read(Lio/netty/buffer/ByteBuf;)Lnet/minecraft/world/phys/Vec3;", lpReads())
+            .extraInputs("hasContinuationBit(I)Z", everyByte())
     );
 
+    /** Writes every suite's file to the directory in the first argument, or only the suites the other arguments name. */
     public static void main(final String[] args) throws IOException {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
+        List<String> only = Arrays.asList(args).subList(1, args.length);
         for (Suite suite : SUITES) {
+            if (!only.isEmpty() && !only.contains(suite.name())) {
+                continue;
+            }
+
             Path file = outputDir.resolve(suite.name() + ".jsonl");
             try (GoldenWriter writer = new GoldenWriter(file)) {
                 suite.write(writer);
@@ -2202,5 +2345,128 @@ public final class Golden {
     private static double randomBits(final Random random) {
         double value = Double.longBitsToDouble(random.nextLong());
         return Double.isNaN(value) ? Double.NaN : value;
+    }
+
+    private static Codecs.Codec bufferCodec(final Values.Generator values, final Class<?> valueType) {
+        return new Codecs.Codec(NetworkValues.BUFFER, values, valueType);
+    }
+
+    // Every composite, of 1 to 14 fields, from VAR_INT, STRING_UTF8, BOOL and FLOAT in turn. A value is the list of its
+    // fields, which the getters read and the constructor (a FunctionN made by Proxy) makes.
+    private static CodecSuite composites(final CodecSuite suite) {
+        StreamCodec<?, ?>[] codecs = {ByteBufCodecs.VAR_INT, ByteBufCodecs.STRING_UTF8, ByteBufCodecs.BOOL, ByteBufCodecs.FLOAT};
+        String[] names = {"VAR_INT", "STRING_UTF8", "BOOL", "FLOAT"};
+        Values.Generator[] generators = {INTS, STRINGS, BOOLEANS, FLOATS};
+        for (Method method : StreamCodec.class.getMethods()) {
+            if (!method.getName().equals("composite")) {
+                continue;
+            }
+
+            int fields = method.getParameterCount() / 2;
+            Object[] args = new Object[method.getParameterCount()];
+            Values.Generator[] elements = new Values.Generator[fields];
+            List<String> label = new ArrayList<>();
+            for (int i = 0; i < fields; i++) {
+                int index = i;
+                args[2 * i] = codecs[i % codecs.length];
+                args[2 * i + 1] = (Function<List<?>, Object>)list -> list.get(index);
+                elements[i] = generators[i % generators.length];
+                label.add(names[i % names.length]);
+            }
+            Class<?> constructor = method.getParameterTypes()[2 * fields];
+            args[2 * fields] = Proxy.newProxyInstance(Golden.class.getClassLoader(), new Class<?>[]{constructor}, (proxy, invoked, values) -> switch (invoked.getName()) {
+                case "apply" -> Arrays.asList(values.clone());
+                case "hashCode" -> System.identityHashCode(proxy);
+                case "equals" -> proxy == values[0];
+                default -> "constructor";
+            });
+            suite.codec(
+                Descriptors.of(method), String.join(", ", label), leading -> method.invoke(null, args),
+                bufferCodec(Codecs.tupleOf(elements), List.class)
+            );
+        }
+        return suite;
+    }
+
+    // Movements whose largest component is around LpVec3's limits: the smallest it writes and an ulp either side, whole
+    // blocks around where the scale needs a VarInt (past 3), the largest it writes and past it, and NaN (written as 0) and
+    // infinities. Each with either sign along each axis, the other components zero, smaller or the same.
+    private static List<Vec3> lpVectors() {
+        double[] magnitudes = {
+            0.0, LpVec3.ABS_MIN_VALUE, Math.nextDown(LpVec3.ABS_MIN_VALUE), Math.nextUp(LpVec3.ABS_MIN_VALUE), 1.0E-5, 0.1, 0.5,
+            Math.nextDown(1.0), 1.0, Math.nextUp(1.0), 2.0, 2.5, 3.0, Math.nextUp(3.0), 3.5, 4.0, 5.0, 7.0, 8.0, 100.0, 1000.0,
+            65535.0, 65536.0, 0x1p31, 0x1p33, Math.nextDown(LpVec3.ABS_MAX_VALUE), LpVec3.ABS_MAX_VALUE, Math.nextUp(LpVec3.ABS_MAX_VALUE),
+            1.0E11, Double.MAX_VALUE, Double.POSITIVE_INFINITY, Double.NaN
+        };
+        Random random = new Random(1013);
+        List<Vec3> vectors = new ArrayList<>();
+        for (double magnitude : magnitudes) {
+            for (double sign : new double[]{1.0, -1.0}) {
+                for (int axis = 0; axis < 3; axis++) {
+                    for (int others = 0; others < 3; others++) {
+                        double[] components = new double[3];
+                        for (int i = 0; i < 3; i++) {
+                            components[i] = switch (others) {
+                                case 0 -> 0.0;
+                                case 1 -> (random.nextDouble() * 2.0 - 1.0) * magnitude;
+                                default -> magnitude;
+                            };
+                        }
+                        components[axis] = sign * magnitude;
+                        vectors.add(new Vec3(components[0], components[1], components[2]));
+                    }
+                }
+            }
+        }
+        return vectors;
+    }
+
+    private static List<Object[]> lpWrites() {
+        Random random = new Random(1014);
+        List<Object[]> inputs = new ArrayList<>();
+        for (Vec3 vector : lpVectors()) {
+            inputs.add(new Object[]{NetworkValues.randomBuffer(random), vector});
+        }
+        return inputs;
+    }
+
+    // The vectors' encodings, whole, cut short, and with a field after them.
+    private static List<Object[]> lpReads() {
+        Random random = new Random(1015);
+        List<Object[]> inputs = new ArrayList<>();
+        for (Vec3 vector : lpVectors()) {
+            ByteBuf buffer = Unpooled.buffer();
+            LpVec3.write(buffer, vector);
+            byte[] bytes = NetworkValues.readable(buffer);
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, bytes)});
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, Arrays.copyOf(bytes, bytes.length - 1))});
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(bytes, NetworkValues.randomField(random)))});
+        }
+        return inputs;
+    }
+
+    // Bounds that are signed zeros (0.0 is above -0.0, which throws), NaN, equal, or the wrong way round, around values
+    // between, on and past them.
+    private static List<Object[]> clampInputs() {
+        double[][] bounds = {
+            {0.0, -0.0}, {-0.0, 0.0}, {0.0, 0.0}, {-0.0, -0.0}, {1.0, 1.0}, {-1.0, 1.0}, {2.0, 1.0}, {Double.NaN, 1.0}, {1.0, Double.NaN},
+            {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY}, {-LpVec3.ABS_MAX_VALUE, LpVec3.ABS_MAX_VALUE}
+        };
+        double[] values = {-0.0, 0.0, -1.0, 1.0, 0.5, 3.0, Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY};
+        List<Object[]> inputs = new ArrayList<>();
+        for (double[] bound : bounds) {
+            for (double value : values) {
+                inputs.add(new Object[]{value, bound[0], bound[1]});
+            }
+        }
+        return inputs;
+    }
+
+    private static List<Object[]> everyByte() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int value = 0; value < 256; value++) {
+            inputs.add(new Object[]{value});
+        }
+        return inputs;
     }
 }

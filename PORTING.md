@@ -61,6 +61,19 @@ Netty:
 - Concurrency guards that `&mut self` already rules out, such as an AtomicLong checked by a ThreadingDetector, become plain fields.
 - Deep class hierarchies (`Entity → LivingEntity → Mob → …`) get settled when the first entity is ported. The plan: entities live in an arena and are addressed by ID, the parent class is embedded as a field, and overridden methods become trait methods.
 
+## Codecs
+
+The network codecs are objects Java builds out of other objects and lambdas, so they get rules of their own.
+
+- `StreamCodec<B, V>` is a trait with two associated types, `StreamCodec<Buffer = B, Value = V>`. A codec has one buffer, Java's `B`. Java passes a codec of a buffer's parent class where a codec of the buffer is wanted (`StreamCodec<? super B, T>`); here that's a codec whose buffer the wanted one is `AsMut` of. Every buffer is `AsMut` of itself and of the buffers it wraps (`FriendlyByteBuf` is `AsMut<ByteBuf>` and `AsMut<FriendlyByteBuf>`), and a direct call derefs a wrapper (`BlockPos::STREAM_CODEC.decode(friendly_buf)`). A codec Java makes generic in its buffer takes the buffer of the codec it wraps (`ByteBufCodecs::optional`). A `composite` takes the buffer it's used on, which the static's type pins; a nested one may need it spelled out.
+- A static codec field is a module `static` of type `StaticStreamCodec<B, V>` (a `LazyLock` of a boxed codec, made on first use), which an associated const refers to: `BlockPos::STREAM_CODEC`. An `IntFunction` field is the same with a boxed `Fn(i32) -> T` (`Direction::BY_ID`), passed on as `Direction::BY_ID.as_ref()`. Codecs share other codecs by reference, since `&C` is a codec.
+- Java's anonymous classes implementing a codec are `stream_codec::of(encoder, decoder)`, or a struct inside the function that makes them. A trait method's codec (`map`, `cast`) and one a `CodecOperation` makes (`ByteBufCodecs::list()`'s `Collection`) are named structs: `impl Trait` in a trait method hides that the codec is `Send` and `Sync`, which a static needs, and a closure can't return `impl Trait`.
+- The functional interfaces (`StreamDecoder`, `StreamEncoder`, `StreamMemberEncoder`, `CodecOperation`) are traits that every closure of the right shape implements, so lambdas and method references pass as they are (`stream_codec::of(LpVec3::write, LpVec3::read)`). A codec isn't a `StreamDecoder` too, since Rust can't have both blanket impls: where Java passes a codec as a decoder, pass `|input| codec.decode(input)`. Other functional interfaces (`IntFunction`, `ToIntFunction`, `Function`) are closures.
+- `ByteBufCodecs`, an interface Java only uses for its constants and static methods, is a unit struct like `Mth`.
+- Overloads: `composite`'s get their number of fields (`composite3`), ones returning a `CodecOperation` instead of a codec get `_operation` (`collection(IntFunction)` is `collection_operation`), and ones adding a maximum `_max` (`collection_max`, `list_max`).
+- A codec's collection is any Rust collection it can extend and iterate over by reference: a `Vec` for an `ArrayList`. Java's collection constructors throw on a negative capacity, which a count read from a buffer can be, so codecs making lists take `ArrayList::new` from `java::util::array_list`, which panics there too. Which Rust type stands for a Java hash set or map gets settled with its first caller, since encoding writes in Java's iteration order.
+- `OptionalInt` is `Option<i32>`, and a codec's `encode` takes the value by reference, while getters and `map`'s functions return owned values (a getter clones where Java would share).
+
 ## Where Java and Rust disagree on numbers
 
 The golden tests caught each of these, or exist to catch them.

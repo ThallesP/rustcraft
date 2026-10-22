@@ -91,7 +91,10 @@ final class StaticSuite implements Suite {
         }
     }
 
-    /** Every public constant the class declares itself. */
+    /**
+     * Every public constant the class declares itself. A stream codec whose buffer and values have generators gets codec
+     * cases, and an IntFunction whose values can be encoded gets apply cases (see Codecs).
+     */
     static void writeFields(final Class<?> type, final GoldenWriter writer) throws IOException {
         Field[] fields = type.getFields();
         Arrays.sort(fields, Comparator.comparing(Field::getName));
@@ -101,14 +104,23 @@ final class StaticSuite implements Suite {
                 continue;
             }
 
+            Object value;
+            try {
+                value = field.get(null);
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException(e);
+            }
+            Codecs.Codec codec = Codecs.codecOf(field.getGenericType());
+            Class<?> function = Codecs.functionOf(field.getGenericType());
             if (Values.canEncode(field.getType())) {
-                try {
-                    writer.field(field.getName(), Values.encode(field.get(null), field.getType()));
-                } catch (IllegalAccessException e) {
-                    throw new IllegalStateException(e);
-                }
+                writer.field(field.getName(), Values.encode(value, field.getType()));
+            } else if (codec != null) {
+                Codecs.writeCodec(writer, field.getName(), new Values.Generator[0], leading -> value, codec, spec -> true);
+            } else if (function != null) {
+                Codecs.writeFunction(writer, field.getName(), new Values.Generator[0], leading -> value, function);
             } else {
-                writer.skipped(field.getName(), "no encoder for " + field.getType().getName());
+                String reason = Codecs.unsupportedReason(field.getGenericType());
+                writer.skipped(field.getName(), reason != null ? reason : "no encoder for " + field.getType().getName());
             }
         }
     }
@@ -122,7 +134,7 @@ final class StaticSuite implements Suite {
     }
 
     // A void method's result is null, and what it wrote to its arguments shows in `after`.
-    private static String unsupportedReason(final Method method) {
+    static String unsupportedReason(final Method method) {
         if (method.getReturnType() != void.class && !Values.canEncode(method.getReturnType())) {
             return "no encoder for " + method.getReturnType().getName();
         }

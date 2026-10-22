@@ -1,10 +1,15 @@
 //! net/minecraft/world/level/block/Rotation.java
 //!
-//! Not ported yet: the codecs (`CODEC`, `LEGACY_CODEC` and `STREAM_CODEC`) and `BY_ID`, which
-//! wait for DataFixerUpper and the network buffers, and `rotation()`, which waits for
-//! `OctahedralGroup`.
+//! Not ported yet: `CODEC` and `LEGACY_CODEC`, which wait for DataFixerUpper's codecs, and
+//! `rotation()`, which waits for `OctahedralGroup`.
 
+use std::sync::LazyLock;
+
+use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::net::minecraft::core::direction::{Axis, Direction};
+use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
+use crate::net::minecraft::network::codec::stream_codec::StaticStreamCodec;
+use crate::net::minecraft::util::by_id_map::{ByIdMap, OutOfBoundsStrategy};
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::util::util::Util;
 
@@ -17,7 +22,27 @@ pub enum Rotation {
     COUNTERCLOCKWISE_90,
 }
 
+// By index, wrapping around.
+static BY_ID: LazyLock<Box<dyn Fn(i32) -> Rotation + Send + Sync>> = LazyLock::new(|| {
+    Box::new(ByIdMap::continuous(
+        Rotation::get_index,
+        &Rotation::VALUES,
+        OutOfBoundsStrategy::WRAP,
+    ))
+});
+
+static STREAM_CODEC: StaticStreamCodec<ByteBuf, Rotation> = LazyLock::new(|| {
+    Box::new(ByteBufCodecs::id_mapper(
+        Rotation::BY_ID.as_ref(),
+        Rotation::get_index,
+    ))
+});
+
 impl Rotation {
+    /// Java's `IntFunction<Rotation>`.
+    pub const BY_ID: &'static LazyLock<Box<dyn Fn(i32) -> Rotation + Send + Sync>> = &BY_ID;
+    pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, Rotation> = &STREAM_CODEC;
+
     /// `values()`: the constants in declaration order, which is also their index and ordinal.
     pub const VALUES: [Rotation; 4] = [
         Rotation::NONE,
@@ -108,6 +133,11 @@ impl Rotation {
             Rotation::COUNTERCLOCKWISE_90 => "counterclockwise_90",
         }
     }
+
+    // The index each constant is made with, which is its ordinal.
+    fn get_index(&self) -> i32 {
+        *self as i32
+    }
 }
 
 #[cfg(test)]
@@ -129,11 +159,8 @@ mod tests {
         let golden = Golden::load("net.minecraft.world.level.block.Rotation");
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
         golden.pending("LEGACY_CODEC", "waits for DataFixerUpper's codecs");
-        golden.pending("STREAM_CODEC", "waits for the network buffers");
-        golden.pending(
-            "BY_ID",
-            "an IntFunction (ByIdMap), which comes with the stream codecs",
-        );
+        golden.check_codec("STREAM_CODEC", || Rotation::STREAM_CODEC);
+        golden.check_function("BY_ID", || Rotation::BY_ID.as_ref());
         golden.pending(
             "rotation()Lcom/mojang/math/OctahedralGroup;",
             "waits for OctahedralGroup",

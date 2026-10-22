@@ -1,14 +1,18 @@
 //! net/minecraft/world/phys/Vec3.java
 //!
-//! Not ported yet: the codecs (`CODEC`, `STREAM_CODEC`, `LP_STREAM_CODEC`), which wait for
-//! DataFixerUpper and the network buffers, and `toString`, which needs Java's
+//! Not ported yet: `CODEC`, which waits for DataFixerUpper's codecs, and `toString`, which needs Java's
 //! `Double.toString` (only logs and error messages print it).
 
+use std::sync::LazyLock;
+
+use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::double::Double;
 use crate::java::lang::math::Math;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::position::Position;
 use crate::net::minecraft::core::vec3i::Vec3i;
+use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec};
+use crate::net::minecraft::network::lp_vec3::LpVec3;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::phys::vec2::Vec2;
@@ -34,7 +38,31 @@ impl PartialEq for Vec3 {
 
 impl Eq for Vec3 {}
 
+// Three doubles.
+static STREAM_CODEC: StaticStreamCodec<ByteBuf, Vec3> = LazyLock::new(|| {
+    Box::new(stream_codec::of(
+        |output: &mut ByteBuf, value: &Vec3| {
+            output.write_double(value.x());
+            output.write_double(value.y());
+            output.write_double(value.z());
+        },
+        |input: &mut ByteBuf| {
+            Vec3::new(
+                input.read_double(),
+                input.read_double(),
+                input.read_double(),
+            )
+        },
+    ))
+});
+
+static LP_STREAM_CODEC: StaticStreamCodec<ByteBuf, Vec3> =
+    LazyLock::new(|| Box::new(stream_codec::of(LpVec3::write, LpVec3::read)));
+
 impl Vec3 {
+    pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, Vec3> = &STREAM_CODEC;
+    /// For movements, in as few bytes as `LpVec3` takes.
+    pub const LP_STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, Vec3> = &LP_STREAM_CODEC;
     pub const ZERO: Vec3 = Vec3::new(0.0, 0.0, 0.0);
     pub const X_AXIS: Vec3 = Vec3::new(1.0, 0.0, 0.0);
     pub const Y_AXIS: Vec3 = Vec3::new(0.0, 1.0, 0.0);
@@ -393,8 +421,8 @@ mod tests {
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.world.phys.Vec3");
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
-        golden.pending("STREAM_CODEC", "waits for the network buffers");
-        golden.pending("LP_STREAM_CODEC", "waits for the network buffers");
+        golden.check_codec("STREAM_CODEC", || Vec3::STREAM_CODEC);
+        golden.check_codec("LP_STREAM_CODEC", || Vec3::LP_STREAM_CODEC);
         golden.pending(
             "toString()Ljava/lang/String;",
             "needs Java's Double.toString, and only logs and error messages print it",

@@ -1,8 +1,8 @@
 //! net/minecraft/core/Direction.java
 //!
-//! Not ported yet: the codecs (`CODEC`, `VERTICAL_CODEC`, `STREAM_CODEC`, `LEGACY_ID_CODEC`,
-//! `LEGACY_ID_CODEC_2D`) and `BY_ID`, which wait for DataFixerUpper and the network buffers, and
-//! `orderedByNearest` and `getFacingAxis`, which wait for `Entity`.
+//! Not ported yet: the codecs (`CODEC`, `VERTICAL_CODEC`, `LEGACY_ID_CODEC`, `LEGACY_ID_CODEC_2D`),
+//! which wait for DataFixerUpper, and `orderedByNearest` and `getFacingAxis`, which wait for
+//! `Entity`.
 //!
 //! Each constant's constructor arguments, and the vectors it makes of its normal, live in a
 //! table indexed by the constant. `Axis`, `AxisDirection` and `Plane` are its nested enums.
@@ -11,8 +11,12 @@ use std::f64::consts::PI;
 use std::fmt;
 use std::sync::LazyLock;
 
+use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::math::Math;
 use crate::net::minecraft::core::vec3i::Vec3i;
+use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
+use crate::net::minecraft::network::codec::stream_codec::StaticStreamCodec;
+use crate::net::minecraft::util::by_id_map::{ByIdMap, OutOfBoundsStrategy};
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::util::util::Util;
@@ -102,7 +106,26 @@ static BY_2D_DATA: LazyLock<Vec<Direction>> = LazyLock::new(|| {
     directions
 });
 
+// By 3D data value, wrapping around.
+static BY_ID: LazyLock<Box<dyn Fn(i32) -> Direction + Send + Sync>> = LazyLock::new(|| {
+    Box::new(ByIdMap::continuous(
+        Direction::get_3d_data_value,
+        &Direction::VALUES,
+        OutOfBoundsStrategy::WRAP,
+    ))
+});
+
+static STREAM_CODEC: StaticStreamCodec<ByteBuf, Direction> = LazyLock::new(|| {
+    Box::new(ByteBufCodecs::id_mapper(
+        Direction::BY_ID.as_ref(),
+        Direction::get_3d_data_value,
+    ))
+});
+
 impl Direction {
+    /// Java's `IntFunction<Direction>`.
+    pub const BY_ID: &'static LazyLock<Box<dyn Fn(i32) -> Direction + Send + Sync>> = &BY_ID;
+    pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, Direction> = &STREAM_CODEC;
     /// `values()`: the constants in declaration order, which is also their ordinal.
     pub const VALUES: [Direction; 6] = [
         Direction::DOWN,
@@ -752,11 +775,8 @@ mod tests {
         ] {
             golden.pending(codec, "waits for DataFixerUpper's codecs");
         }
-        golden.pending("STREAM_CODEC", "waits for the network buffers");
-        golden.pending(
-            "BY_ID",
-            "an IntFunction (ByIdMap), which comes with the stream codecs",
-        );
+        golden.check_codec("STREAM_CODEC", || Direction::STREAM_CODEC);
+        golden.check_function("BY_ID", || Direction::BY_ID.as_ref());
         golden.pending(
             "orderedByNearest(Lnet/minecraft/world/entity/Entity;)[Lnet/minecraft/core/Direction;",
             "waits for Entity",

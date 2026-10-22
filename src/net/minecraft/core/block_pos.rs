@@ -1,7 +1,7 @@
 //! net/minecraft/core/BlockPos.java
 //!
-//! Not ported yet: the codecs (`CODEC` and `STREAM_CODEC`), which wait for DataFixerUpper and
-//! the network buffers; `betweenClosedStream(BoundingBox)`, which comes with `BoundingBox`; and
+//! Not ported yet: `CODEC`, which waits for DataFixerUpper's codecs;
+//! `betweenClosedStream(BoundingBox)`, which comes with `BoundingBox`; and
 //! `breadthFirstTraversal`, which only the server's blocks call (`SpongeBlock`,
 //! `CreakingHeartBlockEntity`).
 //!
@@ -13,12 +13,16 @@
 use std::fmt;
 use std::iter;
 use std::ops::Deref;
+use std::sync::LazyLock;
 
+use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::math::Math;
 use crate::net::minecraft::core::axis_cycle::AxisCycle;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::position::Position;
 use crate::net::minecraft::core::vec3i::Vec3i;
+use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec};
+use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::rotation::Rotation;
@@ -39,7 +43,16 @@ impl Deref for BlockPos {
     }
 }
 
+// Packed in a long, like `asLong`.
+static STREAM_CODEC: StaticStreamCodec<ByteBuf, BlockPos> = LazyLock::new(|| {
+    Box::new(stream_codec::of(
+        FriendlyByteBuf::write_block_pos_to,
+        FriendlyByteBuf::read_block_pos_from,
+    ))
+});
+
 impl BlockPos {
+    pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, BlockPos> = &STREAM_CODEC;
     pub const ZERO: BlockPos = BlockPos::new(0, 0, 0);
     pub const PACKED_HORIZONTAL_LENGTH: i32 =
         1 + Mth::log2(Mth::smallest_encompassing_power_of_two(30000000));
@@ -1106,7 +1119,7 @@ mod tests {
     fn block_pos_matches_vanilla() {
         let golden = Golden::load("net.minecraft.core.BlockPos");
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
-        golden.pending("STREAM_CODEC", "waits for the network buffers");
+        golden.check_codec("STREAM_CODEC", || BlockPos::STREAM_CODEC);
         golden.pending(
             "betweenClosedStream(Lnet/minecraft/world/level/levelgen/structure/BoundingBox;)Ljava/util/stream/Stream;",
             "waits for BoundingBox",

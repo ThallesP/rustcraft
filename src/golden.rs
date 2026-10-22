@@ -14,6 +14,7 @@ use std::sync::Once;
 
 use serde_json::Value;
 
+use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::levelgen::legacy_random_source::LegacyRandomSource;
 
@@ -202,7 +203,8 @@ impl<T: Encode + ?Sized> Encode for Box<T> {
     }
 }
 
-/// Tuples are JSON arrays, like the `[output, pose, normal, trustedNormals]` steps of a program.
+/// Tuples are JSON arrays, like the `[output, pose, normal, trustedNormals]` steps of a program,
+/// or a composite codec's fields.
 macro_rules! tuples {
     ($($type:ident $index:tt),*) => {
         impl<$($type: Encode),*> Encode for ($($type,)*) {
@@ -218,9 +220,20 @@ macro_rules! tuples {
                 }
             }
         }
+
+        impl<$($type: Decode),*> Decode for ($($type,)*) {
+            #[allow(non_snake_case)]
+            fn decode(value: &Value) -> Self {
+                match value.as_array().map(Vec::as_slice) {
+                    Some([$($type),*]) => ($($type::decode($type),)*),
+                    _ => panic!("expected a tuple, got {value}"),
+                }
+            }
+        }
     };
 }
 
+tuples!(A 0);
 tuples!(A 0, B 1);
 tuples!(A 0, B 1, C 2);
 tuples!(A 0, B 1, C 2, D 3);
@@ -228,6 +241,12 @@ tuples!(A 0, B 1, C 2, D 3, E 4);
 tuples!(A 0, B 1, C 2, D 3, E 4, F 5);
 tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
 tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10, L 11);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10, L 11, M 12);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10, L 11, M 12, N 13);
 
 /// An op of a hand-written suite's program that panicked, which ends the program. It matches
 /// any `{"throws": …}`, since Rust panics carry no Java exception class.
@@ -599,6 +618,66 @@ impl Golden {
     /// an argument (`Transformation.slerp` decomposes the other transformation).
     pub fn check_mut<Args>(&self, method: &str, function: impl CallMut<Args>) {
         self.check_cases(method, |case| function.call(&case.args));
+    }
+
+    /// Checks a stream codec, which `make` makes inside each checked call, so a panic making it
+    /// counts as the call's. `{name}.decode` cases read the buffer in `args[0]`, and
+    /// `{name}.encode` cases write `args[1]` into it, the buffer afterwards in `after[0]` either way.
+    pub fn check_codec<C: StreamCodec>(&self, name: &str, make: impl Fn() -> C)
+    where
+        C::Buffer: Decode + Encode + 'static,
+        C::Value: Decode + Encode + 'static,
+    {
+        self.check_mut(&format!("{name}.decode"), |input: &mut C::Buffer| {
+            make().decode(input)
+        });
+        self.check_mut(
+            &format!("{name}.encode"),
+            |output: &mut C::Buffer, value: &mut C::Value| make().encode(output, value),
+        );
+    }
+
+    /// Like `check_codec`, for a codec made from an argument (`ByteBufCodecs.stringUtf8`'s
+    /// maximum), which comes first in each case.
+    pub fn check_codec_from<A, C: StreamCodec>(&self, name: &str, make: impl Fn(A) -> C)
+    where
+        A: Decode + Encode + Clone + 'static,
+        C::Buffer: Decode + Encode + 'static,
+        C::Value: Decode + Encode + 'static,
+    {
+        self.check_mut(
+            &format!("{name}.decode"),
+            |argument: &mut A, input: &mut C::Buffer| make(argument.clone()).decode(input),
+        );
+        self.check_mut(
+            &format!("{name}.encode"),
+            |argument: &mut A, output: &mut C::Buffer, value: &mut C::Value| {
+                make(argument.clone()).encode(output, value)
+            },
+        );
+    }
+
+    /// Checks an `IntFunction`, which `make` makes inside each checked call: `{name}.apply`
+    /// cases apply it to the id in `args[0]`.
+    pub fn check_function<T, F>(&self, name: &str, make: impl Fn() -> F)
+    where
+        T: Encode + 'static,
+        F: Fn(i32) -> T,
+    {
+        self.check(&format!("{name}.apply"), |id: i32| make()(id));
+    }
+
+    /// Like `check_function`, for a function made from an argument, which comes first in each
+    /// case.
+    pub fn check_function_from<A, T, F>(&self, name: &str, make: impl Fn(A) -> F)
+    where
+        A: Decode,
+        T: Encode + 'static,
+        F: Fn(i32) -> T,
+    {
+        self.check(&format!("{name}.apply"), |argument: A, id: i32| {
+            make(argument)(id)
+        });
     }
 
     /// Accounts for a method or constant that isn't verified yet, with the reason.
