@@ -30,7 +30,7 @@ cargo run -p oracle-diff -- dir vanilla/26.3/oracle/walk target/oracle/walk
 
 Shared by every file below:
 
-- Floats are the lowercase hex of their raw IEEE 754 bits, as JSON strings: 8 digits for `float`/`f32`, 16 for `double`/`f64` (`1.0f` → `"3f800000"`). Comparisons are bit-exact, so `-0.0 != 0.0`. The one exception is that any NaN matches any NaN.
+- Floats are the lowercase hex of their raw IEEE 754 bits, as JSON strings: 8 digits for `float`/`f32`, 16 for `double`/`f64` (`1.0f` → `"3f800000"`). Comparisons are bit-exact, so `-0.0 != 0.0`. The one exception is that any NaN matches any NaN: NaN bits even differ between two runs of the golden generator, since the same operation can give NaNs of either sign depending on when HotSpot's JIT compiles it, which varies from run to run.
 - `int`, `long`, `short` and `byte` are JSON numbers. A `char` is a number (its UTF-16 code unit). A `boolean` is a JSON bool.
 - A `String` is a JSON string. Arrays and Java records are JSON arrays (records in component order). A `UUID` is `[most, least]`.
 - Files are JSON Lines: one object per line.
@@ -46,11 +46,17 @@ Static methods are covered by reflection. Every public static method whose param
 - for `Math.sin`/`cos`/`tan`/`log`/`pow`, which HotSpot computes with its own assembly, 20,000 more inputs each, spread over every path through it, since last-bit differences between libms are rare;
 - for `Mth.atan2`, angles that read every entry of its tables.
 
-A `RandomSource` argument is a `LegacyRandomSource` seeded with the argument. Its next `nextLong()` after the call is recorded in `after` (one slot per argument), so how many values a method draws must match too. Stateful classes get hand-written suites (`RandomSourceSuite`).
+A `RandomSource` argument is a `LegacyRandomSource` seeded with the argument. Its next `nextLong()` after the call is recorded in `after` (one slot per argument), so how many values a method draws must match too. Any other argument a method wrote to gets its state afterwards in its slot (`MatrixUtil.checkProperty` adds to its matrix's properties). An empty slot means the argument didn't change, or is the returned object, which `result` already shows; the port's argument must then equal what it was or the result.
+
+Stateful classes get hand-written suites, which run seeded random programs of ops and record a step per op. A program ends at the first op that throws, recorded as `{"throws": …}`:
+- `RandomSourceSuite`: each op's output, for every `RandomSource` implementation.
+- `PoseStackSuite`: `[output, pose, normal, trustedNormals]`, the op's output and the top pose afterwards (`trustedNormals` is read by reflection). One program in four draws any float, NaN included.
+- `Matrix4fStackSuite`: the current matrix after each op, for stack sizes from 1 to 20 and a few the constructor rejects.
+- `ProjectionSuite`: `[output, zNear, zFar, fov, width, height, invertY, matrixVersion]`. `getMatrix` needs `RenderSystem`'s device, so the suite installs a stand-in (a `GpuDevice` proxy that only answers `getDeviceInfo`) whose `isZZeroToOne` is the case's `args[0]`.
 
 Value types (JOML's so far) get an `InstanceSuite`, which covers the constructors and instance methods it lists the same way. A case calls one method on a fresh receiver, which is `args[0]`, and `after[0]` is the receiver's state afterwards. Any other argument the method wrote to gets its state in `after` too, unless it's the returned object, which `result` already shows. A constructor is an `<init>` case whose result is the new object. The port checks them with `golden.check_method`, which fails a case when vanilla recorded an `after` slot the check can't see.
 
-JOML objects are encoded as their fields in declaration order: a `Vector3f` is `[x, y, z]`, a `Quaternionf` `[x, y, z, w]`, a `Matrix3f` `[m00, m01, …, m22]`, and a `Matrix4f` `[m00, m01, …, m33, properties]`. The receivers and arguments come from JOML itself (identities, translations, rotations, scales, the camera's projections, products of those, and matrices built from components, NaN and infinities included), so their properties are ones the game's matrices can have.
+JOML objects are encoded as their fields in declaration order: a `Vector3f` is `[x, y, z]`, a `Vector4f` and a `Quaternionf` `[x, y, z, w]`, a `Matrix3f` `[m00, m01, …, m22]`, and a `Matrix4f` (or `Matrix4fStack`) `[m00, m01, …, m33, properties]`. An `Axis` is the name of its constant (`"XP"`). The receivers and arguments come from JOML itself (identities, translations, rotations, scales, the camera's projections, products of those, and matrices built from components, NaN and infinities included), so their properties are ones the game's matrices can have.
 
 ```json
 {"method":"translate(FFF)Lorg/joml/Matrix4f;","args":[["3f800000",…,"3f800000",30],"3f000000","c2700000","3f000000"],"after":[[…,26],null,null,null],"result":[…,26]}

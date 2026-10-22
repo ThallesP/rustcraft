@@ -10,7 +10,9 @@
 pub mod math;
 pub mod matrix3f;
 pub mod matrix4f;
+pub mod matrix4f_stack;
 pub mod matrix4fc;
 pub mod quaternionf;
 pub mod rounding_mode;
 pub mod vector3f;
+pub mod vector4f;

@@ -14,10 +14,12 @@ import org.joml.Quaternionf;
 import org.joml.Quaternionfc;
 import org.joml.Vector3f;
 import org.joml.Vector3fc;
+import org.joml.Vector4f;
+import org.joml.Vector4fc;
 
 /**
  * Arguments and receivers of JOML's types, encoded as their fields in declaration order: a Vector3f is
- * {@code [x, y, z]}, a Quaternionf {@code [x, y, z, w]}, a Matrix3f {@code [m00, m01, …, m22]}, and a Matrix4f
+ * {@code [x, y, z]}, a Vector4f and a Quaternionf {@code [x, y, z, w]}, a Matrix3f {@code [m00, m01, …, m22]}, and a Matrix4f
  * {@code [m00, m01, …, m33, properties]}. Matrix4f's methods take shortcuts based on its properties, so they're
  * part of its state, and every matrix here gets them from JOML itself, the way the game's do.
  */
@@ -35,6 +37,20 @@ final class JomlValues {
         JomlValues::randomVector3f,
         Vector3f::new,
         vector -> floats(vector.x(), vector.y(), vector.z())
+    );
+
+    static final Values.Generator VECTOR4F = new Joml<>(
+        List.of(
+            new Vector4f(), new Vector4f(0.0F), new Vector4f(1.0F, 1.0F, 1.0F, 1.0F), new Vector4f(0.0F, 0.0F, 1.0F, 0.0F),
+            new Vector4f(-1.0F, -1.0F, -1.0F, 1.0F), new Vector4f(1.0F, 1.0F, 1.0F, -1.0F), new Vector4f(0.5F, 0.25F, 1.0F, 0.5F),
+            new Vector4f(-0.0F, -0.0F, -0.0F, -0.0F), new Vector4f(-Float.MAX_VALUE, 0.0F, 0.0F, 0.0F), new Vector4f(0.5F, -60.0F, 0.5F, 1.0F),
+            new Vector4f(1.0E-20F, -1.0E-20F, 1.0E-20F, 1.0E-20F), new Vector4f(1.0E20F, 1.0E20F, -1.0E20F, 1.0E20F),
+            new Vector4f(Float.MIN_VALUE, 0.0F, 0.0F, 1.0F), new Vector4f(Float.POSITIVE_INFINITY, 1.0F, 0.0F, 1.0F),
+            new Vector4f(Float.NaN, 0.0F, 1.0F, 1.0F)
+        ),
+        JomlValues::randomVector4f,
+        Vector4f::new,
+        vector -> floats(vector.x(), vector.y(), vector.z(), vector.w())
     );
 
     static final Values.Generator QUATERNIONF = new Joml<>(
@@ -113,6 +129,9 @@ final class JomlValues {
         if (type == Vector3f.class || type == Vector3fc.class) {
             return VECTOR3F;
         }
+        if (type == Vector4f.class || type == Vector4fc.class) {
+            return VECTOR4F;
+        }
         if (type == Quaternionf.class || type == Quaternionfc.class) {
             return QUATERNIONF;
         }
@@ -132,6 +151,7 @@ final class JomlValues {
     static JsonElement encode(final Object value) {
         return switch (value) {
             case Vector3fc vector -> VECTOR3F.encode(vector);
+            case Vector4fc vector -> VECTOR4F.encode(vector);
             case Quaternionfc quaternion -> QUATERNIONF.encode(quaternion);
             case Matrix3fc matrix -> MATRIX3F.encode(matrix);
             case Matrix4fc matrix -> MATRIX4F.encode(matrix);
@@ -214,6 +234,18 @@ final class JomlValues {
             case 0 -> new Vector3f(component(random), component(random), component(random));
             case 1 -> new Vector3f(random.nextFloat() * 2.0F - 1.0F, random.nextFloat() * 2.0F - 1.0F, random.nextFloat() * 2.0F - 1.0F).normalize();
             default -> new Vector3f((Float)Values.FLOATS.random(random), (Float)Values.FLOATS.random(random), (Float)Values.FLOATS.random(random));
+        };
+    }
+
+    // Colours, clip-space points like the frustum's corners, and anything else.
+    private static Vector4f randomVector4f(final Random random) {
+        return switch (random.nextInt(3)) {
+            case 0 -> new Vector4f(random.nextFloat(), random.nextFloat(), random.nextFloat(), random.nextFloat());
+            case 1 -> new Vector4f(component(random), component(random), component(random), random.nextBoolean() ? 1.0F : component(random));
+            default -> new Vector4f(
+                (Float)Values.FLOATS.random(random), (Float)Values.FLOATS.random(random), (Float)Values.FLOATS.random(random),
+                (Float)Values.FLOATS.random(random)
+            );
         };
     }
 

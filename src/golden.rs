@@ -29,6 +29,7 @@ pub trait Decode: Sized {
 pub trait Encode {
     fn encode(&self) -> Value;
 
+    /// Never panics: a value of another shape just doesn't match.
     fn matches(&self, expected: &Value) -> bool {
         self.encode() == *expected
     }
@@ -69,7 +70,11 @@ macro_rules! floats {
             }
 
             fn matches(&self, expected: &Value) -> bool {
-                let expected = <$type>::decode(expected);
+                let bits = expected.as_str().filter(|hex| hex.len() == $digits);
+                let Some(expected) = bits.and_then(|hex| <$bits>::from_str_radix(hex, 16).ok()) else {
+                    return false;
+                };
+                let expected = <$type>::from_bits(expected);
                 (self.is_nan() && expected.is_nan()) || self.to_bits() == expected.to_bits()
             }
         }
@@ -130,6 +135,58 @@ impl Encode for () {
     }
 }
 
+/// Lets hand-written suites mix outputs of different types, e.g. one step per op of a program.
+impl<T: Encode + ?Sized> Encode for Box<T> {
+    fn encode(&self) -> Value {
+        (**self).encode()
+    }
+
+    fn matches(&self, expected: &Value) -> bool {
+        (**self).matches(expected)
+    }
+}
+
+/// Tuples are JSON arrays, like the `[output, pose, normal, trustedNormals]` steps of a program.
+macro_rules! tuples {
+    ($($type:ident $index:tt),*) => {
+        impl<$($type: Encode),*> Encode for ($($type,)*) {
+            fn encode(&self) -> Value {
+                Value::from(vec![$(self.$index.encode()),*])
+            }
+
+            #[allow(non_snake_case)]
+            fn matches(&self, expected: &Value) -> bool {
+                match expected.as_array().map(Vec::as_slice) {
+                    Some([$($type),*]) => true $(&& self.$index.matches($type))*,
+                    _ => false,
+                }
+            }
+        }
+    };
+}
+
+tuples!(A 0, B 1);
+tuples!(A 0, B 1, C 2);
+tuples!(A 0, B 1, C 2, D 3);
+tuples!(A 0, B 1, C 2, D 3, E 4);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
+tuples!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7);
+
+/// An op of a hand-written suite's program that panicked, which ends the program. It matches
+/// any `{"throws": …}`, since Rust panics carry no Java exception class.
+pub struct Thrown;
+
+impl Encode for Thrown {
+    fn encode(&self) -> Value {
+        serde_json::json!({ "throws": "panic" })
+    }
+
+    fn matches(&self, expected: &Value) -> bool {
+        expected.get("throws").is_some()
+    }
+}
+
 /// The elements of a fixed-size JSON array, e.g. an object encoded as its fields.
 pub fn elements<const N: usize>(value: &Value) -> &[Value; N] {
     value
@@ -156,8 +213,10 @@ macro_rules! encode_fields {
             }
 
             fn matches(&self, expected: &serde_json::Value) -> bool {
-                let [$($field),*] = $crate::golden::elements(expected);
-                true $(&& $crate::golden::Encode::matches(&self.$field, $field))*
+                match expected.as_array().map(Vec::as_slice) {
+                    Some([$($field),*]) => true $(&& $crate::golden::Encode::matches(&self.$field, $field))*,
+                    _ => false,
+                }
             }
         }
     };
@@ -398,7 +457,8 @@ impl Golden {
     }
 
     /// Checks an instance method on the receiver in `args[0]`, which must also end up in
-    /// vanilla's state afterwards (`after[0]`).
+    /// vanilla's state afterwards (`after[0]`). Also fits a static method that may write to its
+    /// first argument, like `MatrixUtil.checkProperty`.
     pub fn check_method<This, Args>(&self, method: &str, function: impl CallMethod<This, Args>)
     where
         This: Decode + Encode + 'static,
@@ -496,14 +556,28 @@ impl Golden {
             }
             let expected_after = case.after.as_deref().unwrap_or_default();
             for (index, actual) in after.iter().enumerate() {
-                match expected_after.get(index) {
+                match expected_after
+                    .get(index)
+                    .filter(|expected| !expected.is_null())
+                {
                     Some(expected) if actual.matches(expected) => {}
                     Some(expected) => problems.push(format!(
                         "after[{index}]: expected {}, got {}",
                         show(expected),
                         show(&actual.encode())
                     )),
-                    None => problems.push(format!("after[{index}]: vanilla recorded nothing")),
+                    // Vanilla leaves a slot empty when the argument didn't change, or when it's the
+                    // returned object, which the result already shows.
+                    None => {
+                        let unchanged = case.args.get(index).is_some_and(|arg| actual.matches(arg));
+                        let returned = matches!(&case.expected, Expected::Returns(result) if actual.matches(result));
+                        if !unchanged && !returned {
+                            problems.push(format!(
+                                "after[{index}]: vanilla left it as it was, got {}",
+                                show(&actual.encode())
+                            ));
+                        }
+                    }
                 }
             }
             for (index, expected) in expected_after.iter().enumerate().skip(after.len()) {

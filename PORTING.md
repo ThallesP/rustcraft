@@ -31,6 +31,10 @@ Libraries whose classes the game's math runs through are ported like the game, f
 ## Object model
 
 - Interfaces become traits. An interface-typed value becomes `Box<dyn Trait>` when owned and `&mut dyn Trait` when borrowed.
+- An interface implemented only by its own constants becomes an enum (`Axis::XP`; `Axis.of` would make another, but nothing calls it). Its overloads that differ by type get the type (`rotate_matrix4f`).
+- A class that extends another to add state holds its parent as a field and derefs to it: `Matrix4fStack` is the `Matrix4f` it derefs to, plus the saved copies.
+- A getter that hands out a mutable object (`PoseStack.last()`) becomes `last()` returning `&` and `last_mut()` returning `&mut`.
+- Global state that isn't ported yet becomes a parameter, like a back-reference: `Projection.getMatrix` asks `RenderSystem`'s device whether depth runs from 0 to 1, so `Projection::get_matrix` takes `z_zero_to_one`.
 - An interface that fills in another interface's methods with defaults (`BitRandomSource`) becomes functions that implementors forward to. A Rust trait can't provide another trait's methods.
 - A back-reference, i.e. an object pointing at its owner, becomes a parameter. `MarsagliaPolarGaussian` holds its `RandomSource` in Java; in Rust, the owner passes itself in.
 - Concurrency guards that `&mut self` already rules out, such as an AtomicLong checked by a ThreadingDetector, become plain fields.

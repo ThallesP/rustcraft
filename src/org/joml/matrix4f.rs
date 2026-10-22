@@ -16,6 +16,7 @@ use crate::org::joml::matrix4fc::{
 };
 use crate::org::joml::quaternionf::Quaternionf;
 use crate::org::joml::vector3f::Vector3f;
+use crate::org::joml::vector4f::Vector4f;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Matrix4f {
@@ -185,6 +186,12 @@ impl Matrix4f {
 
     pub fn properties(&self) -> i32 {
         self.properties
+    }
+
+    /// Sets the properties without checking them, so they can promise more than the matrix is.
+    pub fn assume(&mut self, properties: i32) -> &mut Self {
+        self.properties = properties;
+        self
     }
 
     getters!(
@@ -1944,6 +1951,26 @@ impl Matrix4f {
     ) -> &'a mut Vector3f {
         dest.set_xyz(x, y, z).mul_direction(self)
     }
+
+    pub fn transform<'a>(&self, v: &'a mut Vector4f) -> &'a mut Vector4f {
+        v.mul_matrix4f(self)
+    }
+
+    pub fn transform_into<'a>(&self, v: &Vector4f, dest: &'a mut Vector4f) -> &'a mut Vector4f {
+        v.mul_matrix4f_into(self, dest)
+    }
+
+    pub fn transform_transpose<'a>(&self, v: &'a mut Vector4f) -> &'a mut Vector4f {
+        v.mul_transpose(self)
+    }
+
+    pub fn transform_transpose_into<'a>(
+        &self,
+        v: &Vector4f,
+        dest: &'a mut Vector4f,
+    ) -> &'a mut Vector4f {
+        v.mul_transpose_into(self, dest)
+    }
 }
 
 // The rotation matrix of a quaternion, [rm00, rm01, rm02, rm10, … rm22], computed the way each of
@@ -1982,6 +2009,7 @@ mod tests {
     use crate::golden::{Golden, encode_fields};
     use crate::org::joml::quaternionf::Quaternionf;
     use crate::org::joml::vector3f::Vector3f;
+    use crate::org::joml::vector4f::Vector4f;
 
     encode_fields!(Matrix4f {
         m00: f32,
@@ -2012,6 +2040,10 @@ mod tests {
             Matrix4f::from_matrix4f(&mat)
         });
         golden.check_method("properties()I", |this: &mut Matrix4f| this.properties());
+        golden.check_method(
+            "assume(I)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, properties| *this.assume(properties),
+        );
         golden.check_method(
             "determineProperties()Lorg/joml/Matrix4f;",
             |this: &mut Matrix4f| *this.determine_properties(),
@@ -2300,6 +2332,26 @@ mod tests {
             "transformDirection(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             |this: &mut Matrix4f, x, y, z, mut dest: Vector3f| {
                 *this.transform_direction_xyz_into(x, y, z, &mut dest)
+            },
+        );
+        golden.check_method(
+            "transform(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            |this: &mut Matrix4f, mut v: Vector4f| *this.transform(&mut v),
+        );
+        golden.check_method(
+            "transform(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            |this: &mut Matrix4f, v: Vector4f, mut dest: Vector4f| {
+                *this.transform_into(&v, &mut dest)
+            },
+        );
+        golden.check_method(
+            "transformTranspose(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            |this: &mut Matrix4f, mut v: Vector4f| *this.transform_transpose(&mut v),
+        );
+        golden.check_method(
+            "transformTranspose(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            |this: &mut Matrix4f, v: Vector4f, mut dest: Vector4f| {
+                *this.transform_transpose_into(&v, &mut dest)
             },
         );
         golden.finish();

@@ -5,6 +5,7 @@
 // whatever their receiver (`fromSeed(&self)` reads as a constructor to clippy).
 #![allow(clippy::upper_case_acronyms, clippy::wrong_self_convention)]
 
+pub mod com;
 pub mod java;
 pub mod net;
 pub mod org;

@@ -1,5 +1,7 @@
 package rustcraft.golden;
 
+import com.mojang.math.Axis;
+import com.mojang.math.MatrixUtil;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +16,7 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.joml.Vector4f;
 
 /** Writes vanilla's answers for the Rust golden tests, one JSON Lines file per class. See TESTING.md. */
 public final class Golden {
@@ -127,6 +130,7 @@ public final class Golden {
             "perspective(FFFF)Lorg/joml/Matrix4f;", "perspective(FFFFZ)Lorg/joml/Matrix4f;",
             "perspective(FFFFLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;", "perspective(FFFFZLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
             "setOrtho(FFFFFF)Lorg/joml/Matrix4f;", "setOrtho(FFFFFFZ)Lorg/joml/Matrix4f;",
+            "assume(I)Lorg/joml/Matrix4f;",
             "transformProject(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "transformProject(Lorg/joml/Vector3fc;Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "transformProject(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
@@ -135,8 +139,32 @@ public final class Golden {
             "transformPosition(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "transformDirection(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "transformDirection(Lorg/joml/Vector3fc;Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
-            "transformDirection(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;"
-        )
+            "transformDirection(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
+            "transform(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;", "transform(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            "transformTranspose(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            "transformTranspose(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;"
+        ),
+        new InstanceSuite(
+            Vector4f.class,
+            "<init>()V", "<init>(F)V", "<init>(FFFF)V", "<init>(Lorg/joml/Vector3fc;F)V", "<init>(Lorg/joml/Vector4fc;)V",
+            "set(FFFF)Lorg/joml/Vector4f;", "set(Lorg/joml/Vector4fc;)Lorg/joml/Vector4f;", "set(Lorg/joml/Vector3fc;F)Lorg/joml/Vector4f;",
+            "mul(F)Lorg/joml/Vector4f;", "mul(FLorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            "mul(Lorg/joml/Vector4fc;)Lorg/joml/Vector4f;", "mul(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            "mul(Lorg/joml/Matrix4fc;)Lorg/joml/Vector4f;", "mul(Lorg/joml/Matrix4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            "mulTranspose(Lorg/joml/Matrix4fc;)Lorg/joml/Vector4f;", "mulTranspose(Lorg/joml/Matrix4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            "div(F)Lorg/joml/Vector4f;", "div(FLorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            "lerp(Lorg/joml/Vector4fc;F)Lorg/joml/Vector4f;", "lerp(Lorg/joml/Vector4fc;FLorg/joml/Vector4f;)Lorg/joml/Vector4f;"
+        ),
+        new Matrix4fStackSuite(),
+        new InstanceSuite(
+            Axis.class,
+            "rotation(F)Lorg/joml/Quaternionf;", "rotationDegrees(F)Lorg/joml/Quaternionf;",
+            "rotate(Lorg/joml/Matrix3f;F)Lorg/joml/Matrix3f;", "rotateDegrees(Lorg/joml/Matrix3f;F)Lorg/joml/Matrix3f;",
+            "rotate(Lorg/joml/Matrix4f;F)Lorg/joml/Matrix4f;", "rotateDegrees(Lorg/joml/Matrix4f;F)Lorg/joml/Matrix4f;"
+        ),
+        new StaticSuite(MatrixUtil.class),
+        new PoseStackSuite(),
+        new ProjectionSuite()
     );
 
     public static void main(final String[] args) throws IOException {

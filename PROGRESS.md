@@ -4,15 +4,40 @@ The loop's memory: newest entries first. Each step adds an entry and rewrites "N
 
 ## Next
 
-Milestone 1, JOML, part 2: Mojang's math on top of what's ported. Port `com.mojang.math.Axis`, `MatrixUtil` (`isPureTranslation`, `checkPropertyRaw`…), `com.mojang.blaze3d.vertex.PoseStack` with its `Pose`, and `Projection.getMatrix` (which swaps near and far), plus the JOML they still need: `Matrix4fStack` (`pushMatrix`/`popMatrix`) and `Vector4f`. `PoseStack` is stateful, so give it a hand-written suite of push/pop/translate/scale/rotate/mulPose programs like `RandomSourceSuite`, recording `last().pose()`, `normal()` and `trustedNormals` after each op. Add each JOML method to its `InstanceSuite` list as it's ported. After that: `Matrix3x2f`/`Matrix3x2fStack` for the GUI, and `FrustumIntersection` with Minecraft's `Frustum` for chunk culling.
+Milestone 1, JOML, part 3: the rest of the client's math that doesn't need milestone 2's types.
+- `Matrix3x2f` and `Matrix3x2fStack`, the GUI's pose (`GuiGraphicsExtractor`): the methods it calls in an `InstanceSuite`, and a stack suite like `Matrix4fStackSuite`.
+- `FrustumIntersection` (`set(Matrix4fc)`, `intersectAab`, `testPoint`), with goldens. Minecraft's `Frustum` needs `AABB` and `BoundingBox`, so it waits for milestone 2.
+- `Transformation`, with `GivensParameters` and `MatrixUtil.eigenvalueJacobi`/`svdDecompose`: block models build `BlockModelRotation`'s transformation with it, and `PoseStack.mulPose(Transformation)` takes one. Those two return void, which the static suite skips, so they need a hand-written suite recording their out-arguments.
 
-`log10` (one call site, `Options`) and `cbrt` (one, `ClientExplosionTracker`) are small HotSpot stubs; port them when those classes come. The client never calls `Math.exp`. ARGB's `Vector3f` methods now have golden cases (its `pending_rest` covers them) and can be ported whenever ARGB is next touched.
+`ProjectionType.applyLayeringTransform` and `VertexSorting` come with the renderer. `log10` (one call site, `Options`) and `cbrt` (one, `ClientExplosionTracker`) are small HotSpot stubs; port them when those classes come. The client never calls `Math.exp`. ARGB's `Vector3f` and `Vector4f` methods have golden cases (its `pending_rest` covers them) and can be ported whenever ARGB is next touched.
 
 ## Needs Thalles
 
 - **Licence of the code translated from OpenJDK and JOML.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22: Axis, MatrixUtil, PoseStack, Projection, Matrix4fStack and Vector4f
+
+- Ported Mojang's math on top of JOML, each checked against vanilla:
+  - `com.mojang.math.Axis`: all 6 methods (3,716 cases). It's an interface, but only its six constants implement it, so it's an enum. `Axis.of` makes another implementation, but nothing calls it, so it isn't ported.
+  - `MatrixUtil`: `mulComponentWise`, `checkPropertyRaw`, `checkProperty`, `isIdentity` and `isPureTranslation` (4,747 cases). `eigenvalueJacobi` and `svdDecompose` are pending: only `Transformation` calls them, and they return void, so the static suite skips them.
+  - `PoseStack` and its `Pose`, except `translate(Vec3)` and `mulPose(Transformation)`. New `PoseStackSuite`: 512 programs of 48 ops (push, pop, both translates, uniform, mirrored and other scales, the rotations, `mulPose`, `transformNormal`, `setIdentity`, `isEmpty`), recording `[output, pose, normal, trustedNormals]` after each op (23,396 steps). One program in four takes any float, NaN included.
+  - `Projection` and `ProjectionType`'s constants. `getMatrix` asks `RenderSystem`'s device whether depth runs from 0 to 1, so the port takes that as a parameter (PORTING.md). New `ProjectionSuite`, which installs a stand-in device (a `GpuDevice` proxy that only answers `getDeviceInfo`): 256 programs, half with each depth range, recording `getMatrix`'s matrix and every getter after each op (6,144 steps).
+- JOML:
+  - `Vector4f`: 5 constructors and 15 methods (13,264 cases).
+  - `Matrix4f`: `assume`, and `transform`/`transformTranspose` of a `Vector4f` with their `dest` overloads (3,925 cases), which the frustum needs.
+  - `Matrix4fStack` (`pushMatrix`, `popMatrix`, `clear`), which holds its `Matrix4f` and derefs to it. New `Matrix4fStackSuite`: 256 programs over stack sizes 1 to 20 and three the constructor rejects, recording the matrix after each op (10,426 steps).
+  - With `Vector4f` values, ARGB's 12 `Vector4f` methods have cases now (8,514), under its `pending_rest`.
+- Golden harness:
+  - A slot vanilla leaves empty in `after` means the argument didn't change, or is the returned object. The port's argument must then equal what it was or the result. Before, `check_method` couldn't check a static method writing to its argument (`checkProperty`), since vanilla only records a changed argument.
+  - `Encode::matches` never panics now: a value of another shape doesn't match. The rule above needs that, since it compares an argument with the result, like a matrix with `checkProperty`'s boolean.
+  - Rust: `Encode` for `Box<dyn Encode>` and tuples, and `Thrown` for an op that panicked, so a program's steps keep their types (any NaN still matches any NaN). Java: an `Op` record shared by the program suites.
+- Found:
+  - NaN bits in the golden files differ between two runs of the generator. Two runs in a row gave 39 differing lines in `Matrix3f` and a few in four other files, all of them NaN signs. With NaNs normalized, every line of the old golden files is identical to before.
+  - `PoseStack.Pose.mulPose` changes the matrix it's given: `MatrixUtil.checkProperty` adds the properties it works out to the matrix's. So `mul_pose` takes `&mut Matrix4f`.
+- Mutations (31, run once and not committed): 29 fail the goldens, and the other 2 are equivalent (an index past the stack's end panics anyway, and JOML's `fma` is `a * b + c`). One found a gap: no program changed only the FOV between two setups, so dropping the FOV comparison from `setupPerspective` passed. Setups now also repeat the previous one with one argument changed (578 times), and that mutation fails 40 of 256 programs.
+- Evidence: `cargo test --workspace` passes 52 tests, including 18 golden suites (12 before). fmt, clippy and the port check are clean.
 
 ### 2026-10-22: JOML's Math, Vector3f, Quaternionf, Matrix3f and Matrix4f
 

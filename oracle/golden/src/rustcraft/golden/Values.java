@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonPrimitive;
+import com.mojang.math.Axis;
 import java.lang.reflect.Array;
 import java.lang.reflect.RecordComponent;
 import java.util.List;
@@ -182,6 +183,18 @@ final class Values {
         }
     };
 
+    // Axis's six constants, by name. Axis.of isn't covered: nothing in the game calls it.
+    private static final Map<Axis, String> AXIS_NAMES = Map.of(
+        Axis.XN, "XN", Axis.XP, "XP", Axis.YN, "YN", Axis.YP, "YP", Axis.ZN, "ZN", Axis.ZP, "ZP"
+    );
+    private static final List<Object> AXIS_CONSTANTS = List.of(Axis.XN, Axis.XP, Axis.YN, Axis.YP, Axis.ZN, Axis.ZP);
+
+    static final Generator AXES = new Simple(
+        AXIS_CONSTANTS,
+        random -> AXIS_CONSTANTS.get(random.nextInt(AXIS_CONSTANTS.size())),
+        value -> new JsonPrimitive(AXIS_NAMES.get((Axis)value))
+    );
+
     private static final Map<Class<?>, Generator> GENERATORS = Map.ofEntries(
         Map.entry(int.class, INTS),
         Map.entry(Integer.class, INTS),
@@ -193,7 +206,8 @@ final class Values {
         Map.entry(char.class, CHARS),
         Map.entry(boolean.class, BOOLEANS),
         Map.entry(String.class, STRINGS),
-        Map.entry(RandomSource.class, RANDOM_SOURCES)
+        Map.entry(RandomSource.class, RANDOM_SOURCES),
+        Map.entry(Axis.class, AXES)
     );
 
     private static final List<Class<?>> BOXES = List.of(
