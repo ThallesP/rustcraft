@@ -35,18 +35,22 @@ def main():
 
     # Run inside vanilla/, since loading game classes makes log4j create logs/ in the working directory. Cases never
     # release the buffers Netty hands back (ByteBuf.readBytes), so its leak detector would only log noise. A compound's
-    # encoding has its HashMap's table length, which only reflection into java.util can read. Reading NBT wraps an
-    # IOException in a crash report, whose system details run `lshw` for the CPU, which takes a second each time, so
-    # the generator runs without a PATH to find it on (the details only go into the exception's message).
+    # encoding has its HashMap's table length, which only reflection into java.util can read.
+    #
+    # Reading NBT wraps an IOException in a crash report, whose system details (SystemReport) probe the hardware with
+    # OSHI each time: about a thousand files under /proc and /sys, and lshw, dmidecode, lspci and cpuid as processes,
+    # over 20 ms a report for the thousands of reports the NBT cases make. So the generator runs without OSHI's jar:
+    # making a SystemInfo throws NoClassDefFoundError, which SystemReport catches like any detail it can't get, and
+    # the details only go into the exception's message, which no golden records.
+    runtime_classpath = [classes_dir, *(path for path in classpath if not path.name.startswith("oshi-core-"))]
     output_dir = VERSION_DIR / "golden"
     shutil.rmtree(output_dir, ignore_errors=True)
     subprocess.run(
         [
-            jdk_bin / "java", "-Dio.netty.leakDetection.level=disabled", "--add-opens", "java.base/java.util=ALL-UNNAMED", "-cp", os.pathsep.join(map(str, [classes_dir, *classpath])),
+            jdk_bin / "java", "-Dio.netty.leakDetection.level=disabled", "--add-opens", "java.base/java.util=ALL-UNNAMED", "-cp", os.pathsep.join(map(str, runtime_classpath)),
             "rustcraft.golden.Golden", output_dir,
         ],
         cwd=VERSION_DIR,
-        env={**os.environ, "PATH": ""},
         check=True,
     )
 

@@ -30,6 +30,7 @@ import java.util.function.Function;
 import java.util.function.ToIntFunction;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import net.minecraft.SystemReport;
 import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -101,6 +102,8 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix3f;
 import org.joml.Matrix3x2f;
@@ -945,6 +948,10 @@ public final class Golden {
 
     /** Writes every suite's file to the directory in the first argument, or only the suites the other arguments name. */
     public static void main(final String[] args) throws IOException {
+        // Reading NBT wraps an IOException in a crash report, whose system details warn, with a stack trace, about each
+        // one they can't get: the game's version, which the generator doesn't set, and the hardware, since
+        // tools/golden.py runs it without OSHI. That's four stack traces for each of thousands of reports.
+        Configurator.setLevel(SystemReport.class.getName(), Level.ERROR);
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
