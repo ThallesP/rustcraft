@@ -30,4 +30,9 @@ jobs:
       - run: python3 tools/hotspot_port_check.py
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # tests/opengl_frame.rs renders under xvfb-run. On this runner's Xvfb (xserver 21.1.12, Mesa 25.2) SDL finds no
+      # GLX visual for the attributes vanilla asks for, though GLX itself works; SDL's EGL path, on the same Xvfb and
+      # llvmpipe, does. The oracle machine's Xvfb takes GLX, like vanilla.
       - run: cargo test --workspace
+        env:
+          SDL_VIDEO_FORCE_EGL: "1"
