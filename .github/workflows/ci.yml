@@ -14,10 +14,14 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      # Mojang's jars and libraries and the JDK only change with the pinned version.
+      # Mojang's jars and libraries and the JDK only change with the pinned version. Goldens are
+      # regenerated every run, so they stay out of the cache.
       - uses: actions/cache@v6
         with:
-          path: vanilla
+          path: |
+            vanilla
+            !vanilla/*/golden
+            !vanilla/*/golden-classes
           key: vanilla-${{ hashFiles('MINECRAFT_VERSION', 'tools/setup_vanilla.py') }}
       - run: python3 tools/setup_vanilla.py --skip-decompile
       - run: python3 tools/golden.py
