@@ -1,6 +1,8 @@
 //! com/mojang/renderpearl/backend/api/BackendRenderPipeline.java
 //!
-//! Only `CreateInfo` so far: what the frontend hands a backend to make a pipeline from.
+//! A pipeline a backend compiled, which its render passes cast back to their own through
+//! `as_any`, and `CreateInfo`, what the frontend hands a backend to make one from. Java's
+//! `Pending` is the compile's second half, which `GpuDevice::compile_pipeline` runs at once.
 
 use crate::com::mojang::renderpearl::api::gpu_format::GpuFormat;
 use crate::com::mojang::renderpearl::api::pipeline::bind_group_layout::UniformDescription;
@@ -9,6 +11,13 @@ use crate::com::mojang::renderpearl::api::pipeline::depth_stencil_state::DepthSt
 use crate::com::mojang::renderpearl::api::pipeline::polygon_mode::PolygonMode;
 use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use crate::com::mojang::renderpearl::backend::api::spv_module::SpvModule;
+use std::any::Any;
+
+pub trait BackendRenderPipeline: Any {
+    fn is_closed(&self) -> bool;
+
+    fn as_any(&self) -> &dyn Any;
+}
 
 /// `BackendRenderPipeline.CreateInfo`.
 pub struct CreateInfo {

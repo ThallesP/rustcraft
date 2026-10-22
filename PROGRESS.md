@@ -35,12 +35,10 @@ Codecs still pending, for when their callers come: `ByteBufCodecs.either` and `F
 
 ### render
 
-Gate 2's first draw. The shaders' text is vanilla's; next the device runs it:
-- `GlPipelineRecompiler.compileShader` and `compileProgram`, `GlProgram` (uniform blocks and samplers bound by the create info's bindings), `GlRenderPipeline` and `VertexArray` (the `ARB_vertex_attrib_binding` path llvmpipe takes), samplers, and buffers with `BufferStorage`'s immutable storage and mapping. Compiling every pipeline on llvmpipe, as `ShaderManager.reload` does at startup, is the first check.
-- The frontend between the game and the backend: `FrontendGpuDevice`, `FrontendCommandEncoder` and `FrontendRenderPass` (their checks, uniforms bound by name, `draw`/`drawIndexed`), `RenderSystem`'s device and dynamic uniforms (`DynamicTransforms`, `Projection`, `Globals`), then a `pipeline/gui` fill drawn through it.
-- The first pixel-for-pixel frame needs a vanilla screenshot of a state the port can draw that soon: add a scenario step to the oracle client that shoots a GUI-only frame (a screen of fills, or the loading overlay), extra output that doesn't change what vanilla draws.
-
-Then this brief's third part, not started: a `ResourceManager` over `vanilla/<version>/resources/` (the vanilla pack's layers, `listResources`, which `ShaderManager::load_configs` would then use), `NativeImage.read` (stb's PNG decoding, checked against vanilla's pixels), and the block atlas: `SpriteLoader` and `Stitcher`, whose layout a golden suite running vanilla's `Stitcher` on the same sprites records.
+Gate 2's block faces, after this step's first draws:
+- Resources: `VanillaPackResources` over `vanilla/<version>/resources/`, `MultiPackResourceManager`, `Resource`, and `ShaderManager::load_configs` through `listResources`.
+- `NativeImage.read` through LWJGL's own stb build, checked against vanilla's decoded pixels for every block texture; then the block atlas (`SpriteLoader`, `SpriteContents`, `Stitcher`, `TextureAtlas`, `MipmapGenerator`), its layout and every mip level's pixels against vanilla's.
+- Block models (`BlockModel`, `BlockStateModelLoader`, `FaceBakery`) down to baked quads, against vanilla's bake.
 
 ### world
 
@@ -62,6 +60,16 @@ Left from the registry, for when what needs them comes:
 - **Licence of the code translated from OpenJDK, JOML, Netty and Guava.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception, `string::from_bytes_utf8` from the JDK's `String.java`, and `src/java/util/hash_map.rs`, `src/java/util/hash_set.rs` and `src/java/io/` from `HashMap.java`, `HashSet.java`, `DataInput.java`, `DataOutput.java`, `DataInputStream.java`, `DataOutputStream.java` and `ModifiedUtf.java`, the same, which keep their notices. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. `src/io/netty/` comes from Netty, Apache 2.0, and keeps its notice, saying the files were translated and changed; a distribution has to carry the licence too. So does `src/com/google/`, from Guava, also Apache 2.0. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too, and Apache 2.0 code isn't compatible with GPLv2 only. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22 (render): Draws on the OpenGL device
+
+- Ported and checked:
+  - The pipeline's last step to the driver: `GlPipelineRecompiler.compileShader` and `compileProgram`, `GlShaderModule`, `GlProgram` (linking, and `setupBindGroupLayouts`: each `_uniform_00_NN` block, sampler and texel buffer at the next binding or texture unit, the push constant block first), `Uniform`, `VertexArray` (both `Separate`, `ARB_vertex_attrib_binding`'s, which llvmpipe takes, and `Emulated`), `GlRenderPipeline` (its fixed-function state and `bind`), `GlDevice.compilePipeline`, and `PipelineBuilder.compilePipeline`, which makes the `FrontendRenderPipeline`.
+  - Drawing: `RenderPass` (pipelines, uniforms by name, vertex and index buffers, scissors, `draw` and `drawIndexed`), `FrontendRenderPass` with its checks, `RenderPassBackend`, `GlRenderPass`, `GlCommandEncoder`'s `executeDraw` and `setupDraw` (binding only what changed), `writeToBuffer` and `writeToTexture`, and `FrontendCommandEncoder`'s checks on render passes and writes. `GpuBufferSlice`, `IndexType`, `GpuSampler` with `AddressMode` and `FilterMode`, `GlSampler`, `TextureViewAndSampler`, `ScissorState`, and `BufferStorage`'s immutable and mutable buffers with data.
+  - What the game feeds a draw: `BufferBuilder`, `ByteBufferBuilder`, `VertexConsumer` and `MeshData`'s draw state; `Std140Builder` and `Std140SizeCalculator`; `DynamicGpuData.Transform` and `TerrainTransform`'s blocks; `ProjectionMatrixBuffer`; `RenderSystem.AutoStorageIndexBuffer` (the shared quad, line and sequential indices); `ARGB.toABGR` and `fromABGR` (goldens).
+  - `src/main.rs`: `--compile-pipelines`, and `--fill` with `--gui-scale`, which draws `GuiGraphicsExtractor.fill`s through `pipeline/gui` the way `GuiRenderer` does.
+- Matched: all 192 pipelines `ShaderManager.reload` compiles at startup compile and link on llvmpipe (1.3 s, debug build). GUI fills come out pixel for pixel as their known pixels (TESTING.md): 320x240 at GUI scale 2, overlapping fills in order, corners given the other way round, and a transparent fill that the fragment shader discards. On GLX locally and on SDL's EGL path like CI.
+- Evidence: `cargo test --workspace` passes, the OpenGL tests (5) in 2.3 s. fmt, clippy and the port check are clean.
 
 ### 2026-10-22 (world): Paletted containers, the bit storages and palettes a chunk section keeps its blocks and biomes in
 

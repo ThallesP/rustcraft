@@ -944,6 +944,15 @@ impl Matrix4f {
         self.translation(offset.x, offset.y, offset.z)
     }
 
+    /// The floats `get(ByteBuffer)` writes: the columns in order, which is how uniform blocks
+    /// hold a `mat4`.
+    pub fn get_column_major(&self) -> [f32; 16] {
+        [
+            self.m00, self.m01, self.m02, self.m03, self.m10, self.m11, self.m12, self.m13,
+            self.m20, self.m21, self.m22, self.m23, self.m30, self.m31, self.m32, self.m33,
+        ]
+    }
+
     pub fn get_translation<'a>(&self, dest: &'a mut Vector3f) -> &'a mut Vector3f {
         dest.x = self.m30;
         dest.y = self.m31;

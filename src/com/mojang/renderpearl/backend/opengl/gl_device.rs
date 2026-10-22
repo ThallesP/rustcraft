@@ -6,9 +6,11 @@
 //! the same order, which makes its `DeviceInfo`: those flags decide the shaders' text (see
 //! `GlslCompiler` and `GlPipelineRecompiler`).
 //!
-//! Functions come from `SDL_GL_GetProcAddress`. Not ported yet: samplers, pipelines (compiling
-//! the recompiler's GLSL), queries, fences, and the vertex array, buffer storage, direct state
-//! access and debug label helpers, whose extensions are still turned on as vanilla turns them on.
+//! Functions come from `SDL_GL_GetProcAddress`. Pipelines compile the recompiler's GLSL into a
+//! program with the vertex array `VertexArray.createSource` picks. Not ported yet: queries,
+//! fences, and the direct state access and debug label helpers, whose extensions are still turned
+//! on as vanilla turns them on. `sacrificeShaderToOpenGlAndAmd` only does anything on AMD's
+//! driver, so it isn't ported.
 
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::GpuBuffer;
 use crate::com::mojang::renderpearl::api::commands::command_encoder::CommandEncoder;
@@ -20,8 +22,14 @@ use crate::com::mojang::renderpearl::api::device::gpu_debug_options::GpuDebugOpt
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::device::gpu_surface::GpuSurface;
 use crate::com::mojang::renderpearl::api::gpu_format::GpuFormat;
+use crate::com::mojang::renderpearl::api::textures::address_mode::AddressMode;
+use crate::com::mojang::renderpearl::api::textures::filter_mode::FilterMode;
+use crate::com::mojang::renderpearl::api::textures::gpu_sampler::GpuSampler;
 use crate::com::mojang::renderpearl::api::textures::gpu_texture::{self, GpuTexture};
 use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
+use crate::com::mojang::renderpearl::backend::api::backend_render_pipeline::{
+    BackendRenderPipeline, CreateInfo,
+};
 use crate::com::mojang::renderpearl::backend::opengl::gl_backend::GlBackend;
 use crate::com::mojang::renderpearl::backend::opengl::gl_buffer::GlBuffer;
 use crate::com::mojang::renderpearl::backend::opengl::gl_command_encoder::GlCommandEncoder;
@@ -29,8 +37,11 @@ use crate::com::mojang::renderpearl::backend::opengl::gl_const::GlConst;
 use crate::com::mojang::renderpearl::backend::opengl::gl_debug::GlDebug;
 use crate::com::mojang::renderpearl::backend::opengl::gl_heuristics::GlHeuristics;
 use crate::com::mojang::renderpearl::backend::opengl::gl_pipeline_recompiler::GlPipelineRecompiler;
+use crate::com::mojang::renderpearl::backend::opengl::gl_render_pipeline::GlRenderPipeline;
+use crate::com::mojang::renderpearl::backend::opengl::gl_sampler::GlSampler;
 use crate::com::mojang::renderpearl::backend::opengl::gl_surface::GlSurface;
 use crate::com::mojang::renderpearl::backend::opengl::gl_texture::GlTexture;
+use crate::com::mojang::renderpearl::backend::opengl::vertex_array::VertexArray;
 use crate::java::util::hash_set::HashSet;
 use crate::org::lwjgl::sdl::sdl_error::SDLError;
 use crate::org::lwjgl::sdl::sdl_video::{SDLVideo, SdlGlContext, SdlWindow};
@@ -48,6 +59,10 @@ pub struct GlDevice {
     device_info: DeviceInfo,
     recompiler: GlPipelineRecompiler,
     current_window: Cell<SdlWindow>,
+    /// `BufferStorage.create`'s choice: immutable storage.
+    immutable_buffers: bool,
+    /// `VertexArray.createSource`'s choice: `Separate`.
+    separate_vertex_arrays: bool,
 }
 
 /// The device's flags for hidden windows: hidden, a utility window, not focusable.
@@ -188,7 +203,9 @@ impl GlDevice {
         }
         // BufferStorage.create.
         let force_mutable = heuristics.could_be_intel_gen7() || heuristics.is_nvidia();
-        if !force_mutable && has("GL_ARB_buffer_storage") && GlDevice::USE_GL_ARB_BUFFER_STORAGE {
+        let immutable_buffers =
+            !force_mutable && has("GL_ARB_buffer_storage") && GlDevice::USE_GL_ARB_BUFFER_STORAGE;
+        if immutable_buffers {
             enable("GL_ARB_buffer_storage");
         }
         // DirectStateAccess.create.
@@ -199,7 +216,9 @@ impl GlDevice {
             enable("GL_ARB_direct_state_access");
         }
         // VertexArray.createSource.
-        if has("GL_ARB_vertex_attrib_binding") && GlDevice::USE_GL_ARB_VERTEX_ATTRIB_BINDING {
+        let separate_vertex_arrays =
+            has("GL_ARB_vertex_attrib_binding") && GlDevice::USE_GL_ARB_VERTEX_ATTRIB_BINDING;
+        if separate_vertex_arrays {
             enable("GL_ARB_vertex_attrib_binding");
         }
 
@@ -235,7 +254,7 @@ impl GlDevice {
         );
         let gl = Rc::new(gl);
         Ok(GlDevice {
-            encoder: GlCommandEncoder::new(gl.clone()),
+            encoder: GlCommandEncoder::new(gl.clone(), device_info.features, device_info.limits),
             recompiler: GlPipelineRecompiler::new(device_info.features.shader_draw_parameters),
             gl,
             initial_window_handle,
@@ -243,6 +262,8 @@ impl GlDevice {
             heuristics,
             device_info,
             current_window: Cell::new(initial_window_handle),
+            immutable_buffers,
+            separate_vertex_arrays,
         })
     }
 
@@ -390,7 +411,79 @@ impl GpuDevice for GlDevice {
     }
 
     fn create_buffer(&self, _label: Option<&str>, usage: i32, size: i64) -> Rc<dyn GpuBuffer> {
-        Rc::new(GlBuffer::new(self.gl.clone(), usage, size))
+        Rc::new(GlBuffer::new(
+            self.gl.clone(),
+            self.immutable_buffers,
+            usage,
+            size,
+            None,
+        ))
+    }
+
+    fn create_buffer_with_data(
+        &self,
+        _label: Option<&str>,
+        usage: i32,
+        data: &[u8],
+    ) -> Rc<dyn GpuBuffer> {
+        Rc::new(GlBuffer::new(
+            self.gl.clone(),
+            self.immutable_buffers,
+            usage,
+            data.len() as i64,
+            Some(data),
+        ))
+    }
+
+    /// Panics where Java's frontend throws `IllegalArgumentException` for an anisotropy the
+    /// device can't do.
+    fn create_sampler(
+        &self,
+        address_mode_u: AddressMode,
+        address_mode_v: AddressMode,
+        min_filter: FilterMode,
+        mag_filter: FilterMode,
+        max_anisotropy: i32,
+        max_lod: Option<f64>,
+    ) -> Rc<dyn GpuSampler> {
+        let max_supported_anisotropy = self.device_info.limits.max_anisotropy;
+        assert!(
+            max_anisotropy >= 1 && max_anisotropy <= max_supported_anisotropy,
+            "maxAnisotropy out of range; must be >= 1 and <= {max_supported_anisotropy}, but was {max_anisotropy}"
+        );
+        Rc::new(GlSampler::new(
+            self.gl.clone(),
+            address_mode_u,
+            address_mode_v,
+            min_filter,
+            mag_filter,
+            max_anisotropy,
+            max_lod,
+        ))
+    }
+
+    /// Java logs why the shaders didn't decompile, compile or link, and returns null.
+    fn compile_pipeline(&self, create_info: &CreateInfo) -> Option<Rc<dyn BackendRenderPipeline>> {
+        let decompiled_shaders = match self.recompiler.decompile_shaders(create_info) {
+            Ok(decompiled_shaders) => decompiled_shaders,
+            Err(error) => {
+                eprintln!(
+                    "Couldn't compile program for pipeline {}: {error}",
+                    create_info.name
+                );
+                return None;
+            }
+        };
+        let gl_program =
+            self.recompiler
+                .compile_program(&self.gl, create_info, &decompiled_shaders)?;
+        let vertex_array = VertexArray::new(&self.gl, self.separate_vertex_arrays, create_info);
+        Some(Rc::new(GlRenderPipeline::new(
+            self.gl.clone(),
+            create_info,
+            gl_program,
+            vertex_array,
+        )))
     }
 
     fn get_device_info(&self) -> &DeviceInfo {

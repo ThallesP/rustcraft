@@ -7,15 +7,21 @@
 //! variable and descriptor is renamed after its location or binding, so the text doesn't depend on
 //! the GLSL's names. That text is what the backend hands `glShaderSource`.
 //!
-//! Not ported yet: `compileShader` and `compileProgram`, which come with the GL device; and the
-//! debug mode's names, since vanilla never runs it.
+//! `compileShader` and `compileProgram` hand that text to the driver and link the program; Java
+//! logs their errors with its logger, which is `eprintln!` until the game's logging comes. Not
+//! ported: the debug mode's names, since vanilla never runs it, and the debug labels.
 
 use crate::com::mojang::renderpearl::api::pipeline::shader_type::ShaderType;
 use crate::com::mojang::renderpearl::backend::api::backend_render_pipeline::{CreateInfo, Shader};
+use crate::com::mojang::renderpearl::backend::opengl::gl_const::GlConst;
+use crate::com::mojang::renderpearl::backend::opengl::gl_program::GlProgram;
+use crate::com::mojang::renderpearl::backend::opengl::gl_shader_module::GlShaderModule;
 use crate::com::mojang::renderpearl::frontend::shaders::spv_util::SpvUtil;
 use crate::com::mojang::renderpearl::util::shader_compile_exception::ShaderCompileException;
 use crate::org::lwjgl::util::spvc::spvc::*;
+use glow::HasContext;
 use std::ffi::CStr;
+use std::rc::Rc;
 
 pub struct GlPipelineRecompiler {
     draw_parameters_supported: bool,
@@ -229,6 +235,72 @@ impl GlPipelineRecompiler {
             }
         }
         Ok(())
+    }
+
+    /// Java logs the compile's info log and returns `INVALID_SHADER`, which is `None`.
+    fn compile_shader(
+        gl: &Rc<glow::Context>,
+        name: &str,
+        shader_type: ShaderType,
+        source: &str,
+    ) -> Option<GlShaderModule> {
+        // SAFETY: the device's context is current.
+        unsafe {
+            let shader_id = gl
+                .create_shader(GlConst::to_gl(shader_type))
+                .expect("glCreateShader");
+            gl.shader_source(shader_id, source);
+            gl.compile_shader(shader_id);
+            if !gl.get_shader_compile_status(shader_id) {
+                let log_info = gl.get_shader_info_log(shader_id);
+                eprintln!(
+                    "Couldn't compile {} shader for pipeline ({name}): {}",
+                    shader_type.get_name(),
+                    log_info.trim()
+                );
+                gl.delete_shader(shader_id);
+                return None;
+            }
+            Some(GlShaderModule::new(
+                gl.clone(),
+                shader_id,
+                name,
+                shader_type,
+            ))
+        }
+    }
+
+    /// The linked program, its uniforms set up, or `None` where Java logs why and returns null.
+    /// The shader modules are deleted once it's linked (Java's `finally`).
+    pub fn compile_program(
+        &self,
+        gl: &Rc<glow::Context>,
+        create_info: &CreateInfo,
+        decompiled_shaders: &[String],
+    ) -> Option<GlProgram> {
+        let mut compiled_shaders = Vec::new();
+        for (shader, decompiled_source) in create_info.shaders.iter().zip(decompiled_shaders) {
+            let compiled_shader = GlPipelineRecompiler::compile_shader(
+                gl,
+                &shader.name,
+                shader.module.shader_type(),
+                decompiled_source,
+            )?;
+            compiled_shaders.push(compiled_shader);
+        }
+        match GlProgram::link(gl, &compiled_shaders, &create_info.name) {
+            Ok(mut compiled) => {
+                compiled.setup_bind_group_layouts(&create_info.uniforms);
+                Some(compiled)
+            }
+            Err(error) => {
+                eprintln!(
+                    "Couldn't compile program for pipeline {}: {error}",
+                    create_info.name
+                );
+                None
+            }
+        }
     }
 
     /// Each shader's GLSL, in the create info's order. Java logs the error and returns null.

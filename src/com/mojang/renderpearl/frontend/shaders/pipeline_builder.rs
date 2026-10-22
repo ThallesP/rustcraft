@@ -6,13 +6,16 @@
 //! stage first. That's the SPIR-V the backends translate. `uniformBindings`, Java's
 //! `Object2IntOpenHashMap`, is a `Vec` of names whose index is their binding.
 //!
-//! Not ported yet: `compilePipeline`, which runs this on an executor and hands the result to the
-//! backend device, and makes the `FrontendRenderPipeline`; it comes with the device.
+//! `compilePipeline` runs this, hands the create info to the backend device and makes the
+//! `FrontendRenderPipeline`. Java runs it on an executor and the backend's second half later
+//! (`Pending`); the port runs both at once, which gives the same pipeline.
 
+use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::gpu_format::{ComponentType, GpuFormat};
 use crate::com::mojang::renderpearl::api::pipeline::bind_group_layout::{
     BindGroupLayout, UniformDescription,
 };
+use crate::com::mojang::renderpearl::api::pipeline::polygon_mode::PolygonMode;
 use crate::com::mojang::renderpearl::api::pipeline::render_pipeline::RenderPipeline;
 use crate::com::mojang::renderpearl::api::pipeline::shader_source::ShaderSource;
 use crate::com::mojang::renderpearl::api::pipeline::shader_type::ShaderType;
@@ -21,10 +24,12 @@ use crate::com::mojang::renderpearl::backend::api::backend_render_pipeline::{
     AttribBinding, CreateInfo, Shader, VertexBuffer,
 };
 use crate::com::mojang::renderpearl::backend::api::spv_module::{InterfaceVariable, SpvModule};
+use crate::com::mojang::renderpearl::frontend::frontend_render_pipeline::FrontendRenderPipeline;
 use crate::com::mojang::renderpearl::frontend::shaders::glsl_compiler::GlslCompiler;
 use crate::com::mojang::renderpearl::frontend::shaders::spv_util::SpvUtil;
 use crate::com::mojang::renderpearl::util::shader_compile_exception::ShaderCompileException;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 pub struct PipelineBuilder {
     compiler: GlslCompiler,
@@ -61,6 +66,53 @@ impl PipelineBuilder {
 
     pub fn compiler(&self) -> &GlslCompiler {
         &self.compiler
+    }
+
+    /// The pipeline compiled on `backend_device`, or `None` where Java logs why and completes with
+    /// `Pending.NULL` or a null pipeline.
+    pub fn compile_pipeline(
+        &self,
+        pipeline: &RenderPipeline,
+        shader_source: &dyn ShaderSource,
+        backend_device: &dyn GpuDevice,
+    ) -> Option<Rc<FrontendRenderPipeline>> {
+        if pipeline.get_polygon_mode() == PolygonMode::WIREFRAME
+            && !backend_device
+                .get_device_info()
+                .features
+                .wireframe_fill_mode
+        {
+            eprintln!(
+                "Pipeline {} uses {:?} fill mode, not supported by device",
+                pipeline.get_location(),
+                PolygonMode::WIREFRAME
+            );
+            return None;
+        }
+        let mut uniform_bindings = Vec::new();
+        let create_info =
+            match self.generate_backend_create_info(pipeline, shader_source, &mut uniform_bindings)
+            {
+                Ok(create_info) => create_info,
+                Err(error) => {
+                    eprintln!(
+                        "Couldn't compile pipeline {}: {error}",
+                        pipeline.get_location()
+                    );
+                    return None;
+                }
+            };
+        let backend_pipeline = backend_device.compile_pipeline(&create_info)?;
+        Some(Rc::new(FrontendRenderPipeline {
+            name: pipeline.get_location().to_string(),
+            backend_render_pipeline: backend_pipeline,
+            vertex_formats: *pipeline.get_vertex_format_bindings(),
+            uniform_indices: uniform_bindings,
+            uniforms: BindGroupLayout::flatten_uniforms(pipeline.get_bind_group_layouts()),
+            color_target_states: pipeline.get_color_target_states().to_vec(),
+            wants_depth_texture: pipeline.wants_depth_texture(),
+            push_constant_size: pipeline.push_constant_size(),
+        }))
     }
 
     /// Java logs the error and returns null, closing the modules it made.

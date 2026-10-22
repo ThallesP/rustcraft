@@ -87,6 +87,16 @@ fn makes_the_device_vanilla_makes() {
     );
 }
 
+/// Every pipeline `ShaderManager.reload` compiles at startup, the required ones and the
+/// optional ones, compiles and links on llvmpipe from the GLSL vanilla hands the driver.
+#[test]
+fn compiles_every_pipeline_vanilla_compiles() {
+    let Some(output) = run(&["--compile-pipelines"]) else {
+        return;
+    };
+    assert_eq!(output.trim(), "compiled 192 of 192 pipelines");
+}
+
 fn read_png(path: &Path) -> (u32, u32, png::ColorType, Vec<u8>) {
     let decoder = png::Decoder::new(std::io::BufReader::new(
         std::fs::File::open(path).expect("the screenshot exists"),
@@ -164,6 +174,50 @@ fn reads_back_frames_the_right_way_up() {
             } else {
                 [0, 0, 0, 255]
             };
+            assert_eq!(pixels[start..start + 4], expected, "pixel ({x}, {y})");
+        }
+    }
+}
+
+/// GUI fills drawn through `pipeline/gui`, whose pixels are known exactly: each fill's corners
+/// are whole pixels at the GUI scale, so every pixel's center is inside a fill or outside it, never
+/// on an edge, and its opaque color blends (`TRANSLUCENT`) to itself, since alpha 1 keeps none of
+/// what was there. A fill with alpha 0 is discarded by the fragment shader and leaves nothing.
+/// Later fills cover earlier ones, as `GuiRenderer` draws them in order.
+#[test]
+fn draws_gui_fills_exactly() {
+    // In GUI pixels at scale 2, as GuiGraphicsExtractor.fill takes them: the second fill's corners
+    // come the other way round, which fill swaps, and the last is transparent over everything.
+    let fills = [
+        (10, 20, 60, 45, 0xFFFF0000u32),
+        (80, 80, 30, 30, 0xFF00FF00),
+        (100, 5, 150, 15, 0xFF2040C0),
+        (0, 0, 160, 120, 0x00FFFFFF),
+    ];
+    let fill_arguments: Vec<String> = fills
+        .iter()
+        .map(|(x0, y0, x1, y1, color)| format!("{x0},{y0},{x1},{y1},{color:08X}"))
+        .collect();
+    let mut arguments = vec!["--size", "320x240", "--gui-scale", "2"];
+    for fill in &fill_arguments {
+        arguments.push("--fill");
+        arguments.push(fill);
+    }
+    let Some((width, height, _, pixels)) = screenshot("gui-fills.png", &arguments) else {
+        return;
+    };
+    assert_eq!((width, height), (320, 240));
+    for y in 0..height as i32 {
+        for x in 0..width as i32 {
+            let mut expected = [0, 0, 0, 255];
+            for &(x0, y0, x1, y1, color) in &fills {
+                let inside = (x0.min(x1) * 2..x0.max(x1) * 2).contains(&x)
+                    && (y0.min(y1) * 2..y0.max(y1) * 2).contains(&y);
+                if inside && color >> 24 != 0 {
+                    expected = [(color >> 16) as u8, (color >> 8) as u8, color as u8, 255];
+                }
+            }
+            let start = ((x + y * width as i32) * 4) as usize;
             assert_eq!(pixels[start..start + 4], expected, "pixel ({x}, {y})");
         }
     }

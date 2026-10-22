@@ -8,34 +8,55 @@
 //! cleared like `GameRenderer.render` clears it at the start of each frame:
 //!
 //!   rustcraft --device-info                     prints the device as vanilla logs it
+//!   rustcraft --compile-pipelines               compiles every pipeline `ShaderManager` does,
+//!                                               printing how many linked
 //!   rustcraft --screenshot out.png [--size WxH] [--clear AARRGGBB] [--quadrant AARRGGBB]
+//!             [--gui-scale N] [--fill X0,Y0,X1,Y1,AARRGGBB]...
 //!                                               renders a frame offscreen and writes it as a PNG
-//!   rustcraft --window [--size WxH] [--clear AARRGGBB] [--frames N]
+//!   rustcraft --window [--size WxH] [--clear AARRGGBB] [--frames N] [--fill ...]...
 //!                                               shows frames in a window until it's closed
 //!
 //! The clear color defaults to `GuiRenderState.clearColorOverride`'s, transparent black; the
 //! loading overlay's is its brand background, `FFEF323D`. `--quadrant` clears the lower left
 //! quarter in GL's coordinates through a render pass's area, which shows the readback's
-//! orientation.
+//! orientation. Each `--fill` is `GuiGraphicsExtractor.fill` in GUI pixels, drawn in order
+//! through `pipeline/gui` the way `GuiRenderer` draws, at the GUI scale (default 1).
 
 use rustcraft::com::mojang::blaze3d::pipeline::main_target::MainTarget;
 use rustcraft::com::mojang::blaze3d::platform::window::Window;
 use rustcraft::com::mojang::blaze3d::systems::render_system::RenderSystem;
+use rustcraft::com::mojang::blaze3d::vertex::buffer_builder::BufferBuilder;
+use rustcraft::com::mojang::blaze3d::vertex::byte_buffer_builder::ByteBufferBuilder;
+use rustcraft::com::mojang::blaze3d::vertex::default_vertex_format::DefaultVertexFormat;
+use rustcraft::com::mojang::blaze3d::vertex::vertex_consumer::VertexConsumer;
+use rustcraft::com::mojang::renderpearl::api::buffers::gpu_buffer;
 use rustcraft::com::mojang::renderpearl::api::commands::render_pass::RenderArea;
 use rustcraft::com::mojang::renderpearl::api::commands::render_pass_descriptor::RenderPassDescriptor;
 use rustcraft::com::mojang::renderpearl::api::device::gpu_backend::GpuBackend;
 use rustcraft::com::mojang::renderpearl::api::device::gpu_debug_options::GpuDebugOptions;
 use rustcraft::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
+use rustcraft::com::mojang::renderpearl::api::pipeline::compiled_render_pipeline::CompiledRenderPipeline;
+use rustcraft::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use rustcraft::com::mojang::renderpearl::backend::opengl::gl_backend::GlBackend;
+use rustcraft::com::mojang::renderpearl::frontend::shaders::pipeline_builder::PipelineBuilder;
+use rustcraft::net::minecraft::client::renderer::dynamic_gpu_data::Transform;
+use rustcraft::net::minecraft::client::renderer::projection::Projection;
+use rustcraft::net::minecraft::client::renderer::projection_matrix_buffer::ProjectionMatrixBuffer;
+use rustcraft::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
+use rustcraft::net::minecraft::client::renderer::shader_manager::{Configs, ShaderManager};
 use rustcraft::net::minecraft::client::screenshot::Screenshot;
 use rustcraft::net::minecraft::util::argb::ARGB;
+use rustcraft::org::joml::matrix3x2f::Matrix3x2f;
+use rustcraft::org::joml::matrix4f::Matrix4f;
 use rustcraft::org::joml::vector4f::Vector4f;
 use rustcraft::org::lwjgl::sdl::sdl_events::{SDLEvents, SdlEvent};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::rc::Rc;
 
 enum Mode {
     DeviceInfo,
+    CompilePipelines,
     Screenshot(PathBuf),
     Window,
 }
@@ -47,6 +68,33 @@ struct Arguments {
     clear_color: Vector4f,
     quadrant_color: Option<Vector4f>,
     frames: Option<u32>,
+    gui_scale: i32,
+    fills: Vec<Fill>,
+}
+
+/// `GuiGraphicsExtractor.fill`'s arguments.
+#[derive(Clone, Copy)]
+struct Fill {
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    color: i32,
+}
+
+fn parse_fill(text: &str) -> Result<Fill, String> {
+    let parts: Vec<&str> = text.split(',').collect();
+    let [x0, y0, x1, y1, color] = parts[..] else {
+        return Err(format!("--fill takes X0,Y0,X1,Y1,AARRGGBB, not {text}"));
+    };
+    let coordinate = |part: &str| part.parse().map_err(|_| format!("bad coordinate {part}"));
+    Ok(Fill {
+        x0: coordinate(x0)?,
+        y0: coordinate(y0)?,
+        x1: coordinate(x1)?,
+        y1: coordinate(y1)?,
+        color: u32::from_str_radix(color, 16).map_err(|_| format!("bad color {color}"))? as i32,
+    })
 }
 
 fn parse_arguments() -> Result<Arguments, String> {
@@ -55,11 +103,14 @@ fn parse_arguments() -> Result<Arguments, String> {
     let mut clear_color = Vector4f::from_scalar(0.0);
     let mut quadrant_color = None;
     let mut frames = None;
+    let mut gui_scale = 1;
+    let mut fills = Vec::new();
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().ok_or(format!("{argument} needs a value"));
         match argument.as_str() {
             "--device-info" => mode = Some(Mode::DeviceInfo),
+            "--compile-pipelines" => mode = Some(Mode::CompilePipelines),
             "--screenshot" => mode = Some(Mode::Screenshot(PathBuf::from(value()?))),
             "--window" => mode = Some(Mode::Window),
             "--size" => {
@@ -82,6 +133,12 @@ fn parse_arguments() -> Result<Arguments, String> {
                     .map_err(|_| format!("--quadrant takes AARRGGBB, not {hex}"))?;
                 quadrant_color = Some(ARGB::vector4f_from_argb32(argb as i32));
             }
+            "--gui-scale" => {
+                gui_scale = value()?
+                    .parse()
+                    .map_err(|_| "--gui-scale takes a scale".to_owned())?
+            }
+            "--fill" => fills.push(parse_fill(&value()?)?),
             "--frames" => {
                 frames = Some(
                     value()?
@@ -93,13 +150,149 @@ fn parse_arguments() -> Result<Arguments, String> {
         }
     }
     Ok(Arguments {
-        mode: mode.ok_or("pass --device-info, --screenshot PATH or --window")?,
+        mode: mode
+            .ok_or("pass --device-info, --compile-pipelines, --screenshot PATH or --window")?,
         width,
         height,
         clear_color,
         quadrant_color,
         frames,
+        gui_scale,
+        fills,
     })
+}
+
+/// What the GUI draws with: `pipeline/gui` compiled like `ShaderManager` compiles it, its
+/// projection's buffer and the shared quad indices.
+struct Gui {
+    pipeline: Rc<dyn CompiledRenderPipeline>,
+    projection: Projection,
+    projection_matrix_buffer: ProjectionMatrixBuffer,
+    quad_indices: rustcraft::com::mojang::blaze3d::systems::render_system::AutoStorageIndexBuffer,
+}
+
+/// The vanilla pack's shaders, and a pipeline builder for the device.
+fn shaders(device: &dyn GpuDevice) -> Result<(Configs, PipelineBuilder), String> {
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("vanilla")
+        .join(include_str!("../MINECRAFT_VERSION").trim())
+        .join("resources");
+    let configs = ShaderManager::load_configs(&pack)
+        .map_err(|error| format!("can't load the shaders from {}: {error}", pack.display()))?;
+    let info = device.get_device_info();
+    let builder = PipelineBuilder::new(
+        info.is_z_zero_to_one,
+        info.features.shader_draw_parameters,
+        info.hints_and_workarounds.is_explicit_depth_required,
+    );
+    Ok((configs, builder))
+}
+
+impl Gui {
+    fn new(device: &dyn GpuDevice) -> Result<Gui, String> {
+        let (configs, builder) = shaders(device)?;
+        let pipeline: Rc<dyn CompiledRenderPipeline> = builder
+            .compile_pipeline(&RenderPipelines::get().GUI, &configs, device)
+            .ok_or("pipeline/gui didn't compile")?;
+        Ok(Gui {
+            pipeline,
+            projection: Projection::new(),
+            projection_matrix_buffer: ProjectionMatrixBuffer::new(device, "gui"),
+            quad_indices: RenderSystem::sequential_buffer(PrimitiveTopology::QUADS),
+        })
+    }
+
+    /// `GuiRenderer.draw` for fills: their quads in one mesh, drawn in one render pass over the
+    /// main target with the GUI's orthographic projection and model view.
+    fn draw(
+        &mut self,
+        device: &dyn GpuDevice,
+        main_target: &MainTarget,
+        gui_scale: i32,
+        fills: &[Fill],
+    ) {
+        if fills.is_empty() {
+            return;
+        }
+        let mut byte_buffer = ByteBufferBuilder::new(786432);
+        let mut builder = BufferBuilder::new(
+            &mut byte_buffer,
+            PrimitiveTopology::QUADS,
+            DefaultVertexFormat::POSITION_COLOR,
+        );
+        let pose = Matrix3x2f::new();
+        for fill in fills {
+            // GuiGraphicsExtractor.fill puts the larger coordinates first.
+            let (x0, x1) = if fill.x0 < fill.x1 {
+                (fill.x1, fill.x0)
+            } else {
+                (fill.x0, fill.x1)
+            };
+            let (y0, y1) = if fill.y0 < fill.y1 {
+                (fill.y1, fill.y0)
+            } else {
+                (fill.y0, fill.y1)
+            };
+            // ColoredRectangleRenderState.buildVertices.
+            builder
+                .add_vertex_with_2d_pose(&pose, x0 as f32, y0 as f32)
+                .set_color(fill.color);
+            builder
+                .add_vertex_with_2d_pose(&pose, x0 as f32, y1 as f32)
+                .set_color(fill.color);
+            builder
+                .add_vertex_with_2d_pose(&pose, x1 as f32, y1 as f32)
+                .set_color(fill.color);
+            builder
+                .add_vertex_with_2d_pose(&pose, x1 as f32, y0 as f32)
+                .set_color(fill.color);
+        }
+        let mesh = builder.build_or_throw();
+        let draw_state = *mesh.draw_state();
+        let vertex_buffer = device.create_buffer_with_data(
+            Some("GUI vertices"),
+            gpu_buffer::USAGE_VERTEX,
+            mesh.vertex_buffer(),
+        );
+        let index_buffer = self.quad_indices.get_buffer(device, draw_state.index_count);
+
+        self.projection.setup_ortho(
+            1000.0,
+            11000.0,
+            main_target.width as f32 / gui_scale as f32,
+            main_target.height as f32 / gui_scale as f32,
+            true,
+        );
+        let projection = self
+            .projection_matrix_buffer
+            .get_buffer(device, &mut self.projection);
+        let mut model_view = Matrix4f::new();
+        model_view.set_translation(0.0, 0.0, -11000.0);
+        let transform = Transform::of_model_view(model_view).write();
+        let dynamic_transforms = device.create_buffer_with_data(
+            Some("Dynamic Transforms UBO"),
+            gpu_buffer::USAGE_UNIFORM,
+            &transform,
+        );
+
+        let encoder = device.create_command_encoder();
+        let mut pass = encoder.create_render_pass_with(
+            "GUI",
+            main_target
+                .get_color_texture_view()
+                .expect("the main target has color"),
+            None,
+            main_target.get_depth_texture_view(),
+            None,
+        );
+        // RenderSystem.bindDefaultUniforms: only the projection is set so far.
+        pass.set_uniform_slice("Projection", &projection);
+        pass.set_uniform_buffer("DynamicTransforms", &dynamic_transforms);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_vertex_buffer(0, Some(&gpu_buffer::slice(&vertex_buffer)));
+        pass.set_index_buffer(&index_buffer, self.quad_indices.index_type());
+        pass.draw_indexed(draw_state.index_count, 1, 0, 0, 0);
+    }
 }
 
 /// `GameRenderer.render`'s first command: the main target cleared to the clear color, depth to 0
@@ -107,9 +300,10 @@ fn parse_arguments() -> Result<Arguments, String> {
 fn render_frame(
     device: &dyn GpuDevice,
     main_target: &MainTarget,
-    clear_color: &Vector4f,
-    quadrant_color: Option<Vector4f>,
+    arguments: &Arguments,
+    gui: &mut Option<Gui>,
 ) {
+    let clear_color = &arguments.clear_color;
     let encoder = device.create_command_encoder();
     encoder.clear_color_and_depth_textures(
         &**main_target
@@ -132,7 +326,11 @@ fn render_frame(
     );
     drop(pass);
 
-    if let Some(quadrant_color) = quadrant_color {
+    if let Some(gui) = gui {
+        gui.draw(device, main_target, arguments.gui_scale, &arguments.fills);
+    }
+
+    if let Some(quadrant_color) = arguments.quadrant_color {
         let view = main_target
             .get_color_texture_view()
             .expect("the main target has color");
@@ -161,6 +359,11 @@ fn run(arguments: Arguments) -> Result<(), String> {
         .create_device(&debug_options)
         .map_err(|error| error.to_string())?;
     let info = device.get_device_info();
+    let mut gui = if arguments.fills.is_empty() {
+        None
+    } else {
+        Some(Gui::new(&*device)?)
+    };
 
     match arguments.mode {
         Mode::DeviceInfo => {
@@ -183,17 +386,28 @@ fn run(arguments: Arguments) -> Result<(), String> {
                 info.hints_and_workarounds.is_explicit_depth_required
             );
         }
-        Mode::Screenshot(path) => {
+        Mode::CompilePipelines => {
+            // ShaderManager.reload compiles the required pipelines, then the optional ones.
+            let (configs, builder) = shaders(&*device)?;
+            let pipelines: Vec<_> = RenderPipelines::required_pipelines()
+                .into_iter()
+                .chain(RenderPipelines::optional_pipelines())
+                .collect();
+            let mut compiled = 0;
+            for pipeline in &pipelines {
+                match builder.compile_pipeline(pipeline, &configs, &*device) {
+                    Some(_) => compiled += 1,
+                    None => println!("failed: {}", pipeline.get_location()),
+                }
+            }
+            println!("compiled {compiled} of {} pipelines", pipelines.len());
+        }
+        Mode::Screenshot(ref path) => {
             let main_target = MainTarget::new(&*device, arguments.width, arguments.height);
-            render_frame(
-                &*device,
-                &main_target,
-                &arguments.clear_color,
-                arguments.quadrant_color,
-            );
+            render_frame(&*device, &main_target, &arguments, &mut gui);
             let image = Screenshot::take_screenshot(&*device, &main_target, 1);
             image
-                .write_to_file(&path)
+                .write_to_file(path)
                 .map_err(|error| format!("can't write {}: {error}", path.display()))?;
             println!(
                 "wrote {} ({}x{})",
@@ -221,12 +435,7 @@ fn run(arguments: Arguments) -> Result<(), String> {
                         break 'frames;
                     }
                 }
-                render_frame(
-                    &*device,
-                    &main_target,
-                    &arguments.clear_color,
-                    arguments.quadrant_color,
-                );
+                render_frame(&*device, &main_target, &arguments, &mut gui);
                 surface.blit_from_texture(
                     main_target
                         .get_color_texture_view()

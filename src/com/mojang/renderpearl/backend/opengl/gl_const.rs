@@ -1,13 +1,137 @@
 //! com/mojang/renderpearl/backend/opengl/GlConst.java
 //!
-//! Only the format and shader stage mappings so far.
+//! Java's `toGl` overloads take their type's name (`to_gl_compare_op`), except `ShaderType`'s,
+//! which came first. `CUBEMAP_TARGETS` and the buffer usage flags come with cubemaps and mapped
+//! buffers.
 
 use crate::com::mojang::renderpearl::api::gpu_format::GpuFormat::{self, *};
+use crate::com::mojang::renderpearl::api::pipeline::blend_factor::BlendFactor;
+use crate::com::mojang::renderpearl::api::pipeline::blend_op::BlendOp;
+use crate::com::mojang::renderpearl::api::pipeline::compare_op::CompareOp;
+use crate::com::mojang::renderpearl::api::pipeline::index_type::IndexType;
+use crate::com::mojang::renderpearl::api::pipeline::polygon_mode::PolygonMode;
+use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use crate::com::mojang::renderpearl::api::pipeline::shader_type::ShaderType;
+use crate::com::mojang::renderpearl::api::textures::address_mode::AddressMode;
 
 pub struct GlConst;
 
 impl GlConst {
+    pub fn to_gl_compare_op(compare_op: CompareOp) -> u32 {
+        match compare_op {
+            CompareOp::ALWAYS_PASS => 519,
+            CompareOp::LESS_THAN => 513,
+            CompareOp::LESS_THAN_OR_EQUAL => 515,
+            CompareOp::EQUAL => 514,
+            CompareOp::NOT_EQUAL => 517,
+            CompareOp::GREATER_THAN_OR_EQUAL => 518,
+            CompareOp::GREATER_THAN => 516,
+            CompareOp::NEVER_PASS => 512,
+        }
+    }
+
+    pub fn to_gl_polygon_mode(polygon_mode: PolygonMode) -> u32 {
+        match polygon_mode {
+            PolygonMode::WIREFRAME => 6913,
+            PolygonMode::FILL => 6914,
+        }
+    }
+
+    pub fn to_gl_blend_factor(blend_factor: BlendFactor) -> u32 {
+        match blend_factor {
+            BlendFactor::CONSTANT_ALPHA => 32771,
+            BlendFactor::CONSTANT_COLOR => 32769,
+            BlendFactor::DST_ALPHA => 772,
+            BlendFactor::DST_COLOR => 774,
+            BlendFactor::ONE => 1,
+            BlendFactor::ONE_MINUS_CONSTANT_ALPHA => 32772,
+            BlendFactor::ONE_MINUS_CONSTANT_COLOR => 32770,
+            BlendFactor::ONE_MINUS_DST_ALPHA => 773,
+            BlendFactor::ONE_MINUS_DST_COLOR => 775,
+            BlendFactor::ONE_MINUS_SRC_ALPHA => 771,
+            BlendFactor::ONE_MINUS_SRC_COLOR => 769,
+            BlendFactor::SRC_ALPHA => 770,
+            BlendFactor::SRC_ALPHA_SATURATE => 776,
+            BlendFactor::SRC_COLOR => 768,
+            BlendFactor::ZERO => 0,
+        }
+    }
+
+    pub fn to_gl_blend_op(blend_op: BlendOp) -> u32 {
+        match blend_op {
+            BlendOp::ADD => 32774,
+            BlendOp::SUBTRACT => 32778,
+            BlendOp::REVERSE_SUBTRACT => 32779,
+            BlendOp::MIN => 32775,
+            BlendOp::MAX => 32776,
+        }
+    }
+
+    /// Quads are drawn as indexed triangles, so they're triangles to GL, like lines.
+    pub fn to_gl_primitive_topology(primitive_topology: PrimitiveTopology) -> u32 {
+        match primitive_topology {
+            PrimitiveTopology::LINES => 4,
+            PrimitiveTopology::DEBUG_LINES => 1,
+            PrimitiveTopology::DEBUG_LINE_STRIP => 3,
+            PrimitiveTopology::POINTS => 0,
+            PrimitiveTopology::TRIANGLES => 4,
+            PrimitiveTopology::TRIANGLE_STRIP => 5,
+            PrimitiveTopology::TRIANGLE_FAN => 6,
+            PrimitiveTopology::QUADS => 4,
+        }
+    }
+
+    pub fn to_gl_index_type(index_type: IndexType) -> u32 {
+        match index_type {
+            IndexType::SHORT => 5123,
+            IndexType::INT => 5125,
+        }
+    }
+
+    pub fn to_gl_address_mode(address_mode: AddressMode) -> u32 {
+        match address_mode {
+            AddressMode::REPEAT => 10497,
+            AddressMode::CLAMP_TO_EDGE => 33071,
+        }
+    }
+
+    pub fn gl_format_channel_count(gl_external_id: u32) -> i32 {
+        match gl_external_id {
+            36249 | 6408 => 4,
+            36248 | 6407 => 3,
+            33320 | 33319 => 2,
+            36244 | 6403 => 1,
+            _ => 0,
+        }
+    }
+
+    pub fn is_gl_format_integer(gl_external_id: u32) -> bool {
+        matches!(gl_external_id, 36249 | 36248 | 33320 | 36244)
+    }
+
+    pub fn is_format_normalized(gpu_format: GpuFormat) -> bool {
+        matches!(
+            gpu_format,
+            R8_UNORM
+                | R8_SNORM
+                | R16_UNORM
+                | R16_SNORM
+                | RG8_UNORM
+                | RG8_SNORM
+                | RG16_UNORM
+                | RG16_SNORM
+                | RGB8_UNORM
+                | RGB8_SNORM
+                | RGB16_UNORM
+                | RGB16_SNORM
+                | RGBA8_UNORM
+                | RGBA8_SNORM
+                | RGBA16_UNORM
+                | RGB10A2_UNORM
+                | D16_UNORM
+        )
+    }
+
     /// The texture's internal format, or 0 for one GL textures can't have.
     pub fn to_gl_internal_id(gpu_format: GpuFormat) -> u32 {
         match gpu_format {

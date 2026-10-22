@@ -9,6 +9,26 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
+/// `NativeImage.Format`: the channels a pixel has. Only their count so far.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    RGBA,
+    RGB,
+    LUMINANCE_ALPHA,
+    LUMINANCE,
+}
+
+impl Format {
+    pub fn components(self) -> i32 {
+        match self {
+            Format::RGBA => 4,
+            Format::RGB => 3,
+            Format::LUMINANCE_ALPHA => 2,
+            Format::LUMINANCE => 1,
+        }
+    }
+}
+
 pub struct NativeImage {
     width: i32,
     height: i32,
@@ -31,6 +51,10 @@ impl NativeImage {
 
     pub fn get_height(&self) -> i32 {
         self.height
+    }
+
+    pub fn format(&self) -> Format {
+        Format::RGBA
     }
 
     /// Panics where Java throws `IllegalArgumentException` for a pixel outside the image.

@@ -1,7 +1,9 @@
 pub mod bind_group_layouts;
+pub mod dynamic_gpu_data;
 pub mod level_renderer;
 pub mod oit;
 pub mod projection;
+pub mod projection_matrix_buffer;
 pub mod render_pipelines;
 pub mod shader_defines;
 pub mod shader_manager;

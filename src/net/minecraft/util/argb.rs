@@ -1,6 +1,7 @@
 //! net/minecraft/util/ARGB.java
 //!
-//! Only what Mth, `ByteBufCodecs.RGB_COLOR` and clear colors (`vector4fFromARGB32`) need so far.
+//! Only what Mth, `ByteBufCodecs.RGB_COLOR`, clear colors (`vector4fFromARGB32`) and vertex and
+//! texture colors (`toABGR`) need so far.
 
 use crate::org::joml::vector4f::Vector4f;
 
@@ -67,6 +68,16 @@ impl ARGB {
         ARGB::from8_bit_channel(ARGB::blue(color))
     }
 
+    /// Swaps red and blue: an ARGB color as the bytes red, green, blue, alpha in a little-endian
+    /// int, which is how textures and vertices hold colors.
+    pub fn to_abgr(color: i32) -> i32 {
+        color & -16711936 | (color & 0xFF0000) >> 16 | (color & 0xFF) << 16
+    }
+
+    pub fn from_abgr(color: i32) -> i32 {
+        ARGB::to_abgr(color)
+    }
+
     fn from8_bit_channel(value: i32) -> f32 {
         value as f32 / 255.0
     }
@@ -87,6 +98,8 @@ mod tests {
         golden.check("color(IIII)I", ARGB::color);
         golden.check("color(III)I", ARGB::color_rgb);
         golden.check("alpha(I)I", ARGB::alpha);
+        golden.check("toABGR(I)I", ARGB::to_abgr);
+        golden.check("fromABGR(I)I", ARGB::from_abgr);
         golden.check("alphaFloat(I)F", ARGB::alpha_float);
         golden.check("redFloat(I)F", ARGB::red_float);
         golden.check("greenFloat(I)F", ARGB::green_float);
