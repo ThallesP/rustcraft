@@ -9,9 +9,17 @@ target/oracle/<scenario>/capture.jsonl, to compare with vanilla's:
     python3 tools/port_client.py capture walk --accept-eula
     cargo run -p oracle-diff -- packets --join vanilla/26.3/oracle/walk/capture.jsonl target/oracle/walk/capture.jsonl
 
+`check-join` does both, gate 1 end to end, and exits 0 when the join phases match:
+
+    python3 tools/port_client.py check-join walk --accept-eula
+    python3 tools/port_client.py check-join walk --accept-eula --compression-threshold 256
+
 Wrap it in `flock /tmp/rustcraft-oracle.lock` on a shared machine: the server and the proxy use
 fixed ports. `--compression-threshold` turns the server's compression on, which captures don't
-show (the proxy records packets inflated).
+show (the proxy records packets inflated) but for the server's `login_compression`. So a run with
+compression is compared with vanilla's run with the same threshold, in
+vanilla/<version>/oracle-compressed-<threshold>/, which `check-join` records with
+`oracle_client.py capture` when it isn't there yet.
 """
 
 import argparse
@@ -24,6 +32,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import oracle_client  # noqa: E402
 from oracle_client import PROXY_PORT, SERVER_PORT, VERSION_DIR, resolve_scenario, wait_for_line  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +98,25 @@ def capture(scenario, out_dir, accept_eula, compression_threshold):
     return scenario_out
 
 
+def check_join(scenario, accept_eula, compression_threshold):
+    """Gate 1: the port's join phase against vanilla's (`oracle-diff packets --join`), True when they match."""
+    if compression_threshold is None:
+        reference, out_dir = VERSION_DIR / "oracle", ROOT / "target" / "oracle"
+    else:
+        reference = VERSION_DIR / f"oracle-compressed-{compression_threshold}"
+        out_dir = ROOT / "target" / f"oracle-compressed-{compression_threshold}"
+    expected = reference / scenario.stem / "capture.jsonl"
+    if not expected.exists():
+        if compression_threshold is None:
+            raise SystemExit(f"no vanilla capture at {expected}: run oracle_client.py capture {scenario.stem} first")
+        oracle_client.capture(scenario, reference, accept_eula, compression_threshold)
+
+    actual = capture(scenario, out_dir, accept_eula, compression_threshold) / "capture.jsonl"
+    command = ["cargo", "run", "--quiet", "-p", "oracle-diff", "--", "packets", "--join", expected, actual]
+    print(" ".join(str(part.relative_to(ROOT)) if isinstance(part, Path) else part for part in command), flush=True)
+    return subprocess.run(command, cwd=ROOT).returncode == 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -97,11 +125,17 @@ def main():
     capture_parser.add_argument("--out", type=Path, default=ROOT / "target" / "oracle", help="output directory (default: target/oracle)")
     capture_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
     capture_parser.add_argument("--compression-threshold", type=int, help="turn the server's compression on, from this packet size")
+    check_parser = commands.add_parser("check-join", help="capture the port's run and compare its join phase with vanilla's (gate 1)")
+    check_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
+    check_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
+    check_parser.add_argument("--compression-threshold", type=int, help="turn the server's compression on, from this packet size")
     args = parser.parse_args()
 
     scenario = resolve_scenario(args.scenario)
     if args.command == "capture":
         capture(scenario, args.out, args.accept_eula, args.compression_threshold)
+    elif not check_join(scenario, args.accept_eula, args.compression_threshold):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

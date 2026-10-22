@@ -1,5 +1,6 @@
 package rustcraft.oracle.client;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
@@ -44,8 +45,11 @@ public final class OracleGameTest implements FabricClientGameTest {
     private static final String PLAYER_NAME = "rustcraft";
     private static final int SETTLE_TICKS = 20;
     private static final int LOAD_TIMEOUT_TICKS = 60 * 20;
+    private static final int SERVER_TIMEOUT_TICKS = 5 * 60 * 20;
     // Sent as a custom payload with no data; vanilla servers discard unknown payloads.
     private static final Identifier SCENARIO_START = Identifier.fromNamespaceAndPath("rustcraft", "scenario_start");
+    // tools/oracle_client.py starts the server when the client prints this.
+    private static final String WAITING_FOR_SERVER = "rustcraft oracle: waiting for the server";
 
     private static final Map<String, Function<Options, KeyMapping>> KEY_MAPPINGS = Map.of(
         "forward", options -> options.keyUp,
@@ -86,6 +90,14 @@ public final class OracleGameTest implements FabricClientGameTest {
     }
 
     private static void runMultiplayer(ClientGameTestContext context, Scenario scenario, Path outDir, String address) {
+        // tools/oracle_client.py capture starts the server once the client is up and creates this file when it's ready, so
+        // the server has ticked as long when the client joins as when the port joins it: the server's timers (the
+        // players' latency, every 600 ticks) then fall at the same points of both runs.
+        String serverReady = System.getProperty("rustcraft.oracle.serverReady", "");
+        if (!serverReady.isEmpty()) {
+            System.out.println(WAITING_FOR_SERVER);
+            context.waitFor(client -> Files.exists(Path.of(serverReady)), SERVER_TIMEOUT_TICKS);
+        }
         context.runOnClient(client -> ConnectScreen.startConnecting(
             client.gui.screen(),
             client,

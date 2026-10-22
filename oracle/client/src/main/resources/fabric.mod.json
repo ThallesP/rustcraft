@@ -9,6 +9,7 @@
   "entrypoints": {
     "fabric-client-gametest": ["rustcraft.oracle.client.OracleGameTest"]
   },
+  "mixins": ["rustcraft-oracle.mixins.json"],
   "depends": {
     "fabricloader": ">=0.20.1",
     "minecraft": "26.3",

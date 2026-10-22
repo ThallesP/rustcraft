@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "rustcraft.oracle.client.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "ChanneledNetworkAddonMixin",
+    "ClientBrandRetrieverMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
