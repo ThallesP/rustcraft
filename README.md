@@ -18,12 +18,63 @@ This project started from this prompt:
 >
 > what do you think here?
 
+Then, on 2026-10-22, the goal:
+
+> I want to re-create the Minecraft Client in Rust, focus on being able to join a Minecraft Server and rendering the world in a real GUI.
+>
+> Use the decompiled Minecraft Java in here for reference, and feel free to optimize or using any other library for rendering, like using one that does Metal (the apple thing) directly if possible.
+>
+> For validation, compare against the real Minecraft Java client, for example joining a test server, comparing if something is pixel perfect overtime (like in a video or a screenshot), opening GUIs, comparing network packets to the original client and see if they match and if needed, use the C++ Minecraft Server tests which focus a lot on physics of a Minecraft Bot client compared to the real thing, and maybe even do some of our own if you want to.
+>
+> The goal here is to get a better optimized version of the Minecraft Client from Java to Rust, like getting even more FPS while being equal to the Java one in everything. Feel free to have agents that compare each one, and see what's missing, a table in the readme describing the features and how the Rust port compares would be really nice.
+
 ## How it fits together
 
 - **The port** lives in `src/`, mirroring Java's packages: `src/net/minecraft/util/mth.rs` is `net/minecraft/util/Mth.java`. [PORTING.md](PORTING.md) has the translation rules, including the places where Java and Rust disagree on numbers.
 - **Vanilla is the oracle.** The real game runs alongside the port and the outputs get compared, from single functions up to screenshots. [TESTING.md](TESTING.md) has the layers and file formats.
-- **The goal** is in [GOAL.md](GOAL.md): the `walk` scenario matching vanilla pixel for pixel. [PROGRESS.md](PROGRESS.md) logs how far the port has come.
+- **The goal** is in [GOAL.md](GOAL.md): join a server and render the world in a real window, then match vanilla in packets, physics, pixels and screens while running faster. The work runs as parallel tracks (net, world, render, and later player, screens, performance and backends). [PROGRESS.md](PROGRESS.md) logs how far each has come.
 - **Mojang's code and assets stay out of git.** `tools/setup_vanilla.py` downloads and decompiles them into `vanilla/`, which is gitignored, because they can't be redistributed. The Rust translation is derived from that code too, so think twice before making this repository public.
+
+## Features
+
+How the port compares with vanilla 26.3, area by area. **Checked by** says how the port is compared with the real game ([TESTING.md](TESTING.md)):
+- **goldens**: vanilla's own answers to the same calls, matched bit for bit;
+- **traces**: tick-by-tick player state while both clients replay a scenario;
+- **captures**: the packets each client sends to a vanilla server;
+- **screenshots**: pixel-identical frames.
+
+Every step of the loop updates this table.
+
+| Area | Feature | Port | Checked by | vs vanilla |
+| --- | --- | --- | --- | --- |
+| Math | Java's `Math` (HotSpot's x86-64 `sin`, `cos`, `tan`, `log`, `pow`; FdLibm's `asin`, `acos`, `atan`, `atan2`, `hypot`), `Mth` | Done | goldens | same bits |
+| Math | JOML: the `Matrix4f`, `Vector3f`, `Quaternionf`… methods the client calls | Done | goldens | same bits |
+| Math | Random sources (legacy, Xoroshiro128++, `nextGaussian`) | Done | goldens | same sequences |
+| Core | `Vec3`, `Vec3i`, `BlockPos`, `Direction`, `AABB`, `Identifier`, `PoseStack`, `Transformation`, `ResourceKey`, `Registries` | Done | goldens | |
+| Data | NBT: every tag, `NbtIo`, size accounting | Partial: no SNBT `toString`, no `HashMap` tree bins | goldens | |
+| Data | Text components, DataFixerUpper codecs | Not started | | |
+| Network | Byte layer: VarInt, `FriendlyByteBuf`, stream codecs, frames | Done | goldens | |
+| Network | Compression, encryption, online-mode login | Not started | | |
+| Network | Handshake | Done (1 of 1 packets) | goldens | |
+| Network | Server list ping | Not started (0 of 4) | | |
+| Network | Login, offline mode | Partial: 10 of 11 packets (disconnect waits for text components) | goldens | |
+| Network | Configuration | Partial: 10 of 10 serverbound, 16 of 21 clientbound | goldens | |
+| Network | Play | Not started: 0 of 144 clientbound, 0 of 69 serverbound | | |
+| Network | Joining a server (`Connection`, the client's listeners) | Not started | captures | |
+| World | Blocks and block states (1,286 blocks, 35,723 states) | Not started | | |
+| World | Chunk data, level storage, light | Not started | | |
+| Player | Input, movement, collisions | Not started | traces | |
+| Rendering | Window (SDL3) and input | Not started | | |
+| Rendering | renderpearl with its OpenGL backend, shaders through shaderc and SPIRV-Cross | Not started | screenshots | |
+| Rendering | Metal backend (macOS) | Not started | draw stream checked against OpenGL's | |
+| Rendering | Vulkan backend | Not started | screenshots, against vanilla's Vulkan backend | |
+| Rendering | Resources, texture atlases, block models | Not started | | |
+| Rendering | Terrain, sky, fog, clouds | Not started | screenshots | |
+| Rendering | HUD (hotbar, hearts, hunger, crosshair), first-person hand | Not started | screenshots | |
+| Screens | Title, pause, inventory, chat, F3 | Not started | screenshots | |
+| Entities | Players, mobs, items, block entities | Not started | | |
+| Sound | | Not started | | |
+| Performance | FPS, frame time, chunk-meshing throughput | Not measured | benchmark scenario | |
 
 ## Getting started
 
