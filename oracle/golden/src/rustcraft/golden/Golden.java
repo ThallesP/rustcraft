@@ -98,6 +98,20 @@ import net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket;
 import net.minecraft.network.protocol.cookie.CookiePacketTypes;
 import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
 import net.minecraft.network.protocol.handshake.ClientIntent;
+import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
+import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
+import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundStartConfigurationPacket;
+import net.minecraft.network.protocol.game.GamePacketTypes;
+import net.minecraft.network.protocol.game.GameProtocols;
+import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
+import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket;
+import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
+import net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.network.protocol.handshake.ClientIntentionPacket;
 import net.minecraft.network.protocol.handshake.HandshakePacketTypes;
 import net.minecraft.network.protocol.handshake.HandshakeProtocols;
@@ -111,6 +125,7 @@ import net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
 import net.minecraft.network.protocol.login.ServerboundKeyPacket;
 import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
+import net.minecraft.network.protocol.ping.PingPacketTypes;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
@@ -124,6 +139,7 @@ import net.minecraft.util.ByIdMap;
 import net.minecraft.util.Mth;
 import net.minecraft.util.StringRepresentable;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.player.ChatVisiblity;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.RandomSupport;
@@ -1072,6 +1088,35 @@ public final class Golden {
                     reportDetailBuffers().stream()
                 ).toList()
             ),
+        // The game protocol: its packet types, its templates, and the packets the client sends and answers while it joins.
+        new StaticSuite(GamePacketTypes.class),
+        new StaticSuite(PingPacketTypes.class),
+        new ProtocolSuite(GameProtocols.class),
+        InstanceSuite.every(ClientboundChunkBatchStartPacket.class),
+        InstanceSuite.every(ClientboundChunkBatchFinishedPacket.class),
+        InstanceSuite.every(ServerboundChunkBatchReceivedPacket.class),
+        InstanceSuite.every(ServerboundClientTickEndPacket.class),
+        InstanceSuite.every(ServerboundPlayerLoadedPacket.class),
+        InstanceSuite.every(ServerboundConfigurationAcknowledgedPacket.class),
+        InstanceSuite.every(ClientboundStartConfigurationPacket.class),
+        // Its writer stops commands at 32767 characters, so the reader also reads longer ones, written without the limit.
+        InstanceSuite.every(ServerboundChatCommandPacket.class)
+            .extraInputs(
+                "STREAM_CODEC.decode",
+                friendly(written(110, Values.generator(ServerboundChatCommandPacket.class), (FriendlyByteBuf buffer, ServerboundChatCommandPacket packet) ->
+                    Utf8String.write(buffer, packet.command(), Integer.MAX_VALUE)
+                ))
+            ),
+        InstanceSuite.every(ServerboundAcceptTeleportationPacket.class),
+        InstanceSuite.every(ClientboundGameEventPacket.class),
+        // Each kind of move, with the methods of the class they extend.
+        InstanceSuite.every(ServerboundMovePlayerPacket.Pos.class).inherited("getX(D)D", "getY(D)D", "getZ(D)D", "getYRot(F)F", "getXRot(F)F", "isOnGround()Z", "horizontalCollision()Z", "hasPosition()Z", "hasRotation()Z", "handle(Lnet/minecraft/network/protocol/game/ServerGamePacketListener;)V"),
+        InstanceSuite.every(ServerboundMovePlayerPacket.PosRot.class).inherited("getX(D)D", "getY(D)D", "getZ(D)D", "getYRot(F)F", "getXRot(F)F", "isOnGround()Z", "horizontalCollision()Z", "hasPosition()Z", "hasRotation()Z", "handle(Lnet/minecraft/network/protocol/game/ServerGamePacketListener;)V"),
+        InstanceSuite.every(ServerboundMovePlayerPacket.Rot.class).inherited("getX(D)D", "getY(D)D", "getZ(D)D", "getYRot(F)F", "getXRot(F)F", "isOnGround()Z", "horizontalCollision()Z", "hasPosition()Z", "hasRotation()Z", "handle(Lnet/minecraft/network/protocol/game/ServerGamePacketListener;)V"),
+        InstanceSuite.every(ServerboundMovePlayerPacket.StatusOnly.class).inherited("getX(D)D", "getY(D)D", "getZ(D)D", "getYRot(F)F", "getXRot(F)F", "isOnGround()Z", "horizontalCollision()Z", "hasPosition()Z", "hasRotation()Z", "handle(Lnet/minecraft/network/protocol/game/ServerGamePacketListener;)V"),
+        InstanceSuite.every(PositionMoveRotation.class),
+        // Its set of relatives is an EnumSet, whose hashCode adds its constants' identity hashes.
+        InstanceSuite.every(ClientboundPlayerPositionPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
         // The registries the server sends, by their keys, and their elements.
         InstanceSuite.every(ResourceKey.class),
         new StaticSuite(Registries.class),

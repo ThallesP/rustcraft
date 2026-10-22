@@ -15,6 +15,7 @@ pub mod io;
 pub mod java;
 pub mod net;
 pub mod org;
+pub mod rustcraft;
 
 #[cfg(test)]
 mod golden;

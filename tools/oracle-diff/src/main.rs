@@ -16,10 +16,13 @@ use serde_json::Value;
 
 const USAGE: &str = "usage:
   oracle-diff trace <A/trace.jsonl> <B/trace.jsonl>
-  oracle-diff packets <A/capture.jsonl> <B/capture.jsonl> [--ignore name,...] [--no-default-ignore] [--ordered]
+  oracle-diff packets <A/capture.jsonl> <B/capture.jsonl> [--join] [--ignore name,...] [--no-default-ignore] [--ordered]
   oracle-diff image <A.png> <B.png> [--threshold N] [--heatmap out.png]
-  oracle-diff dir <A> <B> [--threshold N] [--ignore name,...] [--no-default-ignore] [--ordered] [--heatmaps <dir>] [--strict]
+  oracle-diff dir <A> <B> [--threshold N] [--join] [--ignore name,...] [--no-default-ignore] [--ordered] [--heatmaps <dir>] [--strict]
 
+  --join               compare only the join phase of each connection: the serverbound packets
+                       before the scenario-start marker (as the join phase always is), and the
+                       clientbound packets that came before the client sent it
   --ignore             packets to skip on top of the defaults; `minecraft:` may be left out
   --no-default-ignore  don't skip the packets that differ between any two runs (keep-alives,
                        pings, session ids, timers, timestamps)
@@ -39,6 +42,7 @@ struct Options {
     ignored: Vec<String>,
     default_ignore: bool,
     ordered: bool,
+    join_only: bool,
     threshold: u8,
     heatmap: Option<PathBuf>,
     strict: bool,
@@ -61,6 +65,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             ),
             "--no-default-ignore" => options.default_ignore = false,
             "--ordered" => options.ordered = true,
+            "--join" => options.join_only = true,
             "--threshold" => {
                 options.threshold = value()?.parse().map_err(|_| "--threshold takes 0-255")?
             }
@@ -140,7 +145,13 @@ fn diff_packets(a: &Path, b: &Path, options: &Options) -> Result<bool, String> {
             })
             .collect()
     };
-    let diff = packets::compare(&read(a)?, &read(b)?, &options.ignored, options.ordered);
+    let diff = packets::compare_scoped(
+        &read(a)?,
+        &read(b)?,
+        &options.ignored,
+        options.ordered,
+        options.join_only,
+    );
     print!("{diff}");
     Ok(diff.is_same())
 }

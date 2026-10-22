@@ -1,12 +1,15 @@
 //! net/minecraft/network/protocol/ProtocolInfoBuilder.java
 //!
-//! Not ported yet: `addPacket` with a `CodecModifier`, `withBundlePacket`, `buildUnbound()` and
-//! the protocols with a context (`contextServerboundProtocol`, `contextClientboundProtocol`),
-//! which only the configuration and game protocols use, and come with them, with `CodecModifier`,
-//! `BundlerInfo` and `UnboundProtocol`. `HandshakeProtocols` checks the rest against vanilla.
+//! Not ported yet: `addPacket` with a `CodecModifier`, which only the game protocol's
+//! `set_creative_mode_slot` and `command_suggestion` use, and both are `Unported` so far; and the
+//! `BundlerInfo` that `withBundlePacket` makes, which comes with the connection's bundle packer.
+//! `withBundlePacket` adds the delimiter's codec like Java's. `HandshakeProtocols` checks the rest
+//! against vanilla, and `GameProtocols` the context protocols' details.
 //!
 //! The context `C` of a protocol without one is Java's `Unit`, which is `()`. Java's anonymous
-//! `SimpleUnboundProtocol` and `ProtocolInfo.Details` are `SimpleUnbound` and `BuiltDetails`.
+//! `SimpleUnboundProtocol`, `UnboundProtocol` and `ProtocolInfo.Details` are `SimpleUnbound`,
+//! `Unbound` and `BuiltDetails`. `buildUnbound()`, which overloads `buildUnbound(C)` without the
+//! context, is `build_context_unbound`.
 
 use std::sync::Arc;
 
@@ -21,6 +24,7 @@ use crate::net::minecraft::network::protocol::protocol_codec_builder::ProtocolCo
 use crate::net::minecraft::network::protocol::simple_unbound_protocol::{
     ContextWrapper, SimpleUnboundProtocol,
 };
+use crate::net::minecraft::network::protocol::unbound_protocol::UnboundProtocol;
 use crate::net::minecraft::network::protocol_info::{Details, DetailsProvider, ProtocolInfo};
 use crate::net::minecraft::network::serverbound_packet_listener::ServerboundPacketListener;
 
@@ -69,6 +73,21 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
         self
     }
 
+    /// The bundle delimiter's codec, the protocol's first packet (`StreamCodec.unit` of the
+    /// delimiter, which Java makes here).
+    pub fn with_bundle_packet<P, S>(
+        &mut self,
+        delimiter_type: &'static PacketType,
+        delimited_codec: S,
+    ) -> &mut ProtocolInfoBuilder<T, B, C>
+    where
+        P: Packet<T>,
+        S: StreamCodec<Value = P> + Clone + Send + Sync + 'static,
+        B: AsMut<S::Buffer>,
+    {
+        self.add_packet(delimiter_type, delimited_codec)
+    }
+
     fn build_packet_codec(
         flow: PacketFlow,
         context_wrapper: &ContextWrapper<B>,
@@ -108,6 +127,51 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
             context,
             details,
         })
+    }
+}
+
+impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send + Sync + 'static>
+    ProtocolInfoBuilder<T, B, C>
+{
+    /// The protocol's template, which `bind` makes protocols of with a context.
+    pub fn build_context_unbound(self) -> Box<dyn UnboundProtocol<T, B, C>> {
+        let details = ProtocolInfoBuilder::build_details(self.protocol, self.flow, &self.codecs);
+        Box::new(Unbound {
+            protocol: self.protocol,
+            flow: self.flow,
+            codecs: self.codecs,
+            details,
+        })
+    }
+
+    fn context_protocol(
+        id: ConnectionProtocol,
+        flow: PacketFlow,
+        config: impl FnOnce(&mut ProtocolInfoBuilder<T, B, C>),
+    ) -> Box<dyn UnboundProtocol<T, B, C>> {
+        let mut builder = ProtocolInfoBuilder::new(id, flow);
+        config(&mut builder);
+        builder.build_context_unbound()
+    }
+
+    pub fn context_serverbound_protocol(
+        id: ConnectionProtocol,
+        config: impl FnOnce(&mut ProtocolInfoBuilder<T, B, C>),
+    ) -> Box<dyn UnboundProtocol<T, B, C>>
+    where
+        T: ServerboundPacketListener,
+    {
+        ProtocolInfoBuilder::context_protocol(id, PacketFlow::SERVERBOUND, config)
+    }
+
+    pub fn context_clientbound_protocol(
+        id: ConnectionProtocol,
+        config: impl FnOnce(&mut ProtocolInfoBuilder<T, B, C>),
+    ) -> Box<dyn UnboundProtocol<T, B, C>>
+    where
+        T: ClientboundPacketListener,
+    {
+        ProtocolInfoBuilder::context_protocol(id, PacketFlow::CLIENTBOUND, config)
     }
 }
 
@@ -204,6 +268,37 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
 }
 
 impl<T: ?Sized, B, C> DetailsProvider for SimpleUnbound<T, B, C> {
+    fn details(&self) -> &dyn Details {
+        &self.details
+    }
+}
+
+/// What `buildUnbound()` makes, holding the builder's protocol, flow and codecs.
+struct Unbound<T: ?Sized, B, C> {
+    protocol: ConnectionProtocol,
+    flow: PacketFlow,
+    codecs: Vec<CodecEntry<T, B, C>>,
+    details: BuiltDetails,
+}
+
+impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send + Sync + 'static>
+    UnboundProtocol<T, B, C> for Unbound<T, B, C>
+{
+    fn bind(&self, context_wrapper: ContextWrapper<B>, context: C) -> Box<dyn ProtocolInfo<T>> {
+        Box::new(Implementation {
+            id: self.protocol,
+            flow: self.flow,
+            codec: Box::new(ProtocolInfoBuilder::build_packet_codec(
+                self.flow,
+                &context_wrapper,
+                &self.codecs,
+                &context,
+            )),
+        })
+    }
+}
+
+impl<T: ?Sized, B, C> DetailsProvider for Unbound<T, B, C> {
     fn details(&self) -> &dyn Details {
         &self.details
     }

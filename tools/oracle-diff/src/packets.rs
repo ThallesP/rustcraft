@@ -182,6 +182,8 @@ impl StreamDiff {
 
 pub struct CaptureDiff {
     pub ignored: Vec<String>,
+    /// Only the join phase was compared (`--join`).
+    pub join_only: bool,
     pub streams: Vec<StreamDiff>,
 }
 
@@ -206,11 +208,27 @@ impl CaptureDiff {
 /// `ordered_clientbound` is set, clientbound streams only need the same packets with the same
 /// bytes, in any order. A server reacting differently (a correction teleport, a missing chunk)
 /// still shows up as a packet only one side got.
+#[cfg(test)]
 pub fn compare(
     a: &[Packet],
     b: &[Packet],
     ignored: &[String],
     ordered_clientbound: bool,
+) -> CaptureDiff {
+    compare_scoped(a, b, ignored, ordered_clientbound, false)
+}
+
+/// `compare`, or with `join_only` only the join phase: on a connection whose captures both have
+/// the scenario-start marker, the serverbound packets before it, compared as the join phase
+/// always is, and the clientbound packets that came before the client sent it. What a client
+/// does from the marker on is the scenario's, left out. A connection with no marker on either
+/// side is compared whole, as it always is, and one with a marker on one side only still differs.
+pub fn compare_scoped(
+    a: &[Packet],
+    b: &[Packet],
+    ignored: &[String],
+    ordered_clientbound: bool,
+    join_only: bool,
 ) -> CaptureDiff {
     let streams: BTreeSet<(i64, &str)> = a
         .iter()
@@ -220,10 +238,18 @@ pub fn compare(
     let streams = streams
         .into_iter()
         .map(|(connection, direction)| {
-            let (stream_a, stream_b) = (
+            let (mut stream_a, mut stream_b) = (
                 select(a, connection, direction),
                 select(b, connection, direction),
             );
+            if join_only && direction == "clientbound" {
+                let (marker_a, marker_b) =
+                    (marker_index(a, connection), marker_index(b, connection));
+                if let (Some(marker_a), Some(marker_b)) = (marker_a, marker_b) {
+                    stream_a = select(&a[..marker_a], connection, direction);
+                    stream_b = select(&b[..marker_b], connection, direction);
+                }
+            }
             compare_stream(
                 connection,
                 direction,
@@ -231,13 +257,24 @@ pub fn compare(
                 &stream_b,
                 ignored,
                 ordered_clientbound,
+                join_only,
             )
         })
         .collect();
     CaptureDiff {
         ignored: ignored.to_vec(),
+        join_only,
         streams,
     }
+}
+
+/// Where in a capture the connection's client sent the scenario-start marker.
+fn marker_index(capture: &[Packet], connection: i64) -> Option<usize> {
+    capture.iter().position(|packet| {
+        packet.connection == connection
+            && packet.direction == "serverbound"
+            && packet.is_scenario_start()
+    })
 }
 
 fn compare_stream(
@@ -247,6 +284,7 @@ fn compare_stream(
     b: &[&Packet],
     ignored: &[String],
     ordered_clientbound: bool,
+    join_only: bool,
 ) -> StreamDiff {
     let (kept_a, kept_b) = (kept(a, ignored), kept(b, ignored));
     let mut diff = StreamDiff {
@@ -281,6 +319,9 @@ fn compare_stream(
         (Some(marker_a), Some(marker_b)) => {
             diff.phases
                 .push(compare_join(&a[..marker_a], &b[..marker_b], ignored));
+            if join_only {
+                return diff;
+            }
             let (scenario_a, scenario_b) =
                 (kept(&a[marker_a..], ignored), kept(&b[marker_b..], ignored));
             diff.phases.push(PhaseDiff {
@@ -416,7 +457,12 @@ impl fmt::Display for CaptureDiff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "packets (ignoring {}):",
+            "packets ({}ignoring {}):",
+            if self.join_only {
+                "join phase only, "
+            } else {
+                ""
+            },
             if self.ignored.is_empty() {
                 "nothing".to_string()
             } else {
@@ -633,6 +679,46 @@ mod tests {
             serverbound("move_player_pos", "3fe2"),
             serverbound("client_tick_end", ""),
         ]
+    }
+
+    #[test]
+    fn join_only_leaves_the_scenario_out() {
+        let a = walk_run(3, &walk_scenario());
+        let b = walk_run(5, &walk_scenario()[..2]);
+        assert!(!compare(&a, &b, &default_ignored(), false).is_same());
+
+        let diff = compare_scoped(&a, &b, &default_ignored(), false, true);
+        assert!(diff.is_same(), "{diff}");
+        assert_eq!(diff.streams[0].phases.len(), 1);
+        assert_eq!(diff.streams[0].phases[0].phase, Phase::Join);
+        assert!(diff.to_string().contains("join phase only"));
+    }
+
+    #[test]
+    fn join_only_still_catches_a_changed_join() {
+        let a = walk_run(3, &walk_scenario());
+        let mut b = walk_run(3, &walk_scenario());
+        b[0] = serverbound("client_information", "05656e5f7573ff");
+        let diff = compare_scoped(&a, &b, &default_ignored(), false, true);
+        assert!(!diff.is_same());
+    }
+
+    #[test]
+    fn join_only_cuts_clientbound_packets_at_the_marker() {
+        let clientbound = |name: &str, payload: &str| packet("clientbound", "play", name, payload);
+        let mut a = walk_run(3, &[]);
+        a.insert(1, clientbound("minecraft:login", "01"));
+        a.push(clientbound("minecraft:set_entity_data", "0100"));
+        let mut b = walk_run(4, &[]);
+        b.insert(2, clientbound("minecraft:login", "01"));
+        b.push(clientbound("minecraft:set_entity_data", "0101"));
+
+        assert!(!compare(&a, &b, &default_ignored(), false).is_same());
+        let diff = compare_scoped(&a, &b, &default_ignored(), false, true);
+        assert!(diff.is_same(), "{diff}");
+
+        b.insert(3, clientbound("minecraft:game_event", "0d"));
+        assert!(!compare_scoped(&a, &b, &default_ignored(), false, true).is_same());
     }
 
     #[test]

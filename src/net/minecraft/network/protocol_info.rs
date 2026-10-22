@@ -27,6 +27,23 @@ pub trait ProtocolInfo<T: ?Sized>: Send + Sync {
     fn codec(&self) -> &dyn StreamCodec<Buffer = ByteBuf, Value = Box<dyn Packet<T>>>;
 }
 
+// Java shares protocols by reference: a connection's decoder holds a static one
+// (`LoginProtocols.CLIENTBOUND`) or one bound for the connection (the game protocol, bound to its
+// registries), so a `Box` of either is a protocol.
+impl<T: ?Sized, P: ProtocolInfo<T> + ?Sized> ProtocolInfo<T> for &P {
+    fn id(&self) -> ConnectionProtocol {
+        (**self).id()
+    }
+
+    fn flow(&self) -> PacketFlow {
+        (**self).flow()
+    }
+
+    fn codec(&self) -> &dyn StreamCodec<Buffer = ByteBuf, Value = Box<dyn Packet<T>>> {
+        (**self).codec()
+    }
+}
+
 /// `ProtocolInfo.Details`: what a protocol is, without its codec.
 pub trait Details: Send + Sync {
     fn id(&self) -> ConnectionProtocol;

@@ -1,6 +1,11 @@
-//! The client's entry point, for now a frame on the OpenGL backend the way vanilla starts it:
-//! SDL's video subsystem, the GL library, the device on its hidden window, then the main render
-//! target cleared like `GameRenderer.render` clears it at the start of each frame.
+//! The client's entry point. With a server to join, it's `net/minecraft/client/main/Main.java`'s
+//! `main` (`Main`):
+//!
+//!   rustcraft --server HOST:PORT --username NAME   joins the server, headless for now
+//!
+//! The render track's frames on the OpenGL backend, the way vanilla starts it: SDL's video
+//! subsystem, the GL library, the device on its hidden window, then the main render target
+//! cleared like `GameRenderer.render` clears it at the start of each frame:
 //!
 //!   rustcraft --device-info                     prints the device as vanilla logs it
 //!   rustcraft --screenshot out.png [--size WxH] [--clear AARRGGBB] [--quadrant AARRGGBB]
@@ -235,7 +240,17 @@ fn run(arguments: Arguments) -> Result<(), String> {
     Ok(())
 }
 
+/// The render track's modes, which `parse_arguments` reads; anything else goes to `Main`.
+const RENDER_MODES: [&str; 3] = ["--device-info", "--screenshot", "--window"];
+
 fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.iter().any(|arg| RENDER_MODES.contains(&arg.as_str())) {
+        // An exit status's low byte, like Java's `System.exit(-5)`.
+        let status = rustcraft::net::minecraft::client::main::main::Main::main(&args);
+        return ExitCode::from(status as u8);
+    }
+
     match parse_arguments().and_then(run) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

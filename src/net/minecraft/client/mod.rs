@@ -1,2 +1,11 @@
+pub mod client_brand_retriever;
+pub mod delta_tracker;
+pub mod gui;
+pub mod main;
+pub mod minecraft;
+pub mod multiplayer;
+pub mod options;
+pub mod player;
 pub mod renderer;
 pub mod screenshot;
+pub mod user;

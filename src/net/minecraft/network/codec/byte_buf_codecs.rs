@@ -5,7 +5,9 @@
 //! - the ones made from DataFixerUpper's codecs (`fromCodec`, `fromCodecTrusted` and the
 //!   `fromCodecWithRegistries` ones), and `lenientJson`, which waits for Gson;
 //! - `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
-//! - the registries' (`registry`, `holderRegistry`, `holder`, `holderSet` and `idMapper(IdMap)`);
+//! - the registries' other codecs (`registry`, `holder`, `holderSet` and `idMapper(IdMap)`).
+//!   `holderRegistry` reads and writes an element's id in the registries a
+//!   `RegistryFriendlyByteBuf` holds, for which the golden harness has no generator yet;
 //! - `either`, which waits for DataFixerUpper's `Either`;
 //! - `registryFriendlyLengthPrefixed`, which waits for `RegistryFriendlyByteBuf`.
 //!
@@ -22,15 +24,18 @@ use crate::com::mojang::authlib::properties::property_map::PropertyMap;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::io::netty::buffer::unpooled;
 use crate::java::util::array_list::ArrayList;
+use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::nbt::compound_tag::CompoundTag;
 use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
 use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec, StreamCodec};
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
+use crate::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendlyByteBuf;
 use crate::net::minecraft::network::utf8_string::Utf8String;
 use crate::net::minecraft::network::var_int::VarInt;
 use crate::net::minecraft::network::var_long::VarLong;
+use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::mth::Mth;
 use crate::org::joml::quaternionf::Quaternionf;
@@ -594,6 +599,30 @@ impl ByteBufCodecs {
         }
     }
 
+    /// `holderRegistry(ResourceKey)`: an element of the buffer's registry `registry_key`, by its
+    /// id in a VarInt (`registry(registryKey, Registry::asHolderIdMap)`).
+    pub fn holder_registry(
+        registry_key: &ResourceKey,
+    ) -> impl StreamCodec<Buffer = RegistryFriendlyByteBuf, Value = Holder> + use<> {
+        let (decode_key, encode_key) = (registry_key.clone(), registry_key.clone());
+        stream_codec::of(
+            move |output: &mut RegistryFriendlyByteBuf, value: &Holder| {
+                let id = output
+                    .registry_access()
+                    .lookup_or_throw(&encode_key)
+                    .holder_id_or_throw(value);
+                VarInt::write(output, id);
+            },
+            move |input: &mut RegistryFriendlyByteBuf| {
+                let id = VarInt::read(input);
+                input
+                    .registry_access()
+                    .lookup_or_throw(&decode_key)
+                    .holder_by_id_or_throw(id)
+            },
+        )
+    }
+
     /// `idMapper(IntFunction, ToIntFunction)`: a value by its id, in a VarInt.
     pub fn id_mapper<T>(
         by_id: impl Fn(i32) -> T,
@@ -842,9 +871,12 @@ mod tests {
         );
         golden.pending("INSTANT", "waits for java.time.Instant");
         golden.pending("PUBLIC_KEY", "waits for Crypt");
+        golden.pending(
+            "holderRegistry(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/network/codec/StreamCodec;",
+            "the golden harness has no RegistryFriendlyByteBuf generator yet",
+        );
         for name in [
             "registry(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/network/codec/StreamCodec;",
-            "holderRegistry(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/network/codec/StreamCodec;",
             "holder(Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/network/codec/StreamCodec;)Lnet/minecraft/network/codec/StreamCodec;",
             "holderSet(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/network/codec/StreamCodec;",
             "idMapper(Lnet/minecraft/core/IdMap;)Lnet/minecraft/network/codec/StreamCodec;",

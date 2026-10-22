@@ -9,13 +9,13 @@ description = "Minecraft Java Edition client, ported to Rust"
 publish = false
 
 [dependencies]
+flate2 = "1"
 glow = "0.17"
+libc = "0.2"
 libloading = "0.8"
 md-5 = "0.10"
 miniz_oxide = "0.8"
 png = "0.18"
-
-[dev-dependencies]
 serde_json = "1"
 
 # The port itself stays unoptimized with overflow checks, so an int overflow that Java would

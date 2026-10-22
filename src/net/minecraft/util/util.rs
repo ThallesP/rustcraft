@@ -43,4 +43,24 @@ impl Util {
             list.swap((i - 1) as usize, swap_to as usize);
         }
     }
+
+    /// `Util.getMillis()`: the game's clock, `timeSource`'s nanoseconds in milliseconds.
+    pub fn get_millis() -> i64 {
+        Util::get_nanos() / 1000000
+    }
+
+    /// `Util.getNanos()`: `System.nanoTime()`, which HotSpot reads from Linux's monotonic clock.
+    pub fn get_nanos() -> i64 {
+        let mut time = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `clock_gettime` writes the time into the struct it's given, which lives here.
+        unsafe {
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time);
+        }
+        time.tv_sec
+            .wrapping_mul(1000000000)
+            .wrapping_add(time.tv_nsec)
+    }
 }

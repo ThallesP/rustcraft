@@ -2,6 +2,7 @@ package rustcraft.golden;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonPrimitive;
 import com.mojang.authlib.GameProfile;
 import io.netty.buffer.Unpooled;
 import java.lang.reflect.Field;
@@ -12,6 +13,7 @@ import java.lang.reflect.Proxy;
 import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -65,6 +67,19 @@ import net.minecraft.network.protocol.configuration.ServerboundSelectKnownPacks;
 import net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket;
 import net.minecraft.network.protocol.cookie.CookiePacketTypes;
 import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
+import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
+import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
+import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundStartConfigurationPacket;
+import net.minecraft.network.protocol.game.GamePacketTypes;
+import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
+import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket;
+import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
+import net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.network.protocol.handshake.ClientIntent;
 import net.minecraft.network.protocol.handshake.ClientIntentionPacket;
 import net.minecraft.network.protocol.handshake.HandshakePacketTypes;
@@ -87,10 +102,13 @@ import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.server.packs.repository.KnownPack;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.PositionMoveRotation;
+import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.ChatVisiblity;
 import net.minecraft.world.flag.FeatureFlag;
 import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.flag.FeatureFlags;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Arguments and values of the protocols. A PacketFlow, ConnectionProtocol or ClientIntent is its constant's name, and a
@@ -115,6 +133,7 @@ final class PacketValues {
     static final Values.Generator HUMANOID_ARM = new CoreValues.Constants<>(HumanoidArm.class);
     static final Values.Generator PARTICLE_STATUS = new CoreValues.Constants<>(ParticleStatus.class);
     static final Values.Generator RESOURCE_PACK_ACTION = new CoreValues.Constants<>(ServerboundResourcePackPacket.Action.class);
+    static final Values.Generator RELATIVE = new CoreValues.Constants<>(Relative.class);
 
     private static final Values.Generator INTS = Values.generator(int.class);
     private static final Values.Generator LONGS = Values.generator(long.class);
@@ -139,7 +158,13 @@ final class PacketValues {
         CommonPacketTypes.CLIENTBOUND_STORE_COOKIE, CommonPacketTypes.CLIENTBOUND_TRANSFER, ConfigurationPacketTypes.CLIENTBOUND_CODE_OF_CONDUCT,
         ConfigurationPacketTypes.CLIENTBOUND_FINISH_CONFIGURATION, ConfigurationPacketTypes.CLIENTBOUND_REGISTRY_DATA,
         ConfigurationPacketTypes.CLIENTBOUND_RESET_CHAT, ConfigurationPacketTypes.CLIENTBOUND_SELECT_KNOWN_PACKS,
-        CommonPacketTypes.CLIENTBOUND_CUSTOM_REPORT_DETAILS, ConfigurationPacketTypes.CLIENTBOUND_UPDATE_ENABLED_FEATURES
+        CommonPacketTypes.CLIENTBOUND_CUSTOM_REPORT_DETAILS, ConfigurationPacketTypes.CLIENTBOUND_UPDATE_ENABLED_FEATURES,
+        GamePacketTypes.CLIENTBOUND_CHUNK_BATCH_FINISHED, GamePacketTypes.CLIENTBOUND_CHUNK_BATCH_START, GamePacketTypes.CLIENTBOUND_GAME_EVENT,
+        GamePacketTypes.CLIENTBOUND_PLAYER_POSITION, GamePacketTypes.CLIENTBOUND_START_CONFIGURATION,
+        GamePacketTypes.SERVERBOUND_ACCEPT_TELEPORTATION, GamePacketTypes.SERVERBOUND_CHAT_COMMAND, GamePacketTypes.SERVERBOUND_CHUNK_BATCH_RECEIVED,
+        GamePacketTypes.SERVERBOUND_CLIENT_TICK_END, GamePacketTypes.SERVERBOUND_CONFIGURATION_ACKNOWLEDGED, GamePacketTypes.SERVERBOUND_MOVE_PLAYER_POS,
+        GamePacketTypes.SERVERBOUND_MOVE_PLAYER_POS_ROT, GamePacketTypes.SERVERBOUND_MOVE_PLAYER_ROT,
+        GamePacketTypes.SERVERBOUND_MOVE_PLAYER_STATUS_ONLY, GamePacketTypes.SERVERBOUND_PLAYER_LOADED
     );
     static final Values.Generator PACKET_TYPE = new Values.Simple(
         PORTED_TYPES.stream()
@@ -219,6 +244,17 @@ final class PacketValues {
     private static final Values.Generator IDENTIFIER_LISTS = Codecs.listOf(IDENTIFIERS);
     // A ClientboundUpdateEnabledFeaturesPacket's features (see featureSets).
     static final Values.Generator FEATURE_SETS = Codecs.hashSetOf(IDENTIFIERS, featureSets());
+    private static final Values.Generator FLOATS = Values.generator(float.class);
+    private static final Values.Generator DOUBLES = Values.generator(double.class);
+    // Commands around readUtf()'s 32767 characters, and the oracle's setup commands.
+    private static final Values.Generator COMMANDS = strings(
+        "time set 6000", "tp @s 0.5 -60.0 0.5 0.0 0.0", "", "a".repeat(32767), "a".repeat(32768), "😀".repeat(16383) + "a", "😀".repeat(16384)
+    );
+    // Every set of relatives, the bits a teleport packs into an int. Each argument is its own copy.
+    static final Values.Generator RELATIVE_SETS = new RelativeSets();
+    // The game event types are the constants, by their ids: a new one registers itself where the packet looks types up.
+    static final Values.Generator GAME_EVENT_TYPES = gameEventTypes();
+
     // A ClientboundCustomReportDetailsPacket's details, with names around stringUtf8(128)'s limit in characters of one and
     // four bytes. Values around 4096 are among reportDetails' maps, not the values' edges, so random maps don't draw them.
     static final Values.Generator REPORT_DETAILS = Codecs.hashMapOf(
@@ -383,6 +419,68 @@ final class PacketValues {
             ClientboundCustomReportDetailsPacket.class, fields -> new ClientboundCustomReportDetailsPacket(stringMap(fields[0])), List.of(),
             REPORT_DETAILS
         );
+
+        // The game protocol's packets the client sends and answers while it joins.
+        packet(ClientboundChunkBatchStartPacket.class, fields -> ClientboundChunkBatchStartPacket.INSTANCE, List.of());
+        packet(
+            ClientboundChunkBatchFinishedPacket.class, fields -> new ClientboundChunkBatchFinishedPacket((Integer)fields[0]), List.of(), INTS
+        );
+        packet(ServerboundChunkBatchReceivedPacket.class, fields -> new ServerboundChunkBatchReceivedPacket((Float)fields[0]), List.of(), FLOATS);
+        packet(ServerboundClientTickEndPacket.class, fields -> ServerboundClientTickEndPacket.INSTANCE, List.of());
+        packet(ServerboundPlayerLoadedPacket.class, fields -> new ServerboundPlayerLoadedPacket(), List.of());
+        packet(ServerboundConfigurationAcknowledgedPacket.class, fields -> ServerboundConfigurationAcknowledgedPacket.INSTANCE, List.of());
+        packet(ClientboundStartConfigurationPacket.class, fields -> ClientboundStartConfigurationPacket.INSTANCE, List.of());
+        packet(ServerboundChatCommandPacket.class, fields -> new ServerboundChatCommandPacket((String)fields[0]), List.of(), COMMANDS);
+        packet(
+            ServerboundAcceptTeleportationPacket.class,
+            fields -> new ServerboundAcceptTeleportationPacket(
+                (Integer)fields[0], (Double)fields[1], (Double)fields[2], (Double)fields[3], (Float)fields[4], (Float)fields[5]
+            ),
+            List.of(), INTS, DOUBLES, DOUBLES, DOUBLES, FLOATS, FLOATS
+        );
+        packet(
+            ClientboundGameEventPacket.class, fields -> new ClientboundGameEventPacket((ClientboundGameEventPacket.Type)fields[0], (Float)fields[1]),
+            List.of("event", "param"), GAME_EVENT_TYPES, FLOATS
+        );
+        // Each kind of move is the fields every kind has: where the player is and looks, the flags, and which parts it has.
+        List<String> moveFields = List.of("x", "y", "z", "yRot", "xRot", "onGround", "horizontalCollision", "hasPos", "hasRot");
+        packet(
+            ServerboundMovePlayerPacket.Pos.class,
+            fields -> new ServerboundMovePlayerPacket.Pos((Double)fields[0], (Double)fields[1], (Double)fields[2], (Boolean)fields[5], (Boolean)fields[6]),
+            moveFields, DOUBLES, DOUBLES, DOUBLES, constant(0.0F, float.class), constant(0.0F, float.class), BOOLEANS, BOOLEANS, constant(true, boolean.class),
+            constant(false, boolean.class)
+        );
+        packet(
+            ServerboundMovePlayerPacket.PosRot.class,
+            fields -> new ServerboundMovePlayerPacket.PosRot(
+                (Double)fields[0], (Double)fields[1], (Double)fields[2], (Float)fields[3], (Float)fields[4], (Boolean)fields[5], (Boolean)fields[6]
+            ),
+            moveFields, DOUBLES, DOUBLES, DOUBLES, FLOATS, FLOATS, BOOLEANS, BOOLEANS, constant(true, boolean.class), constant(true, boolean.class)
+        );
+        packet(
+            ServerboundMovePlayerPacket.Rot.class,
+            fields -> new ServerboundMovePlayerPacket.Rot((Float)fields[3], (Float)fields[4], (Boolean)fields[5], (Boolean)fields[6]),
+            moveFields, constant(0.0, double.class), constant(0.0, double.class), constant(0.0, double.class), FLOATS, FLOATS, BOOLEANS, BOOLEANS,
+            constant(false, boolean.class), constant(true, boolean.class)
+        );
+        packet(
+            ServerboundMovePlayerPacket.StatusOnly.class,
+            fields -> new ServerboundMovePlayerPacket.StatusOnly((Boolean)fields[5], (Boolean)fields[6]),
+            moveFields, constant(0.0, double.class), constant(0.0, double.class), constant(0.0, double.class), constant(0.0F, float.class), constant(0.0F, float.class), BOOLEANS,
+            BOOLEANS, constant(false, boolean.class), constant(false, boolean.class)
+        );
+        // A teleport's values: positions and movements like an entity's, and any rotation.
+        Values.Generator changes = values(
+            PositionMoveRotation.class,
+            fields -> new PositionMoveRotation((Vec3)fields[0], (Vec3)fields[1], (Float)fields[2], (Float)fields[3]), List.of(),
+            CoreValues.VEC3, CoreValues.VEC3, FLOATS, FLOATS
+        );
+        PAYLOADS.put(PositionMoveRotation.class, changes);
+        packet(
+            ClientboundPlayerPositionPacket.class,
+            fields -> new ClientboundPlayerPositionPacket((Integer)fields[0], (PositionMoveRotation)fields[1], relativeSet(fields[2])), List.of(),
+            INTS, changes, RELATIVE_SETS
+        );
     }
 
     private PacketValues() {
@@ -413,6 +511,12 @@ final class PacketValues {
         if (type == PacketType.class) {
             return PACKET_TYPE;
         }
+        if (type == ClientboundGameEventPacket.Type.class) {
+            return GAME_EVENT_TYPES;
+        }
+        if (type == Relative.class) {
+            return RELATIVE;
+        }
         if (type.isInterface() && PacketListener.class.isAssignableFrom(type)) {
             return new Listener(type);
         }
@@ -428,6 +532,9 @@ final class PacketValues {
         Object element = type.getActualTypeArguments()[0];
         if (type.getRawType() == Set.class && element == Identifier.class) {
             return FEATURE_SETS;
+        }
+        if (type.getRawType() == Set.class && element == Relative.class) {
+            return RELATIVE_SETS;
         }
         if (type.getRawType() == Map.class && element == String.class && type.getActualTypeArguments()[1] == String.class) {
             return REPORT_DETAILS;
@@ -460,6 +567,7 @@ final class PacketValues {
         }
         return switch (value) {
             case Enum<?> constant -> CoreValues.encode(constant);
+            case ClientboundGameEventPacket.Type eventType -> GAME_EVENT_TYPES.encode(eventType);
             case Packet<?> packet -> encodeFields(packet);
             // Declared as their interface, so encoded by their own class.
             case CustomQueryAnswerPayload payload -> Values.encode(payload, payload.getClass());
@@ -809,13 +917,85 @@ final class PacketValues {
         return array;
     }
 
+    // A field the class declares, or one of the classes it extends does (the move packets' kinds).
     private static Field field(final Class<?> type, final String name) {
-        try {
-            Field field = type.getDeclaredField(name);
-            field.setAccessible(true);
-            return field;
-        } catch (NoSuchFieldException e) {
-            throw new IllegalStateException(e);
+        for (Class<?> declaring = type; declaring != null; declaring = declaring.getSuperclass()) {
+            try {
+                Field field = declaring.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (NoSuchFieldException e) {
+                // Look in the class it extends.
+            }
+        }
+        throw new IllegalStateException("no field " + name + " in " + type.getName());
+    }
+
+    // A field a kind of packet always sets to the same value.
+    private static Values.Generator constant(final Object value, final Class<?> type) {
+        return new Values.Simple(List.of(value), random -> value, spec -> Values.encode(spec, type));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Set<Relative> relativeSet(final Object spec) {
+        return (Set<Relative>)spec;
+    }
+
+    // ClientboundGameEventPacket's Type constants, encoded as their ids, read by reflection.
+    private static Values.Generator gameEventTypes() {
+        List<Object> constants = new ArrayList<>();
+        for (Field field : ClientboundGameEventPacket.class.getFields()) {
+            if (field.getType() == ClientboundGameEventPacket.Type.class) {
+                try {
+                    constants.add(field.get(null));
+                } catch (IllegalAccessException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+        }
+        Field id = field(ClientboundGameEventPacket.Type.class, "id");
+        return new Values.Simple(constants, random -> constants.get(random.nextInt(constants.size())), type -> {
+            try {
+                return new JsonPrimitive(id.getInt(type));
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException(e);
+            }
+        });
+    }
+
+    /** Every set of relatives, each argument its own copy of an EnumSet. */
+    private static final class RelativeSets implements Values.Generator {
+        @Override
+        public List<Object> edges() {
+            List<Object> sets = new ArrayList<>();
+            for (int bits = 0; bits < 1 << Relative.values().length; bits++) {
+                sets.add(Relative.unpack(bits));
+            }
+            return sets;
+        }
+
+        @Override
+        public Object random(final Random random) {
+            return Relative.unpack(random.nextInt(1 << Relative.values().length));
+        }
+
+        @Override
+        public JsonElement encode(final Object spec) {
+            JsonArray array = new JsonArray();
+            for (Object relative : (Set<?>)spec) {
+                array.add(((Enum<?>)relative).name());
+            }
+            return array;
+        }
+
+        @Override
+        public Object instantiate(final Object spec) {
+            return EnumSet.copyOf((Set<Relative>)spec);
+        }
+
+        @Override
+        public boolean exhaustive() {
+            return true;
         }
     }
 
@@ -873,9 +1053,12 @@ final class PacketValues {
 
             JsonArray call = new JsonArray();
             call.add(method.getName());
+            // A handler taking a class the packets extend (handleMovePlayer's ServerboundMovePlayerPacket) gets the packet
+            // encoded by its own class.
             Class<?>[] parameters = method.getParameterTypes();
             for (int i = 0; i < parameters.length; i++) {
-                call.add(Values.encode(args[i], parameters[i]));
+                Class<?> declared = Values.canEncode(parameters[i]) || args[i] == null ? parameters[i] : args[i].getClass();
+                call.add(Values.encode(args[i], declared));
             }
             this.calls.add(call);
             if (method.isDefault()) {

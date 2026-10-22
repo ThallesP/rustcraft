@@ -1,8 +1,7 @@
 //! net/minecraft/server/packs/repository/KnownPack.java
 //!
-//! Not ported yet: `vanilla(String)`, which names the game's version
-//! (`SharedConstants.getCurrentVersion()`, read from the jar's `version.json`), and comes with the
-//! client's pack repository.
+//! `vanilla(String)` names the game's version, `SharedConstants.getCurrentVersion().id()`, which
+//! Java reads from the jar's `version.json` (`SharedConstants`).
 
 use std::fmt;
 use std::sync::LazyLock;
@@ -11,6 +10,7 @@ use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::object::HashCode;
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec};
+use crate::net::minecraft::shared_constants::SharedConstants;
 
 static STREAM_CODEC: StaticStreamCodec<ByteBuf, KnownPack> = LazyLock::new(|| {
     Box::new(stream_codec::composite3(
@@ -43,6 +43,15 @@ impl KnownPack {
             id,
             version,
         }
+    }
+
+    /// One of the game's own packs, of the game's version.
+    pub fn vanilla(id: &str) -> KnownPack {
+        KnownPack::new(
+            KnownPack::VANILLA_NAMESPACE.to_string(),
+            id.to_string(),
+            SharedConstants::get_current_version_id().to_string(),
+        )
     }
 
     pub fn is_vanilla(&self) -> bool {
@@ -94,9 +103,9 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.server.packs.repository.KnownPack");
-        golden.pending(
+        golden.check(
             "vanilla(Ljava/lang/String;)Lnet/minecraft/server/packs/repository/KnownPack;",
-            "needs the game's version, which comes with the client's pack repository",
+            |id: String| KnownPack::vanilla(&id),
         );
         golden.check_codec("STREAM_CODEC", || KnownPack::STREAM_CODEC);
         golden.field("VANILLA_NAMESPACE", KnownPack::VANILLA_NAMESPACE.to_owned());
