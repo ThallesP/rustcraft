@@ -61,14 +61,17 @@ Left from the registry, for when what needs them comes:
 
 ## Log
 
-### 2026-10-22 (render): Draws on the OpenGL device
+### 2026-10-22 (render): Draws on the OpenGL device, the vanilla pack's resources and stb's textures
 
 - Ported and checked:
   - The pipeline's last step to the driver: `GlPipelineRecompiler.compileShader` and `compileProgram`, `GlShaderModule`, `GlProgram` (linking, and `setupBindGroupLayouts`: each `_uniform_00_NN` block, sampler and texel buffer at the next binding or texture unit, the push constant block first), `Uniform`, `VertexArray` (both `Separate`, `ARB_vertex_attrib_binding`'s, which llvmpipe takes, and `Emulated`), `GlRenderPipeline` (its fixed-function state and `bind`), `GlDevice.compilePipeline`, and `PipelineBuilder.compilePipeline`, which makes the `FrontendRenderPipeline`.
   - Drawing: `RenderPass` (pipelines, uniforms by name, vertex and index buffers, scissors, `draw` and `drawIndexed`), `FrontendRenderPass` with its checks, `RenderPassBackend`, `GlRenderPass`, `GlCommandEncoder`'s `executeDraw` and `setupDraw` (binding only what changed), `writeToBuffer` and `writeToTexture`, and `FrontendCommandEncoder`'s checks on render passes and writes. `GpuBufferSlice`, `IndexType`, `GpuSampler` with `AddressMode` and `FilterMode`, `GlSampler`, `TextureViewAndSampler`, `ScissorState`, and `BufferStorage`'s immutable and mutable buffers with data.
   - What the game feeds a draw: `BufferBuilder`, `ByteBufferBuilder`, `VertexConsumer` and `MeshData`'s draw state; `Std140Builder` and `Std140SizeCalculator`; `DynamicGpuData.Transform` and `TerrainTransform`'s blocks; `ProjectionMatrixBuffer`; `RenderSystem.AutoStorageIndexBuffer` (the shared quad, line and sequential indices); `ARGB.toABGR` and `fromABGR` (goldens).
   - `src/main.rs`: `--compile-pipelines`, and `--fill` with `--gui-scale`, which draws `GuiGraphicsExtractor.fill`s through `pipeline/gui` the way `GuiRenderer` does.
+  - Resources: `PackType`, `PackResources`, `IoSupplier`, `FixedPathPackResources` with its builder, `VanillaPackResources` and its builder (`ClientPackSource.createVanillaPackSource`'s pack over `vanilla/<version>/resources/`, the jar unpacked), `PathPackResources.listPath`, `FileUtil`'s path helpers, `Resource`, `ResourceMetadata` and `MetadataSectionType`, `ResourceManager`, `FallbackResourceManager` and `MultiPackResourceManager`. `Identifier` is `Ord` like its `compareTo`.
+  - Images: LWJGL's stb (`LibSTB`, `STBImage`) from its own `liblwjgl_stb.so`, called through its JNI entry points; `NativeImage.read` (with `PngInfo.validateHeader`), pixels by ARGB, `computeTransparency`; `Transparency`; `TextureUtil.solidify` and `fillEmptyAreasWithDarkColor`; and `ARGB`'s sRGB tables, `meanLinear`, `as8BitChannel` and `color(float, int)` and `color(int, int)` (goldens).
 - Matched: all 192 pipelines `ShaderManager.reload` compiles at startup compile and link on llvmpipe (1.3 s, debug build). GUI fills come out pixel for pixel as their known pixels (TESTING.md): 320x240 at GUI scale 2, overlapping fills in order, corners given the other way round, and a transparent fill that the fragment shader discards. On GLX locally and on SDL's EGL path like CI.
+- Matched, against new goldens (`TextureSuites`, TESTING.md): the resource manager lists the same namespaces and resources under `textures`, `textures/block`, `atlases`, `models/block` and `blockstates` in the same order, and every one of the 3,964 PNGs under `textures/` decodes to vanilla's RGBA, byte for byte (by MD5).
 - Evidence: `cargo test --workspace` passes, the OpenGL tests (5) in 2.3 s. fmt, clippy and the port check are clean.
 
 ### 2026-10-22 (world): Paletted containers, the bit storages and palettes a chunk section keeps its blocks and biomes in

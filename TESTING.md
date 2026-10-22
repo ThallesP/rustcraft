@@ -18,6 +18,7 @@ Everything vanilla produces lands in `vanilla/<version>/`, which is gitignored. 
 ```sh
 python3 tools/setup_vanilla.py                                    # once per version
 python3 tools/golden.py && cargo test                             # layer 1
+python3 tools/golden.py com.mojang.blaze3d.platform.NativeImage   # only these suites, keeping the other files
 python3 tools/oracle_client.py run walk                           # layers 2 and 4, singleplayer
 python3 tools/oracle_client.py capture walk --accept-eula         # layers 2–4 on a fresh vanilla server
 python3 tools/oracle_client.py check-determinism walk --capture --accept-eula
@@ -207,6 +208,14 @@ Chunk data has hand-written suites too (`ChunkSuites`). Programs run ops on one 
 - `RenderPipelines`' sort keys are the order the pipelines are built in, which is its static initialiser's: nothing in the generator builds a pipeline before it, and in the game only post chains do, after it.
 
 The port compiles through the same native libraries (PORTING.md), so its SPIR-V and GLSL are compared byte for byte.
+
+### Textures and the block atlas
+
+`TextureSuites` reads the vanilla pack the way the client does: `ClientPackSource.createVanillaPackSource`'s pack (the jar's resources, then a layer for the launcher's asset index, whose directory isn't on the machine, as it holds only sounds and translations) opened into a `MultiPackResourceManager`, after `ClientBootstrap.bootstrap()` (which registers the atlases' sprite sources). An image is `[width, height, md5]`, the MD5 of its RGBA bytes as they lie in memory, so a mismatch is a pixel that differs.
+- `MultiPackResourceManager`: `getNamespaces`, what `listResources` lists under `textures`, `textures/block`, `atlases`, `models/block` and `blockstates`, in its `TreeMap`'s order, and each atlas definition's resource stack.
+- `NativeImage.read` of every PNG under `textures/` (3,964): the RGBA stb decodes.
+
+The port reads the pack from `vanilla/<version>/resources/` (the client jar unpacked) and decodes with LWJGL's own `liblwjgl_stb.so`, so both sides run the same decoder.
 
 ## 2. Scenarios and tick traces
 

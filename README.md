@@ -70,7 +70,7 @@ Every step of the loop updates this table.
 | Rendering | renderpearl with its OpenGL backend, shaders through shaderc and SPIRV-Cross | Partial: every pipeline of `RenderPipelines`, compiled through vanilla's own shaderc and SPIRV-Cross builds and linked into GL programs with their uniform blocks and samplers; the GL device, textures, samplers, buffers, vertex arrays, render passes that clear and draw (`FrontendRenderPass`, indexed and not), `BufferBuilder`, std140 uniform blocks, screenshots read back; no push constants, multi-draws or indirect draws yet | goldens (SPIR-V, reflection, bindings, GLSL); frames under Xvfb | SPIR-V and GLSL byte-identical for all 192 pipelines, all 192 link on llvmpipe; GUI fills pixel-exact against their known pixels |
 | Rendering | Metal backend (macOS) | Not started | draw stream checked against OpenGL's | |
 | Rendering | Vulkan backend | Not started | screenshots, against vanilla's Vulkan backend | |
-| Rendering | Resources, texture atlases, block models | Not started | | |
+| Rendering | Resources, texture atlases, block models | Partial: the vanilla pack and the client's resource manager; PNGs decoded by LWJGL's own stb; no atlases or models yet | goldens | all 3,964 textures decode to vanilla's pixels |
 | Rendering | Terrain, sky, fog, clouds | Not started | screenshots | |
 | Rendering | HUD (hotbar, hearts, hunger, crosshair), first-person hand | Not started | screenshots | |
 | Screens | Title, pause, inventory, chat, F3 | Not started | screenshots | |

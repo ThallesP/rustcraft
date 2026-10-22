@@ -2,5 +2,6 @@
 //! here: loading vanilla's own builds of the libraries from LWJGL's natives jars, and their C APIs.
 
 pub mod sdl;
+pub mod stb;
 pub mod system;
 pub mod util;

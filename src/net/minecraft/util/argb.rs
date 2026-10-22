@@ -1,13 +1,111 @@
 //! net/minecraft/util/ARGB.java
 //!
-//! Only what Mth, `ByteBufCodecs.RGB_COLOR`, clear colors (`vector4fFromARGB32`) and vertex and
-//! texture colors (`toABGR`) need so far.
+//! Only what Mth, `ByteBufCodecs.RGB_COLOR`, clear colors (`vector4fFromARGB32`), vertex and
+//! texture colors (`toABGR`) and mipmaps (the sRGB tables, `meanLinear`) need so far.
 
+use crate::java::lang::math::Math;
+use crate::net::minecraft::util::mth::Mth;
 use crate::org::joml::vector4f::Vector4f;
+use std::sync::LazyLock;
+
+/// Each sRGB channel's linear value, out of 1023.
+static SRGB_TO_LINEAR: LazyLock<[i16; 256]> = LazyLock::new(|| {
+    std::array::from_fn(|i| {
+        let channel = i as f32 / 255.0;
+        Math::round_f32(ARGB::compute_srgb_to_linear(channel) * 1023.0) as i16
+    })
+});
+
+/// Each linear value out of 1023's sRGB channel.
+static LINEAR_TO_SRGB: LazyLock<[i8; 1024]> = LazyLock::new(|| {
+    std::array::from_fn(|i| {
+        let channel = i as f32 / 1023.0;
+        Math::round_f32(ARGB::compute_linear_to_srgb(channel) * 255.0) as i8
+    })
+});
 
 pub struct ARGB;
 
 impl ARGB {
+    fn compute_srgb_to_linear(x: f32) -> f32 {
+        if x >= 0.04045 {
+            Math::pow((f64::from(x) + 0.055) / 1.055, 2.4) as f32
+        } else {
+            x / 12.92
+        }
+    }
+
+    fn compute_linear_to_srgb(x: f32) -> f32 {
+        if x >= 0.0031308 {
+            (1.055 * Math::pow(f64::from(x), 0.4166666666666667) - 0.055) as f32
+        } else {
+            12.92 * x
+        }
+    }
+
+    /// Panics where Java throws `ArrayIndexOutOfBoundsException`, for a channel outside 0..=255.
+    pub fn srgb_to_linear_channel(srgb: i32) -> f32 {
+        f32::from(SRGB_TO_LINEAR[srgb as usize]) / 1023.0
+    }
+
+    /// Panics where Java throws `ArrayIndexOutOfBoundsException`, for a value outside 0..=1.
+    pub fn linear_to_srgb_channel(linear: f32) -> i32 {
+        let index = Mth::floor_f32(linear * 1023.0);
+        assert!(
+            (0..1024).contains(&index),
+            "Index {index} out of bounds for length 1024"
+        );
+        i32::from(LINEAR_TO_SRGB[index as usize]) & 0xFF
+    }
+
+    /// The four colors' mean: alpha's directly, the others' in linear light.
+    pub fn mean_linear(srgb1: i32, srgb2: i32, srgb3: i32, srgb4: i32) -> i32 {
+        ARGB::color(
+            (ARGB::alpha(srgb1) + ARGB::alpha(srgb2) + ARGB::alpha(srgb3) + ARGB::alpha(srgb4)) / 4,
+            ARGB::linear_channel_mean(
+                ARGB::red(srgb1),
+                ARGB::red(srgb2),
+                ARGB::red(srgb3),
+                ARGB::red(srgb4),
+            ),
+            ARGB::linear_channel_mean(
+                ARGB::green(srgb1),
+                ARGB::green(srgb2),
+                ARGB::green(srgb3),
+                ARGB::green(srgb4),
+            ),
+            ARGB::linear_channel_mean(
+                ARGB::blue(srgb1),
+                ARGB::blue(srgb2),
+                ARGB::blue(srgb3),
+                ARGB::blue(srgb4),
+            ),
+        )
+    }
+
+    fn linear_channel_mean(c1: i32, c2: i32, c3: i32, c4: i32) -> i32 {
+        let linear = (i32::from(SRGB_TO_LINEAR[c1 as usize])
+            + i32::from(SRGB_TO_LINEAR[c2 as usize])
+            + i32::from(SRGB_TO_LINEAR[c3 as usize])
+            + i32::from(SRGB_TO_LINEAR[c4 as usize]))
+            / 4;
+        i32::from(LINEAR_TO_SRGB[linear as usize]) & 0xFF
+    }
+
+    pub fn as8_bit_channel(value: f32) -> i32 {
+        Mth::floor_f32(value * 255.0)
+    }
+
+    /// `color(float, int)`: the RGB with an alpha from 0 to 1.
+    pub fn color_alpha_f32(alpha: f32, rgb: i32) -> i32 {
+        ARGB::as8_bit_channel(alpha) << 24 | rgb & 16777215
+    }
+
+    /// `color(int, int)`: the RGB with an alpha.
+    pub fn color_alpha(alpha: i32, rgb: i32) -> i32 {
+        alpha << 24 | rgb & 16777215
+    }
+
     /// `color >>> 24`.
     pub fn alpha(color: i32) -> i32 {
         ((color as u32) >> 24) as i32
@@ -99,6 +197,12 @@ mod tests {
         golden.check("color(III)I", ARGB::color_rgb);
         golden.check("alpha(I)I", ARGB::alpha);
         golden.check("toABGR(I)I", ARGB::to_abgr);
+        golden.check("srgbToLinearChannel(I)F", ARGB::srgb_to_linear_channel);
+        golden.check("linearToSrgbChannel(F)I", ARGB::linear_to_srgb_channel);
+        golden.check("meanLinear(IIII)I", ARGB::mean_linear);
+        golden.check("as8BitChannel(F)I", ARGB::as8_bit_channel);
+        golden.check("color(FI)I", ARGB::color_alpha_f32);
+        golden.check("color(II)I", ARGB::color_alpha);
         golden.check("fromABGR(I)I", ARGB::from_abgr);
         golden.check("alphaFloat(I)F", ARGB::alpha_float);
         golden.check("redFloat(I)F", ARGB::red_float);

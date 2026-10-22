@@ -450,7 +450,12 @@ fn run(arguments: Arguments) -> Result<(), String> {
 }
 
 /// The render track's modes, which `parse_arguments` reads; anything else goes to `Main`.
-const RENDER_MODES: [&str; 3] = ["--device-info", "--screenshot", "--window"];
+const RENDER_MODES: [&str; 4] = [
+    "--device-info",
+    "--compile-pipelines",
+    "--screenshot",
+    "--window",
+];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

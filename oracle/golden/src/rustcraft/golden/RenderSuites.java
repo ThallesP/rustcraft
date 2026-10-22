@@ -83,7 +83,7 @@ final class RenderSuites {
     }
 
     static List<Suite> suites() {
-        return List.of(
+        List<Suite> suites = new ArrayList<>(List.of(
             new FieldsSuite(DefaultVertexFormat.class),
             new FieldsSuite(BindGroupLayouts.class),
             new RenderPipelinesSuite(),
@@ -91,7 +91,9 @@ final class RenderSuites {
             new CompileSuite("com.mojang.renderpearl.frontend.shaders.SPIRVModule", CompileSuite::writeReflect),
             new CompileSuite(PipelineBuilder.class.getName(), CompileSuite::writeCreateInfo),
             new CompileSuite(GlPipelineRecompiler.class.getName(), CompileSuite::writeDecompiled)
-        );
+        ));
+        suites.addAll(TextureSuites.suites());
+        return suites;
     }
 
     // ---- Encodings ----

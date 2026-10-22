@@ -251,6 +251,19 @@ impl Identifier {
     }
 }
 
+/// Java's `compareTo`, so a `BTreeMap` of identifiers iterates like a `TreeMap` of them.
+impl Ord for Identifier {
+    fn cmp(&self, other: &Identifier) -> std::cmp::Ordering {
+        self.compare_to(other).cmp(&0)
+    }
+}
+
+impl PartialOrd for Identifier {
+    fn partial_cmp(&self, other: &Identifier) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl fmt::Display for Identifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.namespace, self.path)

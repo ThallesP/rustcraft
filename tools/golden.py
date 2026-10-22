@@ -4,13 +4,15 @@
 Compiles oracle/golden/ against the client jar and runs it, writing one JSON Lines
 file per class to vanilla/<version>/golden/. Run tools/setup_vanilla.py first.
 
-    python3 tools/golden.py
+    python3 tools/golden.py                         # every suite
+    python3 tools/golden.py net.minecraft.util.Mth  # only these suites, keeping the other files
 """
 
 import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,11 +46,13 @@ def main():
     # the details only go into the exception's message, which no golden records.
     runtime_classpath = [classes_dir, *(path for path in classpath if not path.name.startswith("oshi-core-"))]
     output_dir = VERSION_DIR / "golden"
-    shutil.rmtree(output_dir, ignore_errors=True)
+    only = sys.argv[1:]
+    if not only:
+        shutil.rmtree(output_dir, ignore_errors=True)
     subprocess.run(
         [
             jdk_bin / "java", "-Dio.netty.leakDetection.level=disabled", "--add-opens", "java.base/java.util=ALL-UNNAMED", "-cp", os.pathsep.join(map(str, runtime_classpath)),
-            "rustcraft.golden.Golden", output_dir,
+            "rustcraft.golden.Golden", output_dir, *only,
         ],
         cwd=VERSION_DIR,
         check=True,
