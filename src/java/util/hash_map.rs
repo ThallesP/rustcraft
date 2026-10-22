@@ -14,10 +14,11 @@
 //! and the golden suite's programs that get there are pending. A bin of 9 in a smaller table makes
 //! the table grow, which is ported.
 //!
-//! Only what `CompoundTag` calls is ported: the constructors (`new HashMap<>()` and
-//! `new HashMap<>(map)`, which sizes its table for the map's size), `size`, `isEmpty`, `get`,
-//! `containsKey`, `put`, `remove`, iterating it, and `AbstractMap`'s `equals` and `hashCode`.
-//! The load factor is always the default 0.75. Keys are never null, which Rust can't have.
+//! Only what the game calls is ported: the constructors (`new HashMap<>()`, `new HashMap<>(map)`,
+//! which sizes its table for the map's size, and `new HashMap<>(initialCapacity)`, which codecs
+//! make their maps with), `size`, `isEmpty`, `get`, `containsKey`, `put`, `remove`, iterating it,
+//! and `AbstractMap`'s `equals`, `hashCode` and `toString`. The load factor is always the default
+//! 0.75. Keys and values are never null, which Rust can't have.
 
 /*
  * Copyright (c) 1997, 2025, Oracle and/or its affiliates. All rights reserved.
@@ -45,6 +46,9 @@
  */
 
 use std::borrow::Borrow;
+use std::fmt;
+use std::iter::Flatten;
+use std::slice;
 
 use crate::java::lang::object::HashCode;
 
@@ -98,6 +102,22 @@ impl<K, V> HashMap<K, V> {
         }
     }
 
+    /// `new HashMap<>(initialCapacity)`: no table until the first `put`, which makes one of the
+    /// smallest power of two at least the capacity (1 for 0), up to 2^30. Panics on a negative
+    /// capacity, where Java throws `IllegalArgumentException`, which a count read from a buffer can
+    /// be.
+    pub fn from_initial_capacity(initial_capacity: i32) -> HashMap<K, V> {
+        assert!(
+            initial_capacity >= 0,
+            "Illegal initial capacity: {initial_capacity}"
+        );
+        HashMap {
+            table: Vec::new(),
+            size: 0,
+            threshold: table_size_for(initial_capacity.min(MAXIMUM_CAPACITY)),
+        }
+    }
+
     pub fn size(&self) -> i32 {
         self.size
     }
@@ -107,20 +127,20 @@ impl<K, V> HashMap<K, V> {
     }
 
     /// The entries in iteration order: bin by bin, each bin's in the order they came.
-    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
-        self.table
-            .iter()
-            .flatten()
-            .map(|node| (&node.key, &node.value))
+    pub fn iter(&self) -> Iter<'_, K, V> {
+        Iter {
+            nodes: self.table.iter().flatten(),
+            remaining: self.size as usize,
+        }
     }
 
     /// `keySet()`'s order.
-    pub fn keys(&self) -> impl Iterator<Item = &K> {
+    pub fn keys(&self) -> impl ExactSizeIterator<Item = &K> {
         self.iter().map(|(key, _)| key)
     }
 
     /// `values()`'s order.
-    pub fn values(&self) -> impl Iterator<Item = &V> {
+    pub fn values(&self) -> impl ExactSizeIterator<Item = &V> {
         self.iter().map(|(_, value)| value)
     }
 
@@ -310,6 +330,60 @@ impl<K, V> Default for HashMap<K, V> {
     }
 }
 
+/// A map's entries in iteration order, as many as its `size()`, which a codec writes first.
+pub struct Iter<'a, K, V> {
+    nodes: Flatten<slice::Iter<'a, Vec<Node<K, V>>>>,
+    remaining: usize,
+}
+
+impl<'a, K, V> Iterator for Iter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn next(&mut self) -> Option<(&'a K, &'a V)> {
+        let node = self.nodes.next()?;
+        self.remaining -= 1;
+        Some((&node.key, &node.value))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<K, V> ExactSizeIterator for Iter<'_, K, V> {}
+
+impl<'a, K, V> IntoIterator for &'a HashMap<K, V> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = Iter<'a, K, V>;
+
+    fn into_iter(self) -> Iter<'a, K, V> {
+        self.iter()
+    }
+}
+
+/// `put`s each entry in turn, like a codec reading a map (`ByteBufCodecs.map`).
+impl<K: HashCode + Eq, V> Extend<(K, V)> for HashMap<K, V> {
+    fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, entries: I) {
+        for (key, value) in entries {
+            self.put(key, value);
+        }
+    }
+}
+
+/// `AbstractMap.toString`: `{key=value, key=value}`, in iteration order.
+impl<K: fmt::Display, V: fmt::Display> fmt::Display for HashMap<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("{")?;
+        for (index, (key, value)) in self.iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{key}={value}")?;
+        }
+        f.write_str("}")
+    }
+}
+
 /// `AbstractMap.equals`: the same size, and every key mapped to an equal value, in any order.
 impl<K: HashCode + Eq, V: PartialEq> PartialEq for HashMap<K, V> {
     fn eq(&self, other: &HashMap<K, V>) -> bool {
@@ -353,25 +427,65 @@ mod tests {
     use serde_json::Value;
 
     use super::HashMap;
-    use crate::golden::{Decode, Encode, Golden};
+    use crate::golden::{Decode, Encode, Golden, elements};
+    use crate::java::lang::object::HashCode;
+
+    // [capacity, [[key, value], …]]: the table's length, and the entries in iteration order.
+    impl<K: Decode + HashCode, V: Decode> Decode for HashMap<K, V> {
+        fn decode(value: &Value) -> Self {
+            let [capacity, entries] = elements(value);
+            HashMap::from_table(i32::decode(capacity), Vec::decode(entries))
+        }
+    }
+
+    impl<K: Encode, V: Encode> Encode for HashMap<K, V> {
+        fn encode(&self) -> Value {
+            let entries: Vec<Value> = self
+                .iter()
+                .map(|(key, value)| Value::from(vec![key.encode(), value.encode()]))
+                .collect();
+            Value::from(vec![Value::from(self.capacity()), Value::from(entries)])
+        }
+
+        fn matches(&self, expected: &Value) -> bool {
+            let Some([capacity, entries]) = expected.as_array().map(Vec::as_slice) else {
+                return false;
+            };
+            let Some(entries) = entries.as_array() else {
+                return false;
+            };
+            self.capacity().matches(capacity)
+                && entries.len() == self.size() as usize
+                && self.iter().zip(entries).all(|((key, value), entry)| {
+                    matches!(entry.as_array().map(Vec::as_slice), Some([expected_key, expected_value])
+                        if key.matches(expected_key) && value.matches(expected_value))
+                })
+        }
+    }
 
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("java.util.HashMap");
-        golden.check("programs", |program: Value| run(&program));
+        golden.check("programs", |program: Value| run(HashMap::new(), &program));
+        golden.check("sized programs", |initial_capacity: i32, program: Value| {
+            run(HashMap::from_initial_capacity(initial_capacity), &program)
+        });
         golden.pending(
             "treeified programs",
+            "tree bins aren't ported: a bin of 9 in a table of 64 or more",
+        );
+        golden.pending(
+            "treeified sized programs",
             "tree bins aren't ported: a bin of 9 in a table of 64 or more",
         );
         golden.finish();
     }
 
     // An op's output, and the map's table length and entries in order after it.
-    type Step = (Box<dyn Encode>, (i32, Vec<(String, i32)>));
+    type Step = (Box<dyn Encode>, HashMap<String, i32>);
 
     // Mirrors HashMapSuite in oracle/golden/.
-    fn run(program: &Value) -> Vec<Step> {
-        let mut map: HashMap<String, i32> = HashMap::new();
+    fn run(mut map: HashMap<String, i32>, program: &Value) -> Vec<Step> {
         let mut steps = Vec::new();
         for op in program.as_array().expect("a program is an array of ops") {
             let op = op.as_array().expect("an op is an array");
@@ -387,11 +501,7 @@ mod tests {
                 }
                 name => panic!("unknown op {name}"),
             };
-            let entries = map
-                .iter()
-                .map(|(key, value)| (key.clone(), *value))
-                .collect();
-            steps.push((output, (map.capacity(), entries)));
+            steps.push((output, map.clone()));
         }
         steps
     }

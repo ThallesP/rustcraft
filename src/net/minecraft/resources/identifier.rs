@@ -13,6 +13,7 @@ use std::fmt;
 use std::sync::LazyLock;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
+use crate::java::lang::object::HashCode;
 use crate::java::lang::string::JavaString;
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
 use crate::net::minecraft::network::codec::stream_codec::{StaticStreamCodec, StreamCodec};
@@ -253,6 +254,13 @@ impl Identifier {
 impl fmt::Display for Identifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.namespace, self.path)
+    }
+}
+
+/// For the Java collections that hash it (a `HashSet` of features).
+impl HashCode for Identifier {
+    fn hash_code(&self) -> i32 {
+        Identifier::hash_code(self)
     }
 }
 

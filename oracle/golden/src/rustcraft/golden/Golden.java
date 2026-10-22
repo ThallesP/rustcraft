@@ -21,8 +21,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
@@ -64,6 +66,7 @@ import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.common.ClientboundClearDialogPacket;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
+import net.minecraft.network.protocol.common.ClientboundCustomReportDetailsPacket;
 import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket;
 import net.minecraft.network.protocol.common.ClientboundPingPacket;
 import net.minecraft.network.protocol.common.ClientboundPostEffectsPacket;
@@ -85,6 +88,7 @@ import net.minecraft.network.protocol.configuration.ClientboundFinishConfigurati
 import net.minecraft.network.protocol.configuration.ClientboundRegistryDataPacket;
 import net.minecraft.network.protocol.configuration.ClientboundResetChatPacket;
 import net.minecraft.network.protocol.configuration.ClientboundSelectKnownPacks;
+import net.minecraft.network.protocol.configuration.ClientboundUpdateEnabledFeaturesPacket;
 import net.minecraft.network.protocol.configuration.ConfigurationPacketTypes;
 import net.minecraft.network.protocol.configuration.ConfigurationProtocols;
 import net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket;
@@ -746,6 +750,22 @@ public final class Golden {
                 "Direction::from3DDataValue, Direction::get3DDataValue",
                 leading -> ByteBufCodecs.idMapper(Direction::from3DDataValue, Direction::get3DDataValue), bufferCodec(DIRECTIONS, Direction.class)
             )
+            // Maps in a HashMap, which writes its entries in its table's order: any, and a server's report details with any
+            // maximum.
+            .codec(
+                "map(Ljava/util/function/IntFunction;Lnet/minecraft/network/codec/StreamCodec;Lnet/minecraft/network/codec/StreamCodec;)Lnet/minecraft/network/codec/StreamCodec;",
+                "HashMap::new, STRING_UTF8, VAR_INT",
+                leading -> ByteBufCodecs.<ByteBuf, String, Integer, HashMap<String, Integer>>map(HashMap::new, ByteBufCodecs.STRING_UTF8, ByteBufCodecs.VAR_INT),
+                bufferCodec(Codecs.hashMapOf(STRINGS, INTS, List.of()), Map.class)
+            )
+            .codec(
+                "map(Ljava/util/function/IntFunction;Lnet/minecraft/network/codec/StreamCodec;Lnet/minecraft/network/codec/StreamCodec;I)Lnet/minecraft/network/codec/StreamCodec;",
+                "HashMap::new, stringUtf8(128), stringUtf8(4096)",
+                leading -> ByteBufCodecs.<ByteBuf, String, String, HashMap<String, String>>map(
+                    HashMap::new, ByteBufCodecs.stringUtf8(128), ByteBufCodecs.stringUtf8(4096), (Integer)leading[0]
+                ),
+                bufferCodec(PacketValues.REPORT_DETAILS, Map.class), INTS
+            )
             // The NBT codecs with the accounters the game gives them: the click action's 32 KiB and 16 deep, and a trusted one.
             // A trusted codec reading a count in the billions from random bytes would allocate an array that long.
             .whereDecode("TRUSTED_TAG.decode", args -> NbtValues.readsLittle((ByteBuf)args[0], null, NbtIo::readAnyTag))
@@ -1026,6 +1046,26 @@ public final class Golden {
         InstanceSuite.every(ClientboundPostEffectsPacket.class),
         // Configuration's codec of it skips any payload it doesn't know, up to 1 MiB.
         InstanceSuite.every(ClientboundCustomPayloadPacket.class).extraInputs("CONFIG_STREAM_CODEC.decode", customPayloads(1048576)),
+        // Its codec reads the features into a HashSet, which keeps one of each, so it also reads identifiers twice, and counts
+        // it refuses to make a set for (negative ones) or reads no identifier after.
+        InstanceSuite.every(ClientboundUpdateEnabledFeaturesPacket.class).extraInputs("STREAM_CODEC.decode", featureBuffers()),
+        // Its writer stops names at 128 characters, values at 4096 and the count at 32, so the reader also reads what's
+        // written without them, a name twice (the HashMap keeps the second value where the first was), and counts with
+        // nothing after them.
+        InstanceSuite.every(ClientboundCustomReportDetailsPacket.class)
+            .extraInputs(
+                "STREAM_CODEC.decode",
+                Stream.concat(
+                    written(109, Values.generator(ClientboundCustomReportDetailsPacket.class), (FriendlyByteBuf buffer, ClientboundCustomReportDetailsPacket packet) -> {
+                        buffer.writeVarInt(packet.details().size());
+                        packet.details().forEach((key, value) -> {
+                            Utf8String.write(buffer, key, Integer.MAX_VALUE);
+                            Utf8String.write(buffer, value, Integer.MAX_VALUE);
+                        });
+                    }).stream(),
+                    reportDetailBuffers().stream()
+                ).toList()
+            ),
         // The registries the server sends, by their keys, and their elements.
         InstanceSuite.every(ResourceKey.class),
         new StaticSuite(Registries.class),
@@ -2594,6 +2634,39 @@ public final class Golden {
     // Custom payload packets the codec's own encodings never hold: a discarded payload of the most the packet takes
     // (32767 bytes serverbound, 1 MiB clientbound) and a byte more, and brands longer than readUtf's 32767, written without
     // the limit.
+    // Counts with nothing after them (negative ones throw making the set), the server's features with one twice, one
+    // identifier twice, and a feature that isn't an identifier.
+    private static List<Object[]> featureBuffers() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int count : new int[]{0, 1, -1, Integer.MIN_VALUE, 65536, 65537, Integer.MAX_VALUE}) {
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.varInt(count))});
+        }
+        byte[] vanilla = NetworkValues.utf("minecraft:vanilla");
+        byte[] tradeRebalance = NetworkValues.utf("minecraft:trade_rebalance");
+        inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(NetworkValues.varInt(3), vanilla, tradeRebalance, vanilla))});
+        inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(NetworkValues.varInt(2), vanilla, vanilla))});
+        inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(NetworkValues.varInt(1), NetworkValues.utf("Minecraft:Vanilla")))});
+        return inputs;
+    }
+
+    // Counts with nothing after them, around the limit of 32 and negative (which throws making the map), and a name twice,
+    // apart and in a row.
+    private static List<Object[]> reportDetailBuffers() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int count : new int[]{0, 1, -1, Integer.MIN_VALUE, 32, 33}) {
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.varInt(count))});
+        }
+        byte[] server = NetworkValues.utf("Server");
+        byte[] mods = NetworkValues.utf("Mod list");
+        inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(
+            NetworkValues.varInt(3), server, NetworkValues.utf("first"), mods, NetworkValues.utf("none"), server, NetworkValues.utf("second")
+        ))});
+        inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(
+            NetworkValues.varInt(2), server, NetworkValues.utf("first"), server, NetworkValues.utf("second")
+        ))});
+        return inputs;
+    }
+
     private static List<Object[]> customPayloads(final int maximum) {
         List<Object[]> inputs = new ArrayList<>();
         for (int size : new int[]{maximum, maximum + 1}) {

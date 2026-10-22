@@ -6,8 +6,7 @@
 //!   `fromCodecWithRegistries` ones), and `lenientJson`, which waits for Gson;
 //! - `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
 //! - the registries' (`registry`, `holderRegistry`, `holder`, `holderSet` and `idMapper(IdMap)`);
-//! - `either`, which waits for DataFixerUpper's `Either`, and `map`, whose first caller settles
-//!   which Rust map stands for its Java map (whose order `encode` writes in);
+//! - `either`, which waits for DataFixerUpper's `Either`;
 //! - `registryFriendlyLengthPrefixed`, which waits for `RegistryFriendlyByteBuf`.
 //!
 //! An interface Java only uses for its constants and static methods, so a unit struct like `Mth`.
@@ -543,6 +542,29 @@ impl ByteBufCodecs {
         }
     }
 
+    /// `map(IntFunction, StreamCodec, StreamCodec)`: any number of entries.
+    pub fn map<K, V, F>(constructor: F, key_codec: K, value_codec: V) -> Map<K, V, F> {
+        ByteBufCodecs::map_max(constructor, key_codec, value_codec, i32::MAX)
+    }
+
+    /// `map(IntFunction, StreamCodec, StreamCodec, int)`: a count, then each entry's key and
+    /// value. The constructor gets the count up to `MAX_INITIAL_COLLECTION_SIZE`, like
+    /// `collection`'s. A Java map made with `HashMap::new` is the ported `HashMap`, which keeps
+    /// Java's table, since encoding writes the entries in its order.
+    pub fn map_max<K, V, F>(
+        constructor: F,
+        key_codec: K,
+        value_codec: V,
+        max_size: i32,
+    ) -> Map<K, V, F> {
+        Map {
+            constructor,
+            key_codec,
+            value_codec,
+            max_size,
+        }
+    }
+
     /// `lengthPrefixed(int)`: the value's encoding behind its length, in a VarInt, of at most
     /// `max_size` bytes.
     pub fn length_prefixed<C: StreamCodec<Buffer = ByteBuf>>(
@@ -734,12 +756,57 @@ where
     }
 }
 
+/// What `map` makes: Java's map is anything with `put`, `size` and `forEach`, which is a Rust
+/// collection of entries that can be extended and iterated over by reference.
+pub struct Map<K, V, F> {
+    constructor: F,
+    key_codec: K,
+    value_codec: V,
+    max_size: i32,
+}
+
+impl<K, V, F, M> StreamCodec for Map<K, V, F>
+where
+    K: StreamCodec,
+    V: StreamCodec<Buffer = K::Buffer>,
+    K::Buffer: AsMut<ByteBuf>,
+    F: Fn(i32) -> M,
+    M: Extend<(K::Value, V::Value)>,
+    for<'a> &'a M: IntoIterator<Item = (&'a K::Value, &'a V::Value), IntoIter: ExactSizeIterator>,
+{
+    type Buffer = K::Buffer;
+    type Value = M;
+
+    fn encode(&self, output: &mut K::Buffer, map: &M) {
+        let entries = map.into_iter();
+        ByteBufCodecs::write_count(output.as_mut(), entries.len() as i32, self.max_size);
+        for (key, value) in entries {
+            self.key_codec.encode(output, key);
+            self.value_codec.encode(output, value);
+        }
+    }
+
+    fn decode(&self, input: &mut K::Buffer) -> M {
+        let count = ByteBufCodecs::read_count(input.as_mut(), self.max_size);
+        let mut result = (self.constructor)(count.min(65536));
+
+        for _ in 0..count {
+            let key = self.key_codec.decode(input);
+            let value = self.value_codec.decode(input);
+            result.extend([(key, value)]);
+        }
+
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ByteBufCodecs;
     use crate::golden::Golden;
     use crate::io::netty::buffer::byte_buf::ByteBuf;
     use crate::java::util::array_list::ArrayList;
+    use crate::java::util::hash_map::HashMap;
     use crate::net::minecraft::core::direction::Direction;
     use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
     use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
@@ -788,15 +855,6 @@ mod tests {
             "either(Lnet/minecraft/network/codec/StreamCodec;Lnet/minecraft/network/codec/StreamCodec;)Lnet/minecraft/network/codec/StreamCodec;",
             "waits for DataFixerUpper's Either",
         );
-        for name in [
-            "map(Ljava/util/function/IntFunction;Lnet/minecraft/network/codec/StreamCodec;Lnet/minecraft/network/codec/StreamCodec;)Lnet/minecraft/network/codec/StreamCodec;",
-            "map(Ljava/util/function/IntFunction;Lnet/minecraft/network/codec/StreamCodec;Lnet/minecraft/network/codec/StreamCodec;I)Lnet/minecraft/network/codec/StreamCodec;",
-        ] {
-            golden.pending(
-                name,
-                "its first caller settles which Rust map stands for its Java map, whose order encode writes in",
-            );
-        }
         golden.pending(
             "registryFriendlyLengthPrefixed(I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;",
             "waits for RegistryFriendlyByteBuf, which comes with the registries",
@@ -930,6 +988,27 @@ mod tests {
         golden.check_codec(
             &format!("idMapper(Ljava/util/function/IntFunction;Ljava/util/function/ToIntFunction;){CODEC}[Direction::from3DDataValue, Direction::get3DDataValue]"),
             || ByteBufCodecs::id_mapper(Direction::from_3d_data_value, Direction::get_3d_data_value),
+        );
+        golden.check_codec(
+            &format!("map(Ljava/util/function/IntFunction;{CODEC}{CODEC}){CODEC}[HashMap::new, STRING_UTF8, VAR_INT]"),
+            || {
+                ByteBufCodecs::map(
+                    HashMap::from_initial_capacity,
+                    ByteBufCodecs::STRING_UTF8,
+                    ByteBufCodecs::VAR_INT,
+                )
+            },
+        );
+        golden.check_codec_from(
+            &format!("map(Ljava/util/function/IntFunction;{CODEC}{CODEC}I){CODEC}[HashMap::new, stringUtf8(128), stringUtf8(4096)]"),
+            |max_size| {
+                ByteBufCodecs::map_max(
+                    HashMap::from_initial_capacity,
+                    ByteBufCodecs::string_utf8(128),
+                    ByteBufCodecs::string_utf8(4096),
+                    max_size,
+                )
+            },
         );
         golden.check_codec_from(
             &format!(

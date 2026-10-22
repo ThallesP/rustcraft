@@ -13,11 +13,13 @@ import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Stream;
@@ -33,6 +35,7 @@ import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.common.ClientboundClearDialogPacket;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
+import net.minecraft.network.protocol.common.ClientboundCustomReportDetailsPacket;
 import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket;
 import net.minecraft.network.protocol.common.ClientboundPingPacket;
 import net.minecraft.network.protocol.common.ClientboundPostEffectsPacket;
@@ -54,6 +57,7 @@ import net.minecraft.network.protocol.configuration.ClientboundFinishConfigurati
 import net.minecraft.network.protocol.configuration.ClientboundRegistryDataPacket;
 import net.minecraft.network.protocol.configuration.ClientboundResetChatPacket;
 import net.minecraft.network.protocol.configuration.ClientboundSelectKnownPacks;
+import net.minecraft.network.protocol.configuration.ClientboundUpdateEnabledFeaturesPacket;
 import net.minecraft.network.protocol.configuration.ConfigurationPacketTypes;
 import net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket;
 import net.minecraft.network.protocol.configuration.ServerboundFinishConfigurationPacket;
@@ -84,6 +88,9 @@ import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.server.packs.repository.KnownPack;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.player.ChatVisiblity;
+import net.minecraft.world.flag.FeatureFlag;
+import net.minecraft.world.flag.FeatureFlagSet;
+import net.minecraft.world.flag.FeatureFlags;
 
 /**
  * Arguments and values of the protocols. A PacketFlow, ConnectionProtocol or ClientIntent is its constant's name, and a
@@ -131,7 +138,8 @@ final class PacketValues {
         CommonPacketTypes.CLIENTBOUND_PING, CommonPacketTypes.CLIENTBOUND_POST_EFFECTS, CommonPacketTypes.CLIENTBOUND_RESOURCE_PACK_POP,
         CommonPacketTypes.CLIENTBOUND_STORE_COOKIE, CommonPacketTypes.CLIENTBOUND_TRANSFER, ConfigurationPacketTypes.CLIENTBOUND_CODE_OF_CONDUCT,
         ConfigurationPacketTypes.CLIENTBOUND_FINISH_CONFIGURATION, ConfigurationPacketTypes.CLIENTBOUND_REGISTRY_DATA,
-        ConfigurationPacketTypes.CLIENTBOUND_RESET_CHAT, ConfigurationPacketTypes.CLIENTBOUND_SELECT_KNOWN_PACKS
+        ConfigurationPacketTypes.CLIENTBOUND_RESET_CHAT, ConfigurationPacketTypes.CLIENTBOUND_SELECT_KNOWN_PACKS,
+        CommonPacketTypes.CLIENTBOUND_CUSTOM_REPORT_DETAILS, ConfigurationPacketTypes.CLIENTBOUND_UPDATE_ENABLED_FEATURES
     );
     static final Values.Generator PACKET_TYPE = new Values.Simple(
         PORTED_TYPES.stream()
@@ -209,6 +217,15 @@ final class PacketValues {
     private static final Values.Generator OPTIONAL_UUIDS = Codecs.optionalOf(UUIDS);
     // A ClientboundPostEffectsPacket's shaders.
     private static final Values.Generator IDENTIFIER_LISTS = Codecs.listOf(IDENTIFIERS);
+    // A ClientboundUpdateEnabledFeaturesPacket's features (see featureSets).
+    static final Values.Generator FEATURE_SETS = Codecs.hashSetOf(IDENTIFIERS, featureSets());
+    // A ClientboundCustomReportDetailsPacket's details, with names around stringUtf8(128)'s limit in characters of one and
+    // four bytes. Values around 4096 are among reportDetails' maps, not the values' edges, so random maps don't draw them.
+    static final Values.Generator REPORT_DETAILS = Codecs.hashMapOf(
+        strings("Server", "", "Mod list", "a".repeat(128), "a".repeat(129), "😀".repeat(64), "😀".repeat(63) + "a", "😀".repeat(64) + "a"),
+        strings("Example", "", "Line one\nLine two", "1.0.0"),
+        reportDetails()
+    );
 
     private static final Map<Class<?>, Values.Generator> PACKETS = new LinkedHashMap<>();
     // The generators of the payloads packets hold, by their class and by their interface, and of the other records they
@@ -358,6 +375,14 @@ final class PacketValues {
             ClientboundRegistryDataPacket.class, fields -> new ClientboundRegistryDataPacket(registryKey(fields[0]), registryEntryList(fields[1])),
             List.of(), CoreValues.RESOURCE_KEY, REGISTRY_ENTRY_LISTS
         );
+        packet(
+            ClientboundUpdateEnabledFeaturesPacket.class, fields -> new ClientboundUpdateEnabledFeaturesPacket(identifierSet(fields[0])), List.of(),
+            FEATURE_SETS
+        );
+        packet(
+            ClientboundCustomReportDetailsPacket.class, fields -> new ClientboundCustomReportDetailsPacket(stringMap(fields[0])), List.of(),
+            REPORT_DETAILS
+        );
     }
 
     private PacketValues() {
@@ -396,10 +421,17 @@ final class PacketValues {
 
     /**
      * The parameterized arguments with a generator of their own here: the select_known_packs packets' packs, a
-     * ClientboundPostEffectsPacket's shaders, a ClientboundResourcePackPopPacket's pack and a registry's entries.
+     * ClientboundPostEffectsPacket's shaders, a ClientboundResourcePackPopPacket's pack, a registry's entries, the enabled
+     * features and a server's report details.
      */
     static Values.Generator generator(final ParameterizedType type) {
         Object element = type.getActualTypeArguments()[0];
+        if (type.getRawType() == Set.class && element == Identifier.class) {
+            return FEATURE_SETS;
+        }
+        if (type.getRawType() == Map.class && element == String.class && type.getActualTypeArguments()[1] == String.class) {
+            return REPORT_DETAILS;
+        }
         if (type.getRawType() == List.class) {
             if (element == KnownPack.class) {
                 return KNOWN_PACK_LISTS;
@@ -611,6 +643,104 @@ final class PacketValues {
     @SuppressWarnings("unchecked")
     private static List<Identifier> identifierList(final Object list) {
         return (List<Identifier>)list;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Set<Identifier> identifierSet(final Object set) {
+        return (Set<Identifier>)set;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, String> stringMap(final Object map) {
+        return (Map<String, String>)map;
+    }
+
+    /**
+     * The server's features (FeatureFlagRegistry.toNames makes a HashSet), every flag's, each flag alone, and none;
+     * identifiers whose hashCodes are equal, which share a bin, added either way round (equal sets that write their
+     * identifiers in other orders); 12, 13, 24 and 25 of them, where the table grows; and 13 with 10 taken out again.
+     */
+    @SuppressWarnings("unchecked")
+    private static List<HashSet<Object>> featureSets() {
+        List<HashSet<Object>> sets = new ArrayList<>();
+        sets.add((HashSet<Object>)(Set<?>)FeatureFlags.REGISTRY.toNames(FeatureFlags.VANILLA_SET));
+        sets.add((HashSet<Object>)(Set<?>)FeatureFlags.REGISTRY.toNames(FeatureFlags.REGISTRY.allFlags()));
+        for (FeatureFlag flag : new FeatureFlag[]{FeatureFlags.TRADE_REBALANCE, FeatureFlags.REDSTONE_EXPERIMENTS, FeatureFlags.MINECART_IMPROVEMENTS}) {
+            sets.add((HashSet<Object>)(Set<?>)FeatureFlags.REGISTRY.toNames(FeatureFlagSet.of(flag)));
+        }
+        sets.add((HashSet<Object>)(Set<?>)FeatureFlags.REGISTRY.toNames(FeatureFlagSet.of()));
+        List<Object> colliding = new ArrayList<>();
+        for (String path : collidingPaths(3).subList(0, 6)) {
+            colliding.add(Identifier.withDefaultNamespace(path));
+        }
+        sets.add(Codecs.addAll(new HashSet<>(), colliding));
+        sets.add(Codecs.addAll(new HashSet<>(), colliding.reversed()));
+        sets.add(Codecs.addAll(new HashSet<>(), Stream.concat(Stream.of(Identifier.withDefaultNamespace("vanilla")), colliding.stream()).toList()));
+        for (int count : new int[]{12, 13, 24, 25}) {
+            sets.add(Codecs.addAll(new HashSet<>(), numbered(count)));
+        }
+        HashSet<Object> shrunk = Codecs.addAll(new HashSet<>(), numbered(13));
+        numbered(10).forEach(shrunk::remove);
+        sets.add(shrunk);
+        return sets;
+    }
+
+    // minecraft:feature_0, minecraft:feature_1, …
+    private static List<Object> numbered(final int count) {
+        List<Object> identifiers = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            identifiers.add(Identifier.withDefaultNamespace("feature_" + i));
+        }
+        return identifiers;
+    }
+
+    /**
+     * Every path of {@code blocks} "ak" and "c-" blocks, whose hashCodes are all equal ({@code 31 * 'a' + 'k'} is
+     * {@code 31 * 'c' + '-'}), like HashMapSuite's "Aa" and "BB" ones, which an identifier's path can't hold.
+     */
+    private static List<String> collidingPaths(final int blocks) {
+        List<String> paths = new ArrayList<>(List.of(""));
+        for (int i = 0; i < blocks; i++) {
+            List<String> longer = new ArrayList<>();
+            for (String path : paths) {
+                longer.add(path + "ak");
+                longer.add(path + "c-");
+            }
+            paths = longer;
+        }
+        return paths;
+    }
+
+    /**
+     * A server's details; values around stringUtf8(4096)'s limit in characters of one and four bytes; 32 and 33 details
+     * (the codec's limit); keys whose hashCodes are equal, which share a bin, put either way round (equal maps that write
+     * their entries in other orders); 13, where the table grows; and 13 with 10 taken out again.
+     */
+    private static List<HashMap<Object, Object>> reportDetails() {
+        List<HashMap<Object, Object>> maps = new ArrayList<>();
+        maps.add(Codecs.putAll(new HashMap<>(), List.of("Server", "Server version", "Mod list"), List.of("Example", "1.0.0", "fabric, lithium")));
+        for (String value : new String[]{"a".repeat(4096), "a".repeat(4097), "😀".repeat(2048), "😀".repeat(2047) + "a", "😀".repeat(2048) + "a"}) {
+            maps.add(Codecs.putAll(new HashMap<>(), List.of("Server", "Mod list"), List.of(value, "fabric")));
+        }
+        for (int count : new int[]{13, 32, 33}) {
+            maps.add(Codecs.putAll(new HashMap<>(), numberedDetails(count), List.of("value")));
+        }
+        List<String> colliding = HashMapSuite.colliding(3).subList(0, 6);
+        maps.add(Codecs.putAll(new HashMap<>(), colliding, List.of("a", "b")));
+        maps.add(Codecs.putAll(new HashMap<>(), colliding.reversed(), List.of("b", "a")));
+        HashMap<Object, Object> shrunk = Codecs.putAll(new HashMap<>(), numberedDetails(13), List.of("value"));
+        numberedDetails(10).forEach(shrunk::remove);
+        maps.add(shrunk);
+        return maps;
+    }
+
+    // "Detail 0", "Detail 1", …
+    private static List<Object> numberedDetails(final int count) {
+        List<Object> keys = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            keys.add("Detail " + i);
+        }
+        return keys;
     }
 
     @SuppressWarnings("unchecked")

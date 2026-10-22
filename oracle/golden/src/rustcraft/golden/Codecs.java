@@ -10,6 +10,8 @@ import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
@@ -268,6 +270,123 @@ final class Codecs {
                 return new ArrayList<>(((List<?>)spec).stream().map(element::instantiate).toList());
             }
         };
+    }
+
+    /**
+     * HashSets of the element's values, encoded with their tables (HashMapSuite.encode), each argument a copy with the same
+     * table and order. Edges add the empty set without a table and with one, each element edge alone, all of them, all of
+     * them as a codec makes the set ({@code new HashSet<>(count)}), and the extra ones. Random sets have as many elements
+     * as a random list, made with {@code new HashSet<>()}, as a codec makes them, or with more elements put and taken out
+     * again, so the table is bigger than the set needs.
+     */
+    static Values.Generator hashSetOf(final Values.Generator element, final List<HashSet<Object>> extraEdges) {
+        List<HashSet<Object>> edges = new ArrayList<>();
+        edges.add(new HashSet<>());
+        edges.add(withTable(new HashSet<>(), element.edges().get(0)));
+        element.edges().forEach(edge -> edges.add(addAll(new HashSet<>(), List.of(edge))));
+        edges.add(addAll(new HashSet<>(), element.edges()));
+        edges.add(addAll(new HashSet<>(element.edges().size()), element.edges()));
+        edges.addAll(extraEdges);
+        return new JomlValues.Mutable<HashSet<Object>>(
+            edges,
+            random -> {
+                List<Object> elements = new ArrayList<>();
+                int size = random.nextInt(4) == 0 ? random.nextInt(141) : random.nextInt(7);
+                for (int i = 0; i < size; i++) {
+                    elements.add(element.random(random));
+                }
+                return switch (random.nextInt(4)) {
+                    case 0 -> addAll(new HashSet<>(Math.min(size, 65536)), elements);
+                    case 1 -> {
+                        HashSet<Object> set = new HashSet<>();
+                        List<Object> extra = new ArrayList<>();
+                        for (int i = random.nextInt(40); i > 0; i--) {
+                            extra.add(element.random(random));
+                        }
+                        addAll(set, elements);
+                        addAll(set, extra);
+                        extra.stream().filter(value -> !elements.contains(value)).forEach(set::remove);
+                        yield set;
+                    }
+                    default -> addAll(new HashSet<>(), elements);
+                };
+            },
+            HashMapSuite::copy,
+            HashMapSuite::encode
+        );
+    }
+
+    /**
+     * HashMaps of the keys' and values' values, encoded with their tables (HashMapSuite.encode), each argument a copy with
+     * the same table and order. Edges add the empty map without a table and with one, each key edge alone and each value
+     * edge alone, all the key edges (with the value edges in turn), them as a codec makes the map
+     * ({@code new HashMap<>(count)}), and the extra ones. Random maps have as many entries as a random list, made with
+     * {@code new HashMap<>()}, as a codec makes them, or with more entries put and taken out again.
+     */
+    static Values.Generator hashMapOf(final Values.Generator keys, final Values.Generator values, final List<HashMap<Object, Object>> extraEdges) {
+        Object firstKey = keys.edges().get(0);
+        Object firstValue = values.edges().get(0);
+        List<HashMap<Object, Object>> edges = new ArrayList<>();
+        edges.add(new HashMap<>());
+        HashMap<Object, Object> withTable = new HashMap<>();
+        withTable.put(firstKey, firstValue);
+        withTable.remove(firstKey);
+        edges.add(withTable);
+        keys.edges().forEach(key -> edges.add(putAll(new HashMap<>(), List.of(key), List.of(firstValue))));
+        values.edges().forEach(value -> edges.add(putAll(new HashMap<>(), List.of(firstKey), List.of(value))));
+        edges.add(putAll(new HashMap<>(), keys.edges(), values.edges()));
+        edges.add(putAll(new HashMap<>(keys.edges().size()), keys.edges(), values.edges()));
+        edges.addAll(extraEdges);
+        return new JomlValues.Mutable<HashMap<Object, Object>>(
+            edges,
+            random -> {
+                List<Object> entryKeys = new ArrayList<>();
+                List<Object> entryValues = new ArrayList<>();
+                int size = random.nextInt(4) == 0 ? random.nextInt(141) : random.nextInt(7);
+                for (int i = 0; i < size; i++) {
+                    entryKeys.add(keys.random(random));
+                    entryValues.add(values.random(random));
+                }
+                return switch (random.nextInt(4)) {
+                    case 0 -> putAll(new HashMap<>(Math.min(size, 65536)), entryKeys, entryValues);
+                    case 1 -> {
+                        HashMap<Object, Object> map = new HashMap<>();
+                        List<Object> extra = new ArrayList<>();
+                        for (int i = random.nextInt(40); i > 0; i--) {
+                            extra.add(keys.random(random));
+                        }
+                        putAll(map, entryKeys, entryValues);
+                        extra.forEach(key -> map.putIfAbsent(key, firstValue));
+                        extra.stream().filter(key -> !entryKeys.contains(key)).forEach(map::remove);
+                        yield map;
+                    }
+                    default -> putAll(new HashMap<>(), entryKeys, entryValues);
+                };
+            },
+            HashMapSuite::copy,
+            HashMapSuite::encode
+        );
+    }
+
+    /** Adds the elements in order. */
+    static HashSet<Object> addAll(final HashSet<Object> set, final List<?> elements) {
+        elements.forEach(set::add);
+        return set;
+    }
+
+    /** Puts each key with the values in turn, in order. */
+    static HashMap<Object, Object> putAll(final HashMap<Object, Object> map, final List<?> keys, final List<?> values) {
+        for (int i = 0; i < keys.size(); i++) {
+            map.put(keys.get(i), values.get(i % values.size()));
+        }
+        return map;
+    }
+
+    /** The set with an element added and taken out again, so it has a table and nothing in it. */
+    static HashSet<Object> withTable(final HashSet<Object> set, final Object element) {
+        set.add(element);
+        set.remove(element);
+        return set;
     }
 
     /** Lists with one element from each generator, encoded as arrays. Edges put each edge in its place among first edges. */

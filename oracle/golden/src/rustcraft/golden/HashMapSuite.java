@@ -8,8 +8,11 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.stream.IntStream;
 
 /**
  * Runs random programs against a java.util.HashMap of strings, the map a CompoundTag keeps its tags in. Its iteration
@@ -21,10 +24,28 @@ import java.util.Random;
  * from small pools so they repeat, from a family whose hashCodes are all equal ("Aa" and "BB" blocks), and from one whose
  * hashes only agree in their low bits, so bins grow long: a bin of 9 makes a table under 64 grow. A program whose map
  * turns a bin into a red-black tree (a bin of 9 in a table of 64 or more) is written under "treeified programs".
+ *
+ * <p>"sized programs" run on a map made with {@code new HashMap<>(initialCapacity)}, {@code [initialCapacity, program]},
+ * the way codecs make their maps and sets (ByteBufCodecs.map and collection pass the count they read, up to 65536): the
+ * table its first put makes is the smallest power of two at least the capacity, and a negative one throws. Those whose map
+ * makes a tree bin are written under "treeified sized programs".
+ *
+ * <p>The suite also has what other suites need to encode and copy a HashMap or HashSet with its table.
  */
 final class HashMapSuite implements Suite {
     private static final int PROGRAMS = 600;
-    private static final Field TABLE = tableField();
+    private static final int RANDOM_SIZED_PROGRAMS = 120;
+    private static final Field TABLE = field(HashMap.class, "table");
+    private static final Field SET_MAP = field(HashSet.class, "map");
+    // What an empty copy with a table puts and takes out again, to make the table.
+    private static final Object PLACEHOLDER = new Object();
+
+    // Capacities around the powers of two and the load factor's thresholds, a random list's (up to 140), the most a
+    // codec passes (65536), and negative ones, which throw.
+    private static final List<Integer> INITIAL_CAPACITIES = List.of(
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 15, 16, 17, 24, 25, 31, 32, 33, 63, 64, 65, 100, 128, 140, 65535, 65536, -1,
+        Integer.MIN_VALUE
+    );
 
     // A compound's keys, an item's and a block entity's, and the empty key a list's wrapper compound has.
     private static final List<String> COMMON_KEYS = List.of(
@@ -48,8 +69,30 @@ final class HashMapSuite implements Suite {
             List<Op> program = randomProgram(random, i % 6);
             JsonArray args = new JsonArray();
             args.add(encode(program));
-            Run run = run(program);
+            Run run = run(new HashMap<>(), program);
             writer.result(run.treeified() ? "treeified programs" : "programs", args, run.steps(), null);
+        }
+
+        // Each capacity with each kind of program, then random capacities.
+        Random sized = new Random(0x5a4b);
+        List<Integer> capacities = new ArrayList<>();
+        INITIAL_CAPACITIES.forEach(capacity -> IntStream.range(0, 6).forEach(kind -> capacities.add(capacity)));
+        IntStream.range(0, RANDOM_SIZED_PROGRAMS).forEach(i -> capacities.add(sized.nextInt(300)));
+        for (int i = 0; i < capacities.size(); i++) {
+            int initialCapacity = capacities.get(i);
+            List<Op> program = randomProgram(sized, i % 6);
+            JsonArray args = new JsonArray();
+            args.add(initialCapacity);
+            args.add(encode(program));
+            HashMap<String, Integer> map;
+            try {
+                map = new HashMap<>(initialCapacity);
+            } catch (IllegalArgumentException e) {
+                writer.threw("sized programs", args, e, null);
+                continue;
+            }
+            Run run = run(map, program);
+            writer.result(run.treeified() ? "treeified sized programs" : "sized programs", args, run.steps(), null);
         }
     }
 
@@ -59,8 +102,8 @@ final class HashMapSuite implements Suite {
     private record Run(JsonArray steps, boolean treeified) {
     }
 
-    private static Run run(final List<Op> program) {
-        HashMap<String, Integer> map = new HashMap<>();
+    private static Run run(final HashMap<String, Integer> initial, final List<Op> program) {
+        HashMap<String, Integer> map = initial;
         JsonArray steps = new JsonArray();
         boolean treeified = false;
         for (Op op : program) {
@@ -103,6 +146,77 @@ final class HashMapSuite implements Suite {
     static int capacity(final HashMap<?, ?> map) {
         Object[] table = table(map);
         return table == null ? 0 : table.length;
+    }
+
+    /** The length of the set's map's table, or 0 before it's made. */
+    static int capacity(final HashSet<?> set) {
+        return capacity(map(set));
+    }
+
+    /**
+     * A HashMap is {@code [capacity, [[key, value], …]]} and a HashSet {@code [capacity, [element, …]]}, like a compound's
+     * map: its table's length and what it holds in its order, which is the order an encoder writes it in. Keys, values
+     * and elements are encoded by their own class.
+     */
+    static JsonArray encode(final HashMap<?, ?> map) {
+        JsonArray entries = new JsonArray();
+        map.forEach((key, value) -> {
+            JsonArray entry = new JsonArray();
+            entry.add(Values.encode(key, key.getClass()));
+            entry.add(Values.encode(value, value.getClass()));
+            entries.add(entry);
+        });
+        JsonArray array = new JsonArray();
+        array.add(capacity(map));
+        array.add(entries);
+        return array;
+    }
+
+    static JsonArray encode(final HashSet<?> set) {
+        JsonArray elements = new JsonArray();
+        set.forEach(element -> elements.add(Values.encode(element, element.getClass())));
+        JsonArray array = new JsonArray();
+        array.add(capacity(set));
+        array.add(elements);
+        return array;
+    }
+
+    /**
+     * A copy with the same table length and order: made with the capacity (no table until the first put), a placeholder
+     * put and taken out again when the map is empty but has a table, then its entries put in its order, which puts each in
+     * the same bin after the ones before it. The copy never grows, since the map had no bin of 9 and no more entries than
+     * its threshold, and the generators never make a tree bin.
+     */
+    @SuppressWarnings("unchecked")
+    static <K, V> HashMap<K, V> copy(final HashMap<K, V> map) {
+        int capacity = capacity(map);
+        HashMap<K, V> copy = capacity == 0 ? new HashMap<>() : new HashMap<>(capacity);
+        if (capacity > 0 && map.isEmpty()) {
+            ((Map<Object, Object>)(Map<?, ?>)copy).put(PLACEHOLDER, PLACEHOLDER);
+            copy.remove(PLACEHOLDER);
+        }
+        map.forEach(copy::put);
+        return copy;
+    }
+
+    @SuppressWarnings("unchecked")
+    static <E> HashSet<E> copy(final HashSet<E> set) {
+        int capacity = capacity(set);
+        HashSet<E> copy = capacity == 0 ? new HashSet<>() : new HashSet<>(capacity);
+        if (capacity > 0 && set.isEmpty()) {
+            ((HashSet<Object>)(HashSet<?>)copy).add(PLACEHOLDER);
+            copy.remove(PLACEHOLDER);
+        }
+        set.forEach(copy::add);
+        return copy;
+    }
+
+    private static HashMap<?, ?> map(final HashSet<?> set) {
+        try {
+            return (HashMap<?, ?>)SET_MAP.get(set);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** Whether a bin of the map's table is a red-black tree. */
@@ -222,9 +336,9 @@ final class HashMapSuite implements Suite {
         return keys;
     }
 
-    private static Field tableField() {
+    private static Field field(final Class<?> type, final String name) {
         try {
-            Field field = HashMap.class.getDeclaredField("table");
+            Field field = type.getDeclaredField(name);
             field.setAccessible(true);
             return field;
         } catch (NoSuchFieldException e) {

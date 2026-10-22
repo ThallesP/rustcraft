@@ -4,6 +4,7 @@ pub mod clientbound_finish_configuration_packet;
 pub mod clientbound_registry_data_packet;
 pub mod clientbound_reset_chat_packet;
 pub mod clientbound_select_known_packs;
+pub mod clientbound_update_enabled_features_packet;
 pub mod configuration_packet_types;
 pub mod configuration_protocols;
 pub mod server_configuration_packet_listener;

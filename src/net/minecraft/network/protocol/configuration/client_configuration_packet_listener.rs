@@ -1,7 +1,6 @@
 //! net/minecraft/network/protocol/configuration/ClientConfigurationPacketListener.java
 //!
-//! Not ported yet: `handleEnabledFeatures`, whose packet holds a Java `HashSet`, which comes with
-//! it, and its `protocol()`, which comes with `PacketListener`'s.
+//! Not ported yet: its `protocol()`, which comes with `PacketListener`'s.
 
 use crate::net::minecraft::network::protocol::common::client_common_packet_listener::ClientCommonPacketListener;
 use crate::net::minecraft::network::protocol::configuration::clientbound_code_of_conduct_packet::ClientboundCodeOfConductPacket;
@@ -9,6 +8,7 @@ use crate::net::minecraft::network::protocol::configuration::clientbound_finish_
 use crate::net::minecraft::network::protocol::configuration::clientbound_registry_data_packet::ClientboundRegistryDataPacket;
 use crate::net::minecraft::network::protocol::configuration::clientbound_reset_chat_packet::ClientboundResetChatPacket;
 use crate::net::minecraft::network::protocol::configuration::clientbound_select_known_packs::ClientboundSelectKnownPacks;
+use crate::net::minecraft::network::protocol::configuration::clientbound_update_enabled_features_packet::ClientboundUpdateEnabledFeaturesPacket;
 
 /// The client's listener while the server configures it after login.
 pub trait ClientConfigurationPacketListener: ClientCommonPacketListener {
@@ -17,6 +17,8 @@ pub trait ClientConfigurationPacketListener: ClientCommonPacketListener {
     fn handle_configuration_finished(&mut self, packet: &ClientboundFinishConfigurationPacket);
 
     fn handle_registry_data(&mut self, packet: &ClientboundRegistryDataPacket);
+
+    fn handle_enabled_features(&mut self, packet: &ClientboundUpdateEnabledFeaturesPacket);
 
     fn handle_select_known_packs(&mut self, packet: &ClientboundSelectKnownPacks);
 
@@ -37,6 +39,10 @@ impl ClientConfigurationPacketListener
 
     fn handle_registry_data(&mut self, packet: &ClientboundRegistryDataPacket) {
         self.record("handleRegistryData", packet);
+    }
+
+    fn handle_enabled_features(&mut self, packet: &ClientboundUpdateEnabledFeaturesPacket) {
+        self.record("handleEnabledFeatures", packet);
     }
 
     fn handle_select_known_packs(&mut self, packet: &ClientboundSelectKnownPacks) {

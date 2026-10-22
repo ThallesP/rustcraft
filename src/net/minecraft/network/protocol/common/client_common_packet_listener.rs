@@ -1,12 +1,12 @@
 //! net/minecraft/network/protocol/common/ClientCommonPacketListener.java
 //!
 //! Not ported yet: `handleDisconnect`, `handleResourcePackPush` and `handleServerLinks`, whose
-//! packets hold text components, and `handleUpdateTags`, `handleCustomReportDetails` and
-//! `handleShowDialog`, whose packets need the registries or Java's `HashMap`. They come with their
-//! packets.
+//! packets hold text components, and `handleUpdateTags` and `handleShowDialog`, whose packets
+//! need the registries. They come with their packets.
 
 use crate::net::minecraft::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_custom_payload_packet::ClientboundCustomPayloadPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_custom_report_details_packet::ClientboundCustomReportDetailsPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_keep_alive_packet::ClientboundKeepAlivePacket;
 use crate::net::minecraft::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_post_effects_packet::ClientboundPostEffectsPacket;
@@ -31,6 +31,8 @@ pub trait ClientCommonPacketListener: ClientCookiePacketListener {
     fn handle_store_cookie(&mut self, packet: &ClientboundStoreCookiePacket);
 
     fn handle_transfer(&mut self, packet: &ClientboundTransferPacket);
+
+    fn handle_custom_report_details(&mut self, packet: &ClientboundCustomReportDetailsPacket);
 
     fn handle_clear_dialog(&mut self, packet: &ClientboundClearDialogPacket);
 }
@@ -65,6 +67,10 @@ impl ClientCommonPacketListener
 
     fn handle_transfer(&mut self, packet: &ClientboundTransferPacket) {
         self.record("handleTransfer", packet);
+    }
+
+    fn handle_custom_report_details(&mut self, packet: &ClientboundCustomReportDetailsPacket) {
+        self.record("handleCustomReportDetails", packet);
     }
 
     fn handle_clear_dialog(&mut self, packet: &ClientboundClearDialogPacket) {

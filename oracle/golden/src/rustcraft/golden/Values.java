@@ -13,6 +13,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -381,10 +383,10 @@ final class Values {
         ) {
             return true;
         }
-        // Their elements are encoded by their own class.
+        // Their elements are encoded by their own class. A Map has to be a HashMap (see encode).
         if (
             Collection.class.isAssignableFrom(type) || Stream.class.isAssignableFrom(type) || Iterator.class.isAssignableFrom(type)
-                || Iterable.class.isAssignableFrom(type)
+                || Iterable.class.isAssignableFrom(type) || Map.class.isAssignableFrom(type)
         ) {
             return true;
         }
@@ -448,6 +450,17 @@ final class Values {
         // Before collections, since a ListTag is a List and a CollectionTag an Iterable.
         if (NbtValues.canEncode(type)) {
             return NbtValues.encode(value);
+        }
+        // A HashSet or HashMap is its table's length and what it holds in its order (HashMapSuite.encode), since its table
+        // decides the order an encoder writes it in. Other maps have no encoding yet.
+        if (value.getClass() == HashSet.class) {
+            return HashMapSuite.encode((HashSet<?>)value);
+        }
+        if (Map.class.isAssignableFrom(type)) {
+            if (value.getClass() != HashMap.class) {
+                throw new IllegalArgumentException("no encoder for " + value.getClass().getName());
+            }
+            return HashMapSuite.encode((HashMap<?, ?>)value);
         }
         if (Collection.class.isAssignableFrom(type)) {
             return encodeElements(((Collection<?>)value).iterator());
