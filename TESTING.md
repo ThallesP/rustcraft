@@ -174,6 +174,20 @@ A `java.util.HashSet` is `[capacity, [element, …]]` and a `java.util.HashMap` 
 - **Pending ledger.** Each ported file ends with a test that checks every method and constant in its golden file, or marks it pending with a reason. Anything neither checked nor pending fails the test, so a class is either fully verified or says what's left.
 - **Methods that hang.** Some vanilla methods never return on extreme inputs. A watchdog names the call, and the suite keeps the inputs in range with `where()`.
 
+### Pipelines and shaders
+
+`RenderSuites` records the renderer's pipelines and the shaders vanilla's OpenGL backend compiles for them, from vanilla's own classes:
+- `DefaultVertexFormat`, `BindGroupLayouts` and `RenderPipelines` are their public constants. A vertex format is `[stepRate, vertexSize, [[name, offset, format], …]]`, a bind group layout `[[name, type, gpuFormat], …]`, and a pipeline `[location, shaders, defines, bindGroupLayouts, colorTargetStates, depthStencilState, polygonMode, cull, vertexFormats, primitiveTopology, pushConstantSize, sortKey]`: shaders `[[stage, id], …]`, defines `[[[key, value], …], [flag, …]]` in the order they were defined, color targets `[blendFunction, format, writeMask]` (a blend function `[[src, dst, op], [src, dst, op]]` for color and alpha), depth `[test, write, biasScale, biasConstant]`, and the 16 vertex buffer slots. A pipeline's layouts are a hash set whose order changes from run to run, so they're sorted by their uniforms' names. An OIT set is its three pipelines, a snippet its builder's fields. `requiredPipelines()` and `optionalPipelines()` are the locations `ShaderManager` compiles, in their `HashMap`'s order.
+- The four steps of compiling each of those pipelines, as `PipelineBuilder.compilePipeline` runs them, with the shaders `ShaderManager.loadConfigs` loads from the client jar (through a `ResourceManager` that lists the jar's assets):
+  - `GlslCompiler.compileToSpv`: `[flags, name, stage, defines]` → the SPIR-V's bytes as hex, each shader once;
+  - `SPIRVModule.reflect`: the same arguments → `[inputs, outputs, descriptors, pushConstants]`, an interface variable `[name, location, flat, component, type]`, a descriptor `[name, resourceType, set, binding, type]`, a type `[baseType, dimensions, vectorSize, [arrayLength, …]]`;
+  - `PipelineBuilder.generateBackendCreateInfo` (private, by reflection): `[flags, location]` → the create info, its shaders' SPIR-V after the bindings are renumbered, and each uniform's binding;
+  - `GlPipelineRecompiler.decompileShaders`: `[flags, location]` → each shader's GLSL 330, the text `glShaderSource` gets.
+- `flags` are the device's `[isZZeroToOne, shaderDrawParameters, isExplicitDepthRequired]`, the three answers that change the text, from a stand-in device like `ProjectionSuite`'s. Mesa's llvmpipe under Xvfb, where the oracle client renders, is `[true, true, false]`: its log lists `GL_ARB_clip_control` and `GL_ARB_shader_draw_parameters` among the extensions vanilla turned on, and it isn't an Apple GPU. Every pipeline gets that; five that read the flags (terrain, multidraw terrain, clouds, an OIT pass, the GUI) also get the other seven combinations. No vanilla shader reads `RENDERPEARL_INSTANCE_INDEX_INCLUDES_BASE_INSTANCE`, so `shaderDrawParameters` only changes SPIRV-Cross's output.
+- `RenderPipelines`' sort keys are the order the pipelines are built in, which is its static initialiser's: nothing in the generator builds a pipeline before it, and in the game only post chains do, after it.
+
+The port compiles through the same native libraries (PORTING.md), so its SPIR-V and GLSL are compared byte for byte.
+
 ## 2. Scenarios and tick traces
 
 A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:
@@ -257,6 +271,10 @@ A run writes `<out>/<scenario>/trace.jsonl`, one line per client tick after the 
 ## 4. Screenshots
 
 The oracle client renders with OpenGL on Mesa's llvmpipe under Xvfb, so its output doesn't depend on the GPU. It turns off the vignette, view bobbing, vsync and clouds, sets particles to minimal, and uses Fabric's test defaults (no anisotropic filtering, no chunk fade, no music, no tutorial). The port must render with the same settings for screenshots to be comparable. `oracle-diff image` reports how many pixels differ and the largest channel difference, and can write a heatmap.
+
+The port renders the same way: `tests/opengl_frame.rs` runs `rustcraft` under `xvfb-run -a` with the oracle client's environment (`LIBGL_ALWAYS_SOFTWARE=1`, `GALLIUM_DRIVER=llvmpipe`, `SDL_VIDEO_DRIVER=x11`), and skips without `xvfb-run`. It checks:
+- the device: `--device-info` prints the three lines vanilla logs about it (`Minecraft.java`'s "Using graphics backend…", "Using graphics device…" and "Using graphics device extensions…", the extensions in their `HashSet`'s order), whose flags follow from the extensions, and which equal the oracle client's log when this machine has one, with the shader goldens' flags;
+- frames read back like `Screenshot.takeScreenshot`: `--screenshot` clears the main render target like `GameRenderer.render` (to `GuiRenderState.clearColorOverride`'s transparent black, or the loading overlay's brand background), and every pixel of the PNG is that color with its alpha made opaque, RGBA at the target's size like vanilla's; and a render pass clearing GL's lower left quarter shows up at the image's lower left.
 
 ## Where outputs go
 

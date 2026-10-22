@@ -64,8 +64,8 @@ Every step of the loop updates this table.
 | World | Blocks and block states (1,286 blocks, 35,723 states) | Not started | | |
 | World | Chunk data, level storage, light | Not started | | |
 | Player | Input, movement, collisions | Not started | traces | |
-| Rendering | Window (SDL3) and input | Not started | | |
-| Rendering | renderpearl with its OpenGL backend, shaders through shaderc and SPIRV-Cross | Not started | screenshots | |
+| Rendering | Window (SDL3) and input | Partial: the window and OpenGL 3.3 core context made like vanilla's (LWJGL's own SDL3 build), frames presented; no input yet | device as vanilla logs it, on llvmpipe | same driver, flags and extensions as the oracle's log |
+| Rendering | renderpearl with its OpenGL backend, shaders through shaderc and SPIRV-Cross | Partial: every pipeline of `RenderPipelines`, compiled through vanilla's own shaderc and SPIRV-Cross builds; the GL device, textures, buffers, render passes that clear, screenshots read back; no draws yet | goldens (SPIR-V, reflection, bindings, GLSL); frames under Xvfb | SPIR-V and GLSL byte-identical for all 192 pipelines |
 | Rendering | Metal backend (macOS) | Not started | draw stream checked against OpenGL's | |
 | Rendering | Vulkan backend | Not started | screenshots, against vanilla's Vulkan backend | |
 | Rendering | Resources, texture atlases, block models | Not started | | |
@@ -78,20 +78,21 @@ Every step of the loop updates this table.
 
 ## Getting started
 
-Needs Python 3.12+, Rust, about 2 GB of disk, and `xvfb` for the oracle client. The scripts download their own JDK.
+Needs Python 3.12+, Rust, about 2 GB of disk, and `xvfb` with Mesa's llvmpipe (`sudo apt install xvfb libgl1-mesa-dri`) for the oracle client and the port's OpenGL tests. The scripts download their own JDK.
 
 ```sh
 python3 tools/setup_vanilla.py          # download, decompile (authlib too), fetch JOML's, Netty's and Guava's sources, run the data generator
 python3 tools/golden.py                 # record vanilla's answers for the golden tests
 cargo test                              # check the port against them
 python3 tools/oracle_client.py run walk # replay a scenario in the real client
+cargo run -- --window                   # a frame of the port in a window (--screenshot out.png renders one offscreen)
 ```
 
 `MINECRAFT_VERSION` pins the game version. Pass another version to `setup_vanilla.py` to study an update next to it.
 
 | Path | What it is |
 | --- | --- |
-| `src/` | The port. `src/java/` holds JDK behaviour the game relies on (`Math`, `String.hashCode`, `UUID`), `src/org/joml/` the parts of JOML, the game's vector and matrix library, that the client calls, `src/io/netty/` the parts of Netty's buffers, `src/com/google/` Guava's, and `src/com/mojang/authlib/` the player profiles of Mojang's authlib. |
+| `src/` | The port. `src/java/` holds JDK behaviour the game relies on (`Math`, `String.hashCode`, `UUID`), `src/org/joml/` the parts of JOML, the game's vector and matrix library, that the client calls, `src/io/netty/` the parts of Netty's buffers, `src/com/google/` Guava's, `src/com/mojang/authlib/` the player profiles of Mojang's authlib, and `src/org/lwjgl/` LWJGL's bindings to shaderc, SPIRV-Cross and SDL3, whose libraries come from vanilla's natives jars at runtime. `src/com/mojang/renderpearl/` is the renderer. |
 | `oracle/golden/` | Java harness that calls real game methods and records the answers |
 | `oracle/client/` | Fabric mod that drives the real client headless: tick traces and screenshots |
 | `oracle/scenarios/` | Scripted inputs both clients replay |

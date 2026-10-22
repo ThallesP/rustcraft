@@ -257,7 +257,7 @@ impl fmt::Display for Identifier {
     }
 }
 
-/// For the Java collections that hash it (a `HashSet` of features).
+/// For the Java collections that hash it (a `HashSet` of features, `RenderPipelines`' maps).
 impl HashCode for Identifier {
     fn hash_code(&self) -> i32 {
         Identifier::hash_code(self)
