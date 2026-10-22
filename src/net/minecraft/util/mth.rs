@@ -306,7 +306,7 @@ impl Mth {
         Mth::approach(current, current + difference, increment)
     }
 
-    pub fn smallest_encompassing_power_of_two(input: i32) -> i32 {
+    pub const fn smallest_encompassing_power_of_two(input: i32) -> i32 {
         let mut result = input.wrapping_sub(1);
         result |= result >> 1;
         result |= result >> 2;
@@ -324,7 +324,7 @@ impl Mth {
         Mth::ceil_f64(f64::from(item_count).sqrt())
     }
 
-    pub fn is_power_of_two_i32(input: i32) -> bool {
+    pub const fn is_power_of_two_i32(input: i32) -> bool {
         input != 0 && (input & input.wrapping_sub(1)) == 0
     }
 
@@ -332,17 +332,17 @@ impl Mth {
         input != 0 && (input & input.wrapping_sub(1)) == 0
     }
 
-    pub fn ceillog2(input: i32) -> i32 {
+    pub const fn ceillog2(input: i32) -> i32 {
         let input = if Mth::is_power_of_two_i32(input) {
             input
         } else {
             Mth::smallest_encompassing_power_of_two(input)
         };
         MULTIPLY_DE_BRUIJN_BIT_POSITION
-            [(((i64::from(input).wrapping_mul(125613361) >> 27) as i32) & 31) as usize]
+            [((((input as i64).wrapping_mul(125613361) >> 27) as i32) & 31) as usize]
     }
 
-    pub fn log2(input: i32) -> i32 {
+    pub const fn log2(input: i32) -> i32 {
         Mth::ceillog2(input)
             - if Mth::is_power_of_two_i32(input) {
                 0

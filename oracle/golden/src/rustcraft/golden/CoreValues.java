@@ -8,16 +8,20 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Random;
+import java.util.stream.Stream;
+import net.minecraft.core.AxisCycle;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Position;
 import net.minecraft.core.Vec3i;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Arguments and receivers of the game's core value types. A Vec3i is {@code [x, y, z]} (ints), a Vec3 {@code [x, y, z]}
- * (doubles), a Vec2 {@code [x, y]} (floats), an enum constant its name ({@code "NORTH"}), and an
- * {@code EnumSet<Direction.Axis>} the names of its axes in order.
+ * Arguments and receivers of the game's core value types. A Vec3i is {@code [x, y, z]} (ints), and so are a BlockPos and
+ * a MutableBlockPos, a Vec3 {@code [x, y, z]} (doubles), a Vec2 {@code [x, y]} (floats), an enum constant its name
+ * ({@code "NORTH"}), and an {@code EnumSet<Direction.Axis>} the names of its axes in order.
  */
 final class CoreValues {
     static final Values.Generator DIRECTION = new Constants<>(Direction.class);
@@ -25,18 +29,47 @@ final class CoreValues {
     static final Values.Generator AXIS_DIRECTION = new Constants<>(Direction.AxisDirection.class);
     static final Values.Generator PLANE = new Constants<>(Direction.Plane.class);
     static final Values.Generator AXIS_SET = new AxisSets();
+    static final Values.Generator AXIS_CYCLE = new Constants<>(AxisCycle.class);
+    static final Values.Generator ROTATION = new Constants<>(Rotation.class);
+    static final Values.Generator TRAVERSAL_NODE_STATUS = new Constants<>(BlockPos.TraversalNodeStatus.class);
+
+    private static final List<Vec3i> VEC3I_EDGES = List.of(
+        Vec3i.ZERO, new Vec3i(1, 0, 0), new Vec3i(0, 1, 0), new Vec3i(0, 0, 1), new Vec3i(-1, 0, 0), new Vec3i(0, -1, 0),
+        new Vec3i(0, 0, -1), new Vec3i(1, 2, 3), new Vec3i(0, -61, 0), new Vec3i(16, 16, 16), new Vec3i(-30000000, 320, 30000000),
+        new Vec3i(33554431, 2047, -33554432), new Vec3i(Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MAX_VALUE),
+        new Vec3i(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE)
+    );
+
+    // BlockPos.asLong packs x and z into 26 bits and y into 12, so a block's edges also include the largest and smallest
+    // coordinates that fit, and one past them, which wrap.
+    private static final List<Vec3i> BLOCK_POS_EDGES = Stream.concat(
+        VEC3I_EDGES.stream(),
+        Stream.of(
+            new Vec3i(33554431, 2047, 33554431), new Vec3i(-33554432, -2048, -33554432), new Vec3i(33554432, 2048, -33554433),
+            new Vec3i(-33554433, -2049, 33554432)
+        )
+    ).toList();
 
     // Each copy is a new object, so equals never takes its `this == o` shortcut, which only the receiver itself would.
     static final Values.Generator VEC3I = new JomlValues.Mutable<>(
-        List.of(
-            Vec3i.ZERO, new Vec3i(1, 0, 0), new Vec3i(0, 1, 0), new Vec3i(0, 0, 1), new Vec3i(-1, 0, 0), new Vec3i(0, -1, 0),
-            new Vec3i(0, 0, -1), new Vec3i(1, 2, 3), new Vec3i(0, -61, 0), new Vec3i(16, 16, 16), new Vec3i(-30000000, 320, 30000000),
-            new Vec3i(33554431, 2047, -33554432), new Vec3i(Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MAX_VALUE),
-            new Vec3i(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE)
-        ),
+        VEC3I_EDGES,
         CoreValues::randomVec3i,
         vec -> new Vec3i(vec.getX(), vec.getY(), vec.getZ()),
         vec -> ints(vec.getX(), vec.getY(), vec.getZ())
+    );
+
+    // A BlockPos is [x, y, z] like a Vec3i, and so is a MutableBlockPos, whose methods get a fresh one to change.
+    static final Values.Generator BLOCK_POS = new JomlValues.Mutable<>(
+        BLOCK_POS_EDGES.stream().map(vec -> new BlockPos(vec.getX(), vec.getY(), vec.getZ())).toList(),
+        CoreValues::randomBlockPos,
+        pos -> new BlockPos(pos.getX(), pos.getY(), pos.getZ()),
+        pos -> ints(pos.getX(), pos.getY(), pos.getZ())
+    );
+    static final Values.Generator MUTABLE_BLOCK_POS = new JomlValues.Mutable<>(
+        BLOCK_POS_EDGES.stream().map(vec -> new BlockPos.MutableBlockPos(vec.getX(), vec.getY(), vec.getZ())).toList(),
+        random -> randomBlockPos(random).mutable(),
+        pos -> new BlockPos.MutableBlockPos(pos.getX(), pos.getY(), pos.getZ()),
+        pos -> ints(pos.getX(), pos.getY(), pos.getZ())
     );
 
     // The walk scenario's spawn and its deltas standing and walking, unit vectors, and vectors whose length overflows, is
@@ -85,8 +118,23 @@ final class CoreValues {
         if (type == EnumSet.class) {
             return AXIS_SET;
         }
+        if (type == AxisCycle.class) {
+            return AXIS_CYCLE;
+        }
+        if (type == Rotation.class) {
+            return ROTATION;
+        }
+        if (type == BlockPos.TraversalNodeStatus.class) {
+            return TRAVERSAL_NODE_STATUS;
+        }
         if (type == Vec3i.class) {
             return VEC3I;
+        }
+        if (type == BlockPos.class) {
+            return BLOCK_POS;
+        }
+        if (type == BlockPos.MutableBlockPos.class) {
+            return MUTABLE_BLOCK_POS;
         }
         // Vec3 is the Position the game passes, entities' positions included.
         if (type == Vec3.class || type == Position.class) {
@@ -192,6 +240,11 @@ final class CoreValues {
             case 2 -> new Vec3i(random.nextInt(60000001) - 30000000, random.nextInt(4096) - 2048, random.nextInt(60000001) - 30000000);
             default -> new Vec3i((Integer)Values.INTS.random(random), (Integer)Values.INTS.random(random), (Integer)Values.INTS.random(random));
         };
+    }
+
+    static BlockPos randomBlockPos(final Random random) {
+        Vec3i vec = randomVec3i(random);
+        return new BlockPos(vec.getX(), vec.getY(), vec.getZ());
     }
 
     // Positions around the walk scenario's spawn, entities' deltas (some components zero), look vectors, block corners

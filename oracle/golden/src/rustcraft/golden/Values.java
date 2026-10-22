@@ -247,7 +247,10 @@ final class Values {
             return true;
         }
         // Their elements are encoded by their own class.
-        if (Collection.class.isAssignableFrom(type) || Stream.class.isAssignableFrom(type) || Iterator.class.isAssignableFrom(type)) {
+        if (
+            Collection.class.isAssignableFrom(type) || Stream.class.isAssignableFrom(type) || Iterator.class.isAssignableFrom(type)
+                || Iterable.class.isAssignableFrom(type)
+        ) {
             return true;
         }
         if (type.isArray()) {
@@ -334,18 +337,49 @@ final class Values {
         if (CoreValues.canEncode(type)) {
             return CoreValues.encode(value);
         }
+        // Last, since an enum can be Iterable too (Direction.Plane), and it's encoded by name.
+        if (Iterable.class.isAssignableFrom(type)) {
+            return encodeElements(((Iterable<?>)value).iterator());
+        }
         throw new IllegalArgumentException("no encoder for " + type.getName());
     }
 
-    // The elements of a collection, stream or iterator, each by its own class, up to STREAM_LIMIT of them.
+    // The elements of a collection, stream, iterator or iterable, each by its own class as it comes (BlockPos's iterables
+    // hand out one MutableBlockPos over and over), up to STREAM_LIMIT of them.
     private static JsonArray encodeElements(final Iterator<?> elements) {
         JsonArray array = new JsonArray();
-        for (int i = 0; i < STREAM_LIMIT && elements.hasNext(); i++) {
-            Object element = elements.next();
+        for (int i = 0; i < STREAM_LIMIT && hasNext(elements); i++) {
+            Object element = next(elements);
             Class<?> type = element instanceof Enum<?> constant ? constant.getDeclaringClass() : element.getClass();
             array.add(encode(element, type));
         }
         return array;
+    }
+
+    private static boolean hasNext(final Iterator<?> elements) {
+        try {
+            return elements.hasNext();
+        } catch (RuntimeException e) {
+            throw new ElementThrew(e);
+        }
+    }
+
+    private static Object next(final Iterator<?> elements) {
+        try {
+            return elements.next();
+        } catch (RuntimeException e) {
+            throw new ElementThrew(e);
+        }
+    }
+
+    /**
+     * The game's code threw while working out an element of a lazy result, like an Iterable whose iterator divides by
+     * zero. Suites record it as the call's throw, and the port collects the elements inside the checked call.
+     */
+    static final class ElementThrew extends RuntimeException {
+        ElementThrew(final RuntimeException cause) {
+            super(cause);
+        }
     }
 
     static String floatBits(final float value) {

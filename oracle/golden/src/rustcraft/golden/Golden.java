@@ -13,11 +13,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
+import net.minecraft.core.AxisCycle;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
 import net.minecraft.util.StringRepresentable;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
@@ -284,7 +287,44 @@ public final class Golden {
             .extraInputs("normalize()Lnet/minecraft/world/phys/Vec3;", normalizeThresholds())
             .extraInputs("directionFromRotation(FF)Lnet/minecraft/world/phys/Vec3;", lookRotations()),
         InstanceSuite.every(Vec2.class)
-            .extraInputs("normalized()Lnet/minecraft/world/phys/Vec2;", normalizedThresholds())
+            .extraInputs("normalized()Lnet/minecraft/world/phys/Vec2;", normalizedThresholds()),
+        InstanceSuite.every(AxisCycle.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/core/AxisCycle;", names(AxisCycle.values())),
+        InstanceSuite.every(Rotation.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/level/block/Rotation;", names(Rotation.values()))
+            .extraInputs("rotate(II)I", rotationSteps()),
+        InstanceSuite.every(BlockPos.class)
+            .inherited("toString()Ljava/lang/String;")
+            .extraInputs("asLong(III)J", packingLimits())
+            .extraInputs("of(J)Lnet/minecraft/core/BlockPos;", packedInputs(0))
+            .extraInputs("getX(J)I", packedInputs(0))
+            .extraInputs("getY(J)I", packedInputs(0))
+            .extraInputs("getZ(J)I", packedInputs(0))
+            .extraInputs("getFlatIndex(J)J", packedInputs(0))
+            .extraInputs("offset(JLnet/minecraft/core/Direction;)J", packedInputs(1))
+            .extraInputs("offset(JIII)J", packedInputs(2))
+            .extraInputs("clampLocationWithin(Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;", clampBounds())
+            .extraInputs("withinManhattan(Lnet/minecraft/core/BlockPos;I)Ljava/lang/Iterable;", manhattanReaches(1))
+            .extraInputs("withinClippedManhattan(Lnet/minecraft/core/BlockPos;III)Ljava/lang/Iterable;", manhattanReaches(3))
+            .extraInputs("withinBoxByManhattanDistance(Lnet/minecraft/core/BlockPos;III)Ljava/lang/Iterable;", manhattanReaches(3))
+            // With a negative reach and a large depth, the search never finds a block, so it runs until the depth wraps.
+            .where("withinClippedManhattan(Lnet/minecraft/core/BlockPos;III)Ljava/lang/Iterable;", args -> manhattanEnds(args, Math.max(Math.max((Integer)args[1], (Integer)args[2]), (Integer)args[3])))
+            .where("withinBoxByManhattanDistance(Lnet/minecraft/core/BlockPos;III)Ljava/lang/Iterable;", args -> manhattanEnds(args, (Integer)args[1] + (Integer)args[2] + (Integer)args[3]))
+            .extraInputs("betweenClosed(IIIIII)Ljava/lang/Iterable;", smallBoxes(false))
+            .extraInputs("betweenClosedStream(IIIIII)Ljava/util/stream/Stream;", smallBoxes(false))
+            .extraInputs("betweenClosed(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;)Ljava/lang/Iterable;", smallBoxes(true))
+            .extraInputs("betweenClosedStream(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;)Ljava/util/stream/Stream;", smallBoxes(true))
+            .extraInputs("neighborColumn(IIII)Ljava/lang/Iterable;", neighborColumns())
+            .extraInputs("spiralAround(Lnet/minecraft/core/BlockPos;ILnet/minecraft/core/Direction;Lnet/minecraft/core/Direction;)Ljava/lang/Iterable;", spirals())
+            .extraInputs("betweenCornersInDirection(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/Vec3;)Ljava/lang/Iterable;", cornerWalks(true))
+            .extraInputs("betweenCornersInDirection(IIIIIILnet/minecraft/world/phys/Vec3;)Ljava/lang/Iterable;", cornerWalks(false))
+            .extraInputs("randomBetweenClosed(Lnet/minecraft/util/RandomSource;IIIIIII)Ljava/lang/Iterable;", randomBoxes(false))
+            .extraInputs("randomInCube(Lnet/minecraft/util/RandomSource;ILnet/minecraft/core/BlockPos;I)Ljava/lang/Iterable;", randomBoxes(true)),
+        InstanceSuite.every(BlockPos.MutableBlockPos.class)
+            .inherited("toString()Ljava/lang/String;")
+            .extraInputs("set(J)Lnet/minecraft/core/BlockPos$MutableBlockPos;", packedInputs(3)),
+        InstanceSuite.every(BlockPos.TraversalNodeStatus.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/core/BlockPos$TraversalNodeStatus;", names(BlockPos.TraversalNodeStatus.values()))
     );
 
     public static void main(final String[] args) throws IOException {
@@ -972,6 +1012,212 @@ public final class Golden {
         inputs.add(new Object[]{30.0F, 90.0F});
         for (int xRot = -90; xRot <= 90; xRot++) {
             inputs.add(new Object[]{(float)xRot, (xRot + 90) * 2.0F - 180.0F});
+        }
+        return inputs;
+    }
+
+    // Every rotation of every whole step of a turn of 4 (a block's facing) and 16 (a sign's), and of none.
+    private static List<Object[]> rotationSteps() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Rotation rotation : Rotation.values()) {
+            for (int steps : new int[]{4, 16, 0}) {
+                for (int index = -1; index <= steps; index++) {
+                    inputs.add(new Object[]{rotation, index, steps});
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // Every block whose coordinates are at BlockPos.asLong's packing limits (26 bits for x and z, 12 for y), or an int
+    // past them, which wraps, or near zero.
+    private static List<Object[]> packingLimits() {
+        int[] horizontal = {-33554433, -33554432, -33554431, -1, 0, 1, 33554431, 33554432};
+        int[] vertical = {-2049, -2048, -2047, -64, -1, 0, 1, 319, 2047, 2048};
+        List<Object[]> inputs = new ArrayList<>();
+        for (int x : horizontal) {
+            for (int y : vertical) {
+                for (int z : horizontal) {
+                    inputs.add(new Object[]{x, y, z});
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // Blocks packed with BlockPos.asLong: at the packing limits, around the walk scenario's spawn and anywhere a BlockPos
+    // packs, and any longs. Kind 0 passes the long alone, 1 with each direction, 2 with steps, and 3 to a
+    // MutableBlockPos's set.
+    private static List<Object[]> packedInputs(final int kind) {
+        Random random = new Random(30 + kind);
+        List<Long> packed = new ArrayList<>();
+        for (Object[] limits : packingLimits()) {
+            packed.add(BlockPos.asLong((Integer)limits[0], (Integer)limits[1], (Integer)limits[2]));
+        }
+        for (int i = 0; i < 300; i++) {
+            packed.add(CoreValues.randomBlockPos(random).asLong());
+        }
+        for (int i = 0; i < 60; i++) {
+            packed.add(random.nextLong());
+        }
+
+        List<Object[]> inputs = new ArrayList<>();
+        for (long node : packed) {
+            switch (kind) {
+                case 0 -> inputs.add(new Object[]{node});
+                case 1 -> {
+                    for (Direction direction : Direction.values()) {
+                        inputs.add(new Object[]{node, direction});
+                    }
+                }
+                case 2 -> inputs.add(new Object[]{node, random.nextInt(5) - 2, random.nextInt(5) - 2, random.nextInt(5) - 2});
+                default -> inputs.add(new Object[]{CoreValues.randomBlockPos(random).mutable(), node});
+            }
+        }
+        return inputs;
+    }
+
+    // Points on the bounds clampLocationWithin works out for a block, an ulp either side, inside and outside, for blocks
+    // around the walk scenario's spawn and far out, where the lower bound's float sum rounds (and past 2^24, the block's
+    // coordinate too).
+    private static List<Object[]> clampBounds() {
+        Random random = new Random(33);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 2000; i++) {
+            BlockPos block = CoreValues.randomBlockPos(random);
+            double[] point = new double[3];
+            for (int axis = 0; axis < 3; axis++) {
+                int coordinate = block.get(Direction.Axis.VALUES[axis]);
+                double min = coordinate + 1.0E-5F;
+                double max = coordinate + 1.0 - 1.0E-5F;
+                point[axis] = switch (random.nextInt(9)) {
+                    case 0 -> min;
+                    case 1 -> Math.nextDown(min);
+                    case 2 -> Math.nextUp(min);
+                    case 3 -> max;
+                    case 4 -> Math.nextDown(max);
+                    case 5 -> Math.nextUp(max);
+                    case 6 -> coordinate + 0.5;
+                    case 7 -> coordinate - 3.0;
+                    default -> coordinate + 3.0;
+                };
+            }
+            inputs.add(new Object[]{block, new Vec3(point[0], point[1], point[2])});
+        }
+        return inputs;
+    }
+
+    // Reaches like the game's (up to 4 blocks each way, or 8 as one reach), and negative ones, with which the search
+    // starts outside the reach or ends at once.
+    private static List<Object[]> manhattanReaches(final int reaches) {
+        Random random = new Random(34 + reaches);
+        List<Object[]> inputs = new ArrayList<>();
+        if (reaches == 1) {
+            for (int reach = -2; reach <= 8; reach++) {
+                for (int i = 0; i < 3; i++) {
+                    inputs.add(new Object[]{CoreValues.randomBlockPos(random), reach});
+                }
+            }
+            return inputs;
+        }
+        for (int x = -2; x <= 4; x++) {
+            for (int y = -2; y <= 4; y++) {
+                for (int z = -2; z <= 4; z++) {
+                    inputs.add(new Object[]{CoreValues.randomBlockPos(random), x, y, z});
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // The search visits at least one block per depth when every reach is non-negative, so it gets to the 512th block
+    // quickly. Otherwise it may find none, and only stops past maxDepth, so that has to be small.
+    private static boolean manhattanEnds(final Object[] args, final int maxDepth) {
+        return (Integer)args[1] >= 0 && (Integer)args[2] >= 0 && (Integer)args[3] >= 0 || maxDepth <= 64;
+    }
+
+    // Boxes up to 9 blocks across around the walk scenario's spawn and anywhere, with their corners either way round (as
+    // ints, a min above the max makes the width 0, which leaves nothing to visit, or negative), or as two BlockPos.
+    private static List<Object[]> smallBoxes(final boolean blockPositions) {
+        Random random = new Random(blockPositions ? 36 : 37);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            BlockPos a = CoreValues.randomBlockPos(random);
+            BlockPos b = a.offset(random.nextInt(11) - 2, random.nextInt(11) - 2, random.nextInt(11) - 2);
+            if (random.nextBoolean()) {
+                BlockPos swap = a;
+                a = b;
+                b = swap;
+            }
+            inputs.add(blockPositions ? new Object[]{a, b} : new Object[]{a.getX(), a.getY(), a.getZ(), b.getX(), b.getY(), b.getZ()});
+        }
+        return inputs;
+    }
+
+    // Columns from a block up or down to a y up to 16 away, or at it.
+    private static List<Object[]> neighborColumns() {
+        Random random = new Random(38);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            BlockPos start = CoreValues.randomBlockPos(random);
+            inputs.add(new Object[]{start.getX(), start.getY(), start.getZ(), start.getY() + random.nextInt(33) - 16});
+        }
+        return inputs;
+    }
+
+    // Every pair of directions (those on one axis throw) with radii up to 3, and none.
+    private static List<Object[]> spirals() {
+        Random random = new Random(39);
+        List<Object[]> inputs = new ArrayList<>();
+        for (Direction first : Direction.values()) {
+            for (Direction second : Direction.values()) {
+                for (int radius = -1; radius <= 3; radius++) {
+                    inputs.add(new Object[]{CoreValues.randomBlockPos(random), radius, first, second});
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // Boxes up to 5 blocks across with their corners either way round, walked along movements like an entity's, ones with
+    // zero (of either sign) or NaN components, which pick the order and the start, and ties for axisStepOrder.
+    private static List<Object[]> cornerWalks(final boolean blockPositions) {
+        Random random = new Random(blockPositions ? 40 : 41);
+        double[] components = {0.0, -0.0, 1.0, -1.0, 0.5, -0.5, Double.NaN};
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            BlockPos a = CoreValues.randomBlockPos(random);
+            BlockPos b = a.offset(random.nextInt(9) - 4, random.nextInt(9) - 4, random.nextInt(9) - 4);
+            Vec3 direction = switch (random.nextInt(3)) {
+                case 0 -> CoreValues.randomVec3(random);
+                case 1 -> new Vec3(components[random.nextInt(7)], components[random.nextInt(7)], components[random.nextInt(7)]);
+                default -> {
+                    double tie = random.nextDouble() - 0.5;
+                    yield new Vec3(tie, random.nextDouble() - 0.5, random.nextBoolean() ? tie : -tie);
+                }
+            };
+            inputs.add(
+                blockPositions ? new Object[]{a, b, direction} : new Object[]{a.getX(), a.getY(), a.getZ(), b.getX(), b.getY(), b.getZ(), direction}
+            );
+        }
+        return inputs;
+    }
+
+    // Draws up to 20 blocks from boxes up to 5 blocks across, or from a cube up to 4 blocks either way of a center, some
+    // empty (a width of 0, which nextInt rejects, but only once a block is drawn).
+    private static List<Object[]> randomBoxes(final boolean cube) {
+        Random random = new Random(cube ? 42 : 43);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            long seed = random.nextLong();
+            int limit = random.nextInt(22) - 1;
+            BlockPos a = CoreValues.randomBlockPos(random);
+            if (cube) {
+                inputs.add(new Object[]{seed, limit, a, random.nextInt(6) - 1});
+            } else {
+                BlockPos b = a.offset(random.nextInt(6) - 1, random.nextInt(6) - 1, random.nextInt(6) - 1);
+                inputs.add(new Object[]{seed, limit, a.getX(), a.getY(), a.getZ(), b.getX(), b.getY(), b.getZ()});
+            }
         }
         return inputs;
     }

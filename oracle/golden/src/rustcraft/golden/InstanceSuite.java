@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Covers the constructors and methods of a value class by reflection: chosen ones for big library classes, or all its
@@ -33,6 +34,8 @@ final class InstanceSuite implements Suite {
     private final Class<?> type;
     private final Set<String> only;
     private final Map<String, List<Object[]>> extraInputs = new HashMap<>();
+    private final Map<String, Predicate<Object[]>> domains = new HashMap<>();
+    private final Set<String> inherited = new LinkedHashSet<>();
     private boolean fields;
 
     /** Big library classes (JOML's Matrix4f has hundreds of methods) list the members the port covers. */
@@ -62,6 +65,21 @@ final class InstanceSuite implements Suite {
     /** Also writes the class's public constants, like a StaticSuite does. */
     InstanceSuite withFields() {
         this.fields = true;
+        return this;
+    }
+
+    /** Drops inputs outside the domain, like StaticSuite.where, for members whose results never end on some inputs. */
+    InstanceSuite where(final String member, final Predicate<Object[]> domain) {
+        this.domains.put(member, domain);
+        return this;
+    }
+
+    /**
+     * Also covers public methods the class inherits whose answers depend on the receiver's class, like Vec3i's
+     * toString, which prints the class's name.
+     */
+    InstanceSuite inherited(final String... members) {
+        this.inherited.addAll(Arrays.asList(members));
         return this;
     }
 
@@ -96,6 +114,8 @@ final class InstanceSuite implements Suite {
 
         Set<String> missing = new HashSet<>(this.only == null ? Set.of() : this.only);
         missing.addAll(this.extraInputs.keySet());
+        missing.addAll(this.domains.keySet());
+        missing.addAll(this.inherited);
         missing.removeAll(written);
         if (!missing.isEmpty()) {
             throw new IllegalStateException(this.type.getName() + " has no public members " + missing);
@@ -107,6 +127,9 @@ final class InstanceSuite implements Suite {
         Arrays.stream(this.type.getDeclaredMethods())
             .filter(method -> Modifier.isPublic(method.getModifiers()))
             .filter(method -> !method.isSynthetic() && !method.isBridge())
+            .forEach(members::add);
+        Arrays.stream(this.type.getMethods())
+            .filter(method -> method.getDeclaringClass() != this.type && this.inherited.contains(descriptor(method)))
             .forEach(members::add);
         members.sort(Comparator.comparing(InstanceSuite::descriptor));
         return members;
@@ -164,7 +187,12 @@ final class InstanceSuite implements Suite {
             }
         }
 
+        Predicate<Object[]> domain = this.domains.getOrDefault(descriptor, spec -> true);
         for (Object[] spec : specs) {
+            if (!domain.test(spec)) {
+                continue;
+            }
+
             JsonArray args = new JsonArray();
             Object[] instances = new Object[spec.length];
             for (int i = 0; i < spec.length; i++) {
@@ -185,6 +213,8 @@ final class InstanceSuite implements Suite {
                 JsonElement encoded = returnType == void.class ? JsonNull.INSTANCE : Values.encode(result, returnType);
                 writer.result(descriptor, args, encoded, this.after(receiver, generators, spec, instances, result));
             } catch (InvocationTargetException e) {
+                writer.threw(descriptor, args, e.getCause(), this.after(receiver, generators, spec, instances, null));
+            } catch (Values.ElementThrew e) {
                 writer.threw(descriptor, args, e.getCause(), this.after(receiver, generators, spec, instances, null));
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(e);

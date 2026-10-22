@@ -1,8 +1,7 @@
 //! net/minecraft/core/Vec3i.java
 //!
 //! Not ported yet: the codecs (`CODEC`, `STREAM_CODEC` and `offsetCodec`), which wait for
-//! DataFixerUpper and the network buffers. The protected setters come with `MutableBlockPos`,
-//! the only class that calls them.
+//! DataFixerUpper and the network buffers.
 
 use std::fmt;
 
@@ -59,6 +58,22 @@ impl Vec3i {
 
     pub const fn get_z(&self) -> i32 {
         self.z
+    }
+
+    /// Java's protected setters, which only `MutableBlockPos` calls.
+    pub(super) fn set_x(&mut self, x: i32) -> &mut Vec3i {
+        self.x = x;
+        self
+    }
+
+    pub(super) fn set_y(&mut self, y: i32) -> &mut Vec3i {
+        self.y = y;
+        self
+    }
+
+    pub(super) fn set_z(&mut self, z: i32) -> &mut Vec3i {
+        self.z = z;
+        self
     }
 
     pub fn offset_xyz(&self, x: i32, y: i32, z: i32) -> Vec3i {
@@ -267,18 +282,27 @@ impl Vec3i {
     pub fn to_short_string(&self) -> String {
         format!("{}, {}, {}", self.get_x(), self.get_y(), self.get_z())
     }
-}
 
-/// Java's `toString`, `MoreObjects.toStringHelper`'s format with the class's simple name.
-impl fmt::Display for Vec3i {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    /// Java's `toString`, `MoreObjects.toStringHelper`'s format with the simple name of the
+    /// receiver's class, which subclasses (`BlockPos`) print instead of `Vec3i`.
+    pub(super) fn fmt_with_class_name(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        class_name: &str,
+    ) -> fmt::Result {
         write!(
             f,
-            "Vec3i{{x={}, y={}, z={}}}",
+            "{class_name}{{x={}, y={}, z={}}}",
             self.get_x(),
             self.get_y(),
             self.get_z()
         )
+    }
+}
+
+impl fmt::Display for Vec3i {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_with_class_name(f, "Vec3i")
     }
 }
 

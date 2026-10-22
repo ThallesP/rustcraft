@@ -165,6 +165,8 @@ final class StaticSuite implements Suite {
                 writer.result(descriptor, args, Values.encode(result, method.getReturnType()), after(generators, spec, instances, result));
             } catch (InvocationTargetException e) {
                 writer.threw(descriptor, args, e.getCause(), after(generators, spec, instances, null));
+            } catch (Values.ElementThrew e) {
+                writer.threw(descriptor, args, e.getCause(), after(generators, spec, instances, null));
             } catch (IllegalAccessException e) {
                 throw new IllegalStateException(e);
             } finally {
