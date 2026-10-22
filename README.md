@@ -22,6 +22,7 @@ This project started from this prompt:
 
 - **The port** lives in `src/`, mirroring Java's packages: `src/net/minecraft/util/mth.rs` is `net/minecraft/util/Mth.java`. [PORTING.md](PORTING.md) has the translation rules, including the places where Java and Rust disagree on numbers.
 - **Vanilla is the oracle.** The real game runs alongside the port and the outputs get compared, from single functions up to screenshots. [TESTING.md](TESTING.md) has the layers and file formats.
+- **The goal** is in [GOAL.md](GOAL.md): the `walk` scenario matching vanilla pixel for pixel. [PROGRESS.md](PROGRESS.md) logs how far the port has come.
 - **Mojang's code and assets stay out of git.** `tools/setup_vanilla.py` downloads and decompiles them into `vanilla/`, which is gitignored, because they can't be redistributed. The Rust translation is derived from that code too, so think twice before making this repository public.
 
 ## Getting started
