@@ -73,10 +73,17 @@ final class Codecs {
         ) {
             return new Codec(NetworkValues.generator(buffer), optionalOf(Values.generator(present)), Optional.class);
         }
-        if (!(arguments[1] instanceof Class<?> valueType) || Values.generator(valueType) == null || !Values.canEncode(valueType)) {
+        // A parameterized value (a ResourceKey<T>, whose argument only says what it's a key of) is its raw class's, unless
+        // its arguments pick a generator (Values.generator(Type)).
+        Type value = arguments[1];
+        Class<?> valueType = value instanceof ParameterizedType generic && generic.getRawType() instanceof Class<?> raw ? raw : null;
+        if (value instanceof Class<?> plain) {
+            valueType = plain;
+        }
+        if (valueType == null || Values.generator(value) == null || !Values.canEncode(valueType)) {
             return null;
         }
-        return new Codec(NetworkValues.generator(buffer), Values.generator(valueType), valueType);
+        return new Codec(NetworkValues.generator(buffer), Values.generator(value), valueType);
     }
 
     /** The values an IntFunction field or result hands out, when they're a class's and can be encoded, or null. */

@@ -7,9 +7,8 @@
 //! - `readEnumSet` and `writeEnumSet`, whose `Class` argument the golden harness can't generate
 //!   yet, and which need `java.util.BitSet` like the `BitSet` ones (`readBitSet`, `writeBitSet`,
 //!   `readFixedBitSet`, `writeFixedBitSet`);
-//! - `readChunkPos` and `writeChunkPos`, which wait for `ChunkPos`; `readGlobalPos`,
-//!   `writeGlobalPos`, `readResourceKey`, `writeResourceKey` and `readRegistryKey`, which wait
-//!   for `ResourceKey`.
+//! - `readChunkPos` and `writeChunkPos`, which wait for `ChunkPos`, and `readGlobalPos` and
+//!   `writeGlobalPos`, which wait for `GlobalPos`.
 //!
 //! The methods overriding `ByteBuf`'s forward to the buffer it wraps, which it derefs to. Java
 //! throws Netty's `DecoderException` and `EncoderException`, and `NegativeArraySizeException` for
@@ -39,6 +38,7 @@ use crate::net::minecraft::network::utf8_string::Utf8String;
 use crate::net::minecraft::network::var_int::VarInt;
 use crate::net::minecraft::network::var_long::VarLong;
 use crate::net::minecraft::resources::identifier::Identifier;
+use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::org::joml::quaternionf::Quaternionf;
 use crate::org::joml::vector3f::Vector3f;
 
@@ -486,6 +486,23 @@ impl FriendlyByteBuf {
         self
     }
 
+    /// The key of an element of the registry, by its identifier.
+    pub fn read_resource_key(&mut self, registry: &ResourceKey) -> ResourceKey {
+        let id = self.read_identifier();
+        ResourceKey::create(registry, id)
+    }
+
+    /// The key's identifier, without its registry's.
+    pub fn write_resource_key(&mut self, key: &ResourceKey) {
+        self.write_identifier(key.identifier());
+    }
+
+    /// A registry's key, by its identifier.
+    pub fn read_registry_key(&mut self) -> ResourceKey {
+        let id = self.read_identifier();
+        ResourceKey::create_registry_key(id)
+    }
+
     /// `readContainerId(ByteBuf)`: a VarInt.
     pub fn read_container_id_from(input: &mut ByteBuf) -> i32 {
         VarInt::read(input)
@@ -563,6 +580,7 @@ mod tests {
     use crate::net::minecraft::network::protocol::common::serverbound_resource_pack_packet::Action;
     use crate::net::minecraft::network::utf8_string::Utf8String;
     use crate::net::minecraft::resources::identifier::Identifier;
+    use crate::net::minecraft::resources::resource_key::ResourceKey;
     use crate::net::minecraft::world::level::block::rotation::Rotation;
     use crate::net::minecraft::world::phys::vec3::Vec3;
     use crate::org::joml::quaternionf::Quaternionf;
@@ -632,12 +650,21 @@ mod tests {
         for name in [
             "readGlobalPos()Lnet/minecraft/core/GlobalPos;",
             "writeGlobalPos(Lnet/minecraft/core/GlobalPos;)V",
-            "readResourceKey(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/resources/ResourceKey;",
-            "writeResourceKey(Lnet/minecraft/resources/ResourceKey;)V",
-            "readRegistryKey()Lnet/minecraft/resources/ResourceKey;",
         ] {
-            golden.pending(name, "waits for ResourceKey");
+            golden.pending(name, "waits for GlobalPos");
         }
+        golden.check_method(
+            "readResourceKey(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/resources/ResourceKey;",
+            |this: &mut FriendlyByteBuf, registry: ResourceKey| this.read_resource_key(&registry),
+        );
+        golden.check_method(
+            "writeResourceKey(Lnet/minecraft/resources/ResourceKey;)V",
+            |this: &mut FriendlyByteBuf, key: ResourceKey| this.write_resource_key(&key),
+        );
+        golden.check_method(
+            "readRegistryKey()Lnet/minecraft/resources/ResourceKey;",
+            |this: &mut FriendlyByteBuf| this.read_registry_key(),
+        );
         golden.check_method(
             "readNbt()Lnet/minecraft/nbt/CompoundTag;",
             |this: &mut FriendlyByteBuf| this.read_nbt(),

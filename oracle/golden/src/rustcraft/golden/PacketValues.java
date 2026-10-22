@@ -21,6 +21,8 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Stream;
+import net.minecraft.core.Registry;
+import net.minecraft.core.RegistrySynchronization;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.FriendlyByteBuf;
@@ -29,7 +31,14 @@ import net.minecraft.network.ProtocolInfo;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.PacketType;
+import net.minecraft.network.protocol.common.ClientboundClearDialogPacket;
+import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
+import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket;
+import net.minecraft.network.protocol.common.ClientboundPingPacket;
+import net.minecraft.network.protocol.common.ClientboundPostEffectsPacket;
+import net.minecraft.network.protocol.common.ClientboundResourcePackPopPacket;
 import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
+import net.minecraft.network.protocol.common.ClientboundTransferPacket;
 import net.minecraft.network.protocol.common.CommonPacketTypes;
 import net.minecraft.network.protocol.common.ServerboundClientInformationPacket;
 import net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket;
@@ -40,6 +49,11 @@ import net.minecraft.network.protocol.common.ServerboundResourcePackPacket;
 import net.minecraft.network.protocol.common.custom.BrandPayload;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.network.protocol.common.custom.DiscardedPayload;
+import net.minecraft.network.protocol.configuration.ClientboundCodeOfConductPacket;
+import net.minecraft.network.protocol.configuration.ClientboundFinishConfigurationPacket;
+import net.minecraft.network.protocol.configuration.ClientboundRegistryDataPacket;
+import net.minecraft.network.protocol.configuration.ClientboundResetChatPacket;
+import net.minecraft.network.protocol.configuration.ClientboundSelectKnownPacks;
 import net.minecraft.network.protocol.configuration.ConfigurationPacketTypes;
 import net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket;
 import net.minecraft.network.protocol.configuration.ServerboundFinishConfigurationPacket;
@@ -64,6 +78,7 @@ import net.minecraft.network.protocol.login.custom.CustomQueryPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.server.packs.repository.KnownPack;
@@ -111,7 +126,12 @@ final class PacketValues {
         CommonPacketTypes.SERVERBOUND_CLIENT_INFORMATION, CommonPacketTypes.SERVERBOUND_CUSTOM_CLICK_ACTION, CommonPacketTypes.SERVERBOUND_CUSTOM_PAYLOAD,
         CommonPacketTypes.SERVERBOUND_KEEP_ALIVE,
         CommonPacketTypes.SERVERBOUND_PONG, CommonPacketTypes.SERVERBOUND_RESOURCE_PACK, ConfigurationPacketTypes.SERVERBOUND_ACCEPT_CODE_OF_CONDUCT,
-        ConfigurationPacketTypes.SERVERBOUND_FINISH_CONFIGURATION, ConfigurationPacketTypes.SERVERBOUND_SELECT_KNOWN_PACKS
+        ConfigurationPacketTypes.SERVERBOUND_FINISH_CONFIGURATION, ConfigurationPacketTypes.SERVERBOUND_SELECT_KNOWN_PACKS,
+        CommonPacketTypes.CLIENTBOUND_CLEAR_DIALOG, CommonPacketTypes.CLIENTBOUND_CUSTOM_PAYLOAD, CommonPacketTypes.CLIENTBOUND_KEEP_ALIVE,
+        CommonPacketTypes.CLIENTBOUND_PING, CommonPacketTypes.CLIENTBOUND_POST_EFFECTS, CommonPacketTypes.CLIENTBOUND_RESOURCE_PACK_POP,
+        CommonPacketTypes.CLIENTBOUND_STORE_COOKIE, CommonPacketTypes.CLIENTBOUND_TRANSFER, ConfigurationPacketTypes.CLIENTBOUND_CODE_OF_CONDUCT,
+        ConfigurationPacketTypes.CLIENTBOUND_FINISH_CONFIGURATION, ConfigurationPacketTypes.CLIENTBOUND_REGISTRY_DATA,
+        ConfigurationPacketTypes.CLIENTBOUND_RESET_CHAT, ConfigurationPacketTypes.CLIENTBOUND_SELECT_KNOWN_PACKS
     );
     static final Values.Generator PACKET_TYPE = new Values.Simple(
         PORTED_TYPES.stream()
@@ -177,14 +197,29 @@ final class PacketValues {
         IDENTIFIERS::encode
     );
 
+    // A transfer's host, and around readUtf()'s limit of 32767 in characters of one byte and four.
+    private static final Values.Generator TRANSFER_HOSTS = strings(
+        "localhost", "127.0.0.1", "", "mc.example.com", "a".repeat(32767), "a".repeat(32768), "😀".repeat(16383) + "a", "😀".repeat(16384)
+    );
+    // A server's code of conduct, and around STRING_UTF8's limit of 32767.
+    private static final Values.Generator CODES_OF_CONDUCT = strings(
+        "Be kind.", "", "Line one\nLine two", "a".repeat(32767), "a".repeat(32768), "😀".repeat(16383) + "a", "😀".repeat(16384)
+    );
+    // A resource pack to pop, or all of them.
+    private static final Values.Generator OPTIONAL_UUIDS = Codecs.optionalOf(UUIDS);
+    // A ClientboundPostEffectsPacket's shaders.
+    private static final Values.Generator IDENTIFIER_LISTS = Codecs.listOf(IDENTIFIERS);
+
     private static final Map<Class<?>, Values.Generator> PACKETS = new LinkedHashMap<>();
     // The generators of the payloads packets hold, by their class and by their interface, and of the other records they
     // hold.
     private static final Map<Class<?>, Values.Generator> PAYLOADS = new HashMap<>();
     // The fields each packet class that isn't a record is encoded as.
     private static final Map<Class<?>, List<Field>> FIELDS = new LinkedHashMap<>();
-    // A ServerboundSelectKnownPacks' packs.
+    // The select_known_packs packets' packs.
     private static final Values.Generator KNOWN_PACK_LISTS;
+    // A ClientboundRegistryDataPacket's entries.
+    private static final Values.Generator REGISTRY_ENTRY_LISTS;
 
     static {
         // The only payloads vanilla reads: what it doesn't know, kept as the query's identifier and nothing else.
@@ -218,6 +253,14 @@ final class PacketValues {
         );
         PAYLOADS.put(KnownPack.class, knownPacks);
         KNOWN_PACK_LISTS = knownPackLists(knownPacks);
+        // A registry's element: its identifier, and its data, or none when the client has it in a known pack.
+        Values.Generator registryEntries = values(
+            RegistrySynchronization.PackedRegistryEntry.class,
+            fields -> new RegistrySynchronization.PackedRegistryEntry((Identifier)fields[0], tagPayload(fields[1])), List.of(), IDENTIFIERS,
+            NbtValues.OPTIONAL_TAGS
+        );
+        PAYLOADS.put(RegistrySynchronization.PackedRegistryEntry.class, registryEntries);
+        REGISTRY_ENTRY_LISTS = Codecs.listOf(registryEntries);
 
         packet(
             ClientIntentionPacket.class, fields -> new ClientIntentionPacket((Integer)fields[0], (String)fields[1], (Integer)fields[2], (ClientIntent)fields[3]),
@@ -288,6 +331,33 @@ final class PacketValues {
             ServerboundCustomClickActionPacket.class, fields -> new ServerboundCustomClickActionPacket((Identifier)fields[0], tagPayload(fields[1])),
             List.of(), IDENTIFIERS, NbtValues.OPTIONAL_TAGS
         );
+
+        // The configuration protocol's clientbound packets.
+        packet(ClientboundFinishConfigurationPacket.class, fields -> ClientboundFinishConfigurationPacket.INSTANCE, List.of());
+        packet(ClientboundResetChatPacket.class, fields -> ClientboundResetChatPacket.INSTANCE, List.of());
+        packet(ClientboundClearDialogPacket.class, fields -> ClientboundClearDialogPacket.INSTANCE, List.of());
+        packet(ClientboundKeepAlivePacket.class, fields -> new ClientboundKeepAlivePacket((Long)fields[0]), List.of("id"), LONGS);
+        packet(ClientboundPingPacket.class, fields -> new ClientboundPingPacket((Integer)fields[0]), List.of("id"), INTS);
+        packet(
+            ClientboundSelectKnownPacks.class, fields -> new ClientboundSelectKnownPacks(knownPackList(fields[0])), List.of(), KNOWN_PACK_LISTS
+        );
+        packet(ClientboundResourcePackPopPacket.class, fields -> new ClientboundResourcePackPopPacket(uuid(fields[0])), List.of(), OPTIONAL_UUIDS);
+        packet(
+            ClientboundTransferPacket.class, fields -> new ClientboundTransferPacket((String)fields[0], (Integer)fields[1]), List.of(),
+            TRANSFER_HOSTS, PORTS
+        );
+        packet(ClientboundCodeOfConductPacket.class, fields -> new ClientboundCodeOfConductPacket((String)fields[0]), List.of(), CODES_OF_CONDUCT);
+        packet(
+            ClientboundPostEffectsPacket.class, fields -> new ClientboundPostEffectsPacket(identifierList(fields[0])), List.of(), IDENTIFIER_LISTS
+        );
+        packet(
+            ClientboundCustomPayloadPacket.class, fields -> new ClientboundCustomPayloadPacket((CustomPacketPayload)fields[0]), List.of(),
+            PAYLOADS.get(CustomPacketPayload.class)
+        );
+        packet(
+            ClientboundRegistryDataPacket.class, fields -> new ClientboundRegistryDataPacket(registryKey(fields[0]), registryEntryList(fields[1])),
+            List.of(), CoreValues.RESOURCE_KEY, REGISTRY_ENTRY_LISTS
+        );
     }
 
     private PacketValues() {
@@ -324,10 +394,24 @@ final class PacketValues {
         return PACKETS.containsKey(type) ? PACKETS.get(type) : PAYLOADS.get(type);
     }
 
-    /** The only parameterized arguments with a generator of their own here: a ServerboundSelectKnownPacks' packs. */
+    /**
+     * The parameterized arguments with a generator of their own here: the select_known_packs packets' packs, a
+     * ClientboundPostEffectsPacket's shaders, a ClientboundResourcePackPopPacket's pack and a registry's entries.
+     */
     static Values.Generator generator(final ParameterizedType type) {
-        boolean packs = type.getRawType() == List.class && type.getActualTypeArguments()[0] == KnownPack.class;
-        return packs ? KNOWN_PACK_LISTS : null;
+        Object element = type.getActualTypeArguments()[0];
+        if (type.getRawType() == List.class) {
+            if (element == KnownPack.class) {
+                return KNOWN_PACK_LISTS;
+            }
+            if (element == Identifier.class) {
+                return IDENTIFIER_LISTS;
+            }
+            if (element == RegistrySynchronization.PackedRegistryEntry.class) {
+                return REGISTRY_ENTRY_LISTS;
+            }
+        }
+        return type.getRawType() == Optional.class && element == UUID.class ? OPTIONAL_UUIDS : null;
     }
 
     static boolean canEncode(final Class<?> type) {
@@ -517,6 +601,26 @@ final class PacketValues {
     @SuppressWarnings("unchecked")
     private static Optional<Tag> tagPayload(final Object payload) {
         return (Optional<Tag>)payload;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Optional<UUID> uuid(final Object id) {
+        return (Optional<UUID>)id;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Identifier> identifierList(final Object list) {
+        return (List<Identifier>)list;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ResourceKey<? extends Registry<?>> registryKey(final Object key) {
+        return (ResourceKey<? extends Registry<?>>)key;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<RegistrySynchronization.PackedRegistryEntry> registryEntryList(final Object list) {
+        return (List<RegistrySynchronization.PackedRegistryEntry>)list;
     }
 
     /**

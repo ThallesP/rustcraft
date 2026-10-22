@@ -16,7 +16,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Position;
 import net.minecraft.core.Vec3i;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.ByIdMap;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.AABB;
@@ -213,6 +215,32 @@ final class CoreValues {
         }
     );
 
+    // The registries the server sends in the configuration protocol (and the dimensions', which it doesn't), the root
+    // registry's own key, keys of their elements, and keys with the odd identifiers. Keys are interned, so each call gets
+    // the same one, like the game's. A key is [registry, identifier].
+    static final Values.Generator RESOURCE_KEY = new Values.Simple(
+        List.of(
+            Registries.BIOME, Registries.DIMENSION_TYPE, Registries.CHAT_TYPE, Registries.DAMAGE_TYPE, Registries.ENCHANTMENT,
+            Registries.WOLF_VARIANT, Registries.PAINTING_VARIANT, Registries.DIALOG, Registries.DIMENSION,
+            ResourceKey.createRegistryKey(Registries.ROOT_REGISTRY_NAME),
+            ResourceKey.create(Registries.DIMENSION, Identifier.withDefaultNamespace("overworld")),
+            ResourceKey.create(Registries.BIOME, Identifier.withDefaultNamespace("plains")),
+            ResourceKey.create(Registries.DIMENSION_TYPE, Identifier.withDefaultNamespace("overworld")),
+            ResourceKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath("", "")),
+            ResourceKey.createRegistryKey(Identifier.fromNamespaceAndPath(".", "../..")),
+            ResourceKey.create(
+                ResourceKey.createRegistryKey(Identifier.fromNamespaceAndPath("rustcraft", "scenario_start")), Identifier.withDefaultNamespace("stone")
+            )
+        ),
+        CoreValues::randomResourceKey,
+        key -> {
+            JsonArray array = new JsonArray();
+            array.add(IDENTIFIER.encode(((ResourceKey<?>)key).registry()));
+            array.add(IDENTIFIER.encode(((ResourceKey<?>)key).identifier()));
+            return array;
+        }
+    );
+
     private CoreValues() {
     }
 
@@ -272,6 +300,9 @@ final class CoreValues {
         if (type == Identifier.class) {
             return IDENTIFIER;
         }
+        if (type == ResourceKey.class) {
+            return RESOURCE_KEY;
+        }
         // Entities aren't ported, so a BlockHitResult is the only HitResult.
         if (type == BlockHitResult.class || type == HitResult.class) {
             return BLOCK_HIT_RESULT;
@@ -300,6 +331,7 @@ final class CoreValues {
             case AABB.Builder builder -> BOX_BUILDER.encode(builder);
             case BlockHitResult hit -> BLOCK_HIT_RESULT.encode(hit);
             case Identifier id -> IDENTIFIER.encode(id);
+            case ResourceKey<?> key -> RESOURCE_KEY.encode(key);
             default -> throw new IllegalArgumentException("no encoder for " + value.getClass().getName());
         };
     }
@@ -548,6 +580,17 @@ final class CoreValues {
             return hit.isWorldBorderHit() ? miss.hitBorder() : miss;
         }
         return new BlockHitResult(hit.getLocation(), hit.getDirection(), hit.getBlockPos(), hit.isInside(), hit.isWorldBorderHit());
+    }
+
+    // A registry's key half the time, and otherwise an element's, in one of the edges' registries or any.
+    private static ResourceKey<?> randomResourceKey(final Random random) {
+        if (random.nextBoolean()) {
+            return ResourceKey.createRegistryKey(randomIdentifier(random));
+        }
+        Identifier registry = random.nextBoolean()
+            ? ((ResourceKey<?>)RESOURCE_KEY.edges().get(random.nextInt(RESOURCE_KEY.edges().size()))).identifier()
+            : randomIdentifier(random);
+        return ResourceKey.create(ResourceKey.createRegistryKey(registry), randomIdentifier(random));
     }
 
     // Mostly the default namespace, else a short one of any allowed characters, and a path of up to three such segments.

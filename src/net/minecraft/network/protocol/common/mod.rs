@@ -1,5 +1,12 @@
 pub mod client_common_packet_listener;
+pub mod clientbound_clear_dialog_packet;
+pub mod clientbound_custom_payload_packet;
+pub mod clientbound_keep_alive_packet;
+pub mod clientbound_ping_packet;
+pub mod clientbound_post_effects_packet;
+pub mod clientbound_resource_pack_pop_packet;
 pub mod clientbound_store_cookie_packet;
+pub mod clientbound_transfer_packet;
 pub mod common_packet_types;
 pub mod custom;
 pub mod server_common_packet_listener;

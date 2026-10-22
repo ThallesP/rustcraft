@@ -37,8 +37,11 @@ import net.minecraft.SystemReport;
 import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Registry;
+import net.minecraft.core.RegistrySynchronization;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.Vec3i;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.ByteArrayTag;
 import net.minecraft.nbt.ByteTag;
 import net.minecraft.nbt.CompoundTag;
@@ -59,7 +62,14 @@ import net.minecraft.network.codec.StreamDecoder;
 import net.minecraft.network.codec.StreamEncoder;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.PacketType;
+import net.minecraft.network.protocol.common.ClientboundClearDialogPacket;
+import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
+import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket;
+import net.minecraft.network.protocol.common.ClientboundPingPacket;
+import net.minecraft.network.protocol.common.ClientboundPostEffectsPacket;
+import net.minecraft.network.protocol.common.ClientboundResourcePackPopPacket;
 import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
+import net.minecraft.network.protocol.common.ClientboundTransferPacket;
 import net.minecraft.network.protocol.common.CommonPacketTypes;
 import net.minecraft.network.protocol.common.ServerboundClientInformationPacket;
 import net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket;
@@ -70,6 +80,11 @@ import net.minecraft.network.protocol.common.ServerboundResourcePackPacket;
 import net.minecraft.network.protocol.common.custom.BrandPayload;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.network.protocol.common.custom.DiscardedPayload;
+import net.minecraft.network.protocol.configuration.ClientboundCodeOfConductPacket;
+import net.minecraft.network.protocol.configuration.ClientboundFinishConfigurationPacket;
+import net.minecraft.network.protocol.configuration.ClientboundRegistryDataPacket;
+import net.minecraft.network.protocol.configuration.ClientboundResetChatPacket;
+import net.minecraft.network.protocol.configuration.ClientboundSelectKnownPacks;
 import net.minecraft.network.protocol.configuration.ConfigurationPacketTypes;
 import net.minecraft.network.protocol.configuration.ConfigurationProtocols;
 import net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket;
@@ -95,6 +110,7 @@ import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ParticleStatus;
@@ -192,6 +208,8 @@ public final class Golden {
     private static final String ENUM_IN_RECORD = "hashes an enum constant's identity hash, which changes from run to run";
     // An array's hashCode and toString are Object's, so a record holding one hashes and prints its identity hash.
     private static final String ARRAY_IN_RECORD = "goes by an array component's identity hash, which changes from run to run";
+    // A ResourceKey doesn't override hashCode, since keys are interned, so a record holding one hashes its identity hash.
+    private static final String KEY_IN_RECORD = "hashes a ResourceKey's identity hash, which changes from run to run";
     private static final String SPARSE = "sparse(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/function/IntFunction;";
 
     private static final List<Suite> SUITES = List.of(
@@ -856,7 +874,10 @@ public final class Golden {
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/network/ConnectionProtocol;", names(ConnectionProtocol.values())),
         InstanceSuite.every(PacketFlow.class)
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/PacketFlow;", names(PacketFlow.values())),
-        InstanceSuite.every(PacketType.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        // Too many types for every pair of edges to be the edge cases, so equals gets them as extra inputs.
+        InstanceSuite.every(PacketType.class)
+            .exclude("hashCode()I", ENUM_IN_RECORD)
+            .extraInputs("equals(Ljava/lang/Object;)Z", edgePairs(PacketValues.PACKET_TYPE)),
         InstanceSuite.every(ClientIntent.class)
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/handshake/ClientIntent;", names(ClientIntent.values())),
         InstanceSuite.every(ClientIntentionPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
@@ -963,7 +984,7 @@ public final class Golden {
         InstanceSuite.every(BrandPayload.class),
         // Its codec skips the rest of the buffer, so it also reads buffers as long as the maximum, and a byte either side.
         InstanceSuite.every(DiscardedPayload.class).extraInputs(DISCARDED_CODEC + ".decode", discardedPayloads()),
-        InstanceSuite.every(ServerboundCustomPayloadPacket.class).extraInputs("STREAM_CODEC.decode", customPayloads()),
+        InstanceSuite.every(ServerboundCustomPayloadPacket.class).extraInputs("STREAM_CODEC.decode", customPayloads(32767)),
         InstanceSuite.every(KnownPack.class),
         InstanceSuite.every(ServerboundSelectKnownPacks.class),
         InstanceSuite.every(ServerboundFinishConfigurationPacket.class),
@@ -977,6 +998,47 @@ public final class Golden {
             .where("hashCode()I", args -> !(((ServerboundCustomClickActionPacket)args[0]).payload().orElse(null) instanceof EndTag))
             .extraInputs("STREAM_CODEC.decode", clickActionPayloads()),
         new ProtocolSuite(ConfigurationProtocols.class),
+        // The configuration protocol's clientbound packets that need neither text components nor the registries.
+        InstanceSuite.every(ClientboundFinishConfigurationPacket.class),
+        InstanceSuite.every(ClientboundResetChatPacket.class),
+        InstanceSuite.every(ClientboundClearDialogPacket.class),
+        InstanceSuite.every(ClientboundKeepAlivePacket.class),
+        InstanceSuite.every(ClientboundPingPacket.class),
+        InstanceSuite.every(ClientboundSelectKnownPacks.class),
+        InstanceSuite.every(ClientboundResourcePackPopPacket.class),
+        // Their writers stop strings at 32767 units, so the readers also read longer ones, written without the limit.
+        InstanceSuite.every(ClientboundTransferPacket.class)
+            .extraInputs(
+                "STREAM_CODEC.decode",
+                friendly(written(107, Values.generator(ClientboundTransferPacket.class), (FriendlyByteBuf buffer, ClientboundTransferPacket packet) -> {
+                    Utf8String.write(buffer, packet.host(), Integer.MAX_VALUE);
+                    buffer.writeVarInt(packet.port());
+                }))
+            ),
+        InstanceSuite.every(ClientboundCodeOfConductPacket.class)
+            .extraInputs(
+                "STREAM_CODEC.decode",
+                written(
+                    108, Values.generator(ClientboundCodeOfConductPacket.class),
+                    (FriendlyByteBuf buffer, ClientboundCodeOfConductPacket packet) -> Utf8String.write(buffer, packet.codeOfConduct(), Integer.MAX_VALUE)
+                )
+            ),
+        InstanceSuite.every(ClientboundPostEffectsPacket.class),
+        // Configuration's codec of it skips any payload it doesn't know, up to 1 MiB.
+        InstanceSuite.every(ClientboundCustomPayloadPacket.class).extraInputs("CONFIG_STREAM_CODEC.decode", customPayloads(1048576)),
+        // The registries the server sends, by their keys, and their elements.
+        InstanceSuite.every(ResourceKey.class),
+        new StaticSuite(Registries.class),
+        // An EndTag's hashCode is Object's, an identity hash. Its data is read with the default quota of 2 MiB, so it also
+        // reads data at the quota and past it.
+        InstanceSuite.every(RegistrySynchronization.PackedRegistryEntry.class)
+            .where("hashCode()I", args -> !(((RegistrySynchronization.PackedRegistryEntry)args[0]).data().orElse(null) instanceof EndTag))
+            .extraInputs("STREAM_CODEC.decode", registryEntriesAtQuota()),
+        // Keys are compared by reference, so equals also compares packets of every pair of the keys' edges, among which
+        // are keys with the same identifier in different registries.
+        InstanceSuite.every(ClientboundRegistryDataPacket.class)
+            .exclude("hashCode()I", KEY_IN_RECORD)
+            .extraInputs("equals(Ljava/lang/Object;)Z", registryDataPairs()),
         InstanceSuite.every(ServerboundResourcePackPacket.Action.class)
             .extraInputs(
                 "valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/common/ServerboundResourcePackPacket$Action;",
@@ -2374,6 +2436,51 @@ public final class Golden {
         return inputs;
     }
 
+    // Registry entries whose data is a list of empty compounds, which the default quota of 2 MiB takes (40329 of them,
+    // 2097144 bytes accounted: 36 for the list, and 4 and 48 for each compound) or refuses (40330, 2097196 bytes). Each
+    // takes a byte to read, so the buffers stay small.
+    private static List<Object[]> registryEntriesAtQuota() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int count : new int[]{40329, 40330}) {
+            FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+            buffer.writeIdentifier(Identifier.withDefaultNamespace("plains"));
+            buffer.writeBoolean(true);
+            buffer.writeByte(Tag.TAG_LIST);
+            buffer.writeByte(Tag.TAG_COMPOUND);
+            buffer.writeInt(count);
+            buffer.writeBytes(new byte[count]);
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.readable(buffer))});
+        }
+        return inputs;
+    }
+
+    // Registry data packets of every pair of the keys' edges, with no entries.
+    private static List<Object[]> registryDataPairs() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Object a : CoreValues.RESOURCE_KEY.edges()) {
+            for (Object b : CoreValues.RESOURCE_KEY.edges()) {
+                inputs.add(new Object[]{registryData(a), registryData(b)});
+            }
+        }
+        return inputs;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ClientboundRegistryDataPacket registryData(final Object key) {
+        return new ClientboundRegistryDataPacket((ResourceKey<? extends Registry<?>>)key, List.of());
+    }
+
+    // Every pair of the generator's edges, either way round.
+    private static List<Object[]> edgePairs(final Values.Generator values) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Object a : values.edges()) {
+            for (Object b : values.edges()) {
+                inputs.add(new Object[]{a, b});
+            }
+        }
+        return inputs;
+    }
+
     // Identifiers with paths and namespaces in common, or one a prefix of the other, which compareTo and equals tell apart.
     private static List<Object[]> identifierPairs() {
         Random random = new Random(72);
@@ -2485,10 +2592,11 @@ public final class Golden {
     }
 
     // Custom payload packets the codec's own encodings never hold: a discarded payload of the most the packet takes
-    // (32767 bytes) and a byte more, and brands longer than readUtf's 32767, written without the limit.
-    private static List<Object[]> customPayloads() {
+    // (32767 bytes serverbound, 1 MiB clientbound) and a byte more, and brands longer than readUtf's 32767, written without
+    // the limit.
+    private static List<Object[]> customPayloads(final int maximum) {
         List<Object[]> inputs = new ArrayList<>();
-        for (int size : new int[]{32767, 32768}) {
+        for (int size : new int[]{maximum, maximum + 1}) {
             FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
             buffer.writeIdentifier(Identifier.fromNamespaceAndPath("rustcraft", "scenario_start"));
             buffer.writeBytes(new byte[size]);
