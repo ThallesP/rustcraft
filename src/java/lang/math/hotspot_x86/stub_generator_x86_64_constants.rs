@@ -1,5 +1,5 @@
-//! src/hotspot/cpu/x86/stubGenerator_x86_64_constants.cpp, the constants the sin and cos stubs
-//! share. `ZERO` isn't ported: no stub in OpenJDK 25 reads it.
+//! src/hotspot/cpu/x86/stubGenerator_x86_64_constants.cpp, the constants the sin, cos and tan
+//! stubs share. `ZERO` isn't ported: no stub in OpenJDK 25 reads it.
 
 /*
  * Copyright (c) 2022, 2025, Oracle and/or its affiliates. All rights reserved.

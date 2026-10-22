@@ -27,7 +27,7 @@ SOURCE_URL = "https://raw.githubusercontent.com/adoptium/jdk25u/{commit}/src/hot
 # Stubs that share a file with another, e.g. log10 lives in stubGenerator_x86_64_log.cpp.
 FILES = {"log10": "log"}
 # Instructions without an effect on the result that the port leaves out.
-UNPORTED = {"bind", "jcc", "jmp", "cmpl", "cmpq", "testl", "ret", "leave", "enter", "push", "pop"}
+UNPORTED = {"bind", "jcc", "jccb", "jmp", "cmpl", "cmpq", "cmp64", "testl", "ret", "leave", "enter", "push", "pop"}
 
 
 def source(name):
@@ -55,7 +55,7 @@ def cpp_runs(text, name):
         mnemonic = instruction.split("(")[0]
         stack = re.match(r"(subq|addq)\(rsp|mov(sd|q|l)\(Address\(rsp", instruction)
         if mnemonic in UNPORTED or stack:
-            if mnemonic in ("bind", "jcc", "jmp") and run:
+            if mnemonic in ("bind", "jcc", "jccb", "jmp") and run:
                 runs.append(run)
                 run = []
             continue
@@ -83,13 +83,19 @@ def rust_runs(text, name):
 
 
 def rust_call(register, mnemonic, args):
-    args = re.sub(r"rsp_(\d+) >> 32", lambda m: f"Address(rsp, {int(m.group(1)) + 4})", args)
+    args = re.sub(r"rsp_(\d+) >> (\d+)", lambda m: f"Address(rsp, {int(m.group(1)) + int(m.group(2)) // 8})", args)
     args = re.sub(r"rsp_(\d+)", r"Address(rsp, \1)", args)
     args = args.replace(", borrow", "").replace("i32::MIN", "INT_MIN")
     args = re.sub(r"(-?\d+)i32 as u32", r"\1", args)
 
     def address(match):
         table, offset = match.groups()
+        # `r11 + rdx * 8` is Address(r11, rdx, Address::times_8, 0), `r11 + rdx - 3648` times_1,
+        # and `r8 + rdx` is Address(r8, rdx).
+        indexed = re.fullmatch(r"(r\w+) \+ (r\w+)(?: \* (\d))?(?: - (\d+))?", offset)
+        if indexed and (indexed.group(3) or indexed.group(4)):
+            base, index, scale, displacement = indexed.groups()
+            return f"Address({base}, {index}, Address::times_{scale or 1}, {'-' + displacement if displacement else 0})"
         base = re.fullmatch(r"(r\w+)(?: \+ (\w+))?", offset)
         if base:
             return f"Address({base.group(1)}, {base.group(2) or 0})"
@@ -102,9 +108,9 @@ def rust_call(register, mnemonic, args):
     return f"{mnemonic}({register}{', ' + args if args else ''})"
 
 
-# Table names differ in case between the two (Ctable, CTABLE).
+# Table names differ in case between the two (Ctable, CTABLE), and the C++ sometimes adds 0 to one.
 def normalize(instruction):
-    return instruction.replace(" ", "").lower()
+    return instruction.replace(" ", "").lower().replace("+0)", ")")
 
 
 def check(name):

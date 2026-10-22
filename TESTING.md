@@ -43,7 +43,7 @@ Static methods are covered by reflection. Every public static method whose param
 - edge cases (zeros, signed zeros, NaN, infinities, MIN/MAX, angles, powers of two, non-ASCII strings);
 - 500 seeded random inputs;
 - for `Mth.sin`/`cos`, every entry of their lookup table;
-- for `Math.sin`/`cos`/`log`, which HotSpot computes with its own assembly, 20,000 more inputs each, spread over every path through it, since last-bit differences between libms are rare;
+- for `Math.sin`/`cos`/`tan`/`log`/`pow`, which HotSpot computes with its own assembly, 20,000 more inputs each, spread over every path through it, since last-bit differences between libms are rare;
 - for `Mth.atan2`, angles that read every entry of its tables.
 
 A `RandomSource` argument is a `LegacyRandomSource` seeded with the argument. Its next `nextLong()` after the call is recorded in `after` (one slot per argument), so how many values a method draws must match too. Stateful classes get hand-written suites (`RandomSourceSuite`).

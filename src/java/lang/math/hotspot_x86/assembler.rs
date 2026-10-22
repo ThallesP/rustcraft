@@ -120,6 +120,16 @@ fn from_dwords(dwords: [u32; 4]) -> Xmm {
     ])
 }
 
+/// What `cvttsd2sil` and `cvttpd2dq` make of one lane.
+fn truncate_i32(bits: u64) -> i32 {
+    let value = f64::from_bits(bits);
+    if value > -2147483649.0 && value < 2147483648.0 {
+        value as i32
+    } else {
+        i32::MIN
+    }
+}
+
 impl Xmm {
     /// A register holding `value` in its low lane. What a caller leaves in the high lane never
     /// reaches a stub's result, so it starts at zero.
@@ -167,6 +177,10 @@ impl Xmm {
         *self = src.xmmword();
     }
 
+    pub fn movapd(&mut self, src: impl Xmmword) {
+        self.movdqu(src);
+    }
+
     /// HotSpot emits `movlhps` instead on CPUs without SSE3. Both copy the low lane to the high one.
     pub fn movddup(&mut self, src: impl Qword) {
         let low = src.qword();
@@ -198,6 +212,10 @@ impl Xmm {
         self.bitwise(src, |a, b| a & b);
     }
 
+    pub fn andpd(&mut self, src: impl Xmmword) {
+        self.pand(src);
+    }
+
     pub fn por(&mut self, src: impl Xmmword) {
         self.bitwise(src, |a, b| a | b);
     }
@@ -223,6 +241,11 @@ impl Xmm {
         *self = from_dwords(std::array::from_fn(|i| a[i].wrapping_add(b[i])));
     }
 
+    pub fn paddq(&mut self, src: impl Xmmword) {
+        let src = src.xmmword();
+        self.0 = std::array::from_fn(|lane| self.0[lane].wrapping_add(src.0[lane]));
+    }
+
     pub fn addsd(&mut self, src: impl Qword) {
         self.scalar(src, |a, b| a + b);
     }
@@ -237,6 +260,18 @@ impl Xmm {
 
     pub fn divsd(&mut self, src: impl Qword) {
         self.scalar(src, |a, b| a / b);
+    }
+
+    /// Correctly rounded, like Rust's `sqrt`.
+    pub fn sqrtsd(&mut self, src: impl Qword) {
+        self.scalar(src, |_, b| b.sqrt());
+    }
+
+    /// Multiplies the lowest float lane and keeps the other three.
+    pub fn mulss(&mut self, src: Xmm) {
+        let mut dwords = dwords(*self);
+        dwords[0] = (f32::from_bits(dwords[0]) * f32::from_bits(src.0[0] as u32)).to_bits();
+        *self = from_dwords(dwords);
     }
 
     pub fn addpd(&mut self, src: impl Xmmword) {
@@ -258,6 +293,20 @@ impl Xmm {
     /// Rounds to nearest like SSE's default rounding mode, as Rust's `as` does.
     pub fn cvtsi2sdq(&mut self, src: impl Qword) {
         self.0[0] = (src.qword() as i64 as f64).to_bits();
+    }
+
+    /// Truncates both lanes to 32-bit integers in the low lane, like `cvttsd2sil` does one, and
+    /// zeroes the high lane.
+    pub fn cvttpd2dq(&mut self, src: impl Xmmword) {
+        let [low, high] = src.xmmword().0.map(|lane| truncate_i32(lane) as u32);
+        *self = from_dwords([low, high, 0, 0]);
+    }
+
+    /// Converts the two lowest 32-bit integers to the two lanes, exactly.
+    pub fn cvtdq2pd(&mut self, src: impl Qword) {
+        let src = src.qword();
+        *self =
+            Xmm([src as u32, (src >> 32) as u32].map(|dword| f64::from(dword as i32).to_bits()));
     }
 
     /// The approximate reciprocal of each float lane. It's only specified to 1.5 * 2^-12, and
@@ -294,6 +343,8 @@ pub trait Gpr {
     fn mov64(&mut self, imm: u64);
     fn movq(&mut self, src: u64);
     fn movl(&mut self, src: impl Dword);
+    /// Writes the low 16 bits and keeps the rest, unlike the 32-bit instructions.
+    fn movw(&mut self, src: impl Dword);
     fn movdq(&mut self, src: Xmm);
     fn movdl(&mut self, src: Xmm);
     fn pextrw(&mut self, src: Xmm, index: u32);
@@ -307,6 +358,7 @@ pub trait Gpr {
     fn orl(&mut self, src: impl Dword);
     fn xorl(&mut self, src: impl Dword);
     fn negl(&mut self);
+    fn notl(&mut self);
     fn shll(&mut self, count: impl Dword);
     fn shrl(&mut self, count: impl Dword);
     fn sarl(&mut self, count: impl Dword);
@@ -321,6 +373,7 @@ pub trait Gpr {
     fn shrq(&mut self, count: impl Dword);
     /// The index of the highest set bit. The stubs never scan zero, where it's undefined.
     fn bsrq(&mut self, src: u64);
+    fn bsrl(&mut self, src: u64);
 }
 
 impl Gpr for u64 {
@@ -336,6 +389,10 @@ impl Gpr for u64 {
         *self = u64::from(src.dword());
     }
 
+    fn movw(&mut self, src: impl Dword) {
+        *self = *self & !0xffff | u64::from(src.dword() as u16);
+    }
+
     fn movdq(&mut self, src: Xmm) {
         *self = src.0[0];
     }
@@ -349,13 +406,7 @@ impl Gpr for u64 {
     }
 
     fn cvttsd2sil(&mut self, src: impl Qword) {
-        let value = f64::from_bits(src.qword());
-        let truncated = if value > -2147483649.0 && value < 2147483648.0 {
-            value as i32
-        } else {
-            i32::MIN
-        };
-        *self = u64::from(truncated as u32);
+        *self = u64::from(truncate_i32(src.qword()) as u32);
     }
 
     fn cvttsd2siq(&mut self, src: impl Qword) {
@@ -390,6 +441,10 @@ impl Gpr for u64 {
 
     fn negl(&mut self) {
         *self = u64::from((*self as u32).wrapping_neg());
+    }
+
+    fn notl(&mut self) {
+        *self = u64::from(!(*self as u32));
     }
 
     fn shll(&mut self, count: impl Dword) {
@@ -441,5 +496,9 @@ impl Gpr for u64 {
 
     fn bsrq(&mut self, src: u64) {
         *self = u64::from(63 - src.leading_zeros());
+    }
+
+    fn bsrl(&mut self, src: u64) {
+        *self = u64::from(31 - (src as u32).leading_zeros());
     }
 }
