@@ -462,6 +462,13 @@ impl AsMut<FriendlyByteBuf> for FriendlyByteBuf {
     }
 }
 
+/// `unwrap()`: the buffer it wraps, which `StreamCodec::map_stream` hands back to its caller.
+impl From<FriendlyByteBuf> for ByteBuf {
+    fn from(buffer: FriendlyByteBuf) -> ByteBuf {
+        buffer.source
+    }
+}
+
 /// `new T[size]`, which throws `NegativeArraySizeException` for a negative size.
 fn new_array<T: Clone + Default>(size: i32) -> Vec<T> {
     assert!(size >= 0, "NegativeArraySizeException: {size}");

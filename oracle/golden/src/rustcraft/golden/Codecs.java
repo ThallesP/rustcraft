@@ -95,16 +95,28 @@ final class Codecs {
         return null;
     }
 
-    @SuppressWarnings("unchecked")
     static void writeCodec(
         final GoldenWriter writer, final String name, final Values.Generator[] leading, final Factory factory, final Codec codec,
         final Predicate<Object[]> decodeDomain
+    ) throws IOException {
+        writeCodec(writer, name, leading, factory, codec, decodeDomain, List.of());
+    }
+
+    /**
+     * Like writeCodec, with more buffers to decode (each the leading arguments' specs and the buffer), for what the
+     * codec's own encodings never hold: a field longer than its writer allows, but not its reader.
+     */
+    @SuppressWarnings("unchecked")
+    static void writeCodec(
+        final GoldenWriter writer, final String name, final Values.Generator[] leading, final Factory factory, final Codec codec,
+        final Predicate<Object[]> decodeDomain, final List<Object[]> extraDecodes
     ) throws IOException {
         Random random = new Random(name.hashCode());
 
         Values.Generator[] decoding = append(leading, codec.buffer());
         List<Object[]> decodes = new ArrayList<>(eachEdge(decoding, random));
         decodes.addAll(encodings(leading, factory, codec, random));
+        decodes.addAll(extraDecodes);
         for (int i = 0; i < RANDOM_CASES; i++) {
             decodes.add(StaticSuite.randomTuple(decoding, random));
         }

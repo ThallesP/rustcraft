@@ -324,6 +324,59 @@ macro_rules! encode_names {
 
 pub(crate) use encode_names;
 
+/// Encodes the packets of a protocol for the listener, values declared as a `Packet` (a
+/// protocol codec's), the way vanilla does: `[type, fields]`, each packet by its own class's
+/// encoding. It lists each of the protocol's types with its class:
+/// `encode_packets!(dyn ServerHandshakePacketListener { HandshakePacketTypes::CLIENT_INTENTION => ClientIntentionPacket });`.
+macro_rules! encode_packets {
+    ($listener:ty { $($type:expr => $packet:ty),* $(,)? }) => {
+        impl $crate::golden::Decode
+            for Box<dyn $crate::net::minecraft::network::protocol::packet::Packet<$listener>>
+        {
+            fn decode(value: &serde_json::Value) -> Self {
+                let [r#type, fields] = $crate::golden::elements(value);
+                let r#type = <$crate::net::minecraft::network::protocol::packet_type::PacketType
+                    as $crate::golden::Decode>::decode(r#type);
+                $(if r#type == **$type {
+                    return Box::new(<$packet as $crate::golden::Decode>::decode(fields));
+                })*
+                panic!("expected one of the protocol's packets, got {value}");
+            }
+        }
+
+        impl $crate::golden::Encode
+            for Box<dyn $crate::net::minecraft::network::protocol::packet::Packet<$listener>>
+        {
+            fn encode(&self) -> serde_json::Value {
+                let r#type = $crate::golden::Encode::encode(self.r#type());
+                let packet: &dyn $crate::net::minecraft::network::protocol::packet::Packet<$listener> = &**self;
+                let packet: &dyn std::any::Any = packet;
+                $(if let Some(packet) = packet.downcast_ref::<$packet>() {
+                    return serde_json::Value::from(vec![r#type, $crate::golden::Encode::encode(packet)]);
+                })*
+                panic!("{self:?} isn't one of the protocol's packets");
+            }
+
+            fn matches(&self, expected: &serde_json::Value) -> bool {
+                let Some([r#type, fields]) = expected.as_array().map(Vec::as_slice) else {
+                    return false;
+                };
+                if !$crate::golden::Encode::matches(self.r#type(), r#type) {
+                    return false;
+                }
+                let packet: &dyn $crate::net::minecraft::network::protocol::packet::Packet<$listener> = &**self;
+                let packet: &dyn std::any::Any = packet;
+                $(if let Some(packet) = packet.downcast_ref::<$packet>() {
+                    return $crate::golden::Encode::matches(packet, fields);
+                })*
+                false
+            }
+        }
+    };
+}
+
+pub(crate) use encode_packets;
+
 /// A `RandomSource` argument of a method checked with `check_mut`, like `Vec3.offsetRandom`'s:
 /// vanilla passes a `LegacyRandomSource` seeded with the arg, and records its next `nextLong()`
 /// after the call.

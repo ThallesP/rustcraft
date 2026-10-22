@@ -41,6 +41,7 @@ final class InstanceSuite implements Suite {
     private final Map<String, Predicate<Object[]>> domains = new HashMap<>();
     private final Set<String> inherited = new LinkedHashSet<>();
     private final Map<String, List<Given>> given = new LinkedHashMap<>();
+    private final Map<String, String> excluded = new HashMap<>();
     private Class<?> wrapped;
     private boolean fields;
 
@@ -66,7 +67,10 @@ final class InstanceSuite implements Suite {
         return new InstanceSuite(type, (Set<String>)null).withFields();
     }
 
-    /** More cases for a member, each the receiver's spec (none for a constructor or static method) followed by the arguments'. */
+    /**
+     * More cases for a member, each the receiver's spec (none for a constructor or static method) followed by the
+     * arguments', or more buffers for a codec constant N to decode, under {@code N.decode}.
+     */
     InstanceSuite extraInputs(final String member, final List<Object[]> inputs) {
         this.extraInputs.put(member, inputs);
         return this;
@@ -81,6 +85,15 @@ final class InstanceSuite implements Suite {
     /** Drops inputs outside the domain, like StaticSuite.where, for members whose results never end on some inputs. */
     InstanceSuite where(final String member, final Predicate<Object[]> domain) {
         this.domains.put(member, domain);
+        return this;
+    }
+
+    /**
+     * Writes the member as skipped with the reason, for one whose answers change from run to run: a record's hashCode
+     * with an enum component hashes the constant's identity hash.
+     */
+    InstanceSuite exclude(final String member, final String reason) {
+        this.excluded.put(member, reason);
         return this;
     }
 
@@ -121,11 +134,11 @@ final class InstanceSuite implements Suite {
 
     @Override
     public void write(final GoldenWriter writer) throws IOException {
+        Set<String> written = new HashSet<>();
         if (this.fields) {
-            StaticSuite.writeFields(this.type, writer);
+            written.addAll(StaticSuite.writeFields(this.type, writer, this.extraInputs));
         }
 
-        Set<String> written = new HashSet<>();
         for (Executable member : this.members()) {
             String descriptor = descriptor(member);
             if (this.only != null && !this.only.contains(descriptor)) {
@@ -143,8 +156,10 @@ final class InstanceSuite implements Suite {
                 continue;
             }
 
-            String reason = this.unsupportedReason(member);
-            if (reason == null) {
+            String reason = this.excluded.containsKey(descriptor) ? this.excluded.get(descriptor) : this.unsupportedReason(member);
+            if (this.excluded.containsKey(descriptor)) {
+                writer.skipped(descriptor, reason);
+            } else if (reason == null) {
                 Object[] generators = this.argumentTypes(member).stream().map(Values::generator).toArray();
                 this.writeCases(writer, member, descriptor, generators);
             } else if (this.only == null) {
@@ -159,6 +174,7 @@ final class InstanceSuite implements Suite {
         missing.addAll(this.domains.keySet());
         missing.addAll(this.inherited);
         missing.addAll(this.given.keySet());
+        missing.addAll(this.excluded.keySet());
         missing.removeAll(written);
         if (!missing.isEmpty()) {
             throw new IllegalStateException(this.type.getName() + " has no public members " + missing);

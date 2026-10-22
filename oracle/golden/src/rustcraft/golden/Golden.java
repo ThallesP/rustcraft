@@ -31,6 +31,7 @@ import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
+import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.LpVec3;
 import net.minecraft.network.Utf8String;
@@ -40,6 +41,17 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.codec.StreamDecoder;
 import net.minecraft.network.codec.StreamEncoder;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.PacketType;
+import net.minecraft.network.protocol.handshake.ClientIntent;
+import net.minecraft.network.protocol.handshake.ClientIntentionPacket;
+import net.minecraft.network.protocol.handshake.HandshakePacketTypes;
+import net.minecraft.network.protocol.handshake.HandshakeProtocols;
+import net.minecraft.network.protocol.login.ClientboundHelloPacket;
+import net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket;
+import net.minecraft.network.protocol.login.LoginPacketTypes;
+import net.minecraft.network.protocol.login.ServerboundHelloPacket;
+import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.ByIdMap;
@@ -108,6 +120,8 @@ public final class Golden {
     private static final String READ_WITH_COUNT = "readWithCount(Ljava/util/function/Consumer;)V";
     private static final String CONTINUOUS =
         "continuous(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;)Ljava/util/function/IntFunction;";
+    // A record's hashCode adds up its components', and an enum constant's is its identity hash.
+    private static final String ENUM_IN_RECORD = "hashes an enum constant's identity hash, which changes from run to run";
     private static final String SPARSE = "sparse(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/function/IntFunction;";
 
     private static final List<Suite> SUITES = List.of(
@@ -652,6 +666,12 @@ public final class Golden {
             .codec(
                 "cast()Lnet/minecraft/network/codec/StreamCodec;", "VAR_INT", leading -> ByteBufCodecs.VAR_INT.<FriendlyByteBuf>cast(),
                 new Codecs.Codec(NetworkValues.FRIENDLY_BUFFER, INTS, Integer.class)
+            )
+            // How the protocols put a packet's codec on the ByteBuf a connection reads.
+            .codec(
+                "mapStream(Ljava/util/function/Function;)Lnet/minecraft/network/codec/StreamCodec;", "ClientIntentionPacket.STREAM_CODEC, FriendlyByteBuf::new",
+                leading -> ClientIntentionPacket.STREAM_CODEC.<ByteBuf>mapStream(FriendlyByteBuf::new),
+                bufferCodec(Values.generator(ClientIntentionPacket.class), ClientIntentionPacket.class)
             ),
         // ByIdMap's maps by the game's ids, with every strategy for ids out of range, and ones it refuses to make.
         new CodecSuite(ByIdMap.class)
@@ -688,7 +708,33 @@ public final class Golden {
             .extraInputs("read(Lio/netty/buffer/ByteBuf;)Lnet/minecraft/world/phys/Vec3;", lpReads())
             .extraInputs("hasContinuationBit(I)Z", everyByte()),
         HandlerSuite.frameDecoder(),
-        HandlerSuite.lengthFieldPrepender()
+        HandlerSuite.lengthFieldPrepender(),
+        // The protocols, and the packets the join phase sends and receives.
+        InstanceSuite.every(ConnectionProtocol.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/network/ConnectionProtocol;", names(ConnectionProtocol.values())),
+        InstanceSuite.every(PacketFlow.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/PacketFlow;", names(PacketFlow.values())),
+        InstanceSuite.every(PacketType.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        InstanceSuite.every(ClientIntent.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/handshake/ClientIntent;", names(ClientIntent.values())),
+        InstanceSuite.every(ClientIntentionPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        new StaticSuite(HandshakePacketTypes.class),
+        new ProtocolSuite(HandshakeProtocols.class),
+        // Its writer stops names at 16 characters, so the reader also reads longer ones, written without the limit.
+        InstanceSuite.every(ServerboundHelloPacket.class)
+            .extraInputs(
+                "STREAM_CODEC.decode",
+                friendly(written(100, Values.generator(ServerboundHelloPacket.class), (FriendlyByteBuf buffer, ServerboundHelloPacket packet) -> {
+                    buffer.writeUtf(packet.name());
+                    buffer.writeUUID(packet.profileId());
+                }))
+            ),
+        InstanceSuite.every(ClientboundHelloPacket.class),
+        InstanceSuite.every(ServerboundLoginAcknowledgedPacket.class),
+        InstanceSuite.every(ClientboundLoginCompressionPacket.class),
+        new StaticSuite(LoginPacketTypes.class),
+        // What a ServerboundHelloPacket's hashCode and toString use.
+        new InstanceSuite(UUID.class, "hashCode()I", "toString()Ljava/lang/String;")
     );
 
     /** Writes every suite's file to the directory in the first argument, or only the suites the other arguments name. */

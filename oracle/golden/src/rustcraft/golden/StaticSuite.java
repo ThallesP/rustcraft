@@ -96,6 +96,16 @@ final class StaticSuite implements Suite {
      * cases, and an IntFunction whose values can be encoded gets apply cases (see Codecs).
      */
     static void writeFields(final Class<?> type, final GoldenWriter writer) throws IOException {
+        writeFields(type, writer, Map.of());
+    }
+
+    /**
+     * Like writeFields, with more buffers for a codec named N to decode under {@code N.decode}. Returns the names of the
+     * codecs' cases ({@code N.decode}) it wrote.
+     */
+    static Set<String> writeFields(final Class<?> type, final GoldenWriter writer, final Map<String, List<Object[]>> extraDecodes)
+        throws IOException {
+        Set<String> codecs = new HashSet<>();
         Field[] fields = type.getFields();
         Arrays.sort(fields, Comparator.comparing(Field::getName));
         for (Field field : fields) {
@@ -115,7 +125,12 @@ final class StaticSuite implements Suite {
             if (Values.canEncode(field.getType())) {
                 writer.field(field.getName(), Values.encode(value, field.getType()));
             } else if (codec != null) {
-                Codecs.writeCodec(writer, field.getName(), new Values.Generator[0], leading -> value, codec, spec -> true);
+                String decode = field.getName() + ".decode";
+                codecs.add(decode);
+                Codecs.writeCodec(
+                    writer, field.getName(), new Values.Generator[0], leading -> value, codec, spec -> true,
+                    extraDecodes.getOrDefault(decode, List.of())
+                );
             } else if (function != null) {
                 Codecs.writeFunction(writer, field.getName(), new Values.Generator[0], leading -> value, function);
             } else {
@@ -123,6 +138,7 @@ final class StaticSuite implements Suite {
                 writer.skipped(field.getName(), reason != null ? reason : "no encoder for " + field.getType().getName());
             }
         }
+        return codecs;
     }
 
     private List<Method> methods() {

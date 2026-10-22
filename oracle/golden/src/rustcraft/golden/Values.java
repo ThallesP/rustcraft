@@ -317,6 +317,9 @@ final class Values {
         if (generator == null) {
             generator = NetworkValues.generator(type);
         }
+        if (generator == null) {
+            generator = PacketValues.generator(type);
+        }
         return generator != null ? generator : CoreValues.generator(type);
     }
 
@@ -342,7 +345,10 @@ final class Values {
         ) {
             return true;
         }
-        if (JomlValues.canEncode(type) || MathValues.canEncode(type) || NetworkValues.canEncode(type) || CoreValues.canEncode(type)) {
+        if (
+            JomlValues.canEncode(type) || MathValues.canEncode(type) || NetworkValues.canEncode(type) || PacketValues.canEncode(type)
+                || CoreValues.canEncode(type)
+        ) {
             return true;
         }
         // Their elements are encoded by their own class.
@@ -444,6 +450,9 @@ final class Values {
         }
         if (NetworkValues.canEncode(type)) {
             return NetworkValues.encode(value);
+        }
+        if (PacketValues.canEncode(type)) {
+            return PacketValues.encode(value, type);
         }
         if (CoreValues.canEncode(type)) {
             return CoreValues.encode(value);

@@ -1,9 +1,7 @@
 //! net/minecraft/network/codec/StreamCodec.java
 //!
-//! Not ported yet: `mapStream`, which wraps the buffer in another sharing its bytes
-//! (`FriendlyByteBuf::new`), and comes with the protocols; `dispatch`, which picks the codec by
-//! the value, and comes with its first caller (particles, stats); and `recursive`, which comes with
-//! text components.
+//! Not ported yet: `dispatch`, which picks the codec by the value, and comes with its first caller
+//! (particles, stats); and `recursive`, which comes with text components.
 //!
 //! Java's `StreamCodec<B, V>` is `StreamCodec<Buffer = B, Value = V>`: a codec reads and writes
 //! one kind of buffer. Java passes a codec of a buffer's parent class where a codec of the buffer
@@ -12,8 +10,11 @@
 
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::mem;
+use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 
+use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::net::minecraft::network::codec::stream_decoder::StreamDecoder;
 use crate::net::minecraft::network::codec::stream_encoder::StreamEncoder;
 use crate::net::minecraft::network::codec::stream_member_encoder::StreamMemberEncoder;
@@ -64,6 +65,22 @@ pub trait StreamCodec {
         Cast {
             original: self,
             buffer: PhantomData,
+        }
+    }
+
+    /// `mapStream(Function)`: this codec on a `ByteBuf`, which `operation` wraps in this codec's
+    /// buffer for each call, like the protocols' `FriendlyByteBuf::new`. Java's wrapper shares
+    /// the buffer's bytes; here it takes the buffer for the call and hands it back after, even
+    /// when the call panics. Java's is generic in the outer buffer, which is always a `ByteBuf`.
+    fn map_stream<F>(self, operation: F) -> MapStream<Self, F>
+    where
+        Self: Sized,
+        F: Fn(ByteBuf) -> Self::Buffer,
+        Self::Buffer: Into<ByteBuf>,
+    {
+        MapStream {
+            original: self,
+            operation,
         }
     }
 }
@@ -163,6 +180,73 @@ impl<C: StreamCodec, S: AsMut<C::Buffer>> StreamCodec for Cast<C, S> {
 
     fn encode(&self, output: &mut S, value: &C::Value) {
         self.original.encode(output.as_mut(), value)
+    }
+}
+
+/// What `map_stream` returns.
+pub struct MapStream<C, F> {
+    original: C,
+    operation: F,
+}
+
+impl<C: StreamCodec, F: Fn(ByteBuf) -> C::Buffer> StreamCodec for MapStream<C, F>
+where
+    C::Buffer: Into<ByteBuf>,
+{
+    type Buffer = ByteBuf;
+    type Value = C::Value;
+
+    fn decode(&self, input: &mut ByteBuf) -> C::Value {
+        let mut wrapped_stream = WrappedStream::new(input, &self.operation);
+        self.original.decode(&mut wrapped_stream)
+    }
+
+    fn encode(&self, output: &mut ByteBuf, value: &C::Value) {
+        let mut wrapped_stream = WrappedStream::new(output, &self.operation);
+        self.original.encode(&mut wrapped_stream, value);
+    }
+}
+
+/// The buffer `map_stream`'s operation made of another's bytes, which go back to the other when
+/// it's dropped.
+struct WrappedStream<'a, W: Into<ByteBuf>> {
+    source: &'a mut ByteBuf,
+    wrapped: Option<W>,
+}
+
+impl<'a, W: Into<ByteBuf>> WrappedStream<'a, W> {
+    fn new(source: &'a mut ByteBuf, operation: impl Fn(ByteBuf) -> W) -> WrappedStream<'a, W> {
+        let wrapped = operation(mem::replace(source, ByteBuf::empty()));
+        WrappedStream {
+            source,
+            wrapped: Some(wrapped),
+        }
+    }
+}
+
+impl<W: Into<ByteBuf>> Deref for WrappedStream<'_, W> {
+    type Target = W;
+
+    fn deref(&self) -> &W {
+        self.wrapped
+            .as_ref()
+            .expect("the buffer is only given back when dropped")
+    }
+}
+
+impl<W: Into<ByteBuf>> DerefMut for WrappedStream<'_, W> {
+    fn deref_mut(&mut self) -> &mut W {
+        self.wrapped
+            .as_mut()
+            .expect("the buffer is only given back when dropped")
+    }
+}
+
+impl<W: Into<ByteBuf>> Drop for WrappedStream<'_, W> {
+    fn drop(&mut self) {
+        if let Some(wrapped) = self.wrapped.take() {
+            *self.source = wrapped.into();
+        }
     }
 }
 
@@ -387,6 +471,7 @@ mod tests {
     use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
     use crate::net::minecraft::network::codec::stream_codec;
     use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
+    use crate::net::minecraft::network::protocol::handshake::client_intention_packet::ClientIntentionPacket;
     use crate::net::minecraft::resources::identifier::Identifier;
     use crate::net::minecraft::util::mth::Mth;
 
@@ -429,10 +514,6 @@ mod tests {
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.network.codec.StreamCodec");
         golden.pending(
-            "mapStream(Ljava/util/function/Function;)Lnet/minecraft/network/codec/StreamCodec;",
-            "wraps the buffer in another sharing its bytes, which comes with the protocols",
-        );
-        golden.pending(
             "dispatch(Ljava/util/function/Function;Ljava/util/function/Function;)Lnet/minecraft/network/codec/StreamCodec;",
             "picks the codec by the value, which comes with its first caller (particles, stats)",
         );
@@ -472,6 +553,10 @@ mod tests {
         golden.check_codec(&format!("cast(){CODEC}[VAR_INT]"), || {
             ByteBufCodecs::VAR_INT.cast::<FriendlyByteBuf>()
         });
+        golden.check_codec(
+            &format!("mapStream(Ljava/util/function/Function;){CODEC}[ClientIntentionPacket.STREAM_CODEC, FriendlyByteBuf::new]"),
+            || ClientIntentionPacket::STREAM_CODEC.map_stream(FriendlyByteBuf::new),
+        );
         check_composite!(golden, composite1, (i32,): (VAR_INT 0 a));
         check_composite!(golden, composite2, (i32, String): (VAR_INT 0 a), (STRING_UTF8 1 b));
         check_composite!(
