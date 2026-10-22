@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +29,8 @@ import java.util.function.Predicate;
  * public ones and its constants for the game's own. Each case calls one method on a fresh receiver, which is
  * {@code args[0]}; {@code after[0]} is the receiver's state after the call, and the other slots hold any argument the
  * method wrote to, unless it's the returned object. Constructors are {@code <init>} cases whose result is the new
- * object. Static methods get cases like a StaticSuite's, without a receiver.
+ * object. Static methods get cases like a StaticSuite's, without a receiver. A member taking codecs or functions gets
+ * cases for the instances listed with given(), like CodecSuite's.
  */
 final class InstanceSuite implements Suite {
     private static final int RANDOM_CASES = 500;
@@ -38,8 +40,13 @@ final class InstanceSuite implements Suite {
     private final Map<String, List<Object[]>> extraInputs = new HashMap<>();
     private final Map<String, Predicate<Object[]>> domains = new HashMap<>();
     private final Set<String> inherited = new LinkedHashSet<>();
+    private final Map<String, List<Given>> given = new LinkedHashMap<>();
     private Class<?> wrapped;
     private boolean fields;
+
+    // The instances a member was given, named by the label, and generators for its other arguments.
+    private record Given(String label, Object[] arguments) {
+    }
 
     /** Big library classes (JOML's Matrix4f has hundreds of methods) list the members the port covers. */
     InstanceSuite(final Class<?> type, final String... members) {
@@ -95,6 +102,18 @@ final class InstanceSuite implements Suite {
         return this;
     }
 
+    /**
+     * Cases for a member taking codecs or functions, which have no generator, given the instances the label names:
+     * they're named by the member's descriptor and the label, {@code readOptional(…)Ljava/util/Optional;[VAR_INT]}.
+     * {@code arguments} has one entry per parameter: the instance itself, which isn't in {@code args}, or a generator
+     * for an argument generated like any other (the values the instance writes). The receiver comes first as always,
+     * and extra inputs and domains go by the cases' name. A result declared as an Object is encoded by its own class.
+     */
+    InstanceSuite given(final String member, final String label, final Object... arguments) {
+        this.given.computeIfAbsent(member, m -> new ArrayList<>()).add(new Given(label, arguments));
+        return this;
+    }
+
     @Override
     public String name() {
         return this.type.getName();
@@ -114,9 +133,20 @@ final class InstanceSuite implements Suite {
             }
 
             written.add(descriptor);
+            List<Given> listed = this.given.get(descriptor);
+            if (listed != null) {
+                for (Given instance : listed) {
+                    String name = descriptor + "[" + instance.label() + "]";
+                    written.add(name);
+                    this.writeCases(writer, member, name, this.withReceiver(member, instance.arguments()));
+                }
+                continue;
+            }
+
             String reason = this.unsupportedReason(member);
             if (reason == null) {
-                this.writeCases(writer, member, descriptor);
+                Object[] generators = this.argumentTypes(member).stream().map(Values::generator).toArray();
+                this.writeCases(writer, member, descriptor, generators);
             } else if (this.only == null) {
                 writer.skipped(descriptor, reason);
             } else {
@@ -128,6 +158,7 @@ final class InstanceSuite implements Suite {
         missing.addAll(this.extraInputs.keySet());
         missing.addAll(this.domains.keySet());
         missing.addAll(this.inherited);
+        missing.addAll(this.given.keySet());
         missing.removeAll(written);
         if (!missing.isEmpty()) {
             throw new IllegalStateException(this.type.getName() + " has no public members " + missing);
@@ -184,6 +215,20 @@ final class InstanceSuite implements Suite {
         return member instanceof Method method ? method.getReturnType() : this.type;
     }
 
+    // A listed instance's arguments, after the receiver's generator unless the member is a constructor or static.
+    private Object[] withReceiver(final Executable member, final Object[] arguments) {
+        if (arguments.length != member.getParameterCount()) {
+            throw new IllegalStateException(descriptor(member) + " takes " + member.getParameterCount() + " arguments, not " + arguments.length);
+        }
+        if (member instanceof Constructor<?> || Modifier.isStatic(member.getModifiers())) {
+            return arguments;
+        }
+        Object[] withReceiver = new Object[arguments.length + 1];
+        withReceiver[0] = Values.generator(this.type);
+        System.arraycopy(arguments, 0, withReceiver, 1, arguments.length);
+        return withReceiver;
+    }
+
     private String unsupportedReason(final Executable member) {
         Class<?> returnType = this.returnType(member);
         if (returnType != void.class && !Values.canEncode(returnType)) {
@@ -198,15 +243,18 @@ final class InstanceSuite implements Suite {
         return null;
     }
 
-    private void writeCases(final GoldenWriter writer, final Executable member, final String descriptor) throws IOException {
+    // Each argument, receiver first, is a generator, or an instance the member was given, which isn't in the cases.
+    private void writeCases(final GoldenWriter writer, final Executable member, final String name, final Object[] arguments) throws IOException {
         boolean constructor = member instanceof Constructor<?>;
         boolean receiver = !constructor && !Modifier.isStatic(member.getModifiers());
-        Values.Generator[] generators = this.argumentTypes(member).stream().map(Values::generator).toArray(Values.Generator[]::new);
+        Values.Generator[] generators = Arrays.stream(arguments)
+            .filter(argument -> argument instanceof Values.Generator)
+            .toArray(Values.Generator[]::new);
         Class<?> returnType = this.returnType(member);
 
-        Random random = new Random(descriptor.hashCode());
+        Random random = new Random(name.hashCode());
         List<Object[]> specs = new ArrayList<>(StaticSuite.edgeTuples(generators, random));
-        specs.addAll(this.extraInputs.getOrDefault(descriptor, List.of()));
+        specs.addAll(this.extraInputs.getOrDefault(name, List.of()));
         // When every argument is an enum, the edges were every combination already.
         boolean exhaustive = Arrays.stream(generators).allMatch(Values.Generator::exhaustive)
             && StaticSuite.edgeProduct(generators) <= StaticSuite.MAX_EDGE_PRODUCT;
@@ -216,7 +264,7 @@ final class InstanceSuite implements Suite {
             }
         }
 
-        Predicate<Object[]> domain = this.domains.getOrDefault(descriptor, spec -> true);
+        Predicate<Object[]> domain = this.domains.getOrDefault(name, spec -> true);
         for (Object[] spec : specs) {
             if (!domain.test(spec)) {
                 continue;
@@ -228,29 +276,43 @@ final class InstanceSuite implements Suite {
                 args.add(generators[i].encode(spec[i]));
                 instances[i] = generators[i].instantiate(spec[i]);
             }
+            Object[] all = arguments.clone();
+            for (int i = 0, generated = 0; i < all.length; i++) {
+                if (all[i] instanceof Values.Generator) {
+                    all[i] = instances[generated++];
+                }
+            }
 
-            Watchdog.begin(this.type.getName() + "." + descriptor + " " + args);
+            Watchdog.begin(this.type.getName() + "." + name + " " + args);
             try {
                 Object result;
                 if (constructor) {
-                    result = ((Constructor<?>)member).newInstance(instances);
+                    result = ((Constructor<?>)member).newInstance(all);
                 } else if (receiver) {
-                    result = ((Method)member).invoke(instances[0], Arrays.copyOfRange(instances, 1, instances.length));
+                    result = ((Method)member).invoke(all[0], Arrays.copyOfRange(all, 1, all.length));
                 } else {
-                    result = ((Method)member).invoke(null, instances);
+                    result = ((Method)member).invoke(null, all);
                 }
-                JsonElement encoded = returnType == void.class ? JsonNull.INSTANCE : Values.encode(result, returnType);
-                writer.result(descriptor, args, encoded, this.after(receiver, generators, spec, instances, result));
+                JsonElement encoded = returnType == void.class ? JsonNull.INSTANCE : Values.encode(result, encodedAs(result, returnType));
+                writer.result(name, args, encoded, this.after(receiver, generators, spec, instances, result));
             } catch (InvocationTargetException e) {
-                writer.threw(descriptor, args, e.getCause(), this.after(receiver, generators, spec, instances, null));
+                writer.threw(name, args, e.getCause(), this.after(receiver, generators, spec, instances, null));
             } catch (Values.ElementThrew e) {
-                writer.threw(descriptor, args, e.getCause(), this.after(receiver, generators, spec, instances, null));
+                writer.threw(name, args, e.getCause(), this.after(receiver, generators, spec, instances, null));
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(e);
             } finally {
                 Watchdog.end();
             }
         }
+    }
+
+    // A generic result (readNullable's) by its own class, an enum constant by its enum's.
+    private static Class<?> encodedAs(final Object result, final Class<?> returnType) {
+        if (returnType != Object.class || result == null) {
+            return returnType;
+        }
+        return result instanceof Enum<?> constant ? constant.getDeclaringClass() : result.getClass();
     }
 
     // The receiver's state is always recorded, even when it's also the result.

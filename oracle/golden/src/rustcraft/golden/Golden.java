@@ -21,7 +21,12 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.ToIntFunction;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -33,6 +38,8 @@ import net.minecraft.network.VarInt;
 import net.minecraft.network.VarLong;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.codec.StreamDecoder;
+import net.minecraft.network.codec.StreamEncoder;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.ByIdMap;
@@ -73,7 +80,32 @@ public final class Golden {
     private static final Values.Generator SIZES = new Values.Simple(
         List.of(-1, 0, 1, 2, 3, 4, 7, 140, 65536), random -> random.nextInt(7), value -> new JsonPrimitive((Integer)value)
     );
+    private static final Values.Generator VEC3S = Values.generator(Vec3.class);
+    private static final Values.Generator IDENTIFIERS = Values.generator(Identifier.class);
+    // Ids around a continuous map's, and any ints.
+    private static final Values.Generator IDS = new Values.Simple(
+        IntStream.rangeClosed(-16, 16).mapToObj(id -> (Object)id).toList(), INTS::random, INTS::encode
+    );
+    // Strings, and ones around a signature's limit of 1024 units, in characters of one, two and three bytes and in
+    // supplementary ones.
+    private static final Values.Generator SIGNATURES = new Values.Simple(
+        Stream.concat(
+            STRINGS.edges().stream(),
+            Stream.of("a".repeat(1024), "a".repeat(1025), "é".repeat(1024), "€".repeat(1025), "😀".repeat(512), "😀".repeat(513))
+        ).toList(),
+        STRINGS::random,
+        STRINGS::encode
+    );
     private static final String OPTIONAL = "optional(Lnet/minecraft/network/codec/StreamCodec;)Lnet/minecraft/network/codec/StreamCodec;";
+    private static final String READ_OPTIONAL = "readOptional(Lnet/minecraft/network/codec/StreamDecoder;)Ljava/util/Optional;";
+    private static final String WRITE_OPTIONAL = "writeOptional(Ljava/util/Optional;Lnet/minecraft/network/codec/StreamEncoder;)V";
+    private static final String READ_NULLABLE = "readNullable(Lnet/minecraft/network/codec/StreamDecoder;)Ljava/lang/Object;";
+    private static final String READ_NULLABLE_FROM = "readNullable(Lio/netty/buffer/ByteBuf;Lnet/minecraft/network/codec/StreamDecoder;)Ljava/lang/Object;";
+    private static final String WRITE_NULLABLE = "writeNullable(Ljava/lang/Object;Lnet/minecraft/network/codec/StreamEncoder;)V";
+    private static final String WRITE_NULLABLE_TO = "writeNullable(Lio/netty/buffer/ByteBuf;Ljava/lang/Object;Lnet/minecraft/network/codec/StreamEncoder;)V";
+    private static final String READ_BY_ID = "readById(Ljava/util/function/IntFunction;)Ljava/lang/Object;";
+    private static final String WRITE_BY_ID = "writeById(Ljava/util/function/ToIntFunction;Ljava/lang/Object;)Lnet/minecraft/network/FriendlyByteBuf;";
+    private static final String READ_WITH_COUNT = "readWithCount(Ljava/util/function/Consumer;)V";
     private static final String CONTINUOUS =
         "continuous(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;)Ljava/util/function/IntFunction;";
     private static final String SPARSE = "sparse(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/function/IntFunction;";
@@ -486,7 +518,64 @@ public final class Golden {
             // A length prefix in the millions makes vanilla allocate that many bytes before it finds the buffer shorter.
             .where("readByteArray(I)[B", args -> allocatesLittle(args[0], (Integer)args[1]))
             .where("readByteArray(Lio/netty/buffer/ByteBuf;I)[B", args -> allocatesLittle(args[0], (Integer)args[1]))
-            .where("readVarIntArray(I)[I", args -> allocatesLittle(args[0], (Integer)args[1])),
+            .where("readVarIntArray(I)[I", args -> allocatesLittle(args[0], (Integer)args[1]))
+            // The readers and writers taking a decoder, an encoder or a function get the game's kinds of them, and the
+            // readers also read what the writers write.
+            .given(READ_OPTIONAL, "VAR_INT", ByteBufCodecs.VAR_INT)
+            .extraInputs(
+                READ_OPTIONAL + "[VAR_INT]",
+                friendly(written(91, Codecs.optionalOf(INTS), (FriendlyByteBuf buffer, Optional<Integer> value) -> buffer.writeOptional(value, ByteBufCodecs.VAR_INT)))
+            )
+            .given(READ_OPTIONAL, "Vec3's doubles", (StreamDecoder<FriendlyByteBuf, Vec3>)i -> new Vec3(i.readDouble(), i.readDouble(), i.readDouble()))
+            .extraInputs(
+                READ_OPTIONAL + "[Vec3's doubles]",
+                friendly(written(92, Codecs.optionalOf(VEC3S), (FriendlyByteBuf buffer, Optional<Vec3> value) -> buffer.writeOptional(value, Vec3.STREAM_CODEC)))
+            )
+            .given(WRITE_OPTIONAL, "VAR_INT", Codecs.optionalOf(INTS), ByteBufCodecs.VAR_INT)
+            .given(WRITE_OPTIONAL, "Vec3's doubles", Codecs.optionalOf(VEC3S), (StreamEncoder<FriendlyByteBuf, Vec3>)(o, pos) -> {
+                o.writeDouble(pos.x());
+                o.writeDouble(pos.y());
+                o.writeDouble(pos.z());
+            })
+            .given(READ_NULLABLE, "readIdentifier", (StreamDecoder<FriendlyByteBuf, Identifier>)FriendlyByteBuf::readIdentifier)
+            .extraInputs(
+                READ_NULLABLE + "[readIdentifier]",
+                friendly(written(93, Codecs.nullableOf(IDENTIFIERS), (FriendlyByteBuf buffer, Identifier value) -> buffer.writeNullable(value, FriendlyByteBuf::writeIdentifier)))
+            )
+            .given(READ_NULLABLE, "readUtf", (StreamDecoder<FriendlyByteBuf, String>)FriendlyByteBuf::readUtf)
+            .extraInputs(
+                READ_NULLABLE + "[readUtf]",
+                friendly(written(94, Codecs.nullableOf(STRINGS), (FriendlyByteBuf buffer, String value) -> buffer.writeNullable(value, FriendlyByteBuf::writeUtf)))
+            )
+            .given(WRITE_NULLABLE, "writeIdentifier", Codecs.nullableOf(IDENTIFIERS), (StreamEncoder<FriendlyByteBuf, Identifier>)FriendlyByteBuf::writeIdentifier)
+            .given(WRITE_NULLABLE, "writeUtf", Codecs.nullableOf(STRINGS), (StreamEncoder<FriendlyByteBuf, String>)FriendlyByteBuf::writeUtf)
+            // A property's signature in GAME_PROFILE_PROPERTIES, at most 1024 units long. The reader also reads longer
+            // ones, written without the limit.
+            .given(READ_NULLABLE_FROM, "Utf8String.read(1024)", NetworkValues.BUFFER, (StreamDecoder<ByteBuf, String>)in -> Utf8String.read(in, 1024))
+            .extraInputs(
+                READ_NULLABLE_FROM + "[Utf8String.read(1024)]",
+                written(95, Codecs.nullableOf(SIGNATURES), (FriendlyByteBuf buffer, String value) -> FriendlyByteBuf.writeNullable(buffer, value, (out, signature) -> Utf8String.write(out, signature, Integer.MAX_VALUE)))
+            )
+            .given(
+                WRITE_NULLABLE_TO, "Utf8String.write(1024)", NetworkValues.BUFFER, Codecs.nullableOf(SIGNATURES),
+                (StreamEncoder<ByteBuf, String>)(out, signature) -> Utf8String.write(out, signature, 1024)
+            )
+            .given(READ_BY_ID, "Direction.BY_ID", Direction.BY_ID)
+            .extraInputs(READ_BY_ID + "[Direction.BY_ID]", friendly(written(96, IDS, FriendlyByteBuf::writeVarInt)))
+            .given(READ_BY_ID, "Rotation.BY_ID", Rotation.BY_ID)
+            .extraInputs(READ_BY_ID + "[Rotation.BY_ID]", friendly(written(97, IDS, FriendlyByteBuf::writeVarInt)))
+            .given(WRITE_BY_ID, "Direction::get3DDataValue", (ToIntFunction<Direction>)Direction::get3DDataValue, DIRECTIONS)
+            .given(WRITE_BY_ID, "Direction::get2DDataValue", (ToIntFunction<Direction>)Direction::get2DDataValue, DIRECTIONS)
+            .given(READ_WITH_COUNT, "readVarInt", (Consumer<FriendlyByteBuf>)FriendlyByteBuf::readVarInt)
+            .extraInputs(READ_WITH_COUNT + "[readVarInt]", friendly(written(98, Codecs.listOf(INTS), (FriendlyByteBuf buffer, List<Integer> values) -> {
+                buffer.writeVarInt(values.size());
+                values.forEach(buffer::writeVarInt);
+            })))
+            .given(READ_WITH_COUNT, "readUtf", (Consumer<FriendlyByteBuf>)FriendlyByteBuf::readUtf)
+            .extraInputs(READ_WITH_COUNT + "[readUtf]", friendly(written(99, Codecs.listOf(STRINGS), (FriendlyByteBuf buffer, List<String> values) -> {
+                buffer.writeVarInt(values.size());
+                values.forEach(buffer::writeUtf);
+            }))),
         // The codecs ByteBufCodecs hands out. The ones made from other codecs or functions get the game's kinds of them.
         new CodecSuite(ByteBufCodecs.class)
             .codec(OPTIONAL, "VAR_INT", leading -> ByteBufCodecs.optional(ByteBufCodecs.VAR_INT), bufferCodec(Codecs.optionalOf(INTS), Optional.class))
@@ -597,7 +686,9 @@ public final class Golden {
         new StaticSuite(LpVec3.class)
             .extraInputs("write(Lio/netty/buffer/ByteBuf;Lnet/minecraft/world/phys/Vec3;)V", lpWrites())
             .extraInputs("read(Lio/netty/buffer/ByteBuf;)Lnet/minecraft/world/phys/Vec3;", lpReads())
-            .extraInputs("hasContinuationBit(I)Z", everyByte())
+            .extraInputs("hasContinuationBit(I)Z", everyByte()),
+        HandlerSuite.frameDecoder(),
+        HandlerSuite.lengthFieldPrepender()
     );
 
     /** Writes every suite's file to the directory in the first argument, or only the suites the other arguments name. */
@@ -2024,6 +2115,24 @@ public final class Golden {
             wrapped.add(copy);
         }
         return wrapped;
+    }
+
+    // Buffers holding what the writer writes of the values' first edges and random ones, read from the start: whole, with
+    // another field after them, cut short by a byte and cut anywhere, with up to 16 bytes of capacity to spare.
+    @SuppressWarnings("unchecked")
+    private static <T> List<Object[]> written(final long seed, final Values.Generator values, final BiConsumer<FriendlyByteBuf, T> writer) {
+        Random random = new Random(seed);
+        List<Object> edges = values.edges();
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            Object value = i < edges.size() ? edges.get(i) : values.random(random);
+            FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+            writer.accept(buffer, (T)values.instantiate(value));
+            for (byte[] variant : Codecs.variants(NetworkValues.readable(buffer), random)) {
+                inputs.add(new Object[]{NetworkValues.buffer(random.nextInt(17), 0, variant)});
+            }
+        }
+        return inputs;
     }
 
     // The buffer edges and random buffers, for inputs worked out from each buffer's indexes.

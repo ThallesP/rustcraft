@@ -42,9 +42,9 @@ final class Codecs {
         Object make(Object[] leading) throws Exception;
     }
 
-    // What a case does with the factory's codec or function and the arguments after the leading ones.
+    /** What a case does with the factory's codec or function and the arguments after the leading ones. */
     @FunctionalInterface
-    private interface Use {
+    interface Use {
         Object apply(Object made, Object[] rest);
     }
 
@@ -174,6 +174,34 @@ final class Codecs {
         };
     }
 
+    /** Values that may be null, like an optional's (null a quarter of the time), for arguments a method lets be null. */
+    static Values.Generator nullableOf(final Values.Generator element) {
+        return new Values.Generator() {
+            @Override
+            public List<Object> edges() {
+                List<Object> edges = new ArrayList<>();
+                edges.add(null);
+                edges.addAll(element.edges());
+                return edges;
+            }
+
+            @Override
+            public Object random(final Random random) {
+                return random.nextInt(4) == 0 ? null : element.random(random);
+            }
+
+            @Override
+            public JsonElement encode(final Object spec) {
+                return spec == null ? JsonNull.INSTANCE : element.encode(spec);
+            }
+
+            @Override
+            public Object instantiate(final Object spec) {
+                return spec == null ? null : element.instantiate(spec);
+            }
+        };
+    }
+
     /**
      * Lists of up to 6 elements mostly, and now and then up to 140 (whose count takes a second byte), encoded as arrays.
      * Edges add the empty list, each element edge alone, and all of them.
@@ -281,20 +309,25 @@ final class Codecs {
                 continue;
             }
 
-            List<byte[]> variants = new ArrayList<>(List.of(bytes, NetworkValues.concat(bytes, NetworkValues.randomField(random))));
-            if (bytes.length > 0) {
-                variants.add(Arrays.copyOf(bytes, bytes.length - 1));
-            }
-            if (bytes.length > 1) {
-                variants.add(Arrays.copyOf(bytes, 1 + random.nextInt(bytes.length - 1)));
-            }
-            for (byte[] variant : variants) {
+            for (byte[] variant : variants(bytes, random)) {
                 Object[] spec = Arrays.copyOf(leadingSpecs, leading.length + 1);
                 spec[leading.length] = NetworkValues.bufferLike(codec.buffer(), random.nextInt(17), variant);
                 specs.add(spec);
             }
         }
         return specs;
+    }
+
+    /** An encoding to decode whole, with another field after it, cut short by a byte, and cut anywhere. */
+    static List<byte[]> variants(final byte[] bytes, final Random random) {
+        List<byte[]> variants = new ArrayList<>(List.of(bytes, NetworkValues.concat(bytes, NetworkValues.randomField(random))));
+        if (bytes.length > 0) {
+            variants.add(Arrays.copyOf(bytes, bytes.length - 1));
+        }
+        if (bytes.length > 1) {
+            variants.add(Arrays.copyOf(bytes, 1 + random.nextInt(bytes.length - 1)));
+        }
+        return variants;
     }
 
     // Each edge once in each position, with random arguments elsewhere.
@@ -310,7 +343,11 @@ final class Codecs {
         return tuples;
     }
 
-    private static void writeCases(
+    /**
+     * Writes a case for each spec: the factory makes the codec or function from the leading arguments, and use applies
+     * it to the rest. A throw from either is the case's.
+     */
+    static void writeCases(
         final GoldenWriter writer, final String name, final int leading, final Factory factory, final Values.Generator[] generators,
         final List<Object[]> specs, final Class<?> valueType, final Use use
     ) throws IOException {

@@ -295,8 +295,8 @@ final class NetworkValues {
         return UUID.nameUUIDFromBytes("OfflinePlayer:rustcraft".getBytes(StandardCharsets.UTF_8));
     }
 
-    // A handshake: packet id 0, protocol version, address, port and intent (login).
-    private static byte[] handshake() {
+    /** A handshake: packet id 0, protocol version, address, port and intent (login). */
+    static byte[] handshake() {
         return concat(varInt(0), varInt(777), utf("localhost"), bytes(0x63, 0xdd), varInt(2));
     }
 

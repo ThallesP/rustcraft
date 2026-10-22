@@ -63,7 +63,7 @@ Netty:
 
 ## Codecs
 
-The network codecs are objects Java builds out of other objects and lambdas, so they get rules of their own.
+The network codecs are objects Java builds out of other objects and lambdas, so they get rules of their own, and so do the methods taking them.
 
 - `StreamCodec<B, V>` is a trait with two associated types, `StreamCodec<Buffer = B, Value = V>`. A codec has one buffer, Java's `B`. Java passes a codec of a buffer's parent class where a codec of the buffer is wanted (`StreamCodec<? super B, T>`); here that's a codec whose buffer the wanted one is `AsMut` of. Every buffer is `AsMut` of itself and of the buffers it wraps (`FriendlyByteBuf` is `AsMut<ByteBuf>` and `AsMut<FriendlyByteBuf>`), and a direct call derefs a wrapper (`BlockPos::STREAM_CODEC.decode(friendly_buf)`). A codec Java makes generic in its buffer takes the buffer of the codec it wraps (`ByteBufCodecs::optional`). A `composite` takes the buffer it's used on, which the static's type pins; a nested one may need it spelled out.
 - A static codec field is a module `static` of type `StaticStreamCodec<B, V>` (a `LazyLock` of a boxed codec, made on first use), which an associated const refers to: `BlockPos::STREAM_CODEC`. An `IntFunction` field is the same with a boxed `Fn(i32) -> T` (`Direction::BY_ID`), passed on as `Direction::BY_ID.as_ref()`. Codecs share other codecs by reference, since `&C` is a codec.
@@ -73,6 +73,12 @@ The network codecs are objects Java builds out of other objects and lambdas, so 
 - Overloads: `composite`'s get their number of fields (`composite3`), ones returning a `CodecOperation` instead of a codec get `_operation` (`collection(IntFunction)` is `collection_operation`), and ones adding a maximum `_max` (`collection_max`, `list_max`).
 - A codec's collection is any Rust collection it can extend and iterate over by reference: a `Vec` for an `ArrayList`. Java's collection constructors throw on a negative capacity, which a count read from a buffer can be, so codecs making lists take `ArrayList::new` from `java::util::array_list`, which panics there too. Which Rust type stands for a Java hash set or map gets settled with its first caller, since encoding writes in Java's iteration order.
 - `OptionalInt` is `Option<i32>`, and a codec's `encode` takes the value by reference, while getters and `map`'s functions return owned values (a getter clones where Java would share).
+- A method taking a `StreamDecoder<? super FriendlyByteBuf, T>` (`FriendlyByteBuf.readOptional`) is generic in the decoder's buffer, `impl StreamDecoder<I, T>` where `Self: AsMut<I>`, so a decoder of a `ByteBuf` or of a `FriendlyByteBuf` passes. A static one generic in its buffer (`readNullable(B, StreamDecoder<? super B, T>)` with `B extends ByteBuf`) takes `B: AsMut<ByteBuf> + AsMut<I>`, and reaches each with `AsMut::<ByteBuf>::as_mut(input)`. A value they write that Java lets be null, or passes as an `Optional`, is an `Option<&T>`. A `Consumer` is an `FnMut`, an `IntFunction` an `Fn(i32) -> T`, and a `ToIntFunction` an `Fn(&T) -> i32`.
+
+## Netty handlers
+
+- A handler in the game's pipeline (`Varint21FrameDecoder`, a `ByteToMessageDecoder`; `Varint21LengthFieldPrepender`, a `MessageToByteEncoder`) is a struct whose `decode` or `encode` leaves out the `ChannelHandlerContext` it doesn't use. Its output list is a `Vec` of what it makes (`Vec<ByteBuf>` for frames), and releasing buffers in `handlerRemoved` is Rust's drop.
+- What Netty does around a handler (cumulating what arrives, calling `decode` again while it makes progress, releasing the message after `encode`) belongs to the pipeline, and comes with `Connection`. The golden cases drive a decoder the way Netty does (TESTING.md).
 
 ## Where Java and Rust disagree on numbers
 

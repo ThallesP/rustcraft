@@ -3,10 +3,7 @@
 //! Not ported yet:
 //! - the codecs' readers and writers (`readWithCodec`, `readWithCodecTrusted`, `writeWithCodec`,
 //!   `readLenientJsonWithCodec`, `writeJsonWithCodec`), which wait for DataFixerUpper;
-//! - the ones taking a stream codec or a function (`readWithCount`, `readOptional`,
-//!   `writeOptional`, `readEither`, `writeEither`, `readNullable`, `writeNullable`, `readById`,
-//!   `writeById`), whose arguments the golden suite doesn't list instances of yet, like
-//!   `ByteBufCodecs`' (`readEither` and `writeEither` also wait for DataFixerUpper's `Either`);
+//! - `readEither` and `writeEither`, which wait for DataFixerUpper's `Either`;
 //! - `readEnum` and `writeEnum`, and `readEnumSet` and `writeEnumSet`, whose `Class` and `Enum`
 //!   arguments the golden harness can't generate yet, and the `BitSet` ones (`readBitSet`,
 //!   `writeBitSet`, `readFixedBitSet`, `writeFixedBitSet`), which wait for `java.util.BitSet`;
@@ -17,12 +14,18 @@
 //! The methods overriding `ByteBuf`'s forward to the buffer it wraps, which it derefs to. Java
 //! throws Netty's `DecoderException` and `EncoderException`, and `NegativeArraySizeException` for
 //! a negative array length, which are panics here.
+//!
+//! The readers and writers taking a `StreamDecoder<? super FriendlyByteBuf, T>` take one of any
+//! buffer this one is `AsMut` of, like the codecs (PORTING.md). A value Java lets be null, or
+//! passes as an `Optional`, is an `Option`.
 
 use std::ops::{Deref, DerefMut};
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::network::codec::stream_decoder::StreamDecoder;
+use crate::net::minecraft::network::codec::stream_encoder::StreamEncoder;
 use crate::net::minecraft::network::utf8_string::Utf8String;
 use crate::net::minecraft::network::var_int::VarInt;
 use crate::net::minecraft::network::var_long::VarLong;
@@ -43,6 +46,91 @@ impl FriendlyByteBuf {
 
     pub fn new(source: ByteBuf) -> FriendlyByteBuf {
         FriendlyByteBuf { source }
+    }
+
+    /// A VarInt count, then the reader called that many times, or none for a negative count.
+    pub fn read_with_count(&mut self, mut reader: impl FnMut(&mut FriendlyByteBuf)) {
+        let count = self.read_var_int();
+
+        for _ in 0..count {
+            reader(self);
+        }
+    }
+
+    /// A boolean, then the value if there is one.
+    pub fn write_optional<O, T>(
+        &mut self,
+        value: Option<&T>,
+        value_writer: impl StreamEncoder<O, T>,
+    ) where
+        Self: AsMut<O>,
+    {
+        if let Some(value) = value {
+            self.write_boolean(true);
+            value_writer.encode(self.as_mut(), value);
+        } else {
+            self.write_boolean(false);
+        }
+    }
+
+    pub fn read_optional<I, T>(&mut self, value_reader: impl StreamDecoder<I, T>) -> Option<T>
+    where
+        Self: AsMut<I>,
+    {
+        if self.read_boolean() {
+            Some(value_reader.decode(self.as_mut()))
+        } else {
+            None
+        }
+    }
+
+    pub fn read_nullable<I, T>(&mut self, value_decoder: impl StreamDecoder<I, T>) -> Option<T>
+    where
+        Self: AsMut<I>,
+    {
+        FriendlyByteBuf::read_nullable_from(self, value_decoder)
+    }
+
+    /// `readNullable(ByteBuf, StreamDecoder)`: a boolean, then the value if it's true. Java's
+    /// `B extends ByteBuf` is a buffer that is one or wraps one.
+    pub fn read_nullable_from<B, I, T>(
+        input: &mut B,
+        value_decoder: impl StreamDecoder<I, T>,
+    ) -> Option<T>
+    where
+        B: AsMut<ByteBuf> + AsMut<I>,
+    {
+        if AsMut::<ByteBuf>::as_mut(input).read_boolean() {
+            Some(value_decoder.decode(input.as_mut()))
+        } else {
+            None
+        }
+    }
+
+    pub fn write_nullable<O, T>(
+        &mut self,
+        value: Option<&T>,
+        value_encoder: impl StreamEncoder<O, T>,
+    ) where
+        Self: AsMut<O>,
+    {
+        FriendlyByteBuf::write_nullable_to(self, value, value_encoder);
+    }
+
+    /// `writeNullable(ByteBuf, Object, StreamEncoder)`: a boolean, then the value if there is one.
+    pub fn write_nullable_to<B, O, T>(
+        output: &mut B,
+        value: Option<&T>,
+        value_encoder: impl StreamEncoder<O, T>,
+    ) where
+        B: AsMut<ByteBuf> + AsMut<O>,
+    {
+        if let Some(value) = value {
+            AsMut::<ByteBuf>::as_mut(output).write_boolean(true);
+            value_encoder.encode(output.as_mut(), value);
+        } else {
+            AsMut::<ByteBuf>::as_mut(output).write_boolean(false);
+        }
     }
 
     /// As many bytes as are readable at most.
@@ -243,6 +331,21 @@ impl FriendlyByteBuf {
         output.write_float(value.w);
     }
 
+    /// A VarInt id, turned into the value it stands for.
+    pub fn read_by_id<T>(&mut self, converter: impl Fn(i32) -> T) -> T {
+        let id = self.read_var_int();
+        converter(id)
+    }
+
+    pub fn write_by_id<T>(
+        &mut self,
+        converter: impl Fn(&T) -> i32,
+        value: &T,
+    ) -> &mut FriendlyByteBuf {
+        let id = converter(value);
+        self.write_var_int(id)
+    }
+
     pub fn read_var_int(&mut self) -> i32 {
         VarInt::read(&mut self.source)
     }
@@ -374,9 +477,19 @@ mod tests {
     use crate::io::netty::buffer::byte_buf::ByteBuf;
     use crate::java::util::uuid::UUID;
     use crate::net::minecraft::core::block_pos::BlockPos;
+    use crate::net::minecraft::core::direction::Direction;
+    use crate::net::minecraft::core::position::Position;
+    use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
+    use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
+    use crate::net::minecraft::network::utf8_string::Utf8String;
     use crate::net::minecraft::resources::identifier::Identifier;
+    use crate::net::minecraft::world::level::block::rotation::Rotation;
+    use crate::net::minecraft::world::phys::vec3::Vec3;
     use crate::org::joml::quaternionf::Quaternionf;
     use crate::org::joml::vector3f::Vector3f;
+
+    const DECODER: &str = "Lnet/minecraft/network/codec/StreamDecoder;";
+    const ENCODER: &str = "Lnet/minecraft/network/codec/StreamEncoder;";
 
     // The buffer it wraps.
     impl Decode for FriendlyByteBuf {
@@ -404,22 +517,10 @@ mod tests {
             golden.pending(name, "waits for DataFixerUpper's codecs");
         }
         for name in [
-            "readWithCount(Ljava/util/function/Consumer;)V",
-            "readOptional(Lnet/minecraft/network/codec/StreamDecoder;)Ljava/util/Optional;",
-            "writeOptional(Ljava/util/Optional;Lnet/minecraft/network/codec/StreamEncoder;)V",
             "readEither(Lnet/minecraft/network/codec/StreamDecoder;Lnet/minecraft/network/codec/StreamDecoder;)Lcom/mojang/datafixers/util/Either;",
             "writeEither(Lcom/mojang/datafixers/util/Either;Lnet/minecraft/network/codec/StreamEncoder;Lnet/minecraft/network/codec/StreamEncoder;)V",
-            "readNullable(Lnet/minecraft/network/codec/StreamDecoder;)Ljava/lang/Object;",
-            "readNullable(Lio/netty/buffer/ByteBuf;Lnet/minecraft/network/codec/StreamDecoder;)Ljava/lang/Object;",
-            "writeNullable(Ljava/lang/Object;Lnet/minecraft/network/codec/StreamEncoder;)V",
-            "writeNullable(Lio/netty/buffer/ByteBuf;Ljava/lang/Object;Lnet/minecraft/network/codec/StreamEncoder;)V",
-            "readById(Ljava/util/function/IntFunction;)Ljava/lang/Object;",
-            "writeById(Ljava/util/function/ToIntFunction;Ljava/lang/Object;)Lnet/minecraft/network/FriendlyByteBuf;",
         ] {
-            golden.pending(
-                name,
-                "takes a stream codec or a function, whose instances the golden suite doesn't list yet",
-            );
+            golden.pending(name, "waits for DataFixerUpper's Either");
         }
         for name in [
             "readEnum(Ljava/lang/Class;)Ljava/lang/Enum;",
@@ -475,6 +576,106 @@ mod tests {
             FriendlyByteBuf::MAX_COMPONENT_STRING_LENGTH,
         );
         golden.check("<init>(Lio/netty/buffer/ByteBuf;)V", FriendlyByteBuf::new);
+        golden.check_method(
+            "readWithCount(Ljava/util/function/Consumer;)V[readVarInt]",
+            |this: &mut FriendlyByteBuf| {
+                this.read_with_count(|input| {
+                    input.read_var_int();
+                })
+            },
+        );
+        golden.check_method(
+            "readWithCount(Ljava/util/function/Consumer;)V[readUtf]",
+            |this: &mut FriendlyByteBuf| {
+                this.read_with_count(|input| {
+                    input.read_utf();
+                })
+            },
+        );
+        golden.check_method(
+            &format!("writeOptional(Ljava/util/Optional;{ENCODER})V[VAR_INT]"),
+            |this: &mut FriendlyByteBuf, value: Option<i32>| {
+                this.write_optional(value.as_ref(), |output: &mut ByteBuf, value: &i32| {
+                    ByteBufCodecs::VAR_INT.encode(output, value)
+                })
+            },
+        );
+        golden.check_method(
+            &format!("writeOptional(Ljava/util/Optional;{ENCODER})V[Vec3's doubles]"),
+            |this: &mut FriendlyByteBuf, value: Option<Vec3>| {
+                this.write_optional(value.as_ref(), |o: &mut FriendlyByteBuf, pos: &Vec3| {
+                    o.write_double(pos.x());
+                    o.write_double(pos.y());
+                    o.write_double(pos.z());
+                })
+            },
+        );
+        golden.check_method(
+            &format!("readOptional({DECODER})Ljava/util/Optional;[VAR_INT]"),
+            |this: &mut FriendlyByteBuf| {
+                this.read_optional(|input: &mut ByteBuf| ByteBufCodecs::VAR_INT.decode(input))
+            },
+        );
+        golden.check_method(
+            &format!("readOptional({DECODER})Ljava/util/Optional;[Vec3's doubles]"),
+            |this: &mut FriendlyByteBuf| {
+                this.read_optional(|i: &mut FriendlyByteBuf| {
+                    Vec3::new(i.read_double(), i.read_double(), i.read_double())
+                })
+            },
+        );
+        golden.check_method(
+            &format!("readNullable({DECODER})Ljava/lang/Object;[readIdentifier]"),
+            |this: &mut FriendlyByteBuf| this.read_nullable(FriendlyByteBuf::read_identifier),
+        );
+        golden.check_method(
+            &format!("readNullable({DECODER})Ljava/lang/Object;[readUtf]"),
+            |this: &mut FriendlyByteBuf| this.read_nullable(FriendlyByteBuf::read_utf),
+        );
+        golden.check_mut(
+            &format!(
+                "readNullable(Lio/netty/buffer/ByteBuf;{DECODER})Ljava/lang/Object;[Utf8String.read(1024)]"
+            ),
+            |input: &mut ByteBuf| {
+                FriendlyByteBuf::read_nullable_from(input, |input: &mut ByteBuf| {
+                    Utf8String::read(input, 1024)
+                })
+            },
+        );
+        golden.check_method(
+            &format!("writeNullable(Ljava/lang/Object;{ENCODER})V[writeIdentifier]"),
+            |this: &mut FriendlyByteBuf, value: Option<Identifier>| {
+                this.write_nullable(
+                    value.as_ref(),
+                    |output: &mut FriendlyByteBuf, identifier: &Identifier| {
+                        output.write_identifier(identifier);
+                    },
+                )
+            },
+        );
+        golden.check_method(
+            &format!("writeNullable(Ljava/lang/Object;{ENCODER})V[writeUtf]"),
+            |this: &mut FriendlyByteBuf, value: Option<String>| {
+                this.write_nullable(
+                    value.as_ref(),
+                    |output: &mut FriendlyByteBuf, value: &String| {
+                        output.write_utf(value);
+                    },
+                )
+            },
+        );
+        golden.check_mut(
+            &format!(
+                "writeNullable(Lio/netty/buffer/ByteBuf;Ljava/lang/Object;{ENCODER})V[Utf8String.write(1024)]"
+            ),
+            |output: &mut ByteBuf, value: &mut Option<String>| {
+                FriendlyByteBuf::write_nullable_to(
+                    output,
+                    value.as_ref(),
+                    |out: &mut ByteBuf, signature: &String| Utf8String::write(out, signature, 1024),
+                )
+            },
+        );
         golden.check_method("readByteArray()[B", |this: &mut FriendlyByteBuf| {
             this.read_byte_array()
         });
@@ -604,6 +805,26 @@ mod tests {
             "writeQuaternion(Lio/netty/buffer/ByteBuf;Lorg/joml/Quaternionfc;)V",
             |output: &mut ByteBuf, value: &mut Quaternionf| {
                 FriendlyByteBuf::write_quaternion_to(output, value)
+            },
+        );
+        golden.check_method(
+            "readById(Ljava/util/function/IntFunction;)Ljava/lang/Object;[Direction.BY_ID]",
+            |this: &mut FriendlyByteBuf| this.read_by_id(Direction::BY_ID.as_ref()),
+        );
+        golden.check_method(
+            "readById(Ljava/util/function/IntFunction;)Ljava/lang/Object;[Rotation.BY_ID]",
+            |this: &mut FriendlyByteBuf| this.read_by_id(Rotation::BY_ID.as_ref()),
+        );
+        golden.check_method(
+            "writeById(Ljava/util/function/ToIntFunction;Ljava/lang/Object;)Lnet/minecraft/network/FriendlyByteBuf;[Direction::get3DDataValue]",
+            |this: &mut FriendlyByteBuf, value: Direction| {
+                this.write_by_id(Direction::get_3d_data_value, &value).clone()
+            },
+        );
+        golden.check_method(
+            "writeById(Ljava/util/function/ToIntFunction;Ljava/lang/Object;)Lnet/minecraft/network/FriendlyByteBuf;[Direction::get2DDataValue]",
+            |this: &mut FriendlyByteBuf, value: Direction| {
+                this.write_by_id(Direction::get_2d_data_value, &value).clone()
             },
         );
         golden.check_method("readVarInt()I", |this: &mut FriendlyByteBuf| {
