@@ -64,7 +64,7 @@ final class StaticSuite implements Suite {
     @Override
     public void write(final GoldenWriter writer) throws IOException {
         if (this.only == null) {
-            this.writeFields(writer);
+            writeFields(this.type, writer);
         }
 
         Set<String> written = new HashSet<>();
@@ -91,12 +91,13 @@ final class StaticSuite implements Suite {
         }
     }
 
-    private void writeFields(final GoldenWriter writer) throws IOException {
-        Field[] fields = this.type.getFields();
+    /** Every public constant the class declares itself. */
+    static void writeFields(final Class<?> type, final GoldenWriter writer) throws IOException {
+        Field[] fields = type.getFields();
         Arrays.sort(fields, Comparator.comparing(Field::getName));
         for (Field field : fields) {
             int modifiers = field.getModifiers();
-            if (!Modifier.isStatic(modifiers) || !Modifier.isFinal(modifiers) || field.getDeclaringClass() != this.type) {
+            if (!Modifier.isStatic(modifiers) || !Modifier.isFinal(modifiers) || field.getDeclaringClass() != type) {
                 continue;
             }
 

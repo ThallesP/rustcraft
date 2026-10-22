@@ -12,9 +12,11 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
@@ -29,11 +31,25 @@ final class InstanceSuite implements Suite {
 
     private final Class<?> type;
     private final Set<String> only;
+    private final Map<String, List<Object[]>> extraInputs = new HashMap<>();
+    private boolean fields;
 
     /** Big library classes (JOML's Matrix4f has hundreds of methods) list the members the port covers. */
     InstanceSuite(final Class<?> type, final String... members) {
         this.type = type;
         this.only = new LinkedHashSet<>(Arrays.asList(members));
+    }
+
+    /** More cases for a member, each a receiver spec followed by the arguments' specs. */
+    InstanceSuite extraInputs(final String member, final List<Object[]> inputs) {
+        this.extraInputs.put(member, inputs);
+        return this;
+    }
+
+    /** Also writes the class's public constants, like a StaticSuite does. */
+    InstanceSuite withFields() {
+        this.fields = true;
+        return this;
     }
 
     @Override
@@ -43,6 +59,10 @@ final class InstanceSuite implements Suite {
 
     @Override
     public void write(final GoldenWriter writer) throws IOException {
+        if (this.fields) {
+            StaticSuite.writeFields(this.type, writer);
+        }
+
         Set<String> written = new HashSet<>();
         for (Executable member : this.members()) {
             String descriptor = descriptor(member);
@@ -53,6 +73,7 @@ final class InstanceSuite implements Suite {
         }
 
         Set<String> missing = new HashSet<>(this.only);
+        missing.addAll(this.extraInputs.keySet());
         missing.removeAll(written);
         if (!missing.isEmpty()) {
             throw new IllegalStateException(this.type.getName() + " has no public members " + missing);
@@ -94,6 +115,7 @@ final class InstanceSuite implements Suite {
 
         Random random = new Random(descriptor.hashCode());
         List<Object[]> specs = new ArrayList<>(StaticSuite.edgeTuples(generators, random));
+        specs.addAll(this.extraInputs.getOrDefault(descriptor, List.of()));
         if (generators.length > 0) {
             for (int i = 0; i < RANDOM_CASES; i++) {
                 specs.add(StaticSuite.randomTuple(generators, random));

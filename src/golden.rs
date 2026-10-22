@@ -128,6 +128,29 @@ impl<T: Encode> Encode for Vec<T> {
     }
 }
 
+/// Fixed-size arrays are JSON arrays too, like `FrustumIntersection`'s six `planes`.
+impl<T: Decode, const N: usize> Decode for [T; N] {
+    fn decode(value: &Value) -> Self {
+        elements::<N>(value).each_ref().map(T::decode)
+    }
+}
+
+impl<T: Encode, const N: usize> Encode for [T; N] {
+    fn encode(&self) -> Value {
+        self.iter().map(Encode::encode).collect()
+    }
+
+    fn matches(&self, expected: &Value) -> bool {
+        expected.as_array().is_some_and(|expected| {
+            expected.len() == N
+                && self
+                    .iter()
+                    .zip(expected)
+                    .all(|(actual, expected)| actual.matches(expected))
+        })
+    }
+}
+
 /// What a method returning `void` returns.
 impl Encode for () {
     fn encode(&self) -> Value {

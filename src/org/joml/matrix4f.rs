@@ -10,6 +10,7 @@
 //! its own, and `rotation_around` reads back what it wrote, so they're ported on `&mut self`.
 
 use crate::org::joml::math::Math;
+use crate::org::joml::matrix3x2f::Matrix3x2f;
 use crate::org::joml::matrix4fc::{
     PROPERTY_AFFINE, PROPERTY_IDENTITY, PROPERTY_ORTHONORMAL, PROPERTY_PERSPECTIVE,
     PROPERTY_TRANSLATION, PROPERTY_UNKNOWN,
@@ -282,6 +283,54 @@ impl Matrix4f {
         } else {
             self.mul0_into(right, dest)
         }
+    }
+
+    /// Multiplies by `right` as the 4x4 matrix with its 2x2 part top left, its translation in
+    /// the last column, and z left alone, which is how the GUI's glyphs go from 2D to 3D.
+    pub fn mul_matrix3x2f(&mut self, right: &Matrix3x2f) -> &mut Self {
+        let this = *self;
+        this.mul_matrix3x2f_into(right, self)
+    }
+
+    pub fn mul_matrix3x2f_into<'a>(
+        &self,
+        right: &Matrix3x2f,
+        dest: &'a mut Matrix4f,
+    ) -> &'a mut Matrix4f {
+        let nm00 = self.m00 * right.m00 + self.m10 * right.m01;
+        let nm01 = self.m01 * right.m00 + self.m11 * right.m01;
+        let nm02 = self.m02 * right.m00 + self.m12 * right.m01;
+        let nm03 = self.m03 * right.m00 + self.m13 * right.m01;
+        let nm10 = self.m00 * right.m10 + self.m10 * right.m11;
+        let nm11 = self.m01 * right.m10 + self.m11 * right.m11;
+        let nm12 = self.m02 * right.m10 + self.m12 * right.m11;
+        let nm13 = self.m03 * right.m10 + self.m13 * right.m11;
+        let nm30 = self.m00 * right.m20 + self.m10 * right.m21 + self.m30;
+        let nm31 = self.m01 * right.m20 + self.m11 * right.m21 + self.m31;
+        let nm32 = self.m02 * right.m20 + self.m12 * right.m21 + self.m32;
+        let nm33 = self.m03 * right.m20 + self.m13 * right.m21 + self.m33;
+        dest.m00 = nm00;
+        dest.m01 = nm01;
+        dest.m02 = nm02;
+        dest.m03 = nm03;
+        dest.m10 = nm10;
+        dest.m11 = nm11;
+        dest.m12 = nm12;
+        dest.m13 = nm13;
+        dest.m20 = self.m20;
+        dest.m21 = self.m21;
+        dest.m22 = self.m22;
+        dest.m23 = self.m23;
+        dest.m30 = nm30;
+        dest.m31 = nm31;
+        dest.m32 = nm32;
+        dest.m33 = nm33;
+        dest.properties = self.properties
+            & !(PROPERTY_IDENTITY
+                | PROPERTY_PERSPECTIVE
+                | PROPERTY_TRANSLATION
+                | PROPERTY_ORTHONORMAL);
+        dest
     }
 
     fn mul0_into<'a>(&self, right: &Matrix4f, dest: &'a mut Matrix4f) -> &'a mut Matrix4f {
@@ -2007,6 +2056,7 @@ fn rotation_of(quat: &Quaternionf) -> [f32; 9] {
 mod tests {
     use super::Matrix4f;
     use crate::golden::{Golden, encode_fields};
+    use crate::org::joml::matrix3x2f::Matrix3x2f;
     use crate::org::joml::quaternionf::Quaternionf;
     use crate::org::joml::vector3f::Vector3f;
     use crate::org::joml::vector4f::Vector4f;
@@ -2087,6 +2137,16 @@ mod tests {
             "mul(Lorg/joml/Matrix4fc;Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
             |this: &mut Matrix4f, right: Matrix4f, mut dest: Matrix4f| {
                 *this.mul_into(&right, &mut dest)
+            },
+        );
+        golden.check_method(
+            "mul(Lorg/joml/Matrix3x2fc;)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, right: Matrix3x2f| *this.mul_matrix3x2f(&right),
+        );
+        golden.check_method(
+            "mul(Lorg/joml/Matrix3x2fc;Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, right: Matrix3x2f, mut dest: Matrix4f| {
+                *this.mul_matrix3x2f_into(&right, &mut dest)
             },
         );
         golden.check_method(

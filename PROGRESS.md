@@ -4,10 +4,12 @@ The loop's memory: newest entries first. Each step adds an entry and rewrites "N
 
 ## Next
 
-Milestone 1, JOML, part 3: the rest of the client's math that doesn't need milestone 2's types.
-- `Matrix3x2f` and `Matrix3x2fStack`, the GUI's pose (`GuiGraphicsExtractor`): the methods it calls in an `InstanceSuite`, and a stack suite like `Matrix4fStackSuite`.
-- `FrustumIntersection` (`set(Matrix4fc)`, `intersectAab`, `testPoint`), with goldens. Minecraft's `Frustum` needs `AABB` and `BoundingBox`, so it waits for milestone 2.
-- `Transformation`, with `GivensParameters` and `MatrixUtil.eigenvalueJacobi`/`svdDecompose`: block models build `BlockModelRotation`'s transformation with it, and `PoseStack.mulPose(Transformation)` takes one. Those two return void, which the static suite skips, so they need a hand-written suite recording their out-arguments.
+Milestone 1, JOML, part 4: `Transformation`, the last of the client's math that doesn't need milestone 2's types. Block models build `BlockModelRotation`'s transformation with it, and `PoseStack.mulPose(Transformation)` (pending in its suite) takes one.
+- `GivensParameters`, a record (its static and instance methods, with a generator for it).
+- `MatrixUtil.eigenvalueJacobi` and `svdDecompose`. They return void, which the static suite skips, so they need a hand-written suite recording their out-arguments. `svdDecompose` calls `java.lang.Math.hypot`, which has no HotSpot stub, so port fdlibm's `Hypot` into `fd_libm.rs` and check it in the `java.lang.Math` suite. It also needs `Matrix3f.scale(F)` and `Matrix4f.getTranslation`.
+- `Transformation`: its constructors, `compose`, `inverse` (`Matrix4f.invertAffine` and `isFinite`), the decomposition getters (decomposed lazily, on first use), `slerp` (`Quaternionf.slerp`, `Vector3f.lerp` with a `dest`) and the static `compose(Matrix4fc, Optional)`, with `Matrix4f.translation(Vector3fc)` and `scale(Vector3fc)`. Its codecs wait for DFU.
+
+Then milestone 2's core types, and Minecraft's `Frustum` (it needs `AABB` and `BoundingBox`) on top of `FrustumIntersection`. Run the bytecode scan (PORTING.md) again then: the client's other JOML calls (`Quaternionf.rotateX/Y/Z`, `Vector3f.rotateX/Y`, `Vector3d`, `Vector3i`, `Vector2i`, `Matrix4f.rotateYXZ`, `ortho2D`…) get ported with the classes that call them, and the `get(ByteBuffer)` calls with the renderer.
 
 `ProjectionType.applyLayeringTransform` and `VertexSorting` come with the renderer. `log10` (one call site, `Options`) and `cbrt` (one, `ClientExplosionTracker`) are small HotSpot stubs; port them when those classes come. The client never calls `Math.exp`. ARGB's `Vector3f` and `Vector4f` methods have golden cases (its `pending_rest` covers them) and can be ported whenever ARGB is next touched.
 
@@ -16,6 +18,35 @@ Milestone 1, JOML, part 3: the rest of the client's math that doesn't need miles
 - **Licence of the code translated from OpenJDK and JOML.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22: Matrix3x2f, Matrix3x2fStack, Vector2f and FrustumIntersection
+
+- Ported from JOML 1.10.9 the methods the client calls, found by scanning its bytecode for `org/joml/` calls (PORTING.md). Each is checked against vanilla:
+  - `Vector2f`: 2 constructors and 6 methods (5,524 cases).
+  - `Matrix3x2f`, the GUI's 2D pose: 2 constructors and 12 methods (8,831 cases). These are `set`, `translate`, both `scale`s, `rotate`, `transformPosition` and `invert` with a `dest`; each fluent one also has its `dest` overload.
+  - `Matrix3x2fStack` (push and pop). New `Matrix3x2fStackSuite`: 256 programs of 48 ops, using the ops the client calls on `GuiGraphicsExtractor`'s stack (push, pop, translate, scale, rotate), 10,055 steps.
+  - `Matrix4f.mul(Matrix3x2fc)` and its `dest` overload (1,350 cases). `GlyphRenderState` uses it to put a glyph's 2D pose into 3D.
+  - `FrustumIntersection`: `<init>()`, both `set`s, `intersectAab`, `testPoint` and its 15 constants (20,239 cases). Minecraft's `Frustum` needs `AABB`, so it waits for milestone 2.
+- Golden harness:
+  - `InstanceSuite` takes extra inputs per member, and can write the class's constants (`withFields`).
+  - `golden.rs` encodes fixed-size arrays.
+  - New generators: GUI poses, and frustums. Most frustums are the camera's culling frustums (`Camera.createProjectionMatrixForCulling` times the view rotation) looking anywhere, with the walk scenario's two looks among the edges. The rest are frustums of any JOML matrix, plus one perspective that ignores x.
+  - `intersectAab` and `testPoint` get extra inputs:
+    - boxes like the game's: chunk sections, entities, the camera's 8-block cube, and points;
+    - boxes and points on a frustum face, to rounding: solved from three planes, then nudged by up to two ulps;
+    - every float edge in each coordinate of a box in front of each edge frustum.
+  - Every `intersectAab` result occurs: `INSIDE` 1,128 times, `INTERSECT` 2,569, and each plane from 262 to 4,109.
+- Found:
+  - Only cases on a plane pin down the order a plane's terms are added in. Before they existed, reassociating `testPoint`'s or `intersectAab`'s sums still passed the goldens.
+  - A camera frustum's side planes pass through the camera (w = 0), so adding w first is exact there. Only the near and far planes, and frustums that aren't the camera's, can tell the order apart.
+  - Moving `w` across `intersectAab`'s `>=` can't change a comparison near equality: `s + w` is exact when `s` is close to `-w` (Sterbenz). Only infinities can tell, and the frustum of an infinite translation covers those.
+- Mutations (37, run once and not committed): 35 fail the goldens. The other 2 are equivalent:
+  - a stack size of 0 panics anyway, on its allocation of -1, as Java throws `NegativeArraySizeException`;
+  - the far plane's `w` moved across the `>=` (Sterbenz, above).
+
+  4 mutations survived the first version of the frustum inputs, which led to the on-plane cases, the perspective that ignores x (a zero normal component times an infinite coordinate) and the float-edge sweep.
+- With NaNs normalized, every line of the other golden files is identical to before. `Matrix4f`'s only gained the 1,350 new cases.
+- Evidence: `cargo test --workspace` passes 56 tests, including 22 golden suites (52 and 18 before). fmt, clippy and the port check are clean.
 
 ### 2026-10-22: Axis, MatrixUtil, PoseStack, Projection, Matrix4fStack and Vector4f
 

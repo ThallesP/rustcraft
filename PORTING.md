@@ -21,6 +21,8 @@ How Java becomes Rust in this repo. The port should read side by side with `vani
 
 Libraries whose classes the game's math runs through are ported like the game, from their published sources, which `tools/setup_vanilla.py` puts next to the decompiled game (`vanilla/<version>/src/org/joml/Matrix4f.java` → `src/org/joml/matrix4f.rs`). So far that's JOML, the vector and matrix library. Its classes have hundreds of methods, so only the ones the client calls are ported, and the golden suite lists them.
 
+Which ones the client calls comes from its bytecode: `javap -c -p` over every class in `client.jar`, keeping the `org/joml/` invocations. A call through a subclass or an interface (`Matrix3x2fStack.translate`, `Matrix3x2fc.transformPosition`) runs the class's own method unless the subclass overrides it.
+
 - JOML's read-only interfaces (`Matrix4fc`, `Vector3fc`, …) are only implemented by its own classes, so they become shared references (`&Matrix4f`), and their constants live in their module (`matrix4fc::PROPERTY_IDENTITY`).
 - Constructors: the no-argument one is `new()`, the one taking the fields is `from_xyz`/`from_xyzw`/`from_values`, and copies are `from_<type>` (`Matrix3f::from_matrix4f`).
 - Overloads taking components instead of a vector get `_xyz` (`add_xyz`), a scalar `_scalar`, an axis and angle `_axis`/`_axis_xyz` (`rotate_axis(angle, &axis)`), another type its name (`mul_matrix3f`).

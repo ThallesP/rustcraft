@@ -7,12 +7,16 @@
 //! argument instead of `this` gets `_into` (`invert_into(dest)`); its fluent overload, which
 //! passes `this`, keeps the name and returns `&mut Self`.
 
+pub mod frustum_intersection;
 pub mod math;
 pub mod matrix3f;
+pub mod matrix3x2f;
+pub mod matrix3x2f_stack;
 pub mod matrix4f;
 pub mod matrix4f_stack;
 pub mod matrix4fc;
 pub mod quaternionf;
 pub mod rounding_mode;
+pub mod vector2f;
 pub mod vector3f;
 pub mod vector4f;

@@ -11,10 +11,13 @@ import java.util.Random;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.levelgen.RandomSupport;
+import org.joml.FrustumIntersection;
 import org.joml.Matrix3f;
+import org.joml.Matrix3x2f;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Quaternionf;
+import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 
@@ -142,7 +145,8 @@ public final class Golden {
             "transformDirection(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "transform(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;", "transform(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
             "transformTranspose(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
-            "transformTranspose(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;"
+            "transformTranspose(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
+            "mul(Lorg/joml/Matrix3x2fc;)Lorg/joml/Matrix4f;", "mul(Lorg/joml/Matrix3x2fc;Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;"
         ),
         new InstanceSuite(
             Vector4f.class,
@@ -156,6 +160,32 @@ public final class Golden {
             "lerp(Lorg/joml/Vector4fc;F)Lorg/joml/Vector4f;", "lerp(Lorg/joml/Vector4fc;FLorg/joml/Vector4f;)Lorg/joml/Vector4f;"
         ),
         new Matrix4fStackSuite(),
+        new InstanceSuite(
+            Vector2f.class,
+            "<init>()V", "<init>(FF)V", "set(FF)Lorg/joml/Vector2f;", "zero()Lorg/joml/Vector2f;",
+            "add(FF)Lorg/joml/Vector2f;", "add(FFLorg/joml/Vector2f;)Lorg/joml/Vector2f;",
+            "mul(FF)Lorg/joml/Vector2f;", "mul(FFLorg/joml/Vector2f;)Lorg/joml/Vector2f;"
+        ),
+        new InstanceSuite(
+            Matrix3x2f.class,
+            "<init>()V", "<init>(Lorg/joml/Matrix3x2fc;)V", "set(Lorg/joml/Matrix3x2fc;)Lorg/joml/Matrix3x2f;",
+            "translate(FF)Lorg/joml/Matrix3x2f;", "translate(FFLorg/joml/Matrix3x2f;)Lorg/joml/Matrix3x2f;",
+            "scale(FF)Lorg/joml/Matrix3x2f;", "scale(FFLorg/joml/Matrix3x2f;)Lorg/joml/Matrix3x2f;",
+            "scale(F)Lorg/joml/Matrix3x2f;", "scale(FLorg/joml/Matrix3x2f;)Lorg/joml/Matrix3x2f;",
+            "rotate(F)Lorg/joml/Matrix3x2f;", "rotate(FLorg/joml/Matrix3x2f;)Lorg/joml/Matrix3x2f;",
+            "invert(Lorg/joml/Matrix3x2f;)Lorg/joml/Matrix3x2f;",
+            "transformPosition(Lorg/joml/Vector2f;)Lorg/joml/Vector2f;",
+            "transformPosition(FFLorg/joml/Vector2f;)Lorg/joml/Vector2f;"
+        ),
+        new Matrix3x2fStackSuite(),
+        new InstanceSuite(
+            FrustumIntersection.class,
+            "<init>()V", "set(Lorg/joml/Matrix4fc;)Lorg/joml/FrustumIntersection;",
+            "set(Lorg/joml/Matrix4fc;Z)Lorg/joml/FrustumIntersection;", "intersectAab(FFFFFF)I", "testPoint(FFF)Z"
+        )
+            .withFields()
+            .extraInputs("intersectAab(FFFFFF)I", frustumBoxes())
+            .extraInputs("testPoint(FFF)Z", frustumPoints()),
         new InstanceSuite(
             Axis.class,
             "rotation(F)Lorg/joml/Quaternionf;", "rotationDegrees(F)Lorg/joml/Quaternionf;",
@@ -279,6 +309,191 @@ public final class Golden {
             inputs.add(new Object[]{radius * Math.sin(angle), radius * Math.cos(angle)});
         }
         return inputs;
+    }
+
+    // Boxes like the game culls, relative to a camera anywhere in the world: chunk sections around it, entity-sized
+    // boxes near it, the cubes offsetToFullyIncludeCameraCube(8) tests (the camera's 8-block cube, stepped back along
+    // the view), single points, boxes of any size (inverted ones included), and boxes with a corner on a plane. Then
+    // every frustum edge with a box in front of an unrotated camera that has each float edge in each coordinate.
+    private static List<Object[]> frustumBoxes() {
+        Random random = new Random(8);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 8000; i++) {
+            FrustumIntersection frustum = (FrustumIntersection)JomlValues.FRUSTUM_INTERSECTION.random(random);
+            if (i % 8 >= 5) {
+                inputs.add(boxOnPlane(frustum, random));
+                continue;
+            }
+            double camX = (random.nextDouble() * 2.0 - 1.0) * 1000.0;
+            double camY = -64.0 + random.nextDouble() * 384.0;
+            double camZ = (random.nextDouble() * 2.0 - 1.0) * 1000.0;
+            double[] box = switch (i % 8) {
+                case 0 -> {
+                    double x = (Math.floor(camX / 16.0) + random.nextInt(25) - 12) * 16.0;
+                    double y = (Math.floor(camY / 16.0) + random.nextInt(9) - 4) * 16.0;
+                    double z = (Math.floor(camZ / 16.0) + random.nextInt(25) - 12) * 16.0;
+                    yield new double[]{x, y, z, x + 16.0, y + 16.0, z + 16.0};
+                }
+                case 1 -> {
+                    double x = camX + (random.nextDouble() * 2.0 - 1.0) * 48.0;
+                    double y = camY + (random.nextDouble() * 2.0 - 1.0) * 24.0;
+                    double z = camZ + (random.nextDouble() * 2.0 - 1.0) * 48.0;
+                    double width = random.nextBoolean() ? 0.6 : random.nextDouble() * 4.0;
+                    double height = random.nextBoolean() ? 1.8 : random.nextDouble() * 4.0;
+                    yield new double[]{x - width / 2.0, y, z - width / 2.0, x + width / 2.0, y + height, z + width / 2.0};
+                }
+                case 2 -> {
+                    double step = random.nextInt(8) * 4.0;
+                    double x = camX - (random.nextDouble() * 2.0 - 1.0) * step;
+                    double y = camY - (random.nextDouble() * 2.0 - 1.0) * step;
+                    double z = camZ - (random.nextDouble() * 2.0 - 1.0) * step;
+                    yield new double[]{
+                        Math.floor(x / 8.0) * 8.0, Math.floor(y / 8.0) * 8.0, Math.floor(z / 8.0) * 8.0,
+                        Math.ceil(x / 8.0) * 8.0, Math.ceil(y / 8.0) * 8.0, Math.ceil(z / 8.0) * 8.0
+                    };
+                }
+                case 3 -> {
+                    // Half of them around the near plane, which is 0.05 away.
+                    double range = random.nextBoolean() ? 300.0 : 0.1;
+                    double x = camX + (random.nextDouble() * 2.0 - 1.0) * range;
+                    double y = camY + (random.nextDouble() * 2.0 - 1.0) * range;
+                    double z = camZ + (random.nextDouble() * 2.0 - 1.0) * range;
+                    yield new double[]{x, y, z, x, y, z};
+                }
+                default -> {
+                    double[] corners = new double[6];
+                    for (int axis = 0; axis < 3; axis++) {
+                        double cam = axis == 0 ? camX : axis == 1 ? camY : camZ;
+                        double min = cam + (random.nextDouble() * 2.0 - 1.0) * 512.0;
+                        corners[axis] = min;
+                        corners[axis + 3] = min + (random.nextInt(8) == 0 ? -1.0 : 1.0) * random.nextDouble() * 256.0;
+                    }
+                    yield corners;
+                }
+            };
+            inputs.add(new Object[]{
+                frustum, (float)(box[0] - camX), (float)(box[1] - camY), (float)(box[2] - camZ),
+                (float)(box[3] - camX), (float)(box[4] - camY), (float)(box[5] - camZ)
+            });
+        }
+
+        float[] inFront = {-1.0F, -1.0F, -11.0F, 1.0F, 1.0F, -9.0F};
+        for (Object frustum : JomlValues.FRUSTUM_INTERSECTION.edges()) {
+            for (int coordinate = 0; coordinate < 6; coordinate++) {
+                for (Object edge : Values.FLOATS.edges()) {
+                    Object[] input = {frustum, inFront[0], inFront[1], inFront[2], inFront[3], inFront[4], inFront[5]};
+                    input[1 + coordinate] = edge;
+                    inputs.add(input);
+                }
+            }
+        }
+        return inputs;
+    }
+
+    // A box of up to 16 blocks a side with its corner furthest along a plane's normal, or nearest, on the plane: which
+    // side that corner rounds to depends on the order the plane's terms are added in.
+    private static Object[] boxOnPlane(final FrustumIntersection frustum, final Random random) {
+        int plane = random.nextInt(6);
+        float[] normal = JomlValues.frustumPlane(frustum, plane);
+        float[] corner = pointOnPlane(frustum, plane, random, 256.0);
+        boolean furthest = random.nextBoolean();
+        Object[] input = new Object[7];
+        input[0] = frustum;
+        for (int axis = 0; axis < 3; axis++) {
+            float size = random.nextInt(4) == 0 ? 0.0F : random.nextFloat() * 16.0F;
+            // The furthest corner takes the min where the normal is negative, the nearest one the max.
+            boolean cornerIsMin = (normal[axis] < 0.0F) == furthest;
+            input[1 + axis] = cornerIsMin ? corner[axis] : corner[axis] - size;
+            input[4 + axis] = cornerIsMin ? corner[axis] + size : corner[axis];
+        }
+        return input;
+    }
+
+    // Points relative to the camera, near it and far, like Frustum.pointInFrustum's, and twice as many on a plane.
+    private static List<Object[]> frustumPoints() {
+        Random random = new Random(9);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 6000; i++) {
+            FrustumIntersection frustum = (FrustumIntersection)JomlValues.FRUSTUM_INTERSECTION.random(random);
+            if (i % 3 != 0) {
+                float[] point = pointOnPlane(frustum, random.nextInt(6), random, random.nextBoolean() ? 4.0 : 256.0);
+                inputs.add(new Object[]{frustum, point[0], point[1], point[2]});
+                continue;
+            }
+            double range = i % 2 == 0 ? 4.0 : 512.0;
+            inputs.add(new Object[]{
+                frustum, (float)((random.nextDouble() * 2.0 - 1.0) * range), (float)((random.nextDouble() * 2.0 - 1.0) * range),
+                (float)((random.nextDouble() * 2.0 - 1.0) * range)
+            });
+        }
+        return inputs;
+    }
+
+    // A point on one of the frustum's planes, as near as floats get, then moved up to two ulps along the axis the plane
+    // depends on most, so which side of the plane it's on depends on the order the plane's terms are added in. It's
+    // also at a random distance inside one plane of each other pair, so it's often on the frustum's face, where the
+    // other planes let it through. Planes that don't pin down a point get the other two coordinates within the range.
+    private static float[] pointOnPlane(final FrustumIntersection frustum, final int index, final Random random, final double range) {
+        float[] plane = JomlValues.frustumPlane(frustum, index);
+        int second = 2 * ((index / 2 + 1) % 3) + random.nextInt(2);
+        int third = 2 * ((index / 2 + 2) % 3) + random.nextInt(2);
+        double scale = switch (random.nextInt(3)) {
+            case 0 -> 0.01;
+            case 1 -> 1.0;
+            default -> range;
+        };
+        double[] point = solvePlanes(
+            plane, JomlValues.frustumPlane(frustum, second), JomlValues.frustumPlane(frustum, third),
+            random.nextDouble() * scale, random.nextDouble() * scale
+        );
+        int axis = 0;
+        for (int i = 1; i < 3; i++) {
+            if (Math.abs(plane[i]) > Math.abs(plane[axis])) {
+                axis = i;
+            }
+        }
+        if (point == null) {
+            point = new double[3];
+            double sum = plane[3];
+            for (int i = 0; i < 3; i++) {
+                if (i != axis) {
+                    point[i] = (float)((random.nextDouble() * 2.0 - 1.0) * range);
+                    sum += plane[i] * point[i];
+                }
+            }
+            point[axis] = -sum / plane[axis];
+        }
+        float[] rounded = {(float)point[0], (float)point[1], (float)point[2]};
+        for (int ulps = random.nextInt(5) - 2; ulps != 0; ulps -= Integer.signum(ulps)) {
+            rounded[axis] = ulps > 0 ? Math.nextUp(rounded[axis]) : Math.nextDown(rounded[axis]);
+        }
+        return rounded;
+    }
+
+    // The point at distance 0 from plane a, b from plane b and c from plane c (planes are [x, y, z, w], and a point's
+    // distance is x * px + y * py + z * pz + w), by Cramer's rule, or null when the planes don't meet in one point.
+    private static double[] solvePlanes(final float[] a, final float[] b, final float[] c, final double distanceB, final double distanceC) {
+        double[][] rows = {{a[0], a[1], a[2]}, {b[0], b[1], b[2]}, {c[0], c[1], c[2]}};
+        double[] rhs = {-a[3], distanceB - b[3], distanceC - c[3]};
+        double determinant = determinant(rows);
+        if (!Double.isFinite(determinant) || Math.abs(determinant) < 1.0E-6) {
+            return null;
+        }
+        double[] point = new double[3];
+        for (int axis = 0; axis < 3; axis++) {
+            double[][] replaced = {rows[0].clone(), rows[1].clone(), rows[2].clone()};
+            for (int row = 0; row < 3; row++) {
+                replaced[row][axis] = rhs[row];
+            }
+            point[axis] = determinant(replaced) / determinant;
+        }
+        return Double.isFinite(point[0]) && Double.isFinite(point[1]) && Double.isFinite(point[2]) ? point : null;
+    }
+
+    private static double determinant(final double[][] m) {
+        return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
     }
 
     private static double sign(final Random random) {
