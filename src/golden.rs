@@ -151,6 +151,27 @@ impl<T: Encode, const N: usize> Encode for [T; N] {
     }
 }
 
+/// A null, for arguments a method lets be null (`Transformation`'s parts) and results it can
+/// return null for (`Transformation.inverse`).
+impl<T: Decode> Decode for Option<T> {
+    fn decode(value: &Value) -> Self {
+        (!value.is_null()).then(|| T::decode(value))
+    }
+}
+
+impl<T: Encode> Encode for Option<T> {
+    fn encode(&self) -> Value {
+        self.as_ref().map_or(Value::Null, Encode::encode)
+    }
+
+    fn matches(&self, expected: &Value) -> bool {
+        match self {
+            Some(value) => value.matches(expected),
+            None => expected.is_null(),
+        }
+    }
+}
+
 /// What a method returning `void` returns.
 impl Encode for () {
     fn encode(&self) -> Value {
@@ -288,6 +309,15 @@ pub trait CallMethod<This, Args> {
     fn call(&self, this: &mut This, args: &[Value]) -> Box<dyn Encode>;
 }
 
+/// A function that may write to any of its arguments, which it takes as `&mut`, e.g.
+/// `MatrixUtil::svd_decompose` writing the parts of its matrix into four of them.
+pub trait CallMut<Args> {
+    fn call(&self, args: &[Value]) -> Outcome;
+}
+
+/// What a call returned, or its panic, and what it can see of its arguments afterwards.
+pub type Outcome = (Result<Box<dyn Encode>, String>, Vec<Box<dyn Encode>>);
+
 /// A function taking a `RandomSource` first. Vanilla passes a `LegacyRandomSource` seeded with
 /// the first arg and records its next `nextLong()` after the call, which must match too.
 pub trait CallWithRandom<Args> {
@@ -323,6 +353,24 @@ macro_rules! calls {
                     panic!("expected {} arguments, got {}", names.len(), args.len());
                 };
                 Box::new(self(this, $($type::decode($value)),*))
+            }
+        }
+
+        impl<Function, Return, $($type),*> CallMut<($($type,)*)> for Function
+        where
+            Function: Fn($(&mut $type),*) -> Return,
+            Return: Encode + 'static,
+            $($type: Decode + Encode + 'static,)*
+        {
+            #[allow(unused_mut)]
+            fn call(&self, args: &[Value]) -> Outcome {
+                let [$($value),*] = args else {
+                    let names: &[&str] = &[$(stringify!($value)),*];
+                    panic!("expected {} arguments, got {}", names.len(), args.len());
+                };
+                $(let mut $value = $type::decode($value);)*
+                let outcome = catch(|| Box::new(self($(&mut $value),*)) as Box<dyn Encode>);
+                (outcome, vec![$(Box::new($value) as Box<dyn Encode>),*])
             }
         }
 
@@ -493,6 +541,14 @@ impl Golden {
         });
     }
 
+    /// Checks a function that may write to any of its arguments: each must end up in vanilla's
+    /// state afterwards, or as it was where vanilla left its slot empty. Fits a static method
+    /// with out-arguments (`MatrixUtil.svdDecompose`), or an instance method that also changes
+    /// an argument (`Transformation.slerp` decomposes the other transformation).
+    pub fn check_mut<Args>(&self, method: &str, function: impl CallMut<Args>) {
+        self.check_cases(method, |case| function.call(&case.args));
+    }
+
     /// Accounts for a method or constant that isn't verified yet, with the reason.
     pub fn pending(&self, name: &str, reason: &str) {
         if self.entry(name).is_none() {
@@ -537,11 +593,7 @@ impl Golden {
 
     /// `run` returns the outcome and what it can see of the arguments afterwards, from the first
     /// on, to compare with vanilla's `after`. Vanilla recording more than that fails the case.
-    fn check_cases(
-        &self,
-        method: &str,
-        mut run: impl FnMut(&Case) -> (Result<Box<dyn Encode>, String>, Vec<Box<dyn Encode>>),
-    ) {
+    fn check_cases(&self, method: &str, mut run: impl FnMut(&Case) -> Outcome) {
         let cases = match self.entry(method) {
             Some(Entry::Cases(cases)) => cases,
             Some(Entry::Skipped(reason)) => {

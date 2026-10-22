@@ -24,7 +24,8 @@ import java.util.Set;
  * Covers chosen constructors and instance methods of a value class by reflection. Each case calls one method on a
  * fresh receiver, which is {@code args[0]}; {@code after[0]} is the receiver's state after the call, and the other
  * slots hold any argument the method wrote to, unless it's the returned object. Constructors are {@code <init>}
- * cases whose result is the new object.
+ * cases whose result is the new object. Static methods listed with them (a record's factories) get cases like a
+ * StaticSuite's, without a receiver.
  */
 final class InstanceSuite implements Suite {
     private static final int RANDOM_CASES = 500;
@@ -40,7 +41,7 @@ final class InstanceSuite implements Suite {
         this.only = new LinkedHashSet<>(Arrays.asList(members));
     }
 
-    /** More cases for a member, each a receiver spec followed by the arguments' specs. */
+    /** More cases for a member, each the receiver's spec (none for a constructor or static method) followed by the arguments'. */
     InstanceSuite extraInputs(final String member, final List<Object[]> inputs) {
         this.extraInputs.put(member, inputs);
         return this;
@@ -83,7 +84,7 @@ final class InstanceSuite implements Suite {
     private List<Executable> members() {
         List<Executable> members = new ArrayList<>(Arrays.asList(this.type.getConstructors()));
         Arrays.stream(this.type.getDeclaredMethods())
-            .filter(method -> Modifier.isPublic(method.getModifiers()) && !Modifier.isStatic(method.getModifiers()))
+            .filter(method -> Modifier.isPublic(method.getModifiers()))
             .filter(method -> !method.isSynthetic() && !method.isBridge())
             .forEach(members::add);
         members.sort(Comparator.comparing(InstanceSuite::descriptor));
@@ -96,14 +97,17 @@ final class InstanceSuite implements Suite {
 
     private void writeCases(final GoldenWriter writer, final Executable member, final String descriptor) throws IOException {
         boolean constructor = member instanceof Constructor<?>;
+        boolean receiver = !constructor && !Modifier.isStatic(member.getModifiers());
         List<Class<?>> types = new ArrayList<>();
-        if (!constructor) {
+        if (receiver) {
             types.add(this.type);
         }
         types.addAll(Arrays.asList(member.getParameterTypes()));
         Values.Generator[] generators = new Values.Generator[types.size()];
         for (int i = 0; i < generators.length; i++) {
-            generators[i] = Values.generator(types.get(i));
+            // equals(Object) compares with another object of the same class.
+            Class<?> type = types.get(i) == Object.class ? this.type : types.get(i);
+            generators[i] = Values.generator(type);
             if (generators[i] == null) {
                 throw new IllegalStateException(descriptor + ": no generator for " + types.get(i).getName());
             }
@@ -132,13 +136,18 @@ final class InstanceSuite implements Suite {
 
             Watchdog.begin(this.type.getName() + "." + descriptor + " " + args);
             try {
-                Object result = constructor
-                    ? ((Constructor<?>)member).newInstance(instances)
-                    : ((Method)member).invoke(instances[0], Arrays.copyOfRange(instances, 1, instances.length));
+                Object result;
+                if (constructor) {
+                    result = ((Constructor<?>)member).newInstance(instances);
+                } else if (receiver) {
+                    result = ((Method)member).invoke(instances[0], Arrays.copyOfRange(instances, 1, instances.length));
+                } else {
+                    result = ((Method)member).invoke(null, instances);
+                }
                 JsonElement encoded = returnType == void.class ? JsonNull.INSTANCE : Values.encode(result, returnType);
-                writer.result(descriptor, args, encoded, this.after(constructor, generators, spec, instances, result));
+                writer.result(descriptor, args, encoded, this.after(receiver, generators, spec, instances, result));
             } catch (InvocationTargetException e) {
-                writer.threw(descriptor, args, e.getCause(), this.after(constructor, generators, spec, instances, null));
+                writer.threw(descriptor, args, e.getCause(), this.after(receiver, generators, spec, instances, null));
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(e);
             } finally {
@@ -149,10 +158,10 @@ final class InstanceSuite implements Suite {
 
     // The receiver's state is always recorded, even when it's also the result.
     private JsonArray after(
-        final boolean constructor, final Values.Generator[] generators, final Object[] specs, final Object[] instances, final Object result
+        final boolean receiver, final Values.Generator[] generators, final Object[] specs, final Object[] instances, final Object result
     ) {
         JsonArray after = StaticSuite.after(generators, specs, instances, result);
-        if (constructor) {
+        if (!receiver) {
             return after;
         }
         if (after == null) {

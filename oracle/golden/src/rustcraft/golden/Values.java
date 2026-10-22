@@ -46,7 +46,7 @@ final class Values {
     }
 
     // Random draws pick an edge one time in eight, so edges also meet random partners.
-    private record Simple(List<Object> edges, Function<Random, Object> fresh, Function<Object, JsonElement> encoder) implements Generator {
+    record Simple(List<Object> edges, Function<Random, Object> fresh, Function<Object, JsonElement> encoder) implements Generator {
         @Override
         public Object random(final Random random) {
             return random.nextInt(8) == 0 ? this.edges.get(random.nextInt(this.edges.size())) : this.fresh.apply(random);
@@ -219,7 +219,10 @@ final class Values {
 
     static Generator generator(final Class<?> type) {
         Generator generator = GENERATORS.get(type);
-        return generator != null ? generator : JomlValues.generator(type);
+        if (generator == null) {
+            generator = JomlValues.generator(type);
+        }
+        return generator != null ? generator : MathValues.generator(type);
     }
 
     static boolean canEncode(final Class<?> type) {
@@ -229,7 +232,7 @@ final class Values {
         if (type.isPrimitive() || BOXES.contains(type) || type == String.class || type == UUID.class || type == IntStream.class) {
             return true;
         }
-        if (JomlValues.canEncode(type)) {
+        if (JomlValues.canEncode(type) || MathValues.canEncode(type)) {
             return true;
         }
         if (type.isArray()) {
@@ -300,6 +303,9 @@ final class Values {
         }
         if (JomlValues.canEncode(type)) {
             return JomlValues.encode(value);
+        }
+        if (MathValues.canEncode(type)) {
+            return MathValues.encode(value);
         }
         throw new IllegalArgumentException("no encoder for " + type.getName());
     }

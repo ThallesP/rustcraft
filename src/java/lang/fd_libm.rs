@@ -53,6 +53,16 @@ fn hi(x: f64) -> i32 {
     (x.to_bits() >> 32) as i32
 }
 
+// __HI(x, high): x with its high-order 32 bits replaced.
+fn with_hi(x: f64, high: i32) -> f64 {
+    f64::from_bits((x.to_bits() & 0x0000_0000_FFFF_FFFF) | (u64::from(high as u32) << 32))
+}
+
+// Math.powerOfTwoD(n): 2^n for a normal exponent n.
+fn power_of_two_d(n: i32) -> f64 {
+    f64::from_bits(((i64::from(n) + 1023) << 52) as u64 & 0x7FF0_0000_0000_0000)
+}
+
 // Hex float literals, as bits since Rust has none.
 const PIO2_HI: f64 = f64::from_bits(0x3ff921fb54442d18); // 0x1.921fb54442d18p0
 const PIO2_LO: f64 = f64::from_bits(0x3c91a62633145c07); // 0x1.1a62633145c07p-54
@@ -359,5 +369,92 @@ impl Atan2 {
             2 => PI - (z - PI_LO), // atan(+, -)
             _ => (z - PI_LO) - PI, // atan(-, -), case 3
         }
+    }
+}
+
+pub struct Hypot;
+
+const TWO_MINUS_600: f64 = f64::from_bits(0x1a70000000000000); // 0x1.0p-600
+const TWO_PLUS_600: f64 = f64::from_bits(0x6570000000000000); // 0x1.0p+600
+const ABOUT_TWO_PLUS_500: f64 = f64::from_bits(0x5f300000ffffffff); // 0x1.00000_ffff_ffffp500
+const TWO_MINUS_500: f64 = f64::from_bits(0x20b0000000000000); // 0x1.0p-500
+const TWO_PLUS_1022: f64 = f64::from_bits(0x7fd0000000000000); // 0x1.0p1022
+
+impl Hypot {
+    /// sqrt(x*x + y*y) to within an ulp, without overflowing or underflowing in between: the
+    /// high word of each operand stands in for its magnitude, and splits it in two halves whose
+    /// products are exact.
+    pub fn compute(x: f64, y: f64) -> f64 {
+        let mut a = x.abs();
+        let mut b = y.abs();
+
+        if !a.is_finite() || !b.is_finite() {
+            if a == f64::INFINITY || b == f64::INFINITY {
+                return f64::INFINITY;
+            } else {
+                return a + b; // Propagate NaN significand bits
+            }
+        }
+
+        if b > a {
+            std::mem::swap(&mut a, &mut b);
+        }
+
+        let mut ha = hi(a); // high word of a
+        let mut hb = hi(b); // high word of b
+
+        if ha.wrapping_sub(hb) > 0x3c00000 {
+            return a + b; // x / y > 2**60
+        }
+
+        let mut k = 0;
+        if a > ABOUT_TWO_PLUS_500 {
+            // a > ~2**500: scale a and b by 2**-600
+            ha = ha.wrapping_sub(0x25800000);
+            hb = hb.wrapping_sub(0x25800000);
+            a *= TWO_MINUS_600;
+            b *= TWO_MINUS_600;
+            k += 600;
+        }
+        let mut t1: f64;
+        let t2: f64;
+        if b < TWO_MINUS_500 {
+            // b < 2**-500
+            if b < f64::MIN_POSITIVE {
+                // subnormal b or 0
+                if b == 0.0 {
+                    return a;
+                }
+                t1 = TWO_PLUS_1022; // t1 = 2^1022
+                b *= t1;
+                a *= t1;
+                k -= 1022;
+            } else {
+                // scale a and b by 2^600
+                ha = ha.wrapping_add(0x25800000); // a *= 2^600
+                hb = hb.wrapping_add(0x25800000); // b *= 2^600
+                a *= TWO_PLUS_600;
+                b *= TWO_PLUS_600;
+                k -= 600;
+            }
+        }
+        // medium size a and b
+        let mut w = a - b;
+        if w > b {
+            t1 = 0.0;
+            t1 = with_hi(t1, ha);
+            t2 = a - t1;
+            w = (t1 * t1 - (b * (-b) - t2 * (a + t1))).sqrt();
+        } else {
+            a += a;
+            let mut y1 = 0.0;
+            y1 = with_hi(y1, hb);
+            let y2 = b - y1;
+            t1 = 0.0;
+            t1 = with_hi(t1, ha.wrapping_add(0x00100000));
+            t2 = a - t1;
+            w = (t1 * y1 - (w * (-w) - (t1 * y2 + t2 * b))).sqrt();
+        }
+        if k != 0 { power_of_two_d(k) * w } else { w }
     }
 }

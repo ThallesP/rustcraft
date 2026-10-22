@@ -4,12 +4,9 @@ The loop's memory: newest entries first. Each step adds an entry and rewrites "N
 
 ## Next
 
-Milestone 1, JOML, part 4: `Transformation`, the last of the client's math that doesn't need milestone 2's types. Block models build `BlockModelRotation`'s transformation with it, and `PoseStack.mulPose(Transformation)` (pending in its suite) takes one.
-- `GivensParameters`, a record (its static and instance methods, with a generator for it).
-- `MatrixUtil.eigenvalueJacobi` and `svdDecompose`. They return void, which the static suite skips, so they need a hand-written suite recording their out-arguments. `svdDecompose` calls `java.lang.Math.hypot`, which has no HotSpot stub, so port fdlibm's `Hypot` into `fd_libm.rs` and check it in the `java.lang.Math` suite. It also needs `Matrix3f.scale(F)` and `Matrix4f.getTranslation`.
-- `Transformation`: its constructors, `compose`, `inverse` (`Matrix4f.invertAffine` and `isFinite`), the decomposition getters (decomposed lazily, on first use), `slerp` (`Quaternionf.slerp`, `Vector3f.lerp` with a `dest`) and the static `compose(Matrix4fc, Optional)`, with `Matrix4f.translation(Vector3fc)` and `scale(Vector3fc)`. Its codecs wait for DFU.
+Milestone 2, part 1: the core value types, `Vec3`, `Vec3i`, `BlockPos`, `Direction` (with `Direction.Axis` and `AxisDirection`), `AABB` and `Identifier`, each with an `InstanceSuite` and generators like the game's values (block positions near the walk scenario's, entity boxes, unit directions). Run the bytecode scan (PORTING.md) first to list the methods the client calls on them. `Direction` needs JOML's `Vector3i` and `Quaternionf.rotateX/Y/Z` (`getRotation`), and `Vec3` needs `Vector3f`.
 
-Then milestone 2's core types, and Minecraft's `Frustum` (it needs `AABB` and `BoundingBox`) on top of `FrustumIntersection`. Run the bytecode scan (PORTING.md) again then: the client's other JOML calls (`Quaternionf.rotateX/Y/Z`, `Vector3f.rotateX/Y`, `Vector3d`, `Vector3i`, `Vector2i`, `Matrix4f.rotateYXZ`, `ortho2D`…) get ported with the classes that call them, and the `get(ByteBuffer)` calls with the renderer.
+Then Minecraft's `Frustum` on top of `FrustumIntersection` (it needs `AABB` and `BoundingBox`), `PoseStack.translate(Vec3)`, and `BlockMath` (`Quaternionf.rotateX/Y`, `Direction.getApproximateNearest`), which `BlockModelRotation` builds its face transformations with. When block models and render states come, settle how they hold shared `Transformation`s: Java's `mulPose(Transformation)` and `BlockMath.getFaceTransformation` add properties to a shared transformation's own matrix (static ones like `TheEndPortalRenderer.TRANSFORMATION` included), so every holder sees them, and that changes which shortcuts later JOML calls take.
 
 `ProjectionType.applyLayeringTransform` and `VertexSorting` come with the renderer. `log10` (one call site, `Options`) and `cbrt` (one, `ClientExplosionTracker`) are small HotSpot stubs; port them when those classes come. The client never calls `Math.exp`. ARGB's `Vector3f` and `Vector4f` methods have golden cases (its `pending_rest` covers them) and can be ported whenever ARGB is next touched.
 
@@ -18,6 +15,30 @@ Then milestone 2's core types, and Minecraft's `Frustum` (it needs `AABB` and `B
 - **Licence of the code translated from OpenJDK and JOML.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22: Transformation, GivensParameters, MatrixUtil's decompositions and fdlibm's hypot
+
+- Ported and checked against vanilla, which finishes the client's math that doesn't need milestone 2's types:
+  - `GivensParameters`, a record: its constructor, both factories, accessors, `inverse`, `cos`, `sin` and the six `around*` (11,277 cases). Records' `equals`, `hashCode` and `toString` aren't ported: nothing calls them.
+  - `MatrixUtil.eigenvalueJacobi` (2,962 cases) and `svdDecompose` (3,585), with their private helpers and the `G` and `PI_4` constants. Java names four matrices in the SVD but they're two objects that the steps overwrite in turn; the port follows the objects. Its zero-column checks compare as doubles (the bytecode widens them).
+  - `Transformation`: both constructors, `compose`, `inverse`, `getMatrix`, `getMatrixCopy`, the four decomposition getters, `equals`, `hashCode`, `slerp`, the static `compose(Matrix4fc, Optional)` and `IDENTITY` (11,088 cases). The codecs wait for DataFixerUpper. The decomposition is a `OnceLock`, so its getters take `&self`. `IDENTITY` carries a flag its clones keep, since the game compares with it by reference (`FaceBakery`, and `inverse` returns it as it is).
+  - `PoseStack.mulPose(Transformation)`. Java hands `mulPose` the transformation's own matrix, and `MatrixUtil.checkProperty` adds properties to it, so the port takes `&mut Transformation` and goes through `get_matrix_mut()` (PORTING.md). 256 more programs (768) multiply by transformations: 1,536 such steps, 16 of which add properties to the transformation's matrix.
+  - fdlibm's `Hypot` in `fd_libm.rs`, as `Math.hypot` (8,253 cases: every edge pair, 6,000 spread over its paths, and its thresholds). std's `f64::hypot` (glibc's) gets 249 of them wrong.
+  - JOML: `Matrix3f.scale(F)`; `Matrix4f.invertAffine` (both overloads), `isFinite`, `translation(Vector3fc)`, `scale(Vector3fc)`, `getTranslation`, `equals` (as `PartialEq`, comparing `floatToIntBits` and not the properties) and `hashCode`; `Quaternionf.slerp` into a `dest`; `Vector3f.lerp` into a `dest` (11,734 cases between them). The client calls each of them, or `Transformation` does (`equals` and `hashCode`, through `Objects`).
+- Golden harness:
+  - `StaticSuite` covers `void` methods: the result is null, and `after` shows what they wrote. On the Rust side, `golden.check_mut` takes a function with every argument as `&mut` and compares all of them afterwards.
+  - `InstanceSuite` takes static members too (a record's factories), and `equals(Object)` gets another object of the same class.
+  - New `MathValues`: `GivensParameters`, `Transformation` (made the ways the game makes them: block entities', block model rotations, entities' parts, their matrices, any JOML matrix, and decomposed ones) and `Optional<Transformation>`. JOML's generator (`Joml`, now `Mutable`) passes a null spec as null, and `golden.rs` decodes null as `None`.
+- Mutations (41, run once and not committed): 34 fail the goldens. The other 7 are equivalent, or hidden where the game rounds:
+  - `hypot`'s scaling thresholds moved inside their safety margins (3), and its early return moved from a ratio of 2^60 to 2^61, where the full computation rounds to the same answer;
+  - swapping the two terms of a commutative addition in `slerp`;
+  - comparing the SVD's zero columns as floats, which differs on one float value only;
+  - `hypot`'s `w > b` as `w >= b`, which agrees on all 500 inputs with a = 2b exactly, where the two formulas add the same exactly split terms;
+  - glibc's `hypot` in `qrGivensQuat`, whose result is rounded to a float.
+
+  2 survived the first version of the inputs: `G` one ulp off and `w >= b`. That led to the matrices on `approxGivensQuat`'s quarter-turn boundary, after which `G` one ulp lower fails 40 cases (one ulp higher gives the same float `G`), and to the a = 2b pairs.
+- With NaNs normalized, every line of the other golden files is identical to before. The changed files only gained the new members, and `PoseStack` its 256 programs after the old 512.
+- Evidence: `cargo test --workspace` passes 58 tests, including 24 golden suites (56 and 22 before). fmt, clippy and the port check are clean.
 
 ### 2026-10-22: Matrix3x2f, Matrix3x2fStack, Vector2f and FrustumIntersection
 

@@ -2,6 +2,7 @@ package rustcraft.golden;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonPrimitive;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -38,7 +39,7 @@ final class JomlValues {
     private static final List<Field> FRUSTUM_PLANE_FIELDS = frustumFields();
     private static final Field FRUSTUM_PLANES = frustumField("planes");
 
-    static final Values.Generator VECTOR2F = new Joml<>(
+    static final Values.Generator VECTOR2F = new Mutable<>(
         List.of(
             new Vector2f(), new Vector2f(1.0F, 0.0F), new Vector2f(0.0F, 1.0F), new Vector2f(-1.0F, 0.0F), new Vector2f(-0.0F, -0.0F),
             new Vector2f(1.0F, 2.0F), new Vector2f(0.5F, -60.0F), new Vector2f(427.0F, 240.0F), new Vector2f(1.0E-20F, -1.0E-20F),
@@ -50,7 +51,7 @@ final class JomlValues {
         vector -> floats(vector.x(), vector.y())
     );
 
-    static final Values.Generator VECTOR3F = new Joml<>(
+    static final Values.Generator VECTOR3F = new Mutable<>(
         List.of(
             new Vector3f(), new Vector3f(1.0F, 0.0F, 0.0F), new Vector3f(0.0F, 1.0F, 0.0F), new Vector3f(0.0F, 0.0F, 1.0F),
             new Vector3f(-1.0F, 0.0F, 0.0F), new Vector3f(0.0F, 0.0F, -1.0F), new Vector3f(-0.0F, -0.0F, -0.0F),
@@ -63,7 +64,7 @@ final class JomlValues {
         vector -> floats(vector.x(), vector.y(), vector.z())
     );
 
-    static final Values.Generator VECTOR4F = new Joml<>(
+    static final Values.Generator VECTOR4F = new Mutable<>(
         List.of(
             new Vector4f(), new Vector4f(0.0F), new Vector4f(1.0F, 1.0F, 1.0F, 1.0F), new Vector4f(0.0F, 0.0F, 1.0F, 0.0F),
             new Vector4f(-1.0F, -1.0F, -1.0F, 1.0F), new Vector4f(1.0F, 1.0F, 1.0F, -1.0F), new Vector4f(0.5F, 0.25F, 1.0F, 0.5F),
@@ -77,7 +78,7 @@ final class JomlValues {
         vector -> floats(vector.x(), vector.y(), vector.z(), vector.w())
     );
 
-    static final Values.Generator QUATERNIONF = new Joml<>(
+    static final Values.Generator QUATERNIONF = new Mutable<>(
         List.of(
             new Quaternionf(), new Quaternionf(1.0F, 0.0F, 0.0F, 0.0F), new Quaternionf(0.0F, 1.0F, 0.0F, 0.0F),
             new Quaternionf(0.0F, 0.0F, 1.0F, 0.0F), new Quaternionf(0.0F, 0.0F, 0.0F, -1.0F), new Quaternionf(0.0F, 0.0F, 0.0F, 0.0F),
@@ -92,7 +93,7 @@ final class JomlValues {
     );
 
     // The GUI's poses: identities, pixel translations, the scales and rotations GuiGraphicsExtractor and the HUD apply.
-    static final Values.Generator MATRIX3X2F = new Joml<>(
+    static final Values.Generator MATRIX3X2F = new Mutable<>(
         List.of(
             new Matrix3x2f(),
             new Matrix3x2f().zero(),
@@ -114,7 +115,7 @@ final class JomlValues {
         matrix -> floats(matrix.m00(), matrix.m01(), matrix.m10(), matrix.m11(), matrix.m20(), matrix.m21())
     );
 
-    static final Values.Generator MATRIX3F = new Joml<>(
+    static final Values.Generator MATRIX3F = new Mutable<>(
         List.of(
             new Matrix3f(), new Matrix3f().zero(), new Matrix3f().rotationX(0.5F), new Matrix3f().rotationY(-1.0F),
             new Matrix3f().rotation(cameraRotation(90.0F, 10.0F)), new Matrix3f().scaling(2.0F, 3.0F, 4.0F),
@@ -131,7 +132,7 @@ final class JomlValues {
         )
     );
 
-    static final Values.Generator MATRIX4F = new Joml<>(
+    static final Values.Generator MATRIX4F = new Mutable<>(
         List.of(
             new Matrix4f(),
             new Matrix4f().zero(),
@@ -170,7 +171,7 @@ final class JomlValues {
     );
 
     // Camera's culling frustums (the walk scenario's two looks among them), and frustums of any matrix.
-    static final Values.Generator FRUSTUM_INTERSECTION = new Joml<>(
+    static final Values.Generator FRUSTUM_INTERSECTION = new Mutable<>(
         List.of(
             new FrustumIntersection(),
             new FrustumIntersection().set(new Matrix4f()),
@@ -246,10 +247,11 @@ final class JomlValues {
     }
 
     /**
-     * Specs are JOML objects nobody mutates. Each call gets a copy, and an argument whose state changed afterwards
-     * (one the method wrote to) is recorded in {@code after}.
+     * Specs are mutable objects nobody mutates. Each call gets a copy, and an argument whose state changed afterwards
+     * (one the method wrote to) is recorded in {@code after}. A null spec (an argument the method lets be null) is
+     * passed as null.
      */
-    private record Joml<T>(List<T> edgeList, Function<Random, T> fresh, Function<T, T> copy, Function<T, JsonArray> encoder)
+    record Mutable<T>(List<T> edgeList, Function<Random, T> fresh, Function<T, T> copy, Function<T, JsonArray> encoder)
         implements Values.Generator {
         @Override
         public List<Object> edges() {
@@ -264,13 +266,13 @@ final class JomlValues {
         @SuppressWarnings("unchecked")
         @Override
         public JsonElement encode(final Object spec) {
-            return this.encoder.apply((T)spec);
+            return spec == null ? JsonNull.INSTANCE : this.encoder.apply((T)spec);
         }
 
         @SuppressWarnings("unchecked")
         @Override
         public Object instantiate(final Object spec) {
-            return this.copy.apply((T)spec);
+            return spec == null ? null : this.copy.apply((T)spec);
         }
 
         @Override
@@ -280,7 +282,7 @@ final class JomlValues {
         }
     }
 
-    private static JsonArray floats(final float... values) {
+    static JsonArray floats(final float... values) {
         JsonArray array = new JsonArray();
         for (float value : values) {
             array.add(new JsonPrimitive(Values.floatBits(value)));
@@ -294,7 +296,7 @@ final class JomlValues {
     }
 
     // Projection.getMatrix's perspective for the walk scenario, which swaps near and far (reversed depth).
-    private static Matrix4f cameraProjection(final boolean zZeroToOne) {
+    static Matrix4f cameraProjection(final boolean zZeroToOne) {
         return new Matrix4f().setPerspective(70.0F * DEG_TO_RAD, 854.0F / 480.0F, 256.0F, 0.05F, zZeroToOne);
     }
 
@@ -316,11 +318,11 @@ final class JomlValues {
             .translate(-0.125F, 0.125F);
     }
 
-    private static Matrix4f affineMatrix() {
+    static Matrix4f affineMatrix() {
         return new Matrix4f().translation(-0.5F, 61.62F, -0.5F).rotateY(0.7F).rotateX(-0.2F).scale(0.5F, 2.0F, -1.0F);
     }
 
-    private static float component(final Random random) {
+    static float component(final Random random) {
         return switch (random.nextInt(4)) {
             case 0 -> (Float)Values.FLOATS.random(random);
             case 1 -> random.nextFloat() * 2.0F - 1.0F;
@@ -329,7 +331,7 @@ final class JomlValues {
         };
     }
 
-    private static float angle(final Random random) {
+    static float angle(final Random random) {
         return random.nextInt(8) == 0 ? (Float)Values.FLOATS.random(random) : (random.nextFloat() * 2.0F - 1.0F) * 4.0F * (float)Math.PI;
     }
 
@@ -343,7 +345,7 @@ final class JomlValues {
         };
     }
 
-    private static Vector3f randomVector3f(final Random random) {
+    static Vector3f randomVector3f(final Random random) {
         return switch (random.nextInt(3)) {
             case 0 -> new Vector3f(component(random), component(random), component(random));
             case 1 -> new Vector3f(random.nextFloat() * 2.0F - 1.0F, random.nextFloat() * 2.0F - 1.0F, random.nextFloat() * 2.0F - 1.0F).normalize();
@@ -363,7 +365,7 @@ final class JomlValues {
         };
     }
 
-    private static Quaternionf randomQuaternionf(final Random random) {
+    static Quaternionf randomQuaternionf(final Random random) {
         return switch (random.nextInt(4)) {
             case 0 -> new Quaternionf().rotationYXZ(angle(random), angle(random), angle(random));
             case 1 -> new Quaternionf().rotationAxis(angle(random), randomVector3f(random).normalize());
@@ -412,7 +414,7 @@ final class JomlValues {
         };
     }
 
-    private static Matrix4f randomMatrix4f(final Random random) {
+    static Matrix4f randomMatrix4f(final Random random) {
         return switch (random.nextInt(5)) {
             case 0, 1 -> composed(random);
             case 2 -> {
@@ -521,7 +523,7 @@ final class JomlValues {
     }
 
     // Transforms like the game's pose stacks build, one to four steps from identity.
-    private static Matrix4f composed(final Random random) {
+    static Matrix4f composed(final Random random) {
         Matrix4f matrix = new Matrix4f();
         int steps = 1 + random.nextInt(4);
         for (int i = 0; i < steps; i++) {

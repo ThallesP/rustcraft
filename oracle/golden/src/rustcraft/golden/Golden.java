@@ -1,7 +1,9 @@
 package rustcraft.golden;
 
 import com.mojang.math.Axis;
+import com.mojang.math.GivensParameters;
 import com.mojang.math.MatrixUtil;
+import com.mojang.math.Transformation;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,13 +47,14 @@ public final class Golden {
                 "floorDiv(II)I", "floorDiv(JJ)J", "floorMod(II)I", "floorMod(JJ)J",
                 "sin(D)D", "cos(D)D", "tan(D)D", "asin(D)D", "log(D)D", "pow(DD)D", "sqrt(D)D",
                 "acos(D)D", "atan2(DD)D", "rint(D)D", "round(F)I", "round(D)J", "signum(F)F", "signum(D)D",
-                "toRadians(D)D", "toDegrees(D)D"
+                "toRadians(D)D", "toDegrees(D)D", "hypot(DD)D"
             )
             .extraInputs("sin(D)D", trigInputs(1, -253, 16))
             .extraInputs("cos(D)D", trigInputs(2, -253, 16))
             .extraInputs("tan(D)D", trigInputs(5, -40, 13))
             .extraInputs("log(D)D", logInputs())
-            .extraInputs("pow(DD)D", powInputs()),
+            .extraInputs("pow(DD)D", powInputs())
+            .extraInputs("hypot(DD)D", hypotInputs()),
         new StringSuite(),
         // JOML's own fast paths are off (no -Djoml.fastmath), so its trig goes through java.lang.Math.
         new StaticSuite(org.joml.Math.class).exclude("random()D", "seeded from the clock"),
@@ -65,7 +68,7 @@ public final class Golden {
             "mul(F)Lorg/joml/Vector3f;", "mul(FFF)Lorg/joml/Vector3f;", "mul(Lorg/joml/Vector3fc;)Lorg/joml/Vector3f;",
             "mul(Lorg/joml/Matrix3fc;)Lorg/joml/Vector3f;", "mul(Lorg/joml/Matrix3fc;Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "negate()Lorg/joml/Vector3f;", "cross(FFF)Lorg/joml/Vector3f;", "cross(Lorg/joml/Vector3fc;)Lorg/joml/Vector3f;",
-            "lerp(Lorg/joml/Vector3fc;F)Lorg/joml/Vector3f;",
+            "lerp(Lorg/joml/Vector3fc;F)Lorg/joml/Vector3f;", "lerp(Lorg/joml/Vector3fc;FLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "dot(FFF)F", "dot(Lorg/joml/Vector3fc;)F", "length()F", "lengthSquared()F",
             "distance(FFF)F", "distance(Lorg/joml/Vector3fc;)F", "distanceSquared(FFF)F", "distanceSquared(Lorg/joml/Vector3fc;)F",
             "normalize()Lorg/joml/Vector3f;", "normalize(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
@@ -86,8 +89,10 @@ public final class Golden {
             "mul(Lorg/joml/Quaternionfc;)Lorg/joml/Quaternionf;", "mul(Lorg/joml/Quaternionfc;Lorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
             "mul(FFFF)Lorg/joml/Quaternionf;", "mul(FFFFLorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
             "transform(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;", "transform(Lorg/joml/Vector3fc;Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
-            "transform(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;"
-        ),
+            "transform(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
+            "slerp(Lorg/joml/Quaternionfc;FLorg/joml/Quaternionf;)Lorg/joml/Quaternionf;"
+        )
+            .extraInputs("slerp(Lorg/joml/Quaternionfc;FLorg/joml/Quaternionf;)Lorg/joml/Quaternionf;", slerpInputs()),
         new InstanceSuite(
             Matrix3f.class,
             "<init>()V", "<init>(FFFFFFFFF)V", "<init>(Lorg/joml/Matrix3fc;)V", "<init>(Lorg/joml/Matrix4fc;)V",
@@ -96,7 +101,7 @@ public final class Golden {
             "mul(Lorg/joml/Matrix3fc;)Lorg/joml/Matrix3f;", "mul(Lorg/joml/Matrix3fc;Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             "invert()Lorg/joml/Matrix3f;", "invert(Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             "transpose()Lorg/joml/Matrix3f;", "transpose(Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
-            "scale(FFF)Lorg/joml/Matrix3f;", "scale(FFFLorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
+            "scale(FFF)Lorg/joml/Matrix3f;", "scale(FFFLorg/joml/Matrix3f;)Lorg/joml/Matrix3f;", "scale(F)Lorg/joml/Matrix3f;",
             "rotateX(F)Lorg/joml/Matrix3f;", "rotateX(FLorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             "rotateY(F)Lorg/joml/Matrix3f;", "rotateY(FLorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             "rotateZ(F)Lorg/joml/Matrix3f;", "rotateZ(FLorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
@@ -146,8 +151,12 @@ public final class Golden {
             "transform(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;", "transform(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
             "transformTranspose(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
             "transformTranspose(Lorg/joml/Vector4fc;Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
-            "mul(Lorg/joml/Matrix3x2fc;)Lorg/joml/Matrix4f;", "mul(Lorg/joml/Matrix3x2fc;Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;"
-        ),
+            "mul(Lorg/joml/Matrix3x2fc;)Lorg/joml/Matrix4f;", "mul(Lorg/joml/Matrix3x2fc;Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
+            "invertAffine()Lorg/joml/Matrix4f;", "invertAffine(Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;", "isFinite()Z",
+            "translation(Lorg/joml/Vector3fc;)Lorg/joml/Matrix4f;", "scale(Lorg/joml/Vector3fc;)Lorg/joml/Matrix4f;",
+            "getTranslation(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;", "equals(Ljava/lang/Object;)Z", "hashCode()I"
+        )
+            .extraInputs("equals(Ljava/lang/Object;)Z", matrixEqualsInputs()),
         new InstanceSuite(
             Vector4f.class,
             "<init>()V", "<init>(F)V", "<init>(FFFF)V", "<init>(Lorg/joml/Vector3fc;F)V", "<init>(Lorg/joml/Vector4fc;)V",
@@ -192,7 +201,37 @@ public final class Golden {
             "rotate(Lorg/joml/Matrix3f;F)Lorg/joml/Matrix3f;", "rotateDegrees(Lorg/joml/Matrix3f;F)Lorg/joml/Matrix3f;",
             "rotate(Lorg/joml/Matrix4f;F)Lorg/joml/Matrix4f;", "rotateDegrees(Lorg/joml/Matrix4f;F)Lorg/joml/Matrix4f;"
         ),
-        new StaticSuite(MatrixUtil.class),
+        new InstanceSuite(
+            GivensParameters.class,
+            "<init>(FF)V", "fromUnnormalized(FF)Lcom/mojang/math/GivensParameters;", "fromPositiveAngle(F)Lcom/mojang/math/GivensParameters;",
+            "sinHalf()F", "cosHalf()F", "inverse()Lcom/mojang/math/GivensParameters;", "cos()F", "sin()F",
+            "aroundX(Lorg/joml/Quaternionf;)Lorg/joml/Quaternionf;", "aroundY(Lorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
+            "aroundZ(Lorg/joml/Quaternionf;)Lorg/joml/Quaternionf;", "aroundX(Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
+            "aroundY(Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;", "aroundZ(Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;"
+        ),
+        new StaticSuite(MatrixUtil.class)
+            .extraInputs("eigenvalueJacobi(Lorg/joml/Matrix3f;ILorg/joml/Quaternionf;)V", jacobiInputs())
+            .extraInputs(
+                "svdDecompose(Lorg/joml/Matrix4fc;Lorg/joml/Vector3f;Lorg/joml/Quaternionf;Lorg/joml/Vector3f;Lorg/joml/Quaternionf;)V",
+                svdInputs()
+            )
+            // Each step costs about two matrix products, so billions of them would take minutes. The game takes 5.
+            .where("eigenvalueJacobi(Lorg/joml/Matrix3f;ILorg/joml/Quaternionf;)V", args -> (Integer)args[1] <= 1024),
+        new InstanceSuite(
+            Transformation.class,
+            "<init>(Lorg/joml/Matrix4fc;)V", "<init>(Lorg/joml/Vector3fc;Lorg/joml/Quaternionfc;Lorg/joml/Vector3fc;Lorg/joml/Quaternionfc;)V",
+            "compose(Lcom/mojang/math/Transformation;)Lcom/mojang/math/Transformation;", "inverse()Lcom/mojang/math/Transformation;",
+            "getMatrix()Lorg/joml/Matrix4fc;", "getMatrixCopy()Lorg/joml/Matrix4f;", "translation()Lorg/joml/Vector3fc;",
+            "leftRotation()Lorg/joml/Quaternionfc;", "scale()Lorg/joml/Vector3fc;", "rightRotation()Lorg/joml/Quaternionfc;",
+            "equals(Ljava/lang/Object;)Z", "hashCode()I", "slerp(Lcom/mojang/math/Transformation;F)Lcom/mojang/math/Transformation;",
+            "compose(Lorg/joml/Matrix4fc;Ljava/util/Optional;)Lorg/joml/Matrix4fc;"
+        )
+            .withFields()
+            .extraInputs(
+                "<init>(Lorg/joml/Vector3fc;Lorg/joml/Quaternionfc;Lorg/joml/Vector3fc;Lorg/joml/Quaternionfc;)V", transformationPartsInputs()
+            )
+            .extraInputs("equals(Ljava/lang/Object;)Z", transformationEqualsInputs())
+            .extraInputs("slerp(Lcom/mojang/math/Transformation;F)Lcom/mojang/math/Transformation;", transformationSlerpInputs()),
         new PoseStackSuite(),
         new ProjectionSuite()
     );
@@ -294,6 +333,184 @@ public final class Golden {
                 default -> new Object[]{randomBits(random), randomBits(random)};
             };
             inputs.add(input);
+        }
+        return inputs;
+    }
+
+    // Pairs like qrGivensQuat's (floats, often one of them zero), then every path through fdlibm's hypot: exponents
+    // about 60 apart (where it returns the sum), both over 2^500 (scaled down first) or under 2^-500 (scaled up),
+    // subnormals, the two ways it splits the sum of squares (a - b above b or not, and a = 2b where they meet), the
+    // thresholds, and any bits.
+    private static List<Object[]> hypotInputs() {
+        Random random = new Random(10);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 6000; i++) {
+            double[] pair = switch (i % 6) {
+                case 0 -> new double[]{JomlValues.component(random), random.nextInt(4) == 0 ? 0.0 : JomlValues.component(random)};
+                case 1 -> {
+                    double a = magnitude(random, -1000, 1000);
+                    yield new double[]{a, Math.scalb(1.0 + random.nextDouble(), Math.getExponent(a) - 56 - random.nextInt(9))};
+                }
+                case 2 -> new double[]{magnitude(random, 480, 1023), magnitude(random, 400, 1023)};
+                case 3 -> new double[]{magnitude(random, -1074, -480), magnitude(random, -1074, -400)};
+                case 4 -> {
+                    double a = magnitude(random, -60, 60);
+                    if (random.nextBoolean()) {
+                        double b = a / 2.0;
+                        for (int ulps = random.nextInt(5) - 2; ulps != 0; ulps -= Integer.signum(ulps)) {
+                            b = ulps > 0 ? Math.nextUp(b) : Math.nextDown(b);
+                        }
+                        yield new double[]{a, b};
+                    }
+                    yield new double[]{a, a * (0.25 + random.nextDouble() * 0.75)};
+                }
+                default -> new double[]{randomBits(random), randomBits(random)};
+            };
+            int first = random.nextInt(2);
+            inputs.add(new Object[]{sign(random) * pair[first], sign(random) * pair[1 - first]});
+        }
+        double[] thresholds = {
+            0x1.00000_ffff_ffffp500, Math.nextUp(0x1.00000_ffff_ffffp500), 0x1.0p-500, Math.nextDown(0x1.0p-500),
+            Double.MIN_NORMAL, Math.nextDown(Double.MIN_NORMAL)
+        };
+        for (double a : thresholds) {
+            for (double b : thresholds) {
+                inputs.add(new Object[]{a, b});
+                inputs.add(new Object[]{a, b * 0x1.0p-30});
+            }
+        }
+        return inputs;
+    }
+
+    // Rotations toward ones a little away (where the dot product nears 1, and slerp turns into a lerp at 1 - 1e-6) or
+    // anywhere, half of them unit quaternions, a quarter in the other hemisphere (a negative dot product), at Display's
+    // progress from 0 to 1 or anything.
+    private static List<Object[]> slerpInputs() {
+        Random random = new Random(11);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 3000; i++) {
+            Quaternionf from = JomlValues.randomQuaternionf(random);
+            if (random.nextBoolean()) {
+                from.normalize();
+            }
+            float angle = switch (i % 3) {
+                case 0 -> random.nextFloat() * 0.01F;
+                case 1 -> Math.scalb(random.nextFloat(), -random.nextInt(24));
+                default -> random.nextFloat() * 2.0F * (float)Math.PI;
+            };
+            Quaternionf to = from.mul(new Quaternionf().rotationAxis(angle, JomlValues.randomVector3f(random).normalize()), new Quaternionf());
+            if (random.nextInt(4) == 0) {
+                to.set(-to.x, -to.y, -to.z, -to.w);
+            }
+            float alpha = random.nextInt(8) == 0 ? (Float)Values.FLOATS.random(random) : random.nextFloat();
+            inputs.add(new Object[]{from, to, alpha, JomlValues.QUATERNIONF.random(random)});
+        }
+        return inputs;
+    }
+
+    // Matrices next to copies of themselves, equal whatever their properties say, or with one component's zero flipped
+    // or moved up an ulp, which makes them differ.
+    private static List<Object[]> matrixEqualsInputs() {
+        Random random = new Random(12);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 600; i++) {
+            Matrix4f matrix = (Matrix4f)JomlValues.MATRIX4F.random(random);
+            Matrix4f other = new Matrix4f(matrix);
+            switch (i % 3) {
+                case 0 -> other.assume(random.nextInt(32));
+                case 1 -> {
+                    int column = random.nextInt(4);
+                    int row = random.nextInt(4);
+                    float value = other.get(column, row);
+                    other.set(column, row, value == 0.0F ? -value : Math.nextUp(value));
+                }
+                default -> {
+                }
+            }
+            inputs.add(new Object[]{matrix, other});
+        }
+        return inputs;
+    }
+
+    // What svdDecompose passes: M^T M for the 3x3 part M of a transformation like the game's, for its 5 steps or a few
+    // more or fewer. Then symmetric matrices whose first rotation sits where approxGivensQuat switches to a quarter turn,
+    // G * a12^2 = (2 * (a11 - a22))^2 give or take a few ulps of a12, which pins down G.
+    private static List<Object[]> jacobiInputs() {
+        Random random = new Random(13);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 2000; i++) {
+            Matrix3f matrix = new Matrix3f(((Transformation)MathValues.TRANSFORMATION.random(random)).getMatrix());
+            Matrix3f symmetric = new Matrix3f(matrix).transpose().mul(matrix);
+            int steps = i % 4 == 0 ? random.nextInt(11) : 5;
+            inputs.add(new Object[]{symmetric, steps, JomlValues.QUATERNIONF.random(random)});
+        }
+        float g = 3.0F + 2.0F * (float)Math.sqrt(2.0F);
+        for (int i = 0; i < 500; i++) {
+            float a11 = random.nextFloat() * 8.0F;
+            float a22 = random.nextFloat() * 8.0F;
+            float ch = 2.0F * (a11 - a22);
+            float a12 = (float)(ch / Math.sqrt(g));
+            for (int ulps = random.nextInt(7) - 3; ulps != 0; ulps -= Integer.signum(ulps)) {
+                a12 = ulps > 0 ? Math.nextUp(a12) : Math.nextDown(a12);
+            }
+            float a33 = random.nextFloat() * 8.0F;
+            inputs.add(new Object[]{new Matrix3f(a11, a12, 0.0F, a12, a22, 0.0F, 0.0F, 0.0F, a33), 1 + random.nextInt(5), new Quaternionf()});
+        }
+        return inputs;
+    }
+
+    // The matrices of transformations like the game's, which Transformation decomposes.
+    private static List<Object[]> svdInputs() {
+        Random random = new Random(14);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 3000; i++) {
+            Transformation transformation = (Transformation)MathValues.TRANSFORMATION.random(random);
+            inputs.add(new Object[]{
+                new Matrix4f(transformation.getMatrix()), JomlValues.VECTOR3F.random(random), JomlValues.QUATERNIONF.random(random),
+                JomlValues.VECTOR3F.random(random), JomlValues.QUATERNIONF.random(random)
+            });
+        }
+        return inputs;
+    }
+
+    // Parts like the game's, in every pattern of null (no translation, rotation or scale).
+    private static List<Object[]> transformationPartsInputs() {
+        Random random = new Random(15);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 1600; i++) {
+            int nulls = i % 16;
+            inputs.add(new Object[]{
+                (nulls & 1) != 0 ? null : MathValues.randomTranslation(random), (nulls & 2) != 0 ? null : MathValues.randomRotation(random),
+                (nulls & 4) != 0 ? null : MathValues.randomScale(random), (nulls & 8) != 0 ? null : MathValues.randomRotation(random)
+            });
+        }
+        return inputs;
+    }
+
+    // Transformations next to copies of themselves, decomposed or not, or ones built from their matrix with any
+    // properties, which are all equal since only the matrix's components count; IDENTITY next to an identity matrix.
+    private static List<Object[]> transformationEqualsInputs() {
+        Random random = new Random(16);
+        List<Object[]> inputs = new ArrayList<>();
+        inputs.add(new Object[]{Transformation.IDENTITY, new Transformation(new Matrix4f())});
+        for (int i = 0; i < 300; i++) {
+            Transformation transformation = (Transformation)MathValues.TRANSFORMATION.random(random);
+            Transformation other = switch (i % 3) {
+                case 0 -> transformation;
+                case 1 -> new Transformation(transformation.getMatrixCopy());
+                default -> new Transformation(transformation.getMatrixCopy().assume(random.nextInt(32)));
+            };
+            inputs.add(new Object[]{transformation, other});
+        }
+        return inputs;
+    }
+
+    // Display entities interpolating from one transformation to the next.
+    private static List<Object[]> transformationSlerpInputs() {
+        Random random = new Random(17);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 1000; i++) {
+            inputs.add(new Object[]{MathValues.TRANSFORMATION.random(random), MathValues.TRANSFORMATION.random(random), random.nextFloat()});
         }
         return inputs;
     }

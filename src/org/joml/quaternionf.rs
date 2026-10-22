@@ -113,6 +113,44 @@ impl Quaternionf {
         self.set_xyzw(0.0, 0.0, sin, cos)
     }
 
+    /// Spherical interpolation toward `target`, or linear where the two are within 1e-6 of
+    /// parallel. The shorter way round: a target in the other hemisphere counts negated.
+    pub fn slerp_into<'a>(
+        &self,
+        target: &Quaternionf,
+        alpha: f32,
+        dest: &'a mut Quaternionf,
+    ) -> &'a mut Quaternionf {
+        let cosom = Math::fma_f32(
+            self.x,
+            target.x,
+            Math::fma_f32(
+                self.y,
+                target.y,
+                Math::fma_f32(self.z, target.z, self.w * target.w),
+            ),
+        );
+        let abs_cosom = Math::abs_f32(cosom);
+        let scale0;
+        let mut scale1;
+        if 1.0 - abs_cosom > 1E-6 {
+            let sin_sqr = 1.0 - abs_cosom * abs_cosom;
+            let sinom = Math::invsqrt_f32(sin_sqr);
+            let omega = Math::atan2_f32(sin_sqr * sinom, abs_cosom);
+            scale0 = Math::sin_f32((1.0 - alpha) * omega) * sinom;
+            scale1 = Math::sin_f32(alpha * omega) * sinom;
+        } else {
+            scale0 = 1.0 - alpha;
+            scale1 = alpha;
+        }
+        scale1 = if cosom >= 0.0 { scale1 } else { -scale1 };
+        dest.x = Math::fma_f32(scale0, self.x, scale1 * target.x);
+        dest.y = Math::fma_f32(scale0, self.y, scale1 * target.y);
+        dest.z = Math::fma_f32(scale0, self.z, scale1 * target.z);
+        dest.w = Math::fma_f32(scale0, self.w, scale1 * target.w);
+        dest
+    }
+
     pub fn mul(&mut self, q: &Quaternionf) -> &mut Self {
         let this = *self;
         this.mul_into(q, self)
@@ -382,6 +420,12 @@ mod tests {
             "transform(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             |this: &mut Quaternionf, x, y, z, mut dest: Vector3f| {
                 *this.transform_xyz_into(x, y, z, &mut dest)
+            },
+        );
+        golden.check_method(
+            "slerp(Lorg/joml/Quaternionfc;FLorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
+            |this: &mut Quaternionf, target: Quaternionf, alpha, mut dest: Quaternionf| {
+                *this.slerp_into(&target, alpha, &mut dest)
             },
         );
         golden.finish();

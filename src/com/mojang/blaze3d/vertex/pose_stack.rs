@@ -1,10 +1,10 @@
 //! com/mojang/blaze3d/vertex/PoseStack.java
 //!
-//! Not ported yet: `translate(Vec3)`, which needs `Vec3`, and `mulPose(Transformation)`, which
-//! needs `Transformation`.
+//! Not ported yet: `translate(Vec3)`, which needs `Vec3`.
 
 use crate::com::mojang::math::axis::Axis;
 use crate::com::mojang::math::matrix_util::MatrixUtil;
+use crate::com::mojang::math::transformation::Transformation;
 use crate::java::lang::math::Math;
 use crate::org::joml::matrix3f::Matrix3f;
 use crate::org::joml::matrix4f::Matrix4f;
@@ -107,6 +107,11 @@ impl PoseStack {
     /// Like Java, adds to `matrix`'s properties when it doesn't say it's a pure translation.
     pub fn mul_pose(&mut self, matrix: &mut Matrix4f) {
         self.last_mut().mul_pose(matrix);
+    }
+
+    /// Adds to the properties of the transformation's own matrix, like `mul_pose`.
+    pub fn mul_pose_transformation(&mut self, matrix: &mut Transformation) {
+        self.last_mut().mul_pose_transformation(matrix);
     }
 }
 
@@ -241,6 +246,12 @@ impl Pose {
             }
         }
     }
+
+    /// Java hands `mulPose` the transformation's own matrix, so the properties it adds stay on the
+    /// transformation, for everything else that holds it.
+    pub fn mul_pose_transformation(&mut self, transformation: &mut Transformation) {
+        self.mul_pose(transformation.get_matrix_mut());
+    }
 }
 
 #[cfg(test)]
@@ -249,6 +260,7 @@ mod tests {
 
     use super::PoseStack;
     use crate::com::mojang::math::axis::Axis;
+    use crate::com::mojang::math::transformation::Transformation;
     use crate::golden::{Decode, Encode, Golden, Thrown, catch};
     use crate::org::joml::matrix4f::Matrix4f;
     use crate::org::joml::quaternionf::Quaternionf;
@@ -303,6 +315,11 @@ mod tests {
                 let mut matrix = Matrix4f::decode(&op[1]);
                 stack.mul_pose(&mut matrix);
                 return Box::new(matrix);
+            }
+            "mulPoseTransformation" => {
+                let mut transformation = Transformation::decode(&op[1]);
+                stack.mul_pose_transformation(&mut transformation);
+                return Box::new(transformation);
             }
             "transformNormal" => {
                 let mut destination = Vector3f::new();

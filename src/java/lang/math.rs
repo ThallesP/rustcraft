@@ -122,7 +122,7 @@ impl Math {
         hotspot_x86::libm_pow(a, b)
     }
 
-    /// HotSpot has no assembly for asin, acos or atan2, so they're StrictMath's, which runs
+    /// HotSpot has no assembly for asin, acos, atan2 or hypot, so they're StrictMath's, which runs
     /// the JDK's Java port of fdlibm.
     pub fn asin(a: f64) -> f64 {
         fd_libm::Asin::compute(a)
@@ -134,6 +134,10 @@ impl Math {
 
     pub fn atan2(y: f64, x: f64) -> f64 {
         fd_libm::Atan2::compute(y, x)
+    }
+
+    pub fn hypot(x: f64, y: f64) -> f64 {
+        fd_libm::Hypot::compute(x, y)
     }
 
     pub fn to_radians(angdeg: f64) -> f64 {
@@ -227,6 +231,7 @@ mod tests {
         golden.check("asin(D)D", Math::asin);
         golden.check("acos(D)D", Math::acos);
         golden.check("atan2(DD)D", Math::atan2);
+        golden.check("hypot(DD)D", Math::hypot);
         golden.check("sqrt(D)D", f64::sqrt);
         golden.check("toRadians(D)D", Math::to_radians);
         golden.check("toDegrees(D)D", Math::to_degrees);

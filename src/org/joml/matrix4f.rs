@@ -46,6 +46,25 @@ impl Default for Matrix4f {
     }
 }
 
+/// JOML's `equals`: the components compare by `Float.floatToIntBits`, so -0.0 differs from 0.0
+/// and NaN equals NaN, and the properties don't count.
+impl PartialEq for Matrix4f {
+    fn eq(&self, other: &Matrix4f) -> bool {
+        self.fields().map(float_to_int_bits) == other.fields().map(float_to_int_bits)
+    }
+}
+
+impl Eq for Matrix4f {}
+
+// Float.floatToIntBits: the bits, with every NaN made the canonical one.
+fn float_to_int_bits(value: f32) -> i32 {
+    if value.is_nan() {
+        0x7fc00000
+    } else {
+        value.to_bits() as i32
+    }
+}
+
 macro_rules! getters {
     ($($field:ident),*) => {$(
         pub fn $field(&self) -> f32 {
@@ -187,6 +206,24 @@ impl Matrix4f {
 
     pub fn properties(&self) -> i32 {
         self.properties
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.fields().iter().all(|&m| Math::is_finite_f32(m))
+    }
+
+    /// Like `Float.hashCode` of each component in turn: every NaN hashes the same.
+    pub fn hash_code(&self) -> i32 {
+        self.fields().iter().fold(1i32, |result, &m| {
+            result.wrapping_mul(31).wrapping_add(float_to_int_bits(m))
+        })
+    }
+
+    fn fields(&self) -> [f32; 16] {
+        [
+            self.m00, self.m01, self.m02, self.m03, self.m10, self.m11, self.m12, self.m13,
+            self.m20, self.m21, self.m22, self.m23, self.m30, self.m31, self.m32, self.m33,
+        ]
     }
 
     /// Sets the properties without checking them, so they can promise more than the matrix is.
@@ -826,7 +863,13 @@ impl Matrix4f {
         dest
     }
 
-    fn invert_affine_into<'a>(&self, dest: &'a mut Matrix4f) -> &'a mut Matrix4f {
+    /// Inverts the matrix as an affine one, whatever its last row and properties say.
+    pub fn invert_affine(&mut self) -> &mut Self {
+        let this = *self;
+        this.invert_affine_into(self)
+    }
+
+    pub fn invert_affine_into<'a>(&self, dest: &'a mut Matrix4f) -> &'a mut Matrix4f {
         let (m11m00, m10m01, m10m02) = (
             self.m00 * self.m11,
             self.m01 * self.m10,
@@ -901,6 +944,17 @@ impl Matrix4f {
         self.m32 = z;
         self.properties = PROPERTY_AFFINE | PROPERTY_TRANSLATION | PROPERTY_ORTHONORMAL;
         self
+    }
+
+    pub fn translation_vector3f(&mut self, offset: &Vector3f) -> &mut Self {
+        self.translation(offset.x, offset.y, offset.z)
+    }
+
+    pub fn get_translation<'a>(&self, dest: &'a mut Vector3f) -> &'a mut Vector3f {
+        dest.x = self.m30;
+        dest.y = self.m31;
+        dest.z = self.m32;
+        dest
     }
 
     pub fn set_translation(&mut self, x: f32, y: f32, z: f32) -> &mut Self {
@@ -1052,6 +1106,10 @@ impl Matrix4f {
     pub fn scale(&mut self, x: f32, y: f32, z: f32) -> &mut Self {
         let this = *self;
         this.scale_into(x, y, z, self)
+    }
+
+    pub fn scale_vector3f(&mut self, xyz: &Vector3f) -> &mut Self {
+        self.scale(xyz.x, xyz.y, xyz.z)
     }
 
     pub fn scale_into<'a>(
@@ -2404,6 +2462,32 @@ mod tests {
                 *this.transform_into(&v, &mut dest)
             },
         );
+        golden.check_method(
+            "invertAffine()Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f| *this.invert_affine(),
+        );
+        golden.check_method(
+            "invertAffine(Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, mut dest: Matrix4f| *this.invert_affine_into(&mut dest),
+        );
+        golden.check_method("isFinite()Z", |this: &mut Matrix4f| this.is_finite());
+        golden.check_method(
+            "translation(Lorg/joml/Vector3fc;)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, offset: Vector3f| *this.translation_vector3f(&offset),
+        );
+        golden.check_method(
+            "scale(Lorg/joml/Vector3fc;)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, xyz: Vector3f| *this.scale_vector3f(&xyz),
+        );
+        golden.check_method(
+            "getTranslation(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
+            |this: &mut Matrix4f, mut dest: Vector3f| *this.get_translation(&mut dest),
+        );
+        golden.check_method(
+            "equals(Ljava/lang/Object;)Z",
+            |this: &mut Matrix4f, obj: Matrix4f| *this == obj,
+        );
+        golden.check_method("hashCode()I", |this: &mut Matrix4f| this.hash_code());
         golden.check_method(
             "transformTranspose(Lorg/joml/Vector4f;)Lorg/joml/Vector4f;",
             |this: &mut Matrix4f, mut v: Vector4f| *this.transform_transpose(&mut v),

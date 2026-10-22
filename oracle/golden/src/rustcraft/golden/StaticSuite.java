@@ -121,11 +121,9 @@ final class StaticSuite implements Suite {
             .toList();
     }
 
+    // A void method's result is null, and what it wrote to its arguments shows in `after`.
     private static String unsupportedReason(final Method method) {
-        if (method.getReturnType() == void.class) {
-            return "returns void";
-        }
-        if (!Values.canEncode(method.getReturnType())) {
+        if (method.getReturnType() != void.class && !Values.canEncode(method.getReturnType())) {
             return "no encoder for " + method.getReturnType().getName();
         }
         for (Class<?> parameter : method.getParameterTypes()) {

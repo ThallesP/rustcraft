@@ -7,6 +7,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
+import com.mojang.math.Transformation;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -20,10 +21,13 @@ import org.joml.Vector3f;
  * Runs random programs against a PoseStack. A case is a fresh stack running the ops in {@code args[0]}; the result
  * has one step per op, {@code [output, pose, normal, trustedNormals]}: what the op returned, then the top pose's
  * state afterwards. An op that throws ends the program. mulPose's output is its matrix argument afterwards, since
- * MatrixUtil.checkProperty adds to the properties of the matrix it's given.
+ * MatrixUtil.checkProperty adds to the properties of the matrix it's given; with a Transformation, it's the
+ * transformation afterwards, whose own matrix that changes.
  */
 final class PoseStackSuite implements Suite {
     private static final int PROGRAMS = 512;
+    // Programs that also multiply by transformations, which come after the others so those stay as they were.
+    private static final int TRANSFORMATION_PROGRAMS = 256;
     private static final int OPS_PER_PROGRAM = 48;
     private static final Field TRUSTED_NORMALS;
 
@@ -44,9 +48,9 @@ final class PoseStackSuite implements Suite {
     @Override
     public void write(final GoldenWriter writer) throws IOException {
         Random random = new Random(0x9053);
-        for (int i = 0; i < PROGRAMS; i++) {
+        for (int i = 0; i < PROGRAMS + TRANSFORMATION_PROGRAMS; i++) {
             // One program in four takes any float, NaN and infinities included, which spoil the rest of it.
-            List<Op> program = randomProgram(random, i % 4 == 3);
+            List<Op> program = randomProgram(random, i % 4 == 3, i >= PROGRAMS);
             JsonArray args = new JsonArray();
             args.add(Op.encode(program));
             writer.result("PoseStack", args, run(program), null);
@@ -100,6 +104,11 @@ final class PoseStackSuite implements Suite {
                 stack.mulPose(matrix);
                 return JomlValues.MATRIX4F.encode(matrix);
             }
+            case "mulPoseTransformation" -> {
+                Transformation transformation = (Transformation)MathValues.TRANSFORMATION.instantiate(args[0]);
+                stack.mulPose(transformation);
+                return MathValues.TRANSFORMATION.encode(transformation);
+            }
             case "transformNormal" -> {
                 return JomlValues.VECTOR3F.encode(stack.last().transformNormal((Float)args[0], (Float)args[1], (Float)args[2], new Vector3f()));
             }
@@ -114,11 +123,11 @@ final class PoseStackSuite implements Suite {
         return JsonNull.INSTANCE;
     }
 
-    private static List<Op> randomProgram(final Random random, final boolean wild) {
+    private static List<Op> randomProgram(final Random random, final boolean wild, final boolean transformations) {
         List<Op> program = new ArrayList<>();
         int depth = 0;
         while (program.size() < OPS_PER_PROGRAM) {
-            Op op = randomOp(random, wild);
+            Op op = randomOp(random, wild, transformations);
             // Popping the last pose throws and ends the program, so it's rare.
             if (op.name().equals("popPose") && depth == 0 && random.nextInt(16) != 0) {
                 continue;
@@ -129,8 +138,8 @@ final class PoseStackSuite implements Suite {
         return program;
     }
 
-    private static Op randomOp(final Random random, final boolean wild) {
-        return switch (random.nextInt(20)) {
+    private static Op randomOp(final Random random, final boolean wild, final boolean transformations) {
+        return switch (random.nextInt(transformations ? 23 : 20)) {
             case 0, 1, 2 -> new Op("pushPose");
             case 3, 4 -> new Op("popPose");
             case 5, 6 -> new Op("translate", number(random, wild), number(random, wild), number(random, wild));
@@ -152,7 +161,8 @@ final class PoseStackSuite implements Suite {
             case 15, 16 -> new Op("mulPose", JomlValues.MATRIX4F.random(random));
             case 17 -> new Op("transformNormal", number(random, wild), number(random, wild), number(random, wild));
             case 18 -> new Op("transformNormalVector", JomlValues.VECTOR3F.random(random));
-            default -> new Op("isEmpty");
+            case 19 -> new Op("isEmpty");
+            default -> new Op("mulPoseTransformation", MathValues.TRANSFORMATION.random(random));
         };
     }
 

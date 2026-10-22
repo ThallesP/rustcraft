@@ -223,6 +223,10 @@ impl Matrix3f {
         dest
     }
 
+    pub fn scale_scalar(&mut self, xyz: f32) -> &mut Self {
+        self.scale(xyz, xyz, xyz)
+    }
+
     pub fn transform<'a>(&self, v: &'a mut Vector3f) -> &'a mut Vector3f {
         v.mul_matrix3f(self)
     }
@@ -518,6 +522,9 @@ mod tests {
             "scale(FFFLorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             |this: &mut Matrix3f, x, y, z, mut dest: Matrix3f| *this.scale_into(x, y, z, &mut dest),
         );
+        golden.check_method("scale(F)Lorg/joml/Matrix3f;", |this: &mut Matrix3f, xyz| {
+            *this.scale_scalar(xyz)
+        });
         golden.check_method(
             "rotateX(F)Lorg/joml/Matrix3f;",
             |this: &mut Matrix3f, ang| *this.rotate_x(ang),

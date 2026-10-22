@@ -3,10 +3,11 @@ package rustcraft.golden;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonPrimitive;
 import com.mojang.math.Axis;
+import com.mojang.math.Transformation;
 
 /**
- * One op of a hand-written suite's program, encoded as {@code [name, args…]}. Args are floats, doubles, axes and JOML
- * objects, which suites copy before handing them to a method that writes to them.
+ * One op of a hand-written suite's program, encoded as {@code [name, args…]}. Args are floats, doubles, axes, JOML
+ * objects and transformations, which suites copy before handing them to a method that writes to them.
  */
 record Op(String name, Object... args) {
     JsonArray encode() {
@@ -18,6 +19,7 @@ record Op(String name, Object... args) {
                 case Double value -> new JsonPrimitive(Values.doubleBits(value));
                 case Boolean value -> new JsonPrimitive(value);
                 case Axis axis -> Values.AXES.encode(axis);
+                case Transformation transformation -> MathValues.TRANSFORMATION.encode(transformation);
                 default -> JomlValues.encode(arg);
             });
         }

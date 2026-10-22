@@ -349,10 +349,20 @@ impl Vector3f {
     }
 
     pub fn lerp(&mut self, other: &Vector3f, t: f32) -> &mut Self {
-        self.x = Math::fma_f32(other.x - self.x, t, self.x);
-        self.y = Math::fma_f32(other.y - self.y, t, self.y);
-        self.z = Math::fma_f32(other.z - self.z, t, self.z);
-        self
+        let this = *self;
+        this.lerp_into(other, t, self)
+    }
+
+    pub fn lerp_into<'a>(
+        &self,
+        other: &Vector3f,
+        t: f32,
+        dest: &'a mut Vector3f,
+    ) -> &'a mut Vector3f {
+        dest.x = Math::fma_f32(other.x - self.x, t, self.x);
+        dest.y = Math::fma_f32(other.y - self.y, t, self.y);
+        dest.z = Math::fma_f32(other.z - self.z, t, self.z);
+        dest
     }
 }
 
@@ -441,6 +451,12 @@ mod tests {
         golden.check_method(
             "lerp(Lorg/joml/Vector3fc;F)Lorg/joml/Vector3f;",
             |this: &mut Vector3f, other: Vector3f, t| *this.lerp(&other, t),
+        );
+        golden.check_method(
+            "lerp(Lorg/joml/Vector3fc;FLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
+            |this: &mut Vector3f, other: Vector3f, t, mut dest: Vector3f| {
+                *this.lerp_into(&other, t, &mut dest)
+            },
         );
         golden.check_method("dot(FFF)F", |this: &mut Vector3f, x, y, z| {
             this.dot_xyz(x, y, z)
