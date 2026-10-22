@@ -1,6 +1,8 @@
 pub mod axis_cycle;
 pub mod block_pos;
 pub mod direction;
+pub mod front_and_top;
+pub mod id_mapper;
 pub mod position;
 pub mod registries;
 pub mod registry_synchronization;

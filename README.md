@@ -61,7 +61,7 @@ Every step of the loop updates this table.
 | Network | Configuration | Partial: 10 of 10 serverbound, 16 of 21 clientbound | goldens | |
 | Network | Play | Not started: 0 of 144 clientbound, 0 of 69 serverbound | | |
 | Network | Joining a server (`Connection`, the client's listeners) | Not started | captures | |
-| World | Blocks and block states (1,286 blocks, 35,723 states) | Not started | | |
+| World | Blocks and block states (1,286 blocks, 35,723 states) | Partial: every block and state with vanilla's ids, properties, default states and what each keeps from its `Properties` (light, occlusion, map colour, random ticks…); no shapes, fluid states or behaviour yet | goldens (every state), `blocks.json` | same ids, values and flags for all 35,723 states |
 | World | Chunk data, level storage, light | Not started | | |
 | Player | Input, movement, collisions | Not started | traces | |
 | Rendering | Window (SDL3) and input | Partial: the window and OpenGL 3.3 core context made like vanilla's (LWJGL's own SDL3 build), frames presented; no input yet | device as vanilla logs it, on llvmpipe | same driver, flags and extensions as the oracle's log |

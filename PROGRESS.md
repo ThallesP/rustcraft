@@ -35,11 +35,41 @@ Gate 2's first draw. The shaders' text is vanilla's; next the device runs it:
 
 Then this brief's third part, not started: a `ResourceManager` over `vanilla/<version>/resources/` (the vanilla pack's layers, `listResources`, which `ShaderManager::load_configs` would then use), `NativeImage.read` (stb's PNG decoding, checked against vanilla's pixels), and the block atlas: `SpriteLoader` and `Stitcher`, whose layout a golden suite running vanilla's `Stitcher` on the same sprites records.
 
+### world
+
+The block state registry is in: every block and state with vanilla's ids, values and what each state keeps from its `Properties`. Next, the chunk data the renderer and physics read:
+- `PalettedContainer` with its `Strategy` and `PalettedContainerFactory` (the block states' and biomes' bits per entry, and where each palette gives way to the next), `SingleValuePalette`, `LinearPalette`, `HashMapPalette` (`CrudeIncrementalIntIdentityHashBiMap`), `GlobalPalette` over `Block.BLOCK_STATE_REGISTRY`, and `SimpleBitStorage` and `ZeroBitStorage` (`DIVIDE_MAGIC`): `read` from a buffer, `get` and `getAll`.
+- `LevelChunkSection.read` and `ClientboundLevelChunkPacketData`'s section buffer (and its heightmaps and block entities), tested on the `level_chunk_with_light` payloads in `vanilla/26.3/oracle/walk/capture.jsonl`, with vanilla's own decoding of the same bytes as the goldens. The biomes' palettes need the biome registry's size, which the configuration's registry data gives the client.
+- Then `ClientLevel`'s chunk storage (`ClientChunkCache`, `LevelChunk`) and light (`LevelLightEngine` and the light packets' data).
+
+Left from the registry, for when what needs them comes:
+- The blocks' shapes (`VoxelShape`, `Shapes`, each class's `getShape`, `getCollisionShape` and `getOcclusionShape`), which `initCache`'s `isSolid`, `isSolidRender`, occlusion shapes, `propagatesSkylightDown`, `getLightDampening` and `useShapeForLightOcclusion` need, and so do the default `isRedstoneConductor`, `isSuffocating` and `isViewBlocking` and `NEAR_PLANE_INTERSECTS_OUTLINE`. `BlockSuites` records only what the port can check, so add those methods to its state suite when they come (the `Block` suite already checks which predicate each block has).
+- Fluids (`Fluid`, `FluidState`, `Fluids`, `getFluidState`), which `LiquidBlock` stands in for with `Fluids`' constants; `SoundType`, `isValidSpawn` and `requiredFeatures`, which `Blocks`' registrations leave out; the offset function (`getOffset`, each class's `getMaxHorizontalOffset`), of which only `hasOffsetFunction` is ported.
+- Each class's behaviour, its fields and its constructor arguments that don't decide its states, which its header names. The class files and `Blocks`' registrations were written from the Java by a one-off translation script, not committed; port each class's behaviour by hand when it comes.
+
 ## Needs Thalles
 
 - **Licence of the code translated from OpenJDK, JOML, Netty and Guava.** `src/java/lang/math/hotspot_x86/` is translated from OpenJDK's HotSpot, which is GPLv2 only (no Classpath Exception), and keeps its notices. `src/java/lang/fd_libm.rs` comes from the JDK's `FdLibm.java`, GPLv2 with the Classpath Exception, `string::from_bytes_utf8` from the JDK's `String.java`, and `src/java/util/hash_map.rs`, `src/java/util/hash_set.rs` and `src/java/io/` from `HashMap.java`, `HashSet.java`, `DataInput.java`, `DataOutput.java`, `DataInputStream.java`, `DataOutputStream.java` and `ModifiedUtf.java`, the same, which keep their notices. `src/org/joml/` comes from JOML, MIT, whose notice a distribution has to carry. `src/io/netty/` comes from Netty, Apache 2.0, and keeps its notice, saying the files were translated and changed; a distribution has to carry the licence too. So does `src/com/google/`, from Guava, also Apache 2.0. That's fine while the repo stays private. Shipping a build of rustcraft would put it under GPLv2 too, and Apache 2.0 code isn't compatible with GPLv2 only. Not blocking. Decide before the repo or any build goes public.
 
 ## Log
+
+### 2026-10-22 (world): The block state registry, every block and state numbered like vanilla
+
+- Ported and checked against vanilla, the world track's first step:
+  - The properties: `Property` (as `Property`, with values as `Comparable`s, and `TypedProperty`), `BooleanProperty`, `IntegerProperty`, `EnumProperty`, the 30 enums their values are (`AttachFace` to `WallSide`, `FrontAndTop`, `TrialSpawnerState` and `VaultState` with their light levels, `CopperGolemStatueBlock.Pose`; `Direction` and `Axis` gained `Enum` and `StringRepresentable`), and `BlockStateProperties` (124 properties and 17 ints): 24,003 `Property` cases and 141 fields.
+  - `StateDefinition` and its `Builder` (18 cases), `StateHolder`, `BlockState`, `BlockBehaviour.Properties` and what `BlockBehaviour` and `BlockStateBase` keep from it, `Block` (`BLOCK_STATE_REGISTRY`, `getId`, `stateById`) with `IdMapper`, and `Blocks`: its 911 fields (1,286 blocks), with `ColorCollection`, `WeatheringCopperCollection`, `WeatheringCopper`'s `getNext`, `BlockItemIds`, `BlockIds`, `BlockItemId`, `DyeColor`, `MapColor`, `PushReaction` and `Util.makeDescriptionId`. The 297 block classes `Blocks` uses and their parents each have what decides their states: their properties, `createBlockStateDefinition`, default state and `isRandomlyTicking` override, and what a constructor does to its `Properties` (`InfestedBlock` halves its host's hardness).
+  - `Block`'s suite: 46,046 cases over the 1,286 blocks. `BlockState`'s: 1,010,105 cases over the 35,723 states (each state's block, values, `toString` and 19 flags, and the lookups). Every state's id, values and default also match `generated/reports/blocks.json`.
+  - `Integer.parseInt` (564 cases) and `Character.digit` in radix 10 (65,536), which `IntegerProperty.getValue` parses with.
+- Design (PORTING.md, "Blocks and block states"): a `Block` is a `Copy` handle, its registry id, that derefs to its `BlockData`; a `BlockState` is a reference to its block's leaked `StateDefinition` and its index there (16 bytes), whose values are the index's mixed-radix digits, so states work while `Blocks` registers; what each state keeps is a table by id. `Blocks`' fields are consts numbered by a macro that checks each registration lands there, and its registrations read earlier blocks from the registry being built, a parameter. A block class is a `BlockClass` static (name, parent, overrides), and its constructors pass the most derived class and `createBlockStateDefinition` down to `Block::new_with`, like Java's dispatch from a base constructor. `Properties`' predicates taking a level are values that say which they are, checked where they answer from the state alone.
+- Found:
+  - `IntegerProperty.create("age", Integer.MAX_VALUE - 1, Integer.MAX_VALUE)` has no values: `IntStream.range(min, max + 1)` wraps. The suite's first run caught the port listing two.
+  - A torchflower crop's `getMaxAge()` is 2 while its `AGE` stops at 1, so it never counts as grown and both its states tick.
+  - `setValue` with an int below an integer property's minimum whose index wraps (`Integer.MIN_VALUE` on a property from 1) passes the `< 0` check and throws `ArrayIndexOutOfBoundsException` from the neighbour table, where the port panics too.
+  - `Integer.parseInt` takes any Unicode decimal digit, so `IntegerProperty.getValue("٣")` is 3.
+  - A default `isViewBlocking` copied by `ofFullCopy` keeps asking its source's `isSuffocating`: the lambda captures the `Properties` it was made for.
+- Mutations (5, run once and not committed): 3 fail the goldens (a leaf's ticking distance, `cycle` not wrapping round, a light level). 2 survive: `ofFullCopy` dropping the jump factor (no block is a full copy of one with a jump factor) and the copied `isViewBlocking` asking the copy's own `isSuffocating` (those values need shapes, which aren't ported).
+- With the new suites, `tools/golden.py` writes 1,221 MB (1,079 before), `BlockState`'s 117 MB the largest new file; the block files come out byte-identical from two runs. The other golden files' tests pass unchanged.
+- Evidence: `cargo test --workspace` passes 203 tests; fmt, clippy and the port check are clean.
 
 ### 2026-10-22 (render): Shaders through vanilla's shaderc and SPIRV-Cross, byte for byte, and a first OpenGL frame
 

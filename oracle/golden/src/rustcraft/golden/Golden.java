@@ -430,6 +430,12 @@ public final class Golden {
             .only("doubleToLongBits(D)J", "hashCode(D)I")
             .extraInputs("doubleToLongBits(D)J", doubleNaNs())
             .extraInputs("hashCode(D)I", doubleNaNs()),
+        // What IntegerProperty.getValue parses a value's name with, which takes any Unicode decimal digit.
+        new StaticSuite(Integer.class).only("parseInt(Ljava/lang/String;)I").extraInputs("parseInt(Ljava/lang/String;)I", intStrings()),
+        new StaticSuite(Character.class)
+            .only("digit(CI)I")
+            .where("digit(CI)I", args -> (Integer)args[1] == 10)
+            .extraInputs("digit(CI)I", decimalDigits()),
         new InstanceSuite(Vector3i.class, "<init>(III)V", "set(III)Lorg/joml/Vector3i;", "get(I)I", "setComponent(II)Lorg/joml/Vector3i;"),
         InstanceSuite.every(Vec3i.class)
             .extraInputs("closerThan(Lnet/minecraft/core/Vec3i;D)Z", distanceTies(0))
@@ -1104,7 +1110,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites()).flatMap(List::stream).toList()) {
+        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites()).flatMap(List::stream).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }
@@ -2536,6 +2542,29 @@ public final class Golden {
     }
 
     // Every ASCII and Latin-1 character and then some, surrogates and the last ones included.
+    // Strings around what Integer.parseInt takes: signs, leading zeros, the limits and past them, digits of other scripts
+    // (each script's 0 to 9 runs on from its zero), a supplementary digit (two surrogates), and what it refuses.
+    private static List<Object[]> intStrings() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (String s : List.of(
+            "", "+", "-", "0", "-0", "+0", "00", "007", "1", "-1", "+1", "9", "10", "99", "2147483647", "2147483648", "-2147483648",
+            "-2147483649", "21474836470", "4294967296", "99999999999999999999", " 1", "1 ", "1.0", "0x1", "1e3", "--1", "+-1", "a", "1a",
+            "\u0663", "\uff13", "\u0e53", "1\u0660", "\u0967\u0966", "\u0669\u0669", "\ud835\udfce", "\u0039\u0660", "\u2163", "\u00b2"
+        )) {
+            inputs.add(new Object[]{s});
+        }
+        return inputs;
+    }
+
+    // Every char, in radix 10.
+    private static List<Object[]> decimalDigits() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int c = 0; c <= 0xffff; c++) {
+            inputs.add(new Object[]{(char)c, 10});
+        }
+        return inputs;
+    }
+
     private static List<Object[]> everyChar() {
         List<Object[]> inputs = new ArrayList<>();
         for (int c = 0; c < 0x180; c++) {

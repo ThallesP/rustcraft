@@ -12,6 +12,7 @@ use std::fmt;
 use std::sync::LazyLock;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
+use crate::java::lang::r#enum::Enum;
 use crate::java::lang::math::Math;
 use crate::net::minecraft::core::vec3i::Vec3i;
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
@@ -19,7 +20,9 @@ use crate::net::minecraft::network::codec::stream_codec::StaticStreamCodec;
 use crate::net::minecraft::util::by_id_map::{ByIdMap, OutOfBoundsStrategy};
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::RandomSource;
+use crate::net::minecraft::util::string_representable::StringRepresentable;
 use crate::net::minecraft::util::util::Util;
+use crate::net::minecraft::world::level::block::state::properties::property::PropertyEnum;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::joml::matrix4f::Matrix4f;
 use crate::org::joml::quaternionf::Quaternionf;
@@ -497,6 +500,25 @@ impl fmt::Display for Direction {
     }
 }
 
+impl Enum for Direction {
+    const ENUM_CONSTANTS: &'static [Direction] = &Direction::VALUES;
+
+    fn ordinal(&self) -> i32 {
+        *self as i32
+    }
+}
+
+impl StringRepresentable for Direction {
+    fn get_serialized_name(&self) -> &'static str {
+        Direction::get_serialized_name(self)
+    }
+}
+
+/// A block state's `facing`.
+impl PropertyEnum for Direction {
+    const CLASS: &'static str = "net.minecraft.core.Direction";
+}
+
 /// `Direction.Axis`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Axis {
@@ -615,6 +637,25 @@ impl fmt::Display for Axis {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.get_name())
     }
+}
+
+impl Enum for Axis {
+    const ENUM_CONSTANTS: &'static [Axis] = &Axis::VALUES;
+
+    fn ordinal(&self) -> i32 {
+        *self as i32
+    }
+}
+
+impl StringRepresentable for Axis {
+    fn get_serialized_name(&self) -> &'static str {
+        Axis::get_serialized_name(self)
+    }
+}
+
+/// A block state's `axis`.
+impl PropertyEnum for Axis {
+    const CLASS: &'static str = "net.minecraft.core.Direction$Axis";
 }
 
 /// `Direction.AxisDirection`.

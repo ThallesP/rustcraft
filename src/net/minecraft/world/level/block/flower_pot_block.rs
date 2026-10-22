@@ -1,0 +1,40 @@
+//! net/minecraft/world/level/block/FlowerPotBlock.java
+//!
+//! Only what decides its blocks' states so far: which of them tick. Not ported yet: the rest,
+//! including its `potted` field and `POTTED_BY_CONTENT`, which its constructor fills.
+
+use crate::net::minecraft::world::level::block::block::{
+    self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
+};
+use crate::net::minecraft::world::level::block::blocks::Blocks;
+use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+
+pub struct FlowerPotBlock;
+
+pub static CLASS: BlockClass = BlockClass {
+    is_randomly_ticking: Some(FlowerPotBlock::is_randomly_ticking),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.FlowerPotBlock",
+        &block::CLASS,
+    )
+};
+
+impl FlowerPotBlock {
+    pub fn new(properties: Properties) -> BlockData {
+        FlowerPotBlock::new_with(properties, &CLASS, Block::create_block_state_definition)
+    }
+
+    pub(crate) fn new_with(
+        properties: Properties,
+        class: &'static BlockClass,
+        definition: CreateBlockStateDefinition,
+    ) -> BlockData {
+        Block::new_with(properties, class, definition)
+    }
+
+    /// The eyeblossoms in pots tick, to open and close.
+    fn is_randomly_ticking(_block: &BlockData, state: BlockState) -> bool {
+        state.is(Blocks::POTTED_OPEN_EYEBLOSSOM) || state.is(Blocks::POTTED_CLOSED_EYEBLOSSOM)
+    }
+}
