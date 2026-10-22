@@ -80,7 +80,8 @@ final class MathValues {
         MathValues::encodeTransformation
     );
 
-    // The only Optional a covered method takes is Transformation.compose's Optional<Transformation>: empty is null.
+    // The only Optional a covered method takes without a generator for its type argument is Transformation.compose's
+    // Optional<Transformation>: empty is null.
     static final Values.Generator OPTIONAL_TRANSFORMATION = new Values.Generator() {
         @Override
         public List<Object> edges() {

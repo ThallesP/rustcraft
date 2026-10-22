@@ -16,10 +16,12 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Stream;
+import net.minecraft.nbt.Tag;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.PacketListener;
@@ -30,6 +32,7 @@ import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
 import net.minecraft.network.protocol.common.CommonPacketTypes;
 import net.minecraft.network.protocol.common.ServerboundClientInformationPacket;
+import net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket;
 import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.ServerboundKeepAlivePacket;
 import net.minecraft.network.protocol.common.ServerboundPongPacket;
@@ -105,7 +108,8 @@ final class PacketValues {
         LoginPacketTypes.CLIENTBOUND_HELLO, LoginPacketTypes.CLIENTBOUND_LOGIN_COMPRESSION, LoginPacketTypes.CLIENTBOUND_LOGIN_DISCONNECT,
         LoginPacketTypes.SERVERBOUND_CUSTOM_QUERY_ANSWER, LoginPacketTypes.SERVERBOUND_HELLO, LoginPacketTypes.SERVERBOUND_KEY,
         LoginPacketTypes.SERVERBOUND_LOGIN_ACKNOWLEDGED, CookiePacketTypes.CLIENTBOUND_COOKIE_REQUEST, CookiePacketTypes.SERVERBOUND_COOKIE_RESPONSE,
-        CommonPacketTypes.SERVERBOUND_CLIENT_INFORMATION, CommonPacketTypes.SERVERBOUND_CUSTOM_PAYLOAD, CommonPacketTypes.SERVERBOUND_KEEP_ALIVE,
+        CommonPacketTypes.SERVERBOUND_CLIENT_INFORMATION, CommonPacketTypes.SERVERBOUND_CUSTOM_CLICK_ACTION, CommonPacketTypes.SERVERBOUND_CUSTOM_PAYLOAD,
+        CommonPacketTypes.SERVERBOUND_KEEP_ALIVE,
         CommonPacketTypes.SERVERBOUND_PONG, CommonPacketTypes.SERVERBOUND_RESOURCE_PACK, ConfigurationPacketTypes.SERVERBOUND_ACCEPT_CODE_OF_CONDUCT,
         ConfigurationPacketTypes.SERVERBOUND_FINISH_CONFIGURATION, ConfigurationPacketTypes.SERVERBOUND_SELECT_KNOWN_PACKS
     );
@@ -279,6 +283,11 @@ final class PacketValues {
             ServerboundSelectKnownPacks.class, fields -> new ServerboundSelectKnownPacks(knownPackList(fields[0])), List.of(), KNOWN_PACK_LISTS
         );
         packet(ServerboundAcceptCodeOfConductPacket.class, fields -> ServerboundAcceptCodeOfConductPacket.INSTANCE, List.of());
+        // A dialog's custom action: its identifier, and any tag or none (an EndTag writes like none).
+        packet(
+            ServerboundCustomClickActionPacket.class, fields -> new ServerboundCustomClickActionPacket((Identifier)fields[0], tagPayload(fields[1])),
+            List.of(), IDENTIFIERS, NbtValues.OPTIONAL_TAGS
+        );
     }
 
     private PacketValues() {
@@ -503,6 +512,11 @@ final class PacketValues {
     @SuppressWarnings("unchecked")
     private static List<KnownPack> knownPackList(final Object list) {
         return (List<KnownPack>)list;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Optional<Tag> tagPayload(final Object payload) {
+        return (Optional<Tag>)payload;
     }
 
     /**

@@ -4,6 +4,7 @@ pub mod common_packet_types;
 pub mod custom;
 pub mod server_common_packet_listener;
 pub mod serverbound_client_information_packet;
+pub mod serverbound_custom_click_action_packet;
 pub mod serverbound_custom_payload_packet;
 pub mod serverbound_keep_alive_packet;
 pub mod serverbound_pong_packet;

@@ -55,8 +55,9 @@ final class CodecSuite implements Suite {
     }
 
     /**
-     * More buffers for a codec constant N to decode under {@code N.decode}, like InstanceSuite.extraInputs, for fields
-     * its writer refuses but its reader doesn't.
+     * More buffers for a codec constant N, or a listed instance N ({@code descriptor[label]}), to decode under
+     * {@code N.decode}, like InstanceSuite.extraInputs, for fields its writer refuses but its reader doesn't. An
+     * instance's inputs are its leading arguments, then the buffer.
      */
     CodecSuite extraInputs(final String member, final List<Object[]> inputs) {
         this.extraInputs.put(member, inputs);
@@ -91,7 +92,12 @@ final class CodecSuite implements Suite {
                 for (Instance instance : listed) {
                     String name = descriptor + "[" + instance.label() + "]";
                     if (instance.codec() != null) {
-                        Codecs.writeCodec(writer, name, instance.leading(), instance.factory(), instance.codec(), domain);
+                        String decode = name + ".decode";
+                        written.add(decode);
+                        Codecs.writeCodec(
+                            writer, name, instance.leading(), instance.factory(), instance.codec(), domain,
+                            this.extraInputs.getOrDefault(decode, List.of())
+                        );
                     } else {
                         Codecs.writeFunction(writer, name, instance.leading(), instance.factory(), instance.functionResult());
                     }

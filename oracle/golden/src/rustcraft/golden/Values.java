@@ -348,14 +348,17 @@ final class Values {
 
     /**
      * Like generator(Class), except that a parameterized type can pick its elements' generator: a List or Iterable of AABBs
-     * is a list of boxes, and a List of KnownPacks a list of packs. Any other parameterized type gets its raw class's
-     * generator.
+     * is a list of boxes, a List of KnownPacks a list of packs, and an Optional of a Tag a tag or none. Any other
+     * parameterized type gets its raw class's generator.
      */
     static Generator generator(final Type type) {
         if (type instanceof ParameterizedType parameterized) {
             Generator generator = CoreValues.generator(parameterized);
             if (generator == null) {
                 generator = PacketValues.generator(parameterized);
+            }
+            if (generator == null) {
+                generator = NbtValues.generator(parameterized);
             }
             return generator != null ? generator : generator((Class<?>)parameterized.getRawType());
         }

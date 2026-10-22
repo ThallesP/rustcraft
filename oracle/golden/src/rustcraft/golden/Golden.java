@@ -1,5 +1,6 @@
 package rustcraft.golden;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
@@ -12,6 +13,7 @@ import com.mojang.math.Transformation;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
@@ -30,15 +32,20 @@ import java.util.function.Function;
 import java.util.function.ToIntFunction;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import net.minecraft.SharedConstants;
 import net.minecraft.SystemReport;
 import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.Vec3i;
+import net.minecraft.nbt.ByteArrayTag;
+import net.minecraft.nbt.ByteTag;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.EndTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.FriendlyByteBuf;
@@ -55,6 +62,7 @@ import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
 import net.minecraft.network.protocol.common.CommonPacketTypes;
 import net.minecraft.network.protocol.common.ServerboundClientInformationPacket;
+import net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket;
 import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.ServerboundKeepAlivePacket;
 import net.minecraft.network.protocol.common.ServerboundPongPacket;
@@ -63,6 +71,7 @@ import net.minecraft.network.protocol.common.custom.BrandPayload;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.network.protocol.common.custom.DiscardedPayload;
 import net.minecraft.network.protocol.configuration.ConfigurationPacketTypes;
+import net.minecraft.network.protocol.configuration.ConfigurationProtocols;
 import net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket;
 import net.minecraft.network.protocol.configuration.ServerboundFinishConfigurationPacket;
 import net.minecraft.network.protocol.configuration.ServerboundSelectKnownPacks;
@@ -86,6 +95,7 @@ import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.server.packs.repository.KnownPack;
@@ -163,6 +173,19 @@ public final class Golden {
     private static final Values.Generator TAGS = Values.generator(Tag.class);
     private static final String TAG_CODEC = "tagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;";
     private static final String DISCARDED_CODEC = "codec(Lnet/minecraft/resources/Identifier;I)Lnet/minecraft/network/codec/StreamCodec;";
+    private static final String LENGTH_PREFIXED = "lengthPrefixed(I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;";
+    private static final String LENGTH_PREFIXED_DECORATED =
+        "lengthPrefixed(ILjava/util/function/BiFunction;)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;";
+    private static final String CLICK_ACTION_TAGS = "optionalTagCodec(new NbtAccounter(32768L, 16))";
+    private static final String DISCARDED_MARKERS = "FriendlyByteBuf::new, DiscardedPayload.codec(rustcraft:scenario_start, 32767)";
+    private static final Identifier MARKER = Identifier.fromNamespaceAndPath("rustcraft", "scenario_start");
+    // The most a length prefix may say: the click action's 65536, small ones that some random tags' encodings fit and
+    // others don't, a discarded payload's 32767 and one more, and the int limits.
+    private static final Values.Generator PREFIX_SIZES = new Values.Simple(
+        List.of(65536, 0, 1, 2, 3, 4, 16, 32767, 32768, Integer.MAX_VALUE, -1, Integer.MIN_VALUE),
+        random -> random.nextBoolean() ? 65536 : random.nextInt(64),
+        value -> new JsonPrimitive((Integer)value)
+    );
     private static final String CONTINUOUS =
         "continuous(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;)Ljava/util/function/IntFunction;";
     // A record's hashCode adds up its components', and an enum constant's is its identity hash.
@@ -534,7 +557,7 @@ public final class Golden {
             "writeFloat(F)Lio/netty/buffer/ByteBuf;", "writeDouble(D)Lio/netty/buffer/ByteBuf;",
             "writeBytes([B)Lio/netty/buffer/ByteBuf;", "writeBytes([BII)Lio/netty/buffer/ByteBuf;",
             "writeBytes(Lio/netty/buffer/ByteBuf;)Lio/netty/buffer/ByteBuf;", "writeBytes(Lio/netty/buffer/ByteBuf;II)Lio/netty/buffer/ByteBuf;",
-            "toString(IILjava/nio/charset/Charset;)Ljava/lang/String;"
+            "toString(IILjava/nio/charset/Charset;)Ljava/lang/String;", "slice(II)Lio/netty/buffer/ByteBuf;"
         )
             .extraInputs("readerIndex(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
             .extraInputs("writerIndex(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
@@ -545,6 +568,7 @@ public final class Golden {
             .extraInputs("readBytes(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
             .extraInputs("skipBytes(I)Lio/netty/buffer/ByteBuf;", bufferIndexes(1))
             .extraInputs("toString(IILjava/nio/charset/Charset;)Ljava/lang/String;", bufferRanges())
+            .extraInputs("slice(II)Lio/netty/buffer/ByteBuf;", sliceRanges())
             .extraInputs("writeFloat(F)Lio/netty/buffer/ByteBuf;", withBuffers(firsts(floatNaNs()), true))
             .extraInputs("writeDouble(D)Lio/netty/buffer/ByteBuf;", withBuffers(firsts(doubleNaNs()), true))
             .extraInputs("readBytes([BII)Lio/netty/buffer/ByteBuf;", arrayRanges())
@@ -721,6 +745,21 @@ public final class Golden {
                 "compoundTagCodec(Ljava/util/function/Supplier;)Lnet/minecraft/network/codec/StreamCodec;", "NbtAccounter::unlimitedHeap",
                 leading -> ByteBufCodecs.compoundTagCodec(NbtAccounter::unlimitedHeap), bufferCodec(Values.generator(CompoundTag.class), CompoundTag.class)
             )
+            // A length prefix in front of the click action's tag, and of a discarded payload, which reads every byte its
+            // slice has, with any maximum.
+            .codec(
+                LENGTH_PREFIXED, CLICK_ACTION_TAGS,
+                leading -> ByteBufCodecs.optionalTagCodec(() -> new NbtAccounter(32768L, 16)).apply(ByteBufCodecs.lengthPrefixed((Integer)leading[0])),
+                bufferCodec(withUnwritableString(Codecs.optionalOf(TAGS)), Optional.class), PREFIX_SIZES
+            )
+            .extraInputs(LENGTH_PREFIXED + "[" + CLICK_ACTION_TAGS + "].decode", lengthPrefixes(tagPrefixPayloads(), false))
+            .codec(
+                LENGTH_PREFIXED_DECORATED, DISCARDED_MARKERS,
+                leading -> DiscardedPayload.<FriendlyByteBuf>codec(MARKER, 32767)
+                    .apply(ByteBufCodecs.<FriendlyByteBuf, DiscardedPayload>lengthPrefixed((Integer)leading[0], (parent, child) -> new FriendlyByteBuf(child))),
+                new Codecs.Codec(NetworkValues.FRIENDLY_BUFFER, Values.generator(DiscardedPayload.class), DiscardedPayload.class), PREFIX_SIZES
+            )
+            .extraInputs(LENGTH_PREFIXED_DECORATED + "[" + DISCARDED_MARKERS + "].decode", lengthPrefixes(discardedPrefixPayloads(), true))
             // A length prefix in the millions makes vanilla allocate that many bytes before it finds the buffer shorter.
             .whereDecode("byteArray(I)Lnet/minecraft/network/codec/StreamCodec;", args -> allocatesLittle(args[1], (Integer)args[0]))
             // Its writer stops the count at 16 and each string at its limit (64, 32767 and 1024), so the reader also reads
@@ -890,10 +929,8 @@ public final class Golden {
         InstanceSuite.every(ParticleStatus.class)
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/server/level/ParticleStatus;", names(ParticleStatus.values())),
         // Its reader's constructor reads what write writes, which doesn't stop the language at 16 characters like it does.
-        // createDefault reads Player.DEFAULT_MAIN_HAND, and Player's class needs a bootstrapped game.
         InstanceSuite.every(ClientInformation.class)
             .exclude("hashCode()I", ENUM_IN_RECORD)
-            .exclude("createDefault()Lnet/minecraft/server/level/ClientInformation;", "reads Player's constant, whose class needs a bootstrapped game")
             .extraInputs(
                 "<init>(Lnet/minecraft/network/FriendlyByteBuf;)V",
                 friendly(written(106, Values.generator(ClientInformation.class), (FriendlyByteBuf buffer, ClientInformation information) -> information.write(buffer)))
@@ -927,15 +964,19 @@ public final class Golden {
         // Its codec skips the rest of the buffer, so it also reads buffers as long as the maximum, and a byte either side.
         InstanceSuite.every(DiscardedPayload.class).extraInputs(DISCARDED_CODEC + ".decode", discardedPayloads()),
         InstanceSuite.every(ServerboundCustomPayloadPacket.class).extraInputs("STREAM_CODEC.decode", customPayloads()),
-        // The game's version isn't set outside the game, so vanilla(String) would only throw.
-        InstanceSuite.every(KnownPack.class)
-            .exclude("vanilla(Ljava/lang/String;)Lnet/minecraft/server/packs/repository/KnownPack;", "needs the game's version, which only the game sets"),
+        InstanceSuite.every(KnownPack.class),
         InstanceSuite.every(ServerboundSelectKnownPacks.class),
         InstanceSuite.every(ServerboundFinishConfigurationPacket.class),
         InstanceSuite.every(ServerboundAcceptCodeOfConductPacket.class),
         InstanceSuite.every(ServerboundKeepAlivePacket.class),
         InstanceSuite.every(ServerboundPongPacket.class),
         InstanceSuite.every(ServerboundResourcePackPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        // An EndTag's hashCode is Object's, an identity hash. Its tag is behind a length prefix of at most 65536 bytes,
+        // read with 32 KiB and 16 levels to spend, so it also reads prefixes and tags at those limits and past them.
+        InstanceSuite.every(ServerboundCustomClickActionPacket.class)
+            .where("hashCode()I", args -> !(((ServerboundCustomClickActionPacket)args[0]).payload().orElse(null) instanceof EndTag))
+            .extraInputs("STREAM_CODEC.decode", clickActionPayloads()),
+        new ProtocolSuite(ConfigurationProtocols.class),
         InstanceSuite.every(ServerboundResourcePackPacket.Action.class)
             .extraInputs(
                 "valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/common/ServerboundResourcePackPacket$Action;",
@@ -952,6 +993,12 @@ public final class Golden {
         // one they can't get: the game's version, which the generator doesn't set, and the hardware, since
         // tools/golden.py runs it without OSHI. That's four stack traces for each of thousands of reports.
         Configurator.setLevel(SystemReport.class.getName(), Level.ERROR);
+        // The game bootstrapped, like its own tests: the configuration protocol's clientbound template holds the dialog
+        // packet, whose codec needs the registries. Bootstrapping sends System.out to the log, so the progress goes to the
+        // stream from before.
+        PrintStream out = System.out;
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
@@ -963,7 +1010,7 @@ public final class Golden {
             Path file = outputDir.resolve(suite.name() + ".jsonl");
             try (GoldenWriter writer = new GoldenWriter(file)) {
                 suite.write(writer);
-                System.out.printf("%s: %d lines%n", file.getFileName(), writer.lines());
+                out.printf("%s: %d lines%n", file.getFileName(), writer.lines());
             }
         }
     }
@@ -2456,6 +2503,111 @@ public final class Golden {
         return inputs;
     }
 
+    // Tags or none, and an edge whose writer throws after writing its id: a string tag too long for writeUTF's 65535 bytes.
+    // Random draws are the tags' own.
+    private static Values.Generator withUnwritableString(final Values.Generator tags) {
+        List<Object> edges = new ArrayList<>(tags.edges());
+        edges.add(Optional.of(StringTag.valueOf("a".repeat(65536))));
+        return new Values.Generator() {
+            @Override
+            public List<Object> edges() {
+                return edges;
+            }
+
+            @Override
+            public Object random(final Random random) {
+                return tags.random(random);
+            }
+
+            @Override
+            public JsonElement encode(final Object spec) {
+                return tags.encode(spec);
+            }
+
+            @Override
+            public Object instantiate(final Object spec) {
+                return tags.instantiate(spec);
+            }
+        };
+    }
+
+    // Tags as the click action's codec writes them: none, an empty compound, a byte, a string and a compound of two.
+    private static List<byte[]> tagPrefixPayloads() {
+        CompoundTag item = new CompoundTag();
+        item.putString("id", "minecraft:stone");
+        item.putInt("count", 64);
+        return Stream.<Tag>of(EndTag.INSTANCE, new CompoundTag(), ByteTag.valueOf((byte)1), StringTag.valueOf("minecraft:stone"), item)
+            .map(NbtValues::anyTagBytes)
+            .toList();
+    }
+
+    // Payloads a discarded payload's codec skips: none, a byte, and a few.
+    private static List<byte[]> discardedPrefixPayloads() {
+        return List.of(new byte[0], NetworkValues.bytes(0x2a), NetworkValues.bytes(1, 2, 3, 4, 5));
+    }
+
+    // Each payload behind a length prefix that's right, a byte short, a byte long, zero, negative or an int's limit, read
+    // with maximums of the payload's length, a byte less and 65536; with no spare capacity or 4 bytes, so a prefix a byte
+    // long is past the writer index but inside the array; and with another byte after the payload or none. A byte before
+    // the prefix is read already, so a mark the codec set on the buffer would show. Discarded payloads also come at their
+    // codec's limit of 32767 bytes and a byte past it.
+    private static List<Object[]> lengthPrefixes(final List<byte[]> payloads, final boolean friendly) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (byte[] payload : payloads) {
+            int length = payload.length;
+            for (int prefix : new int[]{length, length - 1, length + 1, 0, -1, Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+                for (int max : new int[]{length, length - 1, 65536}) {
+                    for (int slack : new int[]{0, 4}) {
+                        for (byte[] after : new byte[][]{new byte[0], NetworkValues.bytes(0x2a)}) {
+                            byte[] bytes = NetworkValues.concat(NetworkValues.bytes(0x7f), NetworkValues.varInt(prefix), payload, after);
+                            ByteBuf buffer = NetworkValues.buffer(slack, 1, bytes);
+                            inputs.add(new Object[]{max, friendly ? new FriendlyByteBuf(buffer) : buffer});
+                        }
+                    }
+                }
+            }
+        }
+        if (friendly) {
+            for (int length : new int[]{32767, 32768}) {
+                ByteBuf buffer = NetworkValues.buffer(0, 0, NetworkValues.concat(NetworkValues.varInt(length), new byte[length]));
+                inputs.add(new Object[]{65536, new FriendlyByteBuf(buffer)});
+            }
+        }
+        return inputs;
+    }
+
+    // Click actions whose tag is behind a length prefix of the codec's limit of 65536 and of a byte past it, with zeros
+    // after the tag up to the prefix's length; byte arrays the accounter's 32 KiB just takes (an array accounts 24 bytes
+    // and one a byte) and just refuses, and one far over it, which fit the limit; and compounds nested 16 deep, as deep
+    // as the accounter reads, and 17.
+    private static List<Object[]> clickActionPayloads() {
+        byte[] id = NetworkValues.utf("rustcraft:click");
+        byte[] small = NbtValues.anyTagBytes(StringTag.valueOf("a"));
+        List<Object[]> inputs = new ArrayList<>();
+        for (int length : new int[]{65536, 65537}) {
+            byte[] padded = Arrays.copyOf(small, length);
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(id, NetworkValues.varInt(length), padded))});
+        }
+        List<Tag> tags = new ArrayList<>();
+        for (int size : new int[]{32744, 32745, 40000}) {
+            tags.add(new ByteArrayTag(new byte[size]));
+        }
+        for (int depth : new int[]{16, 17}) {
+            CompoundTag nested = new CompoundTag();
+            for (int i = 1; i < depth; i++) {
+                CompoundTag outer = new CompoundTag();
+                outer.put("a", nested);
+                nested = outer;
+            }
+            tags.add(nested);
+        }
+        for (Tag tag : tags) {
+            byte[] bytes = NbtValues.anyTagBytes(tag);
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(id, NetworkValues.varInt(bytes.length), bytes))});
+        }
+        return inputs;
+    }
+
     // Buffers holding what the writer writes of the values' first edges and random ones, read from the start: whole, with
     // another field after them, cut short by a byte and cut anywhere, with up to 16 bytes of capacity to spare.
     @SuppressWarnings("unchecked")
@@ -2703,6 +2855,24 @@ public final class Golden {
             };
             for (int[] range : ranges) {
                 inputs.add(new Object[]{buffer, range[0], range[1], StandardCharsets.UTF_8});
+            }
+        }
+        return inputs;
+    }
+
+    // Ranges of a buffer's array to slice: its readable bytes and one more (past the writer index, inside the array when
+    // there's spare capacity), all of it, what's past the writer index, empty at the end, one past the end, negative starts
+    // and lengths, and an end past Integer.MAX_VALUE. A slice is checked against the capacity, not the writer index.
+    private static List<Object[]> sliceRanges() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (ByteBuf buffer : sampleBuffers(107, 40)) {
+            int[][] ranges = {
+                {buffer.readerIndex(), buffer.readableBytes()}, {buffer.readerIndex(), buffer.readableBytes() + 1}, {0, buffer.capacity()},
+                {buffer.writerIndex(), buffer.writableBytes()}, {buffer.capacity(), 0}, {buffer.capacity(), 1}, {0, buffer.capacity() + 1},
+                {-1, 1}, {1, -1}, {-1, 0}, {Integer.MAX_VALUE, 1}
+            };
+            for (int[] range : ranges) {
+                inputs.add(new Object[]{buffer, range[0], range[1]});
             }
         }
         return inputs;

@@ -1,9 +1,7 @@
 //! net/minecraft/network/protocol/common/ServerCommonPacketListener.java
-//!
-//! Not ported yet: `handleCustomClickAction`, which comes with `ServerboundCustomClickActionPacket`
-//! (its payload is an NBT tag).
 
 use crate::net::minecraft::network::protocol::common::serverbound_client_information_packet::ServerboundClientInformationPacket;
+use crate::net::minecraft::network::protocol::common::serverbound_custom_click_action_packet::ServerboundCustomClickActionPacket;
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
 use crate::net::minecraft::network::protocol::common::serverbound_keep_alive_packet::ServerboundKeepAlivePacket;
 use crate::net::minecraft::network::protocol::common::serverbound_pong_packet::ServerboundPongPacket;
@@ -22,6 +20,8 @@ pub trait ServerCommonPacketListener: ServerCookiePacketListener {
     fn handle_resource_pack_response(&mut self, packet: &ServerboundResourcePackPacket);
 
     fn handle_client_information(&mut self, packet: &ServerboundClientInformationPacket);
+
+    fn handle_custom_click_action(&mut self, packet: &ServerboundCustomClickActionPacket);
 }
 
 #[cfg(test)]
@@ -46,5 +46,9 @@ impl ServerCommonPacketListener
 
     fn handle_client_information(&mut self, packet: &ServerboundClientInformationPacket) {
         self.record("handleClientInformation", packet);
+    }
+
+    fn handle_custom_click_action(&mut self, packet: &ServerboundCustomClickActionPacket) {
+        self.record("handleCustomClickAction", packet);
     }
 }

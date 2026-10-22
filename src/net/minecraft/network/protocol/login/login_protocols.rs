@@ -89,8 +89,8 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.network.protocol.login.LoginProtocols");
-        let clientbound = "needs ClientboundLoginFinishedPacket (GameProfile's codec) and \
-            ClientboundLoginDisconnectPacket (Component's codec)";
+        let clientbound =
+            "needs ClientboundLoginDisconnectPacket, which reads its reason with Component's codec";
         golden.pending("CLIENTBOUND_TEMPLATE", clientbound);
         golden.pending("CLIENTBOUND", clientbound);
         golden.pending("CLIENTBOUND.codec()", clientbound);

@@ -3,12 +3,13 @@
 //! HeapByteBufUtil.java.
 //!
 //! The game only sees `ByteBuf`'s API, so the port has one kind of buffer. Netty's others (pooled,
-//! direct, composite, slices) keep their bytes elsewhere and grow differently, but read and write
-//! alike. `retain` and `release` are Rust's ownership, and `alloc()` is the one allocator.
+//! direct, composite) keep their bytes elsewhere and grow differently, but read and write alike,
+//! and a slice is a copy of its range. `retain` and `release` are Rust's ownership, and `alloc()`
+//! is the one allocator.
 //!
 //! Only the methods the client calls are ported, as they come up (PORTING.md): so far the indexes
 //! and marks, capacity, reads and writes of primitives and byte arrays, `readBytes`, `skipBytes`,
-//! `writeBytes` from another buffer, and `toString` of a range as UTF-8.
+//! `writeBytes` from another buffer, `toString` of a range as UTF-8, and `slice`.
 //!
 //! Java throws `IndexOutOfBoundsException` or `IllegalArgumentException`, which are panics here. A
 //! call that throws can have changed the buffer already, as in Java: `writeBytes` grows the array
@@ -449,6 +450,20 @@ impl ByteBuf {
         self
     }
 
+    /// `slice(int, int)`: that range of the array as a buffer of its own, all of it readable, which
+    /// can't grow. The range is checked against the array, not the writer index. Java's slice
+    /// shares the array, so writes to either show in the other; a copy reads the same while
+    /// neither is written to, and the game only reads a slice (`ByteBufCodecs.lengthPrefixed`).
+    pub fn slice(&self, index: i32, length: i32) -> ByteBuf {
+        // AbstractByteBuf(int)'s check of the slice's maximum capacity, then checkSliceOutOfBounds
+        assert!(length >= 0, "maxCapacity : {length} (expected: >= 0)");
+        check_range_bounds("index", index, length, self.capacity());
+        ByteBuf::from_array(
+            self.array[index as usize..(index + length) as usize].to_vec(),
+            length,
+        )
+    }
+
     /// `toString(int, int, Charset)` with UTF-8, through `ByteBufUtil.decodeString`: the range is
     /// checked against the array, not the writer index, and only when it isn't empty.
     pub fn to_string_utf8(&self, index: i32, length: i32) -> String {
@@ -806,6 +821,10 @@ mod tests {
                 assert_eq!(charset, "UTF-8", "only UTF-8 is ported");
                 this.to_string_utf8(index, length)
             },
+        );
+        golden.check_method(
+            "slice(II)Lio/netty/buffer/ByteBuf;",
+            |this: &mut ByteBuf, index: i32, length: i32| this.slice(index, length),
         );
         golden.finish();
     }

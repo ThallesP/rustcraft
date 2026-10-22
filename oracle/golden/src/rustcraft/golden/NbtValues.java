@@ -13,10 +13,12 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.ParameterizedType;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.function.Function;
 import net.minecraft.nbt.ByteArrayTag;
@@ -149,6 +151,8 @@ final class NbtValues {
         ),
         random -> random.nextInt(40) == 0 ? EndTag.INSTANCE : randomTag(random, 0)
     );
+    // A tag or none, empty a quarter of the time.
+    static final Values.Generator OPTIONAL_TAGS = Codecs.optionalOf(TAGS);
     static final Values.Generator NUMERIC_TAGS = mutable(
         anyEdges(BYTE_TAGS, SHORT_TAGS, INT_TAGS, LONG_TAGS, FLOAT_TAGS, DOUBLE_TAGS), random -> randomTagOf(random, 1 + random.nextInt(6), 0)
     );
@@ -189,6 +193,12 @@ final class NbtValues {
 
     static Values.Generator generator(final Class<?> type) {
         return GENERATORS.get(type);
+    }
+
+    /** The only parameterized arguments with a generator of their own here: a click action's Optional<Tag>. */
+    static Values.Generator generator(final ParameterizedType type) {
+        boolean tag = type.getRawType() == Optional.class && type.getActualTypeArguments()[0] == Tag.class;
+        return tag ? OPTIONAL_TAGS : null;
     }
 
     static boolean canEncode(final Class<?> type) {

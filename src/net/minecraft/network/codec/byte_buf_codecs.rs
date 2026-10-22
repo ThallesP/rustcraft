@@ -6,9 +6,9 @@
 //!   `fromCodecWithRegistries` ones), and `lenientJson`, which waits for Gson;
 //! - `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
 //! - the registries' (`registry`, `holderRegistry`, `holder`, `holderSet` and `idMapper(IdMap)`);
-//! - `either`, which waits for DataFixerUpper's `Either`, `map`, whose first caller settles which
-//!   Rust map stands for its Java map (whose order `encode` writes in), and `lengthPrefixed` and
-//!   `registryFriendlyLengthPrefixed`, which wait for `ByteBuf.slice`.
+//! - `either`, which waits for DataFixerUpper's `Either`, and `map`, whose first caller settles
+//!   which Rust map stands for its Java map (whose order `encode` writes in);
+//! - `registryFriendlyLengthPrefixed`, which waits for `RegistryFriendlyByteBuf`.
 //!
 //! An interface Java only uses for its constants and static methods, so a unit struct like `Mth`.
 //! Its codecs are statics, which its constants refer to. Java throws Netty's `DecoderException`
@@ -21,6 +21,7 @@ use crate::com::mojang::authlib::game_profile::GameProfile;
 use crate::com::mojang::authlib::properties::property::Property;
 use crate::com::mojang::authlib::properties::property_map::PropertyMap;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
+use crate::io::netty::buffer::unpooled;
 use crate::java::util::array_list::ArrayList;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::nbt::compound_tag::CompoundTag;
@@ -542,6 +543,35 @@ impl ByteBufCodecs {
         }
     }
 
+    /// `lengthPrefixed(int)`: the value's encoding behind its length, in a VarInt, of at most
+    /// `max_size` bytes.
+    pub fn length_prefixed<C: StreamCodec<Buffer = ByteBuf>>(
+        max_size: i32,
+    ) -> impl FnOnce(C) -> UndecoratedLengthPrefixed<C> {
+        ByteBufCodecs::length_prefixed_decorated(
+            max_size,
+            (|_parent, child| child) as fn(&ByteBuf, ByteBuf) -> ByteBuf,
+        )
+    }
+
+    /// `lengthPrefixed(int, BiFunction)`: the same, the codec reading and writing the buffer the
+    /// decorator makes of the outer one and a buffer of the value's own bytes.
+    pub fn length_prefixed_decorated<C, D>(
+        max_size: i32,
+        decorator: D,
+    ) -> impl FnOnce(C) -> LengthPrefixed<C, D>
+    where
+        C: StreamCodec,
+        C::Buffer: AsMut<ByteBuf>,
+        D: Fn(&C::Buffer, ByteBuf) -> C::Buffer,
+    {
+        move |original| LengthPrefixed {
+            original,
+            max_size,
+            decorator,
+        }
+    }
+
     /// `idMapper(IntFunction, ToIntFunction)`: a value by its id, in a VarInt.
     pub fn id_mapper<T>(
         by_id: impl Fn(i32) -> T,
@@ -603,6 +633,62 @@ where
 /// What `list` makes: a collection in an `ArrayList`.
 pub type List<C> = Collection<C, fn(i32) -> Vec<<C as StreamCodec>::Value>>;
 
+/// What `lengthPrefixed` makes.
+pub struct LengthPrefixed<C, D> {
+    original: C,
+    max_size: i32,
+    decorator: D,
+}
+
+impl<C, D> StreamCodec for LengthPrefixed<C, D>
+where
+    C: StreamCodec,
+    C::Buffer: AsMut<ByteBuf>,
+    D: Fn(&C::Buffer, ByteBuf) -> C::Buffer,
+{
+    type Buffer = C::Buffer;
+    type Value = C::Value;
+
+    /// Reads the value from a slice of the next `size` bytes, after moving past them, so it reads
+    /// no further (a value reading every byte left reads the slice's) and leaves any bytes of the
+    /// slice it doesn't read. A size past the array panics before the move, and past the writer
+    /// index at the move, where Java throws `IndexOutOfBoundsException`.
+    fn decode(&self, input: &mut C::Buffer) -> C::Value {
+        let size = VarInt::read(input.as_mut());
+        assert!(
+            size <= self.max_size,
+            "Buffer size {size} is larger than allowed limit of {}",
+            self.max_size
+        );
+
+        let index = input.as_mut().reader_index();
+        let slice = input.as_mut().slice(index, size);
+        let mut limited_slice = (self.decorator)(input, slice);
+        input.as_mut().set_reader_index(index + size);
+        self.original.decode(&mut limited_slice)
+    }
+
+    /// Writes the value into a buffer of its own (`alloc().buffer()`), then its size and its
+    /// bytes, so a value that panics, or is over `max_size`, writes nothing.
+    fn encode(&self, output: &mut C::Buffer, value: &C::Value) {
+        let mut scratch_buffer = (self.decorator)(output, unpooled::buffer());
+        self.original.encode(&mut scratch_buffer, value);
+        let size = scratch_buffer.as_mut().readable_bytes();
+        assert!(
+            size <= self.max_size,
+            "Buffer size {size} is  larger than allowed limit of {}",
+            self.max_size
+        );
+
+        VarInt::write(output.as_mut(), size);
+        output.as_mut().write_bytes_buf(scratch_buffer.as_mut());
+    }
+}
+
+/// What `lengthPrefixed(int)` makes: its codec reads and writes the slice and the scratch buffer
+/// as they are.
+pub type UndecoratedLengthPrefixed<C> = LengthPrefixed<C, fn(&ByteBuf, ByteBuf) -> ByteBuf>;
+
 /// What `fixedSizeCollection` makes.
 pub struct FixedSizeCollection<C, F> {
     constructor: F,
@@ -657,6 +743,9 @@ mod tests {
     use crate::net::minecraft::core::direction::Direction;
     use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
     use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
+    use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
+    use crate::net::minecraft::network::protocol::common::custom::discarded_payload::DiscardedPayload;
+    use crate::net::minecraft::resources::identifier::Identifier;
 
     const CODEC: &str = "Lnet/minecraft/network/codec/StreamCodec;";
     const OPERATION: &str = "Lnet/minecraft/network/codec/StreamCodec$CodecOperation;";
@@ -708,13 +797,10 @@ mod tests {
                 "its first caller settles which Rust map stands for its Java map, whose order encode writes in",
             );
         }
-        for name in [
-            "lengthPrefixed(I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;",
-            "lengthPrefixed(ILjava/util/function/BiFunction;)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;",
+        golden.pending(
             "registryFriendlyLengthPrefixed(I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;",
-        ] {
-            golden.pending(name, "waits for ByteBuf.slice");
-        }
+            "waits for RegistryFriendlyByteBuf, which comes with the registries",
+        );
         golden.field(
             "MAX_INITIAL_COLLECTION_SIZE",
             ByteBufCodecs::MAX_INITIAL_COLLECTION_SIZE,
@@ -844,6 +930,25 @@ mod tests {
         golden.check_codec(
             &format!("idMapper(Ljava/util/function/IntFunction;Ljava/util/function/ToIntFunction;){CODEC}[Direction::from3DDataValue, Direction::get3DDataValue]"),
             || ByteBufCodecs::id_mapper(Direction::from_3d_data_value, Direction::get_3d_data_value),
+        );
+        golden.check_codec_from(
+            &format!(
+                "lengthPrefixed(I){OPERATION}[optionalTagCodec(new NbtAccounter(32768L, 16))]"
+            ),
+            |max_size| {
+                ByteBufCodecs::optional_tag_codec(|| NbtAccounter::new(32768, 16))
+                    .apply(ByteBufCodecs::length_prefixed(max_size))
+            },
+        );
+        golden.check_codec_from(
+            &format!("lengthPrefixed(ILjava/util/function/BiFunction;){OPERATION}[FriendlyByteBuf::new, DiscardedPayload.codec(rustcraft:scenario_start, 32767)]"),
+            |max_size| {
+                DiscardedPayload::codec(Identifier::from_namespace_and_path("rustcraft", "scenario_start"), 32767)
+                    .apply(ByteBufCodecs::length_prefixed_decorated(
+                        max_size,
+                        |_parent: &FriendlyByteBuf, child| FriendlyByteBuf::new(child),
+                    ))
+            },
         );
         golden.finish();
     }

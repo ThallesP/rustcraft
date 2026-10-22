@@ -2,8 +2,7 @@
 //!
 //! Not ported: `hashCode`, a record's, which hashes its enum constants' identity hashes, and so
 //! changes from run to run. Nothing hashes it. Nor `createDefault`, which only the server calls
-//! (`CommonListenerCookie`), and which reads `Player.DEFAULT_MAIN_HAND`, whose class only loads in
-//! a bootstrapped game, so the golden harness can't call it.
+//! (`CommonListenerCookie`).
 
 use std::fmt;
 
@@ -202,7 +201,7 @@ mod tests {
         );
         golden.pending(
             "createDefault()Lnet/minecraft/server/level/ClientInformation;",
-            "only the server calls it, and vanilla's needs a bootstrapped game",
+            "only the server calls it (CommonListenerCookie)",
         );
         golden.check_method(
             "language()Ljava/lang/String;",
