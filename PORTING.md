@@ -66,7 +66,7 @@ The golden tests caught each of these, or exist to catch them.
 - **`Math.abs(Integer.MIN_VALUE)`** wraps, so use `Math::abs_i32`.
 - **`clamp`:** Rust's `i32::clamp` panics when min > max and Java's doesn't. Write `max(min).min(max)`.
 - **NaN bits:** `Float.floatToIntBits` turns every NaN into the canonical one. `floatToRawIntBits` is `to_bits`.
-- **Strings** are UTF-16. `String.hashCode` runs over UTF-16 units (`JavaString::hash_code`), and lengths and indices count UTF-16 units too.
+- **Strings** are UTF-16. `String.hashCode` runs over UTF-16 units (`JavaString::hash_code`), and lengths and indices count UTF-16 units too. `String.compareTo` returns the difference of the first units that differ, or of the lengths (`JavaString::compare_to`), not just its sign, and beyond the BMP its order isn't code point order. A `char` is a `u16`, since a Rust `char` can't hold half of a surrogate pair (`Identifier.bySeparator` can be asked to split at one).
 - **Same in both:** `(int)` casts from floating point (they saturate, and NaN becomes 0, like `as`), and float `%` (fmod).
 - **Transcendental functions.**
   - On x86-64, HotSpot computes `Math.sin/cos/tan/log/log10/exp/pow` (and `tanh`, `cbrt`) with its own assembly, based on Intel's libm. The interpreter and both JITs call the same stubs. Functions without that (`asin`, `acos`, `atan2`, `hypot`, …) fall back to `StrictMath`, which runs the JDK's Java port of fdlibm, ported in `src/java/lang/fd_libm.rs`. The `libm` crate is no substitute: it ports musl, whose `atan2` differs from fdlibm's on one in eight random inputs. Nor is std's `f64::hypot` (glibc's), which gets 249 of the 8,253 `Math.hypot` goldens wrong.

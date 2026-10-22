@@ -16,6 +16,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Position;
 import net.minecraft.core.Vec3i;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -30,7 +31,8 @@ import org.joml.Vector3f;
  * ({@code "NORTH"}), and an {@code EnumSet<Direction.Axis>} the names of its axes in order. An AABB is
  * {@code [minX, minY, minZ, maxX, maxY, maxZ]} (doubles), a list of them an array, an AABB.Builder its fields
  * {@code [minX, minY, minZ, maxX, maxY, maxZ, defined]} (floats and a boolean), and a BlockHitResult its fields
- * {@code [location, direction, blockPos, miss, inside, worldBorderHit]}, HitResult's first.
+ * {@code [location, direction, blockPos, miss, inside, worldBorderHit]}, HitResult's first. An Identifier is
+ * {@code [namespace, path]}.
  */
 final class CoreValues {
     static final Values.Generator DIRECTION = new Constants<>(Direction.class);
@@ -189,6 +191,26 @@ final class CoreValues {
         }
     );
 
+    // The game's identifiers: blocks, models and textures, a tag's, the scenario's marker and the realms namespace, and
+    // ones with every character a part allows, empty parts, and ".." as a path. Each call gets its own copy.
+    static final Values.Generator IDENTIFIER = new JomlValues.Mutable<>(
+        List.of(
+            Identifier.withDefaultNamespace("stone"), Identifier.withDefaultNamespace("block/stone"),
+            Identifier.withDefaultNamespace("textures/atlas/blocks.png"), Identifier.fromNamespaceAndPath("rustcraft", "scenario_start"),
+            Identifier.fromNamespaceAndPath("realms", "x"), Identifier.fromNamespaceAndPath("c", "ingots/iron"),
+            Identifier.fromNamespaceAndPath("a.b-c_d0", "e/f.g-h_i9"), Identifier.fromNamespaceAndPath("", ""),
+            Identifier.withDefaultNamespace(""), Identifier.fromNamespaceAndPath(".", "../..")
+        ),
+        CoreValues::randomIdentifier,
+        id -> Identifier.fromNamespaceAndPath(id.getNamespace(), id.getPath()),
+        id -> {
+            JsonArray array = new JsonArray();
+            array.add(id.getNamespace());
+            array.add(id.getPath());
+            return array;
+        }
+    );
+
     private CoreValues() {
     }
 
@@ -242,6 +264,9 @@ final class CoreValues {
         if (type == HitResult.Type.class) {
             return HIT_RESULT_TYPE;
         }
+        if (type == Identifier.class) {
+            return IDENTIFIER;
+        }
         // Entities aren't ported, so a BlockHitResult is the only HitResult.
         if (type == BlockHitResult.class || type == HitResult.class) {
             return BLOCK_HIT_RESULT;
@@ -269,6 +294,7 @@ final class CoreValues {
             case AABB box -> BOX.encode(box);
             case AABB.Builder builder -> BOX_BUILDER.encode(builder);
             case BlockHitResult hit -> BLOCK_HIT_RESULT.encode(hit);
+            case Identifier id -> IDENTIFIER.encode(id);
             default -> throw new IllegalArgumentException("no encoder for " + value.getClass().getName());
         };
     }
@@ -517,6 +543,24 @@ final class CoreValues {
             return hit.isWorldBorderHit() ? miss.hitBorder() : miss;
         }
         return new BlockHitResult(hit.getLocation(), hit.getDirection(), hit.getBlockPos(), hit.isInside(), hit.isWorldBorderHit());
+    }
+
+    // Mostly the default namespace, else a short one of any allowed characters, and a path of up to three such segments.
+    static Identifier randomIdentifier(final Random random) {
+        String namespace = random.nextBoolean() ? Identifier.DEFAULT_NAMESPACE : randomName(random, "abcdefghijklmnopqrstuvwxyz0123456789_.-");
+        StringBuilder path = new StringBuilder(randomName(random, "abcdefghijklmnopqrstuvwxyz0123456789_.-"));
+        for (int segments = random.nextInt(3); segments > 0; segments--) {
+            path.append('/').append(randomName(random, "abcdefghijklmnopqrstuvwxyz0123456789_.-"));
+        }
+        return namespace.equals("..") ? Identifier.withDefaultNamespace(path.toString()) : Identifier.fromNamespaceAndPath(namespace, path.toString());
+    }
+
+    private static String randomName(final Random random, final String alphabet) {
+        StringBuilder name = new StringBuilder();
+        for (int length = random.nextInt(9); length > 0; length--) {
+            name.append(alphabet.charAt(random.nextInt(alphabet.length())));
+        }
+        return name.toString();
     }
 
     private static JsonArray ints(final int... values) {

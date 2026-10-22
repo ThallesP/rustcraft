@@ -17,6 +17,7 @@ import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
 import net.minecraft.util.StringRepresentable;
@@ -360,7 +361,24 @@ public final class Golden {
         InstanceSuite.every(HitResult.class),
         InstanceSuite.every(HitResult.Type.class)
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/phys/HitResult$Type;", names(HitResult.Type.values())),
-        InstanceSuite.every(BlockHitResult.class)
+        InstanceSuite.every(BlockHitResult.class),
+        InstanceSuite.every(Identifier.class)
+            .extraInputs("fromNamespaceAndPath(Ljava/lang/String;Ljava/lang/String;)Lnet/minecraft/resources/Identifier;", identifierParts())
+            .extraInputs("tryBuild(Ljava/lang/String;Ljava/lang/String;)Lnet/minecraft/resources/Identifier;", identifierParts())
+            .extraInputs("parse(Ljava/lang/String;)Lnet/minecraft/resources/Identifier;", identifierStrings())
+            .extraInputs("tryParse(Ljava/lang/String;)Lnet/minecraft/resources/Identifier;", identifierStrings())
+            .extraInputs("withDefaultNamespace(Ljava/lang/String;)Lnet/minecraft/resources/Identifier;", identifierStrings())
+            .extraInputs("isValidPath(Ljava/lang/String;)Z", identifierStrings())
+            .extraInputs("isValidNamespace(Ljava/lang/String;)Z", identifierStrings())
+            .extraInputs("bySeparator(Ljava/lang/String;C)Lnet/minecraft/resources/Identifier;", separatedStrings())
+            .extraInputs("tryBySeparator(Ljava/lang/String;C)Lnet/minecraft/resources/Identifier;", separatedStrings())
+            .extraInputs("withPath(Ljava/lang/String;)Lnet/minecraft/resources/Identifier;", identifierAffixes())
+            .extraInputs("withPrefix(Ljava/lang/String;)Lnet/minecraft/resources/Identifier;", identifierAffixes())
+            .extraInputs("withSuffix(Ljava/lang/String;)Lnet/minecraft/resources/Identifier;", identifierAffixes())
+            .extraInputs("equals(Ljava/lang/Object;)Z", identifierPairs())
+            .extraInputs("compareTo(Lnet/minecraft/resources/Identifier;)I", identifierPairs())
+            .extraInputs("isAllowedInIdentifier(C)Z", everyChar())
+            .extraInputs("validPathChar(C)Z", everyChar())
     );
 
     public static void main(final String[] args) throws IOException {
@@ -1664,6 +1682,98 @@ public final class Golden {
                 ? CoreValues.randomVec3(random)
                 : new Vec3(components[random.nextInt(7)], components[random.nextInt(7)], components[random.nextInt(7)]);
             inputs.add(kind == 0 ? new Object[]{box} : new Object[]{box, direction});
+        }
+        return inputs;
+    }
+
+    // Namespaces and paths like the game's, and ones that break each rule: empty, "..", upper case, a space, non-ASCII, a
+    // slash in a namespace, a second separator in a path.
+    // (Methods, since SUITES is built before any static array after it.)
+    private static String[] namespaces() {
+        return new String[]{"", "minecraft", "realms", "my_mod", "a.b-c0", "..", ".", "Minecraft", "mine craft", "é", "a/b"};
+    }
+
+    private static String[] paths() {
+        return new String[]{"", "stone", "block/stone", "textures/atlas/blocks.png", "..", "../x", "Stone", "x y", "😀", "-_./09", "a:b"};
+    }
+
+    // Every namespace with every path, the way fromNamespaceAndPath and tryBuild take them.
+    private static List<Object[]> identifierParts() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (String namespace : namespaces()) {
+            for (String path : paths()) {
+                inputs.add(new Object[]{namespace, path});
+            }
+        }
+        return inputs;
+    }
+
+    // Every namespace and path joined by the separator, each path alone, and each path after a bare separator.
+    private static List<Object[]> identifierStrings() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Object[] parts : identifierParts()) {
+            inputs.add(new Object[]{parts[0] + ":" + parts[1]});
+        }
+        for (String path : paths()) {
+            inputs.add(new Object[]{path});
+            inputs.add(new Object[]{":" + path});
+        }
+        return inputs;
+    }
+
+    // Those strings, and ones joined by other characters, split by the separators the game uses and others: one outside
+    // ASCII, and the halves of a supplementary character (indexOf(char) finds a surrogate inside one).
+    private static List<Object[]> separatedStrings() {
+        char[] separators = {':', '.', '/', '_', 'a', 'é', '\ud83d', '\ude00'};
+        List<String> strings = new ArrayList<>();
+        for (Object[] input : identifierStrings()) {
+            strings.add((String)input[0]);
+        }
+        strings.addAll(List.of("minecraft.stone", "minecraft/block/stone", "😀:stone", "minecraft:😀", "a😀b", "my_mod.item.x", "minecraftéstone", "éstone", "stoneé"));
+        List<Object[]> inputs = new ArrayList<>();
+        for (String string : strings) {
+            for (char separator : separators) {
+                inputs.add(new Object[]{string, separator});
+            }
+        }
+        return inputs;
+    }
+
+    // Identifiers with every path piece as a new path, a prefix and a suffix.
+    private static List<Object[]> identifierAffixes() {
+        Random random = new Random(71);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            Identifier id = i < CoreValues.IDENTIFIER.edges().size() ? (Identifier)CoreValues.IDENTIFIER.edges().get(i) : CoreValues.randomIdentifier(random);
+            for (String path : paths()) {
+                inputs.add(new Object[]{id, path});
+            }
+        }
+        return inputs;
+    }
+
+    // Identifiers with paths and namespaces in common, or one a prefix of the other, which compareTo and equals tell apart.
+    private static List<Object[]> identifierPairs() {
+        Random random = new Random(72);
+        String[] namespaces = {"minecraft", "realms", "a", "ab", "b", ""};
+        String[] paths = {"stone", "stone_bricks", "stonf", "block/stone", "a", ""};
+        List<Object[]> inputs = new ArrayList<>();
+        for (int i = 0; i < 400; i++) {
+            Identifier a = Identifier.fromNamespaceAndPath(namespaces[random.nextInt(namespaces.length)], paths[random.nextInt(paths.length)]);
+            Identifier b = random.nextInt(4) == 0 ? a : Identifier.fromNamespaceAndPath(namespaces[random.nextInt(namespaces.length)], paths[random.nextInt(paths.length)]);
+            inputs.add(new Object[]{a, b});
+        }
+        return inputs;
+    }
+
+    // Every ASCII and Latin-1 character and then some, surrogates and the last ones included.
+    private static List<Object[]> everyChar() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int c = 0; c < 0x180; c++) {
+            inputs.add(new Object[]{(char)c});
+        }
+        for (int c : new int[]{0xd800, 0xdbff, 0xdc00, 0xdfff, 0xfffe, 0xffff}) {
+            inputs.add(new Object[]{(char)c});
         }
         return inputs;
     }
