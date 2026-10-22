@@ -46,5 +46,5 @@ python3 tools/oracle_client.py run walk # replay a scenario in the real client
 | `oracle/scenarios/` | Scripted inputs both clients replay |
 | `tools/packet-proxy/` | Records client ↔ server traffic with each packet decoded |
 | `tools/oracle-diff/` | Compares traces, packet captures and screenshots between two runs |
-| `tools/*.py` | Setup, golden recording, vanilla server and oracle client runners |
+| `tools/*.py` | Setup, golden recording, vanilla server and oracle client runners, and a check for ports of HotSpot's assembly |
 | `vanilla/` (gitignored) | Decompiled source, assets, data reports, jars, JDK, oracle outputs |

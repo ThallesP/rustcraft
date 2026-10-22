@@ -25,7 +25,7 @@ import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
  */
 final class RandomSourceSuite implements Suite {
     private static final int PROGRAMS_PER_SOURCE = 64;
-    private static final int GAUSSIAN_PROGRAMS_PER_SOURCE = 16;
+    private static final int GAUSSIAN_PROGRAMS_PER_SOURCE = 64;
     private static final int OPS_PER_PROGRAM = 96;
     private static final List<Long> SEED_EDGES = List.of(0L, 1L, -1L, 42L, Long.MIN_VALUE, Long.MAX_VALUE, 25214903917L);
     private static final int[] BOUNDS = {1, 2, 3, 5, 7, 10, 16, 64, 100, 1000, 1 << 30, (1 << 30) + 1, Integer.MAX_VALUE};

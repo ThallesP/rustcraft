@@ -907,10 +907,7 @@ mod tests {
         );
         golden.check("inverseLerp(DDD)D", Mth::inverse_lerp_f64);
         golden.check("inverseLerp(FFF)F", Mth::inverse_lerp_f32);
-        golden.pending(
-            "atan2(DD)D",
-            "COS_TAB comes from Math.cos, which isn't exact yet",
-        );
+        golden.check("atan2(DD)D", Mth::atan2);
         golden.check("invSqrt(F)F", Mth::inv_sqrt_f32);
         golden.check("invSqrt(D)D", Mth::inv_sqrt_f64);
         golden.check("fastInvSqrt(D)D", Mth::fast_inv_sqrt);

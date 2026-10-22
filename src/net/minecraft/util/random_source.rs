@@ -110,17 +110,22 @@ mod tests {
             "ThreadSafeLegacyRandomSource",
             |seed: i64, program: Value| run(&mut ThreadSafeLegacyRandomSource::new(seed), &program),
         );
-        for source in [
-            "LegacyRandomSource",
-            "XoroshiroRandomSource",
-            "SingleThreadedRandomSource",
-            "ThreadSafeLegacyRandomSource",
-        ] {
-            golden.pending(
-                &format!("{source}+nextGaussian"),
-                "nextGaussian uses Math.log, which isn't exact yet",
-            );
-        }
+        golden.check(
+            "LegacyRandomSource+nextGaussian",
+            |seed: i64, program: Value| run(&mut LegacyRandomSource::new(seed), &program),
+        );
+        golden.check(
+            "XoroshiroRandomSource+nextGaussian",
+            |seed: i64, program: Value| run(&mut XoroshiroRandomSource::new(seed), &program),
+        );
+        golden.check(
+            "SingleThreadedRandomSource+nextGaussian",
+            |seed: i64, program: Value| run(&mut SingleThreadedRandomSource::new(seed), &program),
+        );
+        golden.check(
+            "ThreadSafeLegacyRandomSource+nextGaussian",
+            |seed: i64, program: Value| run(&mut ThreadSafeLegacyRandomSource::new(seed), &program),
+        );
         golden.finish();
     }
 

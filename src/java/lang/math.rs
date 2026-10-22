@@ -1,5 +1,7 @@
 //! java.lang.Math, where it differs from Rust's std.
 
+mod hotspot_x86;
+
 pub struct Math;
 
 impl Math {
@@ -92,19 +94,19 @@ impl Math {
         }
     }
 
-    // On x86-64, HotSpot computes sin, cos and log with its own assembly (from Intel's libm), which
-    // isn't ported yet. glibc agrees on most inputs and is one ulp off on a few, so the golden test
-    // lists cos and log as pending. sqrt, floor, ceil and abs are exact everywhere and need no shim.
+    // On x86-64, HotSpot computes sin, cos and log with its own assembly (from Intel's libm), so
+    // these run a port of it. glibc's answers are one ulp off on some inputs. sqrt, floor, ceil and
+    // abs are exact everywhere and need no shim.
     pub fn sin(a: f64) -> f64 {
-        a.sin()
+        hotspot_x86::libm_sin(a)
     }
 
     pub fn cos(a: f64) -> f64 {
-        a.cos()
+        hotspot_x86::libm_cos(a)
     }
 
     pub fn log(a: f64) -> f64 {
-        a.ln()
+        hotspot_x86::libm_log(a)
     }
 
     /// HotSpot has no assembly for asin, so it's StrictMath's fdlibm, which the libm crate ports too.
@@ -135,16 +137,10 @@ mod tests {
         golden.check("floorMod(JJ)J", Math::floor_mod_i64);
 
         golden.check("sin(D)D", Math::sin);
+        golden.check("cos(D)D", Math::cos);
+        golden.check("log(D)D", Math::log);
         golden.check("asin(D)D", Math::asin);
         golden.check("sqrt(D)D", f64::sqrt);
-        golden.pending(
-            "cos(D)D",
-            "HotSpot's x86-64 cos isn't ported; glibc is one ulp off on some inputs",
-        );
-        golden.pending(
-            "log(D)D",
-            "HotSpot's x86-64 log isn't ported; glibc is one ulp off on some inputs",
-        );
         golden.finish();
     }
 }
