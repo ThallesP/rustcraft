@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 use serde_json::Value;
 
@@ -194,6 +194,23 @@ impl Encode for () {
 
 /// Lets hand-written suites mix outputs of different types, e.g. one step per op of a program.
 impl<T: Encode + ?Sized> Encode for Box<T> {
+    fn encode(&self) -> Value {
+        (**self).encode()
+    }
+
+    fn matches(&self, expected: &Value) -> bool {
+        (**self).matches(expected)
+    }
+}
+
+/// A shared value, like a record's array component: a fresh one for each argument.
+impl<T: Decode> Decode for Arc<T> {
+    fn decode(value: &Value) -> Self {
+        Arc::new(T::decode(value))
+    }
+}
+
+impl<T: Encode + ?Sized> Encode for Arc<T> {
     fn encode(&self) -> Value {
         (**self).encode()
     }

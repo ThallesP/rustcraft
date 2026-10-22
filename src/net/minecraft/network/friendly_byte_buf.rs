@@ -107,7 +107,7 @@ impl FriendlyByteBuf {
         }
     }
 
-    pub fn write_nullable<O, T>(
+    pub fn write_nullable<O, T: ?Sized>(
         &mut self,
         value: Option<&T>,
         value_encoder: impl StreamEncoder<O, T>,
@@ -118,7 +118,7 @@ impl FriendlyByteBuf {
     }
 
     /// `writeNullable(ByteBuf, Object, StreamEncoder)`: a boolean, then the value if there is one.
-    pub fn write_nullable_to<B, O, T>(
+    pub fn write_nullable_to<B, O, T: ?Sized>(
         output: &mut B,
         value: Option<&T>,
         value_encoder: impl StreamEncoder<O, T>,

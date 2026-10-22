@@ -43,15 +43,26 @@ import net.minecraft.network.codec.StreamDecoder;
 import net.minecraft.network.codec.StreamEncoder;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.PacketType;
+import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
+import net.minecraft.network.protocol.common.CommonPacketTypes;
+import net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket;
+import net.minecraft.network.protocol.cookie.CookiePacketTypes;
+import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
 import net.minecraft.network.protocol.handshake.ClientIntent;
 import net.minecraft.network.protocol.handshake.ClientIntentionPacket;
 import net.minecraft.network.protocol.handshake.HandshakePacketTypes;
 import net.minecraft.network.protocol.handshake.HandshakeProtocols;
+import net.minecraft.network.protocol.login.ClientboundCustomQueryPacket;
 import net.minecraft.network.protocol.login.ClientboundHelloPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket;
 import net.minecraft.network.protocol.login.LoginPacketTypes;
+import net.minecraft.network.protocol.login.LoginProtocols;
+import net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
+import net.minecraft.network.protocol.login.ServerboundKeyPacket;
 import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
+import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
+import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.ByIdMap;
@@ -122,6 +133,8 @@ public final class Golden {
         "continuous(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;)Ljava/util/function/IntFunction;";
     // A record's hashCode adds up its components', and an enum constant's is its identity hash.
     private static final String ENUM_IN_RECORD = "hashes an enum constant's identity hash, which changes from run to run";
+    // An array's hashCode and toString are Object's, so a record holding one hashes and prints its identity hash.
+    private static final String ARRAY_IN_RECORD = "goes by an array component's identity hash, which changes from run to run";
     private static final String SPARSE = "sparse(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/function/IntFunction;";
 
     private static final List<Suite> SUITES = List.of(
@@ -732,7 +745,39 @@ public final class Golden {
         InstanceSuite.every(ClientboundHelloPacket.class),
         InstanceSuite.every(ServerboundLoginAcknowledgedPacket.class),
         InstanceSuite.every(ClientboundLoginCompressionPacket.class),
+        InstanceSuite.every(ServerboundKeyPacket.class),
+        // Their readers skip whatever follows the header as the payload, so they also read payloads at the limit and past it.
+        InstanceSuite.every(ServerboundCustomQueryAnswerPacket.class).extraInputs("STREAM_CODEC.decode", largePayloads(false)),
+        InstanceSuite.every(ClientboundCustomQueryPacket.class).extraInputs("STREAM_CODEC.decode", largePayloads(true)),
+        InstanceSuite.every(DiscardedQueryAnswerPayload.class),
+        InstanceSuite.every(DiscardedQueryPayload.class),
         new StaticSuite(LoginPacketTypes.class),
+        new ProtocolSuite(LoginProtocols.class),
+        // The cookie packets, which login, configuration and play share. Their writers stop payloads at 5120 bytes, so the
+        // readers also read longer ones, written without the limit.
+        InstanceSuite.every(ClientboundCookieRequestPacket.class),
+        InstanceSuite.every(ServerboundCookieResponsePacket.class)
+            .exclude("hashCode()I", ARRAY_IN_RECORD)
+            .exclude("toString()Ljava/lang/String;", ARRAY_IN_RECORD)
+            .extraInputs(
+                "STREAM_CODEC.decode",
+                friendly(written(101, Values.generator(ServerboundCookieResponsePacket.class), (FriendlyByteBuf buffer, ServerboundCookieResponsePacket packet) -> {
+                    buffer.writeIdentifier(packet.key());
+                    buffer.writeNullable(packet.payload(), (FriendlyByteBuf out, byte[] payload) -> out.writeByteArray(payload));
+                }))
+            ),
+        new StaticSuite(CookiePacketTypes.class),
+        InstanceSuite.every(ClientboundStoreCookiePacket.class)
+            .exclude("hashCode()I", ARRAY_IN_RECORD)
+            .exclude("toString()Ljava/lang/String;", ARRAY_IN_RECORD)
+            .extraInputs(
+                "STREAM_CODEC.decode",
+                friendly(written(102, Values.generator(ClientboundStoreCookiePacket.class), (FriendlyByteBuf buffer, ClientboundStoreCookiePacket packet) -> {
+                    buffer.writeIdentifier(packet.key());
+                    buffer.writeByteArray(packet.payload());
+                }))
+            ),
+        new StaticSuite(CommonPacketTypes.class),
         // What a ServerboundHelloPacket's hashCode and toString use.
         new InstanceSuite(UUID.class, "hashCode()I", "toString()Ljava/lang/String;")
     );
@@ -2161,6 +2206,22 @@ public final class Golden {
             wrapped.add(copy);
         }
         return wrapped;
+    }
+
+    // Custom query packets whose payload, everything after the transaction id (and the query's identifier), is the most
+    // their readers take, and a byte more.
+    private static List<Object[]> largePayloads(final boolean identifier) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int size : new int[]{1048576, 1048577}) {
+            FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+            buffer.writeVarInt(7);
+            if (identifier) {
+                buffer.writeIdentifier(Identifier.withDefaultNamespace("query"));
+            }
+            buffer.writeBytes(new byte[size]);
+            inputs.add(new Object[]{new FriendlyByteBuf(NetworkValues.buffer(0, 0, NetworkValues.readable(buffer)))});
+        }
+        return inputs;
     }
 
     // Buffers holding what the writer writes of the values' first edges and random ones, read from the start: whole, with

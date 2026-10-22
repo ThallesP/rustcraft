@@ -2,11 +2,14 @@ package rustcraft.golden;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import io.netty.buffer.Unpooled;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,19 +18,31 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Stream;
 import net.minecraft.network.ConnectionProtocol;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.PacketListener;
 import net.minecraft.network.ProtocolInfo;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.PacketType;
+import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
+import net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket;
+import net.minecraft.network.protocol.cookie.CookiePacketTypes;
+import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
 import net.minecraft.network.protocol.handshake.ClientIntent;
 import net.minecraft.network.protocol.handshake.ClientIntentionPacket;
 import net.minecraft.network.protocol.handshake.HandshakePacketTypes;
+import net.minecraft.network.protocol.login.ClientboundCustomQueryPacket;
 import net.minecraft.network.protocol.login.ClientboundHelloPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket;
 import net.minecraft.network.protocol.login.LoginPacketTypes;
+import net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
+import net.minecraft.network.protocol.login.ServerboundKeyPacket;
 import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
+import net.minecraft.network.protocol.login.custom.CustomQueryAnswerPayload;
+import net.minecraft.network.protocol.login.custom.CustomQueryPayload;
+import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
+import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
 
 /**
@@ -36,6 +51,9 @@ import net.minecraft.resources.Identifier;
  * class's public constructor sets, in that order (read by reflection), and a value declared as a Packet (a protocol
  * codec's) is {@code [type, fields]}, since it can be any of the protocol's. A protocol's template is its details,
  * {@code [id, flow, [[type, networkId], …]]}, and a bound protocol {@code [id, flow]}: ProtocolSuite gives its codec cases.
+ * The custom queries' payloads are records like packets, and a payload declared as its interface is encoded by its own
+ * class. Each argument is its own copy of a packet or payload, made of copies of its fields: a record compares an array
+ * component by reference, which a JSON value can't show.
  *
  * <p>A packet listener records what's called on it: it starts as {@code []}, and its {@code after} slot is the calls,
  * each {@code [method, argument…]}, so a packet's {@code handle} shows which handler it calls with what.
@@ -57,7 +75,7 @@ final class PacketValues {
         HandshakePacketTypes.CLIENT_INTENTION, LoginPacketTypes.CLIENTBOUND_CUSTOM_QUERY, LoginPacketTypes.CLIENTBOUND_LOGIN_FINISHED,
         LoginPacketTypes.CLIENTBOUND_HELLO, LoginPacketTypes.CLIENTBOUND_LOGIN_COMPRESSION, LoginPacketTypes.CLIENTBOUND_LOGIN_DISCONNECT,
         LoginPacketTypes.SERVERBOUND_CUSTOM_QUERY_ANSWER, LoginPacketTypes.SERVERBOUND_HELLO, LoginPacketTypes.SERVERBOUND_KEY,
-        LoginPacketTypes.SERVERBOUND_LOGIN_ACKNOWLEDGED
+        LoginPacketTypes.SERVERBOUND_LOGIN_ACKNOWLEDGED, CookiePacketTypes.CLIENTBOUND_COOKIE_REQUEST, CookiePacketTypes.SERVERBOUND_COOKIE_RESPONSE
     );
     static final Values.Generator PACKET_TYPE = new Values.Simple(
         PORTED_TYPES.stream()
@@ -93,11 +111,28 @@ final class PacketValues {
         random -> (byte[])BYTE_ARRAYS.random(random), byte[]::clone, bytes -> (JsonArray)BYTE_ARRAYS.encode(bytes)
     );
 
+    // Byte arrays, and around a cookie's limit of 5120 bytes.
+    private static final Values.Generator COOKIES = new JomlValues.Mutable<>(
+        Stream.concat(BYTE_ARRAYS.edges().stream().map(bytes -> (byte[])bytes), Stream.of(new byte[5120], new byte[5121])).toList(),
+        random -> (byte[])BYTE_ARRAYS.random(random), byte[]::clone, bytes -> (JsonArray)BYTE_ARRAYS.encode(bytes)
+    );
+
     private static final Map<Class<?>, Values.Generator> PACKETS = new LinkedHashMap<>();
+    // The generators of the payloads packets hold, by their class and by their interface.
+    private static final Map<Class<?>, Values.Generator> PAYLOADS = new HashMap<>();
     // The fields each packet class that isn't a record is encoded as.
     private static final Map<Class<?>, List<Field>> FIELDS = new LinkedHashMap<>();
 
     static {
+        // The only payloads vanilla reads: what it doesn't know, kept as the query's identifier and nothing else.
+        Values.Generator answers = values(DiscardedQueryAnswerPayload.class, fields -> DiscardedQueryAnswerPayload.INSTANCE, List.of());
+        Values.Generator queries = values(DiscardedQueryPayload.class, fields -> new DiscardedQueryPayload((Identifier)fields[0]), List.of(), IDENTIFIERS);
+        PAYLOADS.put(DiscardedQueryAnswerPayload.class, answers);
+        // A packet's answer may be null.
+        PAYLOADS.put(CustomQueryAnswerPayload.class, Codecs.nullableOf(answers));
+        PAYLOADS.put(DiscardedQueryPayload.class, queries);
+        PAYLOADS.put(CustomQueryPayload.class, queries);
+
         packet(
             ClientIntentionPacket.class, fields -> new ClientIntentionPacket((Integer)fields[0], (String)fields[1], (Integer)fields[2], (ClientIntent)fields[3]),
             List.of(), PROTOCOL_VERSIONS, HOST_NAMES, PORTS, CLIENT_INTENT
@@ -115,6 +150,28 @@ final class PacketValues {
         packet(
             ClientboundLoginCompressionPacket.class, fields -> new ClientboundLoginCompressionPacket((Integer)fields[0]),
             List.of("compressionThreshold"), INTS
+        );
+        packet(
+            ServerboundKeyPacket.class, fields -> keyPacket((byte[])fields[0], (byte[])fields[1]), List.of("keybytes", "encryptedChallenge"),
+            KEYS, KEYS
+        );
+        packet(
+            ServerboundCustomQueryAnswerPacket.class,
+            fields -> new ServerboundCustomQueryAnswerPacket((Integer)fields[0], (CustomQueryAnswerPayload)fields[1]), List.of(), INTS,
+            PAYLOADS.get(CustomQueryAnswerPayload.class)
+        );
+        packet(
+            ClientboundCustomQueryPacket.class, fields -> new ClientboundCustomQueryPacket((Integer)fields[0], (CustomQueryPayload)fields[1]),
+            List.of(), INTS, queries
+        );
+        packet(ClientboundCookieRequestPacket.class, fields -> new ClientboundCookieRequestPacket((Identifier)fields[0]), List.of(), IDENTIFIERS);
+        packet(
+            ServerboundCookieResponsePacket.class, fields -> new ServerboundCookieResponsePacket((Identifier)fields[0], (byte[])fields[1]),
+            List.of(), IDENTIFIERS, Codecs.nullableOf(COOKIES)
+        );
+        packet(
+            ClientboundStoreCookiePacket.class, fields -> new ClientboundStoreCookiePacket((Identifier)fields[0], (byte[])fields[1]), List.of(),
+            IDENTIFIERS, COOKIES
         );
     }
 
@@ -137,7 +194,7 @@ final class PacketValues {
         if (type.isInterface() && PacketListener.class.isAssignableFrom(type)) {
             return new Listener(type);
         }
-        return PACKETS.get(type);
+        return PACKETS.containsKey(type) ? PACKETS.get(type) : PAYLOADS.get(type);
     }
 
     static boolean canEncode(final Class<?> type) {
@@ -155,6 +212,9 @@ final class PacketValues {
         return switch (value) {
             case Enum<?> constant -> CoreValues.encode(constant);
             case Packet<?> packet -> encodeFields(packet);
+            // Declared as their interface, so encoded by their own class.
+            case CustomQueryAnswerPayload payload -> Values.encode(payload, payload.getClass());
+            case CustomQueryPayload payload -> Values.encode(payload, payload.getClass());
             case ProtocolInfo<?> protocol -> {
                 JsonArray array = new JsonArray();
                 array.add(Values.encode(protocol.id(), ConnectionProtocol.class));
@@ -185,10 +245,17 @@ final class PacketValues {
         );
     }
 
-    // A packet class's values, which are the packets themselves: edges put each field's edges in its place among the
-    // first edges, and random ones are made of random fields. A record's fields are its components; another class names
-    // its own, which are encoded by reflection.
+    // A packet class's values, which are the packets themselves.
     private static void packet(
+        final Class<?> type, final Function<Object[], Object> constructor, final List<String> fieldNames, final Values.Generator... fields
+    ) {
+        PACKETS.put(type, values(type, constructor, fieldNames, fields));
+    }
+
+    // A class's values: edges put each field's edges in its place among the first edges, and random ones are made of
+    // random fields. Each argument is a copy made of copies of the value's fields, so no two share an array. A record's
+    // fields are its components; another class names its own, which are read and encoded by reflection.
+    private static Values.Generator values(
         final Class<?> type, final Function<Object[], Object> constructor, final List<String> fieldNames, final Values.Generator... fields
     ) {
         Values.Generator tuple = Codecs.tupleOf(fields);
@@ -198,8 +265,17 @@ final class PacketValues {
         if (!type.isRecord()) {
             FIELDS.put(type, declared);
         }
-        Values.Generator values = new Values.Simple(edges, random -> make.apply(tuple.random(random)), PacketValues::encodeFields);
-        PACKETS.put(type, fields.length > 0 ? values : new Only(values));
+        Function<Object, Object> copy = value -> {
+            Object[] copies = fieldsOf(value);
+            for (int i = 0; i < fields.length; i++) {
+                copies[i] = fields[i].instantiate(copies[i]);
+            }
+            return constructor.apply(copies);
+        };
+        Values.Generator values = new JomlValues.Mutable<>(
+            edges, random -> make.apply(tuple.random(random)), copy, value -> (JsonArray)encodeFields(value)
+        );
+        return fields.length > 0 ? values : new Only(values);
     }
 
     // A packet without fields, whose one value is every value there is.
@@ -239,6 +315,37 @@ final class PacketValues {
             }
         }
         return array;
+    }
+
+    // The values of its fields, in the order its constructor takes them.
+    private static Object[] fieldsOf(final Object value) {
+        Class<?> type = value.getClass();
+        try {
+            if (type.isRecord()) {
+                RecordComponent[] components = type.getRecordComponents();
+                Object[] values = new Object[components.length];
+                for (int i = 0; i < components.length; i++) {
+                    values[i] = components[i].getAccessor().invoke(value);
+                }
+                return values;
+            }
+            List<Field> declared = FIELDS.get(type);
+            Object[] values = new Object[declared.size()];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = declared.get(i).get(value);
+            }
+            return values;
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    // A key packet as a server reads it, since its public constructor encrypts with Crypt.
+    private static ServerboundKeyPacket keyPacket(final byte[] keybytes, final byte[] encryptedChallenge) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeByteArray(keybytes);
+        buffer.writeByteArray(encryptedChallenge);
+        return ServerboundKeyPacket.STREAM_CODEC.decode(buffer);
     }
 
     private static JsonArray encodeDetails(final ProtocolInfo.Details details) {

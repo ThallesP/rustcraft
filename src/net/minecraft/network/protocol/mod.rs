@@ -1,3 +1,4 @@
+pub mod common;
 pub mod cookie;
 pub mod game;
 pub mod handshake;
