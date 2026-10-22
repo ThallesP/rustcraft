@@ -26,6 +26,7 @@ final class CodecSuite implements Suite {
     private final Class<?> type;
     private final Map<String, List<Instance>> instances = new LinkedHashMap<>();
     private final Map<String, Predicate<Object[]>> decodeDomains = new HashMap<>();
+    private final Map<String, List<Object[]>> extraInputs = new HashMap<>();
 
     // A codec (codec != null) or IntFunction (functionResult != null) a method made from what the label names.
     private record Instance(
@@ -53,6 +54,15 @@ final class CodecSuite implements Suite {
         return this;
     }
 
+    /**
+     * More buffers for a codec constant N to decode under {@code N.decode}, like InstanceSuite.extraInputs, for fields
+     * its writer refuses but its reader doesn't.
+     */
+    CodecSuite extraInputs(final String member, final List<Object[]> inputs) {
+        this.extraInputs.put(member, inputs);
+        return this;
+    }
+
     /** Drops decode inputs, each the leading arguments and the buffer, like StaticSuite.where. */
     CodecSuite whereDecode(final String method, final Predicate<Object[]> domain) {
         this.decodeDomains.put(method, domain);
@@ -66,10 +76,9 @@ final class CodecSuite implements Suite {
 
     @Override
     public void write(final GoldenWriter writer) throws IOException {
-        StaticSuite.writeFields(this.type, writer);
+        Set<String> written = new HashSet<>(StaticSuite.writeFields(this.type, writer, this.extraInputs));
 
         List<String> plain = new ArrayList<>();
-        Set<String> written = new HashSet<>();
         for (Method method : this.methods()) {
             String descriptor = Descriptors.of(method);
             written.add(descriptor);
@@ -115,6 +124,7 @@ final class CodecSuite implements Suite {
 
         Set<String> missing = new HashSet<>(this.instances.keySet());
         missing.addAll(this.decodeDomains.keySet());
+        missing.addAll(this.extraInputs.keySet());
         missing.removeAll(written);
         if (!missing.isEmpty()) {
             throw new IllegalStateException(this.type.getName() + " has no public methods " + missing);

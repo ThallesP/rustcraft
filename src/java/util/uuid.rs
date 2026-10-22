@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use md5::{Digest, Md5};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct UUID {
     most_sig_bits: i64,
@@ -14,6 +16,32 @@ impl UUID {
             most_sig_bits,
             least_sig_bits,
         }
+    }
+
+    /// `nameUUIDFromBytes(byte[])`: a version 3 UUID, the MD5 of the name with its version and
+    /// variant bits set.
+    pub fn name_uuid_from_bytes(name: &[i8]) -> UUID {
+        let name: Vec<u8> = name.iter().map(|&byte| byte as u8).collect();
+        let mut md5_bytes: [u8; 16] = Md5::digest(name).into();
+        md5_bytes[6] &= 0x0f; // clear version
+        md5_bytes[6] |= 0x30; // set to version 3
+        md5_bytes[8] &= 0x3f; // clear variant
+        md5_bytes[8] |= 0x80; // set to IETF variant
+        UUID::from_data(md5_bytes)
+    }
+
+    /// The private `UUID(byte[])`: the most significant long from the first 8 bytes, big-endian,
+    /// and the least from the rest.
+    fn from_data(data: [u8; 16]) -> UUID {
+        let mut msb: i64 = 0;
+        let mut lsb: i64 = 0;
+        for byte in &data[0..8] {
+            msb = (msb << 8) | i64::from(*byte);
+        }
+        for byte in &data[8..16] {
+            lsb = (lsb << 8) | i64::from(*byte);
+        }
+        UUID::new(msb, lsb)
     }
 
     pub const fn get_most_significant_bits(&self) -> i64 {
@@ -72,6 +100,9 @@ mod golden {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("java.util.UUID");
+        golden.check("nameUUIDFromBytes([B)Ljava/util/UUID;", |name: Vec<i8>| {
+            UUID::name_uuid_from_bytes(&name)
+        });
         golden.check_method("hashCode()I", |this: &mut UUID| this.hash_code());
         golden.check_method("toString()Ljava/lang/String;", |this: &mut UUID| {
             this.to_string()

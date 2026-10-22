@@ -7,8 +7,7 @@
 //!   for NBT;
 //! - the ones made from DataFixerUpper's codecs (`fromCodec`, `fromCodecTrusted` and the
 //!   `fromCodecWithRegistries` ones), and `lenientJson`, which waits for Gson;
-//! - `GAME_PROFILE_PROPERTIES` and `GAME_PROFILE`, which wait for authlib's `GameProfile`,
-//!   `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
+//! - `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
 //! - the registries' (`registry`, `holderRegistry`, `holder`, `holderSet` and `idMapper(IdMap)`);
 //! - `either`, which waits for DataFixerUpper's `Either`, `map`, whose first caller settles which
 //!   Rust map stands for its Java map (whose order `encode` writes in), and `lengthPrefixed` and
@@ -20,8 +19,13 @@
 
 use std::sync::LazyLock;
 
+use crate::com::google::common::collect::immutable_multimap::ImmutableMultimap;
+use crate::com::mojang::authlib::game_profile::GameProfile;
+use crate::com::mojang::authlib::properties::property::Property;
+use crate::com::mojang::authlib::properties::property_map::PropertyMap;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::util::array_list::ArrayList;
+use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec, StreamCodec};
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::network::utf8_string::Utf8String;
@@ -182,8 +186,59 @@ static CONTAINER_ID: StaticStreamCodec<ByteBuf, i32> = LazyLock::new(|| {
     ))
 });
 
+// At most 16 properties, each its name, value and signature, if any. Reading keeps them in an
+// `ImmutableMultimap` by name, which groups them by name in the order each name first came, so
+// they're written back in that order.
+static GAME_PROFILE_PROPERTIES: StaticStreamCodec<ByteBuf, PropertyMap> = LazyLock::new(|| {
+    Box::new(stream_codec::of(
+        |output: &mut ByteBuf, properties: &PropertyMap| {
+            ByteBufCodecs::write_count(output, properties.size(), 16);
+
+            for property in properties.values() {
+                Utf8String::write(output, property.name(), 64);
+                Utf8String::write(output, property.value(), 32767);
+                FriendlyByteBuf::write_nullable_to(
+                    output,
+                    property.signature(),
+                    |out: &mut ByteBuf, signature: &str| Utf8String::write(out, signature, 1024),
+                );
+            }
+        },
+        |input: &mut ByteBuf| {
+            let property_count = ByteBufCodecs::read_count(input, 16);
+            let mut result = ImmutableMultimap::builder();
+
+            for _ in 0..property_count {
+                let name = Utf8String::read(input, 64);
+                let value = Utf8String::read(input, 32767);
+                let signature =
+                    FriendlyByteBuf::read_nullable_from(input, |input: &mut ByteBuf| {
+                        Utf8String::read(input, 1024)
+                    });
+                let property = Property::from_signature(name, value, signature);
+                result.put(property.name().to_owned(), property);
+            }
+
+            PropertyMap::new(result.build())
+        },
+    ))
+});
+
 static PLAYER_NAME: StaticStreamCodec<ByteBuf, String> =
     LazyLock::new(|| Box::new(ByteBufCodecs::string_utf8(16)));
+
+// The id, the name, then the properties.
+static GAME_PROFILE: StaticStreamCodec<ByteBuf, GameProfile> = LazyLock::new(|| {
+    Box::new(stream_codec::composite3(
+        UUIDUtil::STREAM_CODEC,
+        GameProfile::id,
+        ByteBufCodecs::PLAYER_NAME,
+        |profile: &GameProfile| profile.name().to_owned(),
+        ByteBufCodecs::GAME_PROFILE_PROPERTIES,
+        |profile: &GameProfile| profile.properties().clone(),
+        GameProfile::from_properties,
+    ))
+});
 
 // Three bytes, red first. Writing drops the alpha, and reading makes it opaque.
 static RGB_COLOR: StaticStreamCodec<ByteBuf, i32> = LazyLock::new(|| {
@@ -224,7 +279,10 @@ impl ByteBufCodecs {
     pub const VECTOR3F: &'static StaticStreamCodec<ByteBuf, Vector3f> = &VECTOR3F;
     pub const QUATERNIONF: &'static StaticStreamCodec<ByteBuf, Quaternionf> = &QUATERNIONF;
     pub const CONTAINER_ID: &'static StaticStreamCodec<ByteBuf, i32> = &CONTAINER_ID;
+    pub const GAME_PROFILE_PROPERTIES: &'static StaticStreamCodec<ByteBuf, PropertyMap> =
+        &GAME_PROFILE_PROPERTIES;
     pub const PLAYER_NAME: &'static StaticStreamCodec<ByteBuf, String> = &PLAYER_NAME;
+    pub const GAME_PROFILE: &'static StaticStreamCodec<ByteBuf, GameProfile> = &GAME_PROFILE;
     pub const RGB_COLOR: &'static StaticStreamCodec<ByteBuf, i32> = &RGB_COLOR;
     pub const PUBLIC_KEY_SIZE: i32 = 256;
     pub const MAX_PUBLIC_KEY_HEADER_SIZE: i32 = 256;
@@ -553,8 +611,6 @@ mod tests {
             "lenientJson(I)Lnet/minecraft/network/codec/StreamCodec;",
             "waits for Gson",
         );
-        golden.pending("GAME_PROFILE_PROPERTIES", "waits for authlib's GameProfile");
-        golden.pending("GAME_PROFILE", "waits for authlib's GameProfile");
         golden.pending("INSTANT", "waits for java.time.Instant");
         golden.pending("PUBLIC_KEY", "waits for Crypt");
         for name in [
@@ -617,7 +673,11 @@ mod tests {
         golden.check_codec("VECTOR3F", || ByteBufCodecs::VECTOR3F);
         golden.check_codec("QUATERNIONF", || ByteBufCodecs::QUATERNIONF);
         golden.check_codec("CONTAINER_ID", || ByteBufCodecs::CONTAINER_ID);
+        golden.check_codec("GAME_PROFILE_PROPERTIES", || {
+            ByteBufCodecs::GAME_PROFILE_PROPERTIES
+        });
         golden.check_codec("PLAYER_NAME", || ByteBufCodecs::PLAYER_NAME);
+        golden.check_codec("GAME_PROFILE", || ByteBufCodecs::GAME_PROFILE);
         golden.check_codec("RGB_COLOR", || ByteBufCodecs::RGB_COLOR);
         golden.check_codec_from(&format!("byteArray(I){CODEC}"), ByteBufCodecs::byte_array);
         golden.check_codec_from(&format!("stringUtf8(I){CODEC}"), ByteBufCodecs::string_utf8);

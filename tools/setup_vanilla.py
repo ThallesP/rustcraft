@@ -3,8 +3,8 @@
 
 Downloads the client and server jars plus the client's libraries, decompiles the
 client with Vineflower, adds the sources of the libraries the port translates too
-(JOML, and Netty's buffers), extracts its bundled resources and runs the server's data
-generator.
+(JOML, Netty's buffers and Guava, or authlib decompiled, since it publishes no sources),
+extracts its bundled resources and runs the server's data generator.
 Everything lands in vanilla/, which is gitignored: Mojang's code and assets can't
 be redistributed.
 
@@ -38,7 +38,9 @@ VINEFLOWER_SHA256 = "1dfcfe974395734fa467ce620661c7623d05ba83670de0529b1fbd63ff5
 VINEFLOWER_URL = f"https://repo1.maven.org/maven2/org/vineflower/vineflower/{VINEFLOWER_VERSION}/vineflower-{VINEFLOWER_VERSION}.jar"
 MAVEN_CENTRAL = "https://repo1.maven.org/maven2/"
 # Libraries the port translates like the game's own classes, from their published sources.
-SOURCE_LIBRARIES = {"org.joml:joml", "io.netty:netty-buffer"}
+SOURCE_LIBRARIES = {"org.joml:joml", "io.netty:netty-buffer", "com.google.guava:guava"}
+# Ones it translates that publish no sources, so they're decompiled like the game.
+DECOMPILED_LIBRARIES = {"com.mojang:authlib"}
 
 
 # Adoptium's API answers 403 to urllib's default User-Agent.
@@ -95,6 +97,25 @@ def add_library_sources(library, source_dir):
     download(MAVEN_CENTRAL + sources_path, sources_jar, "sha1", fetch_text(MAVEN_CENTRAL + sources_path + ".sha1"))
     with zipfile.ZipFile(sources_jar) as jar:
         jar.extractall(source_dir, [name for name in jar.namelist() if name.endswith(".java")])
+
+
+# Decompiles a library into the game's sources: authlib's GameProfile lands next to the game's
+# com/mojang/ packages, at vanilla/<version>/src/com/mojang/authlib/GameProfile.java.
+def decompile_library(java, vineflower, library_jar, libraries, source_dir):
+    partial = source_dir.with_name(source_dir.name + f".{library_jar.stem}.part")
+    shutil.rmtree(partial, ignore_errors=True)
+    print(f"decompiling {library_jar} into {source_dir}")
+    subprocess.run(
+        [
+            java, "-jar", vineflower,
+            "--folder", "--skip-extra-files", "--indent-string=    ", "--log-level=warn",
+            *(f"-e={library}" for library in libraries if library != library_jar),
+            library_jar, partial,
+        ],
+        check=True,
+    )
+    shutil.copytree(partial, source_dir, dirs_exist_ok=True)
+    shutil.rmtree(partial)
 
 
 def resolve_version(version_id):
@@ -224,6 +245,9 @@ def main():
         for library in version["libraries"]:
             if library["name"].rsplit(":", 1)[0] in SOURCE_LIBRARIES:
                 add_library_sources(library, version_dir / "src")
+            if library["name"].rsplit(":", 1)[0] in DECOMPILED_LIBRARIES:
+                library_jar = LIBRARIES_DIR / library["downloads"]["artifact"]["path"]
+                decompile_library(java, ensure_vineflower(), library_jar, libraries, version_dir / "src")
     extract_resources(client_jar, version_dir / "resources")
     run_data_generator(java, server_jar, version_dir)
     print(f"done: {version_dir}")

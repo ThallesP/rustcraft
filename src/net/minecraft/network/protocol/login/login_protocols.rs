@@ -1,8 +1,7 @@
 //! net/minecraft/network/protocol/login/LoginProtocols.java
 //!
 //! Not ported yet: `CLIENTBOUND_TEMPLATE` and `CLIENTBOUND`, whose packets include
-//! `ClientboundLoginFinishedPacket`, which needs `GameProfile`'s codec, and
-//! `ClientboundLoginDisconnectPacket`, which needs `Component`'s.
+//! `ClientboundLoginDisconnectPacket`, which needs `Component`'s codec.
 
 use std::sync::{Arc, LazyLock};
 

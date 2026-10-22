@@ -320,6 +320,9 @@ final class Values {
         if (generator == null) {
             generator = PacketValues.generator(type);
         }
+        if (generator == null) {
+            generator = ProfileValues.generator(type);
+        }
         return generator != null ? generator : CoreValues.generator(type);
     }
 
@@ -347,7 +350,7 @@ final class Values {
         }
         if (
             JomlValues.canEncode(type) || MathValues.canEncode(type) || NetworkValues.canEncode(type) || PacketValues.canEncode(type)
-                || CoreValues.canEncode(type)
+                || ProfileValues.canEncode(type) || CoreValues.canEncode(type)
         ) {
             return true;
         }
@@ -453,6 +456,9 @@ final class Values {
         }
         if (PacketValues.canEncode(type)) {
             return PacketValues.encode(value, type);
+        }
+        if (ProfileValues.canEncode(type)) {
+            return ProfileValues.encode(value);
         }
         if (CoreValues.canEncode(type)) {
             return CoreValues.encode(value);

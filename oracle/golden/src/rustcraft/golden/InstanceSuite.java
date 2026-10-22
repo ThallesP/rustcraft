@@ -99,7 +99,8 @@ final class InstanceSuite implements Suite {
 
     /**
      * Also covers public methods the class inherits whose answers depend on the receiver's class, like Vec3i's
-     * toString, which prints the class's name.
+     * toString, which prints the class's name, or that it forwards to an object it holds, like PropertyMap's Multimap
+     * methods.
      */
     InstanceSuite inherited(final String... members) {
         this.inherited.addAll(Arrays.asList(members));

@@ -1,6 +1,9 @@
 package rustcraft.golden;
 
 import com.google.gson.JsonPrimitive;
+import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.Property;
+import com.mojang.authlib.properties.PropertyMap;
 import com.mojang.math.Axis;
 import com.mojang.math.GivensParameters;
 import com.mojang.math.MatrixUtil;
@@ -30,6 +33,7 @@ import java.util.stream.Stream;
 import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.Vec3i;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.FriendlyByteBuf;
@@ -55,6 +59,7 @@ import net.minecraft.network.protocol.handshake.HandshakeProtocols;
 import net.minecraft.network.protocol.login.ClientboundCustomQueryPacket;
 import net.minecraft.network.protocol.login.ClientboundHelloPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket;
+import net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket;
 import net.minecraft.network.protocol.login.LoginPacketTypes;
 import net.minecraft.network.protocol.login.LoginProtocols;
 import net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket;
@@ -653,7 +658,28 @@ public final class Golden {
                 leading -> ByteBufCodecs.idMapper(Direction::from3DDataValue, Direction::get3DDataValue), bufferCodec(DIRECTIONS, Direction.class)
             )
             // A length prefix in the millions makes vanilla allocate that many bytes before it finds the buffer shorter.
-            .whereDecode("byteArray(I)Lnet/minecraft/network/codec/StreamCodec;", args -> allocatesLittle(args[1], (Integer)args[0])),
+            .whereDecode("byteArray(I)Lnet/minecraft/network/codec/StreamCodec;", args -> allocatesLittle(args[1], (Integer)args[0]))
+            // Its writer stops the count at 16 and each string at its limit (64, 32767 and 1024), so the reader also reads
+            // what's written without them, and counts it takes or refuses before any property.
+            .extraInputs(
+                "GAME_PROFILE_PROPERTIES.decode",
+                Stream.concat(
+                    written(103, ProfileValues.PROPERTY_MAPS, Golden::writePropertiesWithoutLimits).stream(),
+                    propertyCounts(new byte[0]).stream()
+                ).toList()
+            )
+            // The same for a profile, whose writer also stops the name at 16 characters.
+            .extraInputs(
+                "GAME_PROFILE.decode",
+                Stream.concat(
+                    written(104, ProfileValues.GAME_PROFILES, (FriendlyByteBuf buffer, GameProfile profile) -> {
+                        buffer.writeUUID(profile.id());
+                        Utf8String.write(buffer, profile.name(), Integer.MAX_VALUE);
+                        writePropertiesWithoutLimits(buffer, profile.properties());
+                    }).stream(),
+                    propertyCounts(NetworkValues.concat(NetworkValues.uuid(NetworkValues.offlinePlayer()), NetworkValues.utf("rustcraft"))).stream()
+                ).toList()
+            ),
         // StreamCodec's factories and combinators, each given the game's kinds of codecs and functions.
         composites(new CodecSuite(StreamCodec.class))
             .codec(
@@ -751,8 +777,21 @@ public final class Golden {
         InstanceSuite.every(ClientboundCustomQueryPacket.class).extraInputs("STREAM_CODEC.decode", largePayloads(true)),
         InstanceSuite.every(DiscardedQueryAnswerPayload.class),
         InstanceSuite.every(DiscardedQueryPayload.class),
+        InstanceSuite.every(ClientboundLoginFinishedPacket.class),
         new StaticSuite(LoginPacketTypes.class),
         new ProtocolSuite(LoginProtocols.class),
+        // The profile the login's last packet carries: authlib's, with its properties in a Guava multimap, which a
+        // PropertyMap forwards its Multimap methods to.
+        InstanceSuite.every(GameProfile.class),
+        InstanceSuite.every(Property.class),
+        InstanceSuite.every(PropertyMap.class)
+            .inherited(
+                "values()Ljava/util/Collection;", "size()I", "isEmpty()Z", "equals(Ljava/lang/Object;)Z", "hashCode()I",
+                "toString()Ljava/lang/String;"
+            ),
+        new StaticSuite(UUIDUtil.class)
+            .extraInputs("createOfflinePlayerUUID(Ljava/lang/String;)Ljava/util/UUID;", each(ProfileValues.PLAYER_NAMES.edges()))
+            .extraInputs("createOfflineProfile(Ljava/lang/String;)Lcom/mojang/authlib/GameProfile;", each(ProfileValues.PLAYER_NAMES.edges())),
         // The cookie packets, which login, configuration and play share. Their writers stop payloads at 5120 bytes, so the
         // readers also read longer ones, written without the limit.
         InstanceSuite.every(ClientboundCookieRequestPacket.class),
@@ -778,8 +817,9 @@ public final class Golden {
                 }))
             ),
         new StaticSuite(CommonPacketTypes.class),
-        // What a ServerboundHelloPacket's hashCode and toString use.
-        new InstanceSuite(UUID.class, "hashCode()I", "toString()Ljava/lang/String;")
+        // What a ServerboundHelloPacket's hashCode and toString use, and what makes an offline player's UUID.
+        new InstanceSuite(UUID.class, "hashCode()I", "toString()Ljava/lang/String;", "nameUUIDFromBytes([B)Ljava/util/UUID;")
+            .extraInputs("nameUUIDFromBytes([B)Ljava/util/UUID;", offlinePlayerNames())
     );
 
     /** Writes every suite's file to the directory in the first argument, or only the suites the other arguments name. */
@@ -2206,6 +2246,38 @@ public final class Golden {
             wrapped.add(copy);
         }
         return wrapped;
+    }
+
+    // A profile's properties as GAME_PROFILE_PROPERTIES writes them, without its limits on the count and the strings.
+    private static void writePropertiesWithoutLimits(final FriendlyByteBuf buffer, final PropertyMap properties) {
+        buffer.writeVarInt(properties.size());
+        for (Property property : properties.values()) {
+            Utf8String.write(buffer, property.name(), Integer.MAX_VALUE);
+            Utf8String.write(buffer, property.value(), Integer.MAX_VALUE);
+            FriendlyByteBuf.writeNullable(buffer, property.signature(), (out, signature) -> Utf8String.write(out, signature, Integer.MAX_VALUE));
+        }
+    }
+
+    // After the prefix, property counts the reader takes without reading a property (negative ones too) or refuses (past
+    // 16), with nothing after them.
+    private static List<Object[]> propertyCounts(final byte[] prefix) {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int count : new int[]{0, -1, Integer.MIN_VALUE, 16, 17, Integer.MAX_VALUE}) {
+            inputs.add(new Object[]{NetworkValues.buffer(0, 0, NetworkValues.concat(prefix, NetworkValues.varInt(count)))});
+        }
+        return inputs;
+    }
+
+    // Each value as the only argument.
+    private static List<Object[]> each(final List<Object> values) {
+        return values.stream().map(value -> new Object[]{value}).toList();
+    }
+
+    // What createOfflinePlayerUUID hashes for the player names.
+    private static List<Object[]> offlinePlayerNames() {
+        return ProfileValues.PLAYER_NAMES.edges().stream()
+            .map(name -> new Object[]{("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8)})
+            .toList();
     }
 
     // Custom query packets whose payload, everything after the transaction id (and the query's identifier), is the most

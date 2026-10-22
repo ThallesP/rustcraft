@@ -2,6 +2,7 @@ package rustcraft.golden;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.mojang.authlib.GameProfile;
 import io.netty.buffer.Unpooled;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
@@ -34,6 +35,7 @@ import net.minecraft.network.protocol.handshake.HandshakePacketTypes;
 import net.minecraft.network.protocol.login.ClientboundCustomQueryPacket;
 import net.minecraft.network.protocol.login.ClientboundHelloPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket;
+import net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket;
 import net.minecraft.network.protocol.login.LoginPacketTypes;
 import net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
@@ -99,10 +101,6 @@ final class PacketValues {
     private static final Values.Generator PORTS = new Values.Simple(
         List.of(25565, 0, 65535, 32767, 32768, 65536, -1, Integer.MIN_VALUE, Integer.MAX_VALUE), INTS::random, INTS::encode
     );
-    // The scenario's player, and around readUtf(16)'s limit.
-    private static final Values.Generator PLAYER_NAMES = strings(
-        "rustcraft", "", "a".repeat(16), "a".repeat(17), "é".repeat(16), "😀".repeat(8), "😀".repeat(8) + "a"
-    );
     // An offline server's empty id, and around readUtf(20)'s limit.
     private static final Values.Generator SERVER_IDS = strings("", "a".repeat(20), "a".repeat(21), "😀".repeat(10), "😀".repeat(10) + "a");
     // Byte arrays, and the length of an RSA public key's encoding and of a challenge.
@@ -138,13 +136,17 @@ final class PacketValues {
             List.of(), PROTOCOL_VERSIONS, HOST_NAMES, PORTS, CLIENT_INTENT
         );
         packet(
-            ServerboundHelloPacket.class, fields -> new ServerboundHelloPacket((String)fields[0], (UUID)fields[1]), List.of(), PLAYER_NAMES,
-            UUIDS
+            ServerboundHelloPacket.class, fields -> new ServerboundHelloPacket((String)fields[0], (UUID)fields[1]), List.of(),
+            ProfileValues.PLAYER_NAMES, UUIDS
         );
         packet(
             ClientboundHelloPacket.class,
             fields -> new ClientboundHelloPacket((String)fields[0], (byte[])fields[1], (byte[])fields[2], (Boolean)fields[3]),
             List.of("serverId", "publicKey", "challenge", "shouldAuthenticate"), SERVER_IDS, KEYS, KEYS, BOOLEANS
+        );
+        packet(
+            ClientboundLoginFinishedPacket.class,
+            fields -> new ClientboundLoginFinishedPacket((GameProfile)fields[0], (UUID)fields[1]), List.of(), ProfileValues.GAME_PROFILES, UUIDS
         );
         packet(ServerboundLoginAcknowledgedPacket.class, fields -> ServerboundLoginAcknowledgedPacket.INSTANCE, List.of());
         packet(
