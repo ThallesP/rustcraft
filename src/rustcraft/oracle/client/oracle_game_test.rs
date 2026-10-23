@@ -7,11 +7,13 @@
 //!
 //! Java's test drives the game from its own thread, between ticks; the port's is called after
 //! each tick (`TestDriver`), so what Java does before a tick (holding the keys, the look) is done
-//! after the one before it. Not yet like the oracle client's: screenshots, which come with the
-//! renderer (gates 2 and 3). The port has no screens, so waiting for the level's loading screen to
-//! close is waiting for the level to be ready, which closes it in vanilla too, and until the
-//! renderer compiles sections "chunks rendered" is every chunk in the render distance being in
-//! the level.
+//! after the one before it. A screenshot step renders a frame at a partial tick of 1 and reads it
+//! back like `OracleScreenshot.take`, into `<out>/<scenario>/screenshots/<name>.png`, when the
+//! client has a renderer (the runner makes one for a scenario with screenshots). The port has no
+//! screens, so waiting for the level's loading screen to close is waiting for the level to be
+//! ready, which closes it in vanilla too; "chunks rendered" is every chunk in the render distance
+//! being in the level and, with a renderer, every visible section compiled
+//! (`levelRenderer.hasRenderedAllSections()`).
 
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -20,6 +22,7 @@ use std::sync::Arc;
 
 use crate::net::minecraft::client::minecraft::{Minecraft, TestDriver};
 use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::renderer::game_renderer::RenderOptions;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::protocol::common::custom::discarded_payload::DiscardedPayload;
@@ -79,7 +82,13 @@ impl OracleGameTest {
             options.set_render_distance(scenario.options.render_distance);
             options.set_particles(ParticleStatus::MINIMAL);
             options.joined_first_server = true;
+            options.fov = scenario.options.fov;
+            // oracle/client/options.txt's, which differ from the defaults.
+            options.chunk_section_fade_in_time = 0.0;
+            options.cloud_range = 64;
+            options.texture_filtering_rgss = true;
         }
+        minecraft.hud_hidden.set(scenario.options.hide_gui);
         let outcome = Rc::new(Cell::new(Some(Outcome::Running)));
         (
             OracleGameTest {
@@ -93,6 +102,26 @@ impl OracleGameTest {
             },
             outcome,
         )
+    }
+
+    /// The options the oracle client renders with: its `options.txt` (`oracle/client/options.txt`:
+    /// smooth lighting, cut-out leaves, no chunk fade, gamma 0.5, glint 0.75, RGSS texture
+    /// filtering, cloud range 64) with `applyOptions`' (the scenario's field of view and render
+    /// distance, no bobbing or clouds).
+    pub fn render_options(scenario: &Scenario) -> RenderOptions {
+        RenderOptions {
+            render_distance: scenario.options.render_distance,
+            fov: scenario.options.fov,
+            fov_effect_scale: 1.0,
+            cloud_range: 64,
+            ambient_occlusion: true,
+            cutout_leaves: true,
+            chunk_section_fade_in_time: 0.0,
+            gamma: 0.5,
+            glint_strength: 0.75,
+            use_rgss: true,
+            hide_gui: scenario.options.hide_gui,
+        }
     }
 
     /// The commands that put the world in the scenario's state, the same in both modes: the
@@ -171,7 +200,59 @@ impl OracleGameTest {
                     .get_chunk(center_x + dx, center_z + dz)
                     .is_some()
             })
-        })
+        }) && minecraft
+            .game_renderer
+            .borrow()
+            .as_ref()
+            .is_none_or(|game_renderer| game_renderer.level_renderer().has_rendered_all_sections())
+    }
+
+    /// Whether the scenario takes screenshots, which needs a renderer.
+    pub fn has_screenshots(scenario: &Scenario) -> bool {
+        scenario.steps.iter().any(|step| step.screenshot.is_some())
+    }
+
+    /// The screenshot steps that come after `ticks` of the scenario's ticks and before the next.
+    fn screenshots_after(&self, ticks: i32) -> Vec<String> {
+        let mut elapsed = 0;
+        let mut names = Vec::new();
+        for step in &self.scenario.steps {
+            match &step.screenshot {
+                Some(name) if elapsed == ticks => names.push(name.clone()),
+                _ => elapsed += step.ticks,
+            }
+        }
+        names
+    }
+
+    /// `OracleScreenshot.take` for each screenshot due after `ticks` ticks: a frame at a partial
+    /// tick of 1, read back.
+    fn take_screenshots(&mut self, minecraft: &Minecraft, ticks: i32) {
+        for name in self.screenshots_after(ticks) {
+            if !minecraft.render_level(1.0) {
+                continue;
+            }
+            let image = minecraft
+                .game_renderer
+                .borrow()
+                .as_ref()
+                .map(|game_renderer| game_renderer.take_screenshot());
+            let Some(image) = image else {
+                continue;
+            };
+            let path = self.out_dir.join("screenshots").join(format!("{name}.png"));
+            let written = std::fs::create_dir_all(path.parent().expect("a directory"))
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    image
+                        .write_to_file(&path)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = written {
+                self.fail(minecraft, format!("{}: {error}", path.display()));
+                return;
+            }
+        }
     }
 
     fn scenario_ticks(&self) -> i32 {
@@ -321,6 +402,10 @@ impl TestDriver for OracleGameTest {
                             DiscardedPayload::new(OracleGameTest::scenario_start()),
                         )));
                     self.next(Stage::Replaying);
+                    self.take_screenshots(minecraft, 0);
+                    if self.stage == Stage::Done {
+                        return;
+                    }
                     if self.scenario_ticks() > 0 {
                         self.before_tick(minecraft, 0);
                     }
@@ -333,6 +418,10 @@ impl TestDriver for OracleGameTest {
                     return;
                 }
                 self.replayed_ticks += 1;
+                self.take_screenshots(minecraft, self.replayed_ticks);
+                if self.stage == Stage::Done {
+                    return;
+                }
                 if self.replayed_ticks < self.scenario_ticks() {
                     self.before_tick(minecraft, self.replayed_ticks);
                     return;

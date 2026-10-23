@@ -294,6 +294,14 @@ The atlas's GPU half, drawing each sprite into each mip level, is a frame test (
 - `EnvironmentAttributeSystem`: "getValue" is `[dimensionType, source, ticks, rain, thunder, x, y, z]` → `[plain, interpolated]`, each attribute's `getValue(attribute, pos, null)` and with a `SpatialAttributeInterpolator` filled the way the probe fills one, for the overworld, the nether and the end, each with its own biome and the mixed ones, at 29 times through the day and the moon's cycle (and before and long after), the overworld's with 4 kinds of weather, at 3 positions. The tick cache is invalidated before each case.
 - `EnvironmentAttributeProbe`: 48 programs of `["tick", ticks, rain, thunder, x, y, z]` (the system's tick cache invalidated, then the probe ticked) and `["get", attribute, partialTicks]` on the overworld, the probe in a `ClientLevel` made without its constructor that has its attribute system and biome manager set, which is all `tick` reads. Reads skip attributes for a tick now and then, so their probes are dropped, and half the steps read the three angles, which blend between ticks the shorter way round.
 
+### The frame
+
+`CameraSuites` covers the camera's pure pieces, a `Camera` made with its constructor (it only keeps `Minecraft.getInstance()`, null in the generator) and `setRotation` (protected) called by reflection:
+- `Camera`: "setRotation" is `[yRot, xRot]` → `[viewRotationMatrix, forwards, up, left]`, the matrix's 16 elements in column order and its properties, for the walk's rotations, right angles and their neighbours, and 400 random ones;
+- `Frustum`: "cull" is `[x, y, z, yRot, xRot, fov, aspect, depthFar]` → `[cubes, boxes, offset]`: `Camera.update`'s culling frustum (the view rotation and `perspective(fov, aspect, 0.05, depthFar, true)`) prepared at the camera, its `cubeInFrustum` of the 9×5×9 sections around the camera's, `isVisible` of the same sections shifted a third of a block, and the camera after `offsetToFullyIncludeCameraCube(8)`, for 160 cameras (the walk's eye first).
+
+The rest of the frame is checked by its screenshots: the level renderer's sections and draws, the fog, the sky and the lightmap only show in pixels.
+
 ## 2. Scenarios and tick traces
 
 A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:
@@ -302,7 +310,7 @@ A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:
 {
   "world": { "seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival" },
   "player": { "pos": [0.5, -60.0, 0.5], "y_rot": 0.0, "x_rot": 0.0 },
-  "options": { "window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4 },
+  "options": { "window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4, "hide_gui": false },
   "steps": [
     { "ticks": 20, "keys": ["forward"] },
     { "ticks": 1, "keys": ["forward", "jump"] },
@@ -315,6 +323,7 @@ A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:
 - `keys` are held for every tick of the step: `forward`, `back`, `left`, `right`, `jump`, `sneak`, `sprint`, `attack`, `use`.
 - `look` sets `[y_rot, x_rot]` in degrees at the start of every tick of the step.
 - `screenshot` captures the current frame as `<name>.png` without advancing the game.
+- `hide_gui`, optional, is vanilla's F1 (`Hud.toggle`) for the whole run: no HUD, hand or crosshair, so the screenshots are the level alone. Both clients set it before joining (`walk-no-gui` is the walk with it).
 - `setup`, optional, is a list of commands (without their slash) that build the scenario's course on the flat world, like `"fill -2 -60 8 2 -60 8 minecraft:oak_stairs[facing=south,half=bottom,shape=straight,waterlogged=false] strict"`. Physics scenarios use `fill` and `setblock` in their `strict` mode, which places each state as written, without shape updates from or to its neighbours (a fence's connections, a stair's corners), so the course is exactly what the commands say.
 
 Before tick 0, both modes put the world in the scenario's state with the same commands, the scenario's `setup` before the player is put in place. A port joining a server must send the same ones:
@@ -413,6 +422,8 @@ The port renders the same way: `tests/opengl_frame.rs` runs `rustcraft` under `x
 - every pipeline `ShaderManager.reload` compiles (the 190 required and 2 optional ones) compiles and links on the driver from the GLSL vanilla hands it (`--compile-pipelines`);
 - the block atlas: `--dump-atlas` loads it like the client and uploads it like `TextureAtlas.upload` (each sprite drawn into each mip level by `pipeline/animate_sprite_blit`, animated ones from their first frame's texture), then writes it like `dumpContents` (`<id>_<level>.png` and `<id>.txt`). Its pixels are known from the goldens: the layout and the sprites' mip levels are vanilla's, and with nearest filtering and clamped edges the pixel `k` into a sprite's padded place at level `L` is the sprite's texel `k - p_L` clamped into it, each texture coordinate on a texel's center since every size and padding is a multiple of `2^L`; llvmpipe zeroes new textures, so the rest is transparent black. All five levels match those pixels exactly;
 - draws: `--fill` draws `GuiGraphicsExtractor.fill`s through `pipeline/gui` the way `GuiRenderer` does (a `BufferBuilder` mesh of `ColoredRectangleRenderState`'s vertices, the shared quad indices, the GUI's orthographic projection and model view in their uniform blocks), and the test knows every pixel: the fills' corners are whole pixels at the GUI scale, so no pixel's center lies on an edge, an opaque color blends to itself, a fill with alpha 0 is discarded, and later fills cover earlier ones.
+
+The port's screenshots come from its runs on a server: a scenario with screenshot steps makes the port render (offscreen when it's `--headless`), and `OracleGameTest` renders a frame at a partial tick of 1 and reads it back at each step, like `OracleScreenshot.take`, after waiting, like the oracle client, for every visible section to compile (`hasRenderedAllSections`). `tools/port_client.py` runs such a scenario's port under `xvfb-run -a` with the oracle client's environment (CI adds `SDL_VIDEO_FORCE_EGL=1`). The port renders with the oracle's `options.txt` where it differs from the defaults: no chunk fade, cloud range 64, RGSS texture filtering. `rustcraft --render-scenario SCENARIO --capture CAPTURE --screenshot out.png` renders a scenario's first view offscreen without a server, from the level a capture's packets fill (`CapturedLevel`), its clocks set by the capture's `set_time`s, the player settled where the scenario puts it: the same pixels as the live run's. `tests/opengl_frame.rs` renders the GUI-free walk's spawn view that way from the walk's capture (CI's own) and checks it against the digest of vanilla's screenshot's RGBA bytes.
 
 ## Where outputs go
 

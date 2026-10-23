@@ -93,6 +93,7 @@ final class RenderSuites {
             new CompileSuite(GlPipelineRecompiler.class.getName(), CompileSuite::writeDecompiled)
         ));
         suites.addAll(TextureSuites.suites());
+        suites.addAll(CameraSuites.suites());
         return suites;
     }
 

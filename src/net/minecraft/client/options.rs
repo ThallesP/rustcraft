@@ -38,6 +38,18 @@ pub struct Options {
     auto_jump: bool,
     sprint_window: i32,
     biome_blend_radius: i32,
+    /// What the renderer reads (`GameRenderer.extractOptions`): `fov()`, `fovEffectScale()`,
+    /// `cloudRange()`, `ambientOcclusion()`, `cutoutLeaves()`, `chunkSectionFadeInTime()` (in
+    /// seconds), `gamma()`, `glintStrength()`, and whether `textureFiltering()` is RGSS.
+    pub fov: i32,
+    pub fov_effect_scale: f64,
+    pub cloud_range: i32,
+    pub ambient_occlusion: bool,
+    pub cutout_leaves: bool,
+    pub chunk_section_fade_in_time: f64,
+    pub gamma: f64,
+    pub glint_strength: f64,
+    pub texture_filtering_rgss: bool,
 }
 
 impl Default for Options {
@@ -74,6 +86,15 @@ impl Options {
             auto_jump: false,
             sprint_window: 7,
             biome_blend_radius: Options::DEFAULT_BIOME_BLEND_RADIUS,
+            fov: 70,
+            fov_effect_scale: 1.0,
+            cloud_range: 128,
+            ambient_occlusion: true,
+            cutout_leaves: true,
+            chunk_section_fade_in_time: 0.75,
+            gamma: 0.5,
+            glint_strength: 0.75,
+            texture_filtering_rgss: false,
         }
     }
 

@@ -2,16 +2,23 @@
 //!
 //! The section copies a frame's compiles share, by section, so each section is copied once
 //! however many regions read it. `lighting` is what the regions ask the level for besides blocks
-//! (`RenderSectionRegion`), until `ClientLevel` answers it itself.
+//! (`RenderSectionRegion`): the level itself, which a test can stand in for.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
 use crate::net::minecraft::client::renderer::chunk::render_section_region::RenderSectionRegion;
 use crate::net::minecraft::client::renderer::chunk::section_copy::SectionCopy;
+use crate::net::minecraft::core::holder::Holder;
+use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::core::section_pos::SectionPos;
+use crate::net::minecraft::resources::identifier::Identifier;
+use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::world::attribute::environment_attribute_layer::LayerLevel;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
 
 #[derive(Default)]
@@ -86,6 +93,67 @@ impl RenderRegionCache {
                     let section_index = level.get_section_index_from_section_y(section_y);
                     Arc::new(SectionCopy::new(chunk, section_index, level.is_debug()))
                 }),
+        )
+    }
+}
+
+/// What the environment attributes' layers read of a `ClientLevel` (`LayerLevel`), which has no
+/// Java class: in Java the level answers it. The clocks are the packet listener's
+/// (`ClientLevel.clockManager()`), a clock it doesn't have being at no ticks like Java's new
+/// instance; the noise biomes are the chunks' (`Level.getNoiseBiome`, plains for a chunk the
+/// level doesn't have, `getUncachedNoiseBiome`). The level's weather isn't ported, so it's clear:
+/// no rain, thunder or lightning, which is the scenarios' (`weather clear`).
+pub struct LevelEnvironment<'a> {
+    level: &'a ClientLevel,
+    clocks: std::cell::RefCell<ClientClockManager>,
+}
+
+impl<'a> LevelEnvironment<'a> {
+    pub fn new(level: &'a ClientLevel, clocks: ClientClockManager) -> LevelEnvironment<'a> {
+        LevelEnvironment {
+            level,
+            clocks: std::cell::RefCell::new(clocks),
+        }
+    }
+}
+
+impl LayerLevel for LevelEnvironment<'_> {
+    fn clock_total_ticks(&self, clock: &Holder) -> i64 {
+        self.clocks.borrow_mut().get_instance(clock).total_ticks()
+    }
+
+    fn rain_level(&self) -> f32 {
+        0.0
+    }
+
+    fn thunder_level(&self) -> f32 {
+        0.0
+    }
+
+    fn sky_flash_time(&self) -> i32 {
+        0
+    }
+
+    fn get_noise_biome_at_quart(&self, quart_x: i32, quart_y: i32, quart_z: i32) -> Holder {
+        let Some(chunk) = self
+            .level
+            .get_chunk_source()
+            .get_chunk(quart_x >> 2, quart_z >> 2)
+        else {
+            return Holder::Reference(ResourceKey::create(
+                Registries::BIOME,
+                Identifier::with_default_namespace("plains"),
+            ));
+        };
+        // ChunkAccess.getNoiseBiome: the quart's height kept in the chunk's.
+        let min_quart_y = self.level.get_min_y() >> 2;
+        let max_quart_y_inclusive = min_quart_y + (self.level.get_height() >> 2) - 1;
+        let clamped_quart_y = Mth::clamp_i32(quart_y, min_quart_y, max_quart_y_inclusive);
+        let section_index = self.level.get_section_index(clamped_quart_y << 2);
+        chunk.get_sections()[section_index as usize].get_noise_biome(
+            quart_x & 3,
+            clamped_quart_y & 3,
+            quart_z & 3,
         )
     }
 }

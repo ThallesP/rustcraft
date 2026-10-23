@@ -205,6 +205,19 @@ impl Entity {
         self.x_rot
     }
 
+    /// `turn`: the mouse's turn, in degrees times 0.15, the old rotation turned with it so the
+    /// frame between ticks doesn't swing back. A vehicle isn't ported.
+    pub fn turn(&mut self, xo: f64, yo: f64) {
+        let x_delta = yo as f32 * 0.15;
+        let y_delta = xo as f32 * 0.15;
+        self.set_x_rot(self.get_x_rot() + x_delta);
+        self.set_y_rot(self.get_y_rot() + y_delta);
+        self.set_x_rot(Mth::clamp_f32(self.get_x_rot(), -90.0, 90.0));
+        self.x_rot_o += x_delta;
+        self.y_rot_o += y_delta;
+        self.x_rot_o = Mth::clamp_f32(self.x_rot_o, -90.0, 90.0);
+    }
+
     /// Java's `setXRot` refuses an infinite or NaN rotation, with a warning, and keeps the rest
     /// within straight down and straight up (`Math.clamp(xRot % 360, -90, 90)`).
     pub fn set_x_rot(&mut self, x_rot: f32) {

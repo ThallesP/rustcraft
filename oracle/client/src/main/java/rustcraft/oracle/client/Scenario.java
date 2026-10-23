@@ -20,7 +20,8 @@ public record Scenario(String name, World world, Player player, Options options,
 
     public record Player(double x, double y, double z, float yRot, float xRot) {}
 
-    public record Options(int width, int height, int fov, int guiScale, int renderDistance) {}
+    /** {@code hideGui} is vanilla's F1 ({@code Hud.toggle}): no HUD, hand or crosshair. */
+    public record Options(int width, int height, int fov, int guiScale, int renderDistance, boolean hideGui) {}
 
     /** Either a screenshot, or {@code ticks} ticks with {@code keys} held and an optional fixed {@code look}. */
     public record Step(int ticks, Set<String> keys, float @Nullable [] look, @Nullable String screenshot) {}
@@ -66,7 +67,8 @@ public record Scenario(String name, World world, Player player, Options options,
                 window.get(1).getAsInt(),
                 options.get("fov").getAsInt(),
                 options.get("gui_scale").getAsInt(),
-                options.get("render_distance").getAsInt()
+                options.get("render_distance").getAsInt(),
+                options.has("hide_gui") && options.get("hide_gui").getAsBoolean()
             ),
             List.copyOf(setup),
             List.copyOf(steps)

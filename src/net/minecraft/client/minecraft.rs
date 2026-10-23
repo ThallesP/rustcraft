@@ -1,12 +1,14 @@
 //! net/minecraft/client/Minecraft.java
 //!
-//! Not ported yet: nearly all of it: the window and rendering (the render track's), sound, the
-//! integrated server, resources, the GUI and its screens, input, telemetry and the profiler. What's
-//! here is the game loop's timing and what a tick does with a connection to a server: run the
-//! packets queued for the game thread, then up to 10 ticks, each ticking the connection (the game
-//! mode's, or the connect screen's before there's a level), the player on its level, what the
-//! player sends, and ending with `client_tick_end`; then the frame's update of the level's light
-//! (`renderFrame`'s `level.update()`).
+//! Not ported yet: nearly all of it: sound, the integrated server, resources, the GUI and its
+//! screens, input, telemetry and the profiler. What's here is the game loop's timing and what a
+//! tick does with a connection to a server: run the packets queued for the game thread, then up
+//! to 10 ticks, each ticking the connection (the game mode's, or the connect screen's before
+//! there's a level), the game renderer, the player on its level, what the player sends, and
+//! ending with `client_tick_end`; then the frame's update of the level's light (`renderFrame`'s
+//! `level.update()`) and, with a renderer, a frame of the level, offscreen or presented to the
+//! window. The renderer is made on demand (`init_renderer`): a headless client that takes no
+//! screenshots runs without one.
 //!
 //! The game is shared by its listeners and its player, like Java's, so its state is in cells, and
 //! its back-references are parameters (`LocalPlayer::send_changes`). The screen is one of the few
@@ -19,19 +21,32 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use crate::com::mojang::blaze3d::platform::window::Window;
+use crate::com::mojang::renderpearl::api::device::gpu_surface::GpuSurface;
 use crate::net::minecraft::client::delta_tracker::Timer;
 use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
+use crate::net::minecraft::client::keyboard_handler::{KeyAction, KeyboardHandler};
+use crate::net::minecraft::client::mouse_handler::MouseHandler;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
 use crate::net::minecraft::client::multiplayer::multi_player_game_mode::MultiPlayerGameMode;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
+use crate::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
+use crate::net::minecraft::client::renderer::game_renderer::GameRenderer;
 use crate::net::minecraft::client::user::User;
+use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::packet_processor::PacketProcessor;
 use crate::net::minecraft::network::protocol::game::serverbound_client_tick_end_packet::ServerboundClientTickEndPacket;
+use crate::net::minecraft::resources::identifier::Identifier;
+use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::server::network::event_loop_group_holder::EventLoopGroupHolder;
+use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::util::Util;
+use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
+use crate::org::lwjgl::sdl::sdl_events::{SDLEvents, SdlEvent};
+use crate::org::lwjgl::sdl::sdl_mouse::SDLMouse;
 
 /// The screen shown, of the ones the port has.
 enum Screen {
@@ -65,6 +80,12 @@ pub struct Minecraft {
     pause: Cell<bool>,
     client_tick_count: Cell<i32>,
     test_driver: RefCell<Option<Box<dyn TestDriver>>>,
+    pub game_renderer: RefCell<Option<GameRenderer>>,
+    /// The window frames are presented to, and its surface; none for an offscreen renderer.
+    window: RefCell<Option<(Window, Box<dyn GpuSurface>)>>,
+    /// `gui.hud.isHidden()`: F1.
+    pub hud_hidden: Cell<bool>,
+    mouse_handler: RefCell<MouseHandler>,
 }
 
 impl Minecraft {
@@ -88,6 +109,10 @@ impl Minecraft {
             pause: Cell::new(false),
             client_tick_count: Cell::new(0),
             test_driver: RefCell::new(None),
+            game_renderer: RefCell::new(None),
+            window: RefCell::new(None),
+            hud_hidden: Cell::new(false),
+            mouse_handler: RefCell::new(MouseHandler::new()),
         })
     }
 
@@ -110,6 +135,11 @@ impl Minecraft {
         let mut next_frame = Instant::now();
         while self.running.get() {
             self.run_tick(true);
+            self.mouse_handler
+                .borrow_mut()
+                .handle_accumulated_movement(self);
+            self.render_frame();
+            self.poll_events();
             next_frame += frame;
             let now = Instant::now();
             if next_frame < now {
@@ -168,6 +198,22 @@ impl Minecraft {
 
         if self.level.borrow().is_some() {
             if !self.pause.get() {
+                if let Some(game_renderer) = self.game_renderer.borrow_mut().as_mut() {
+                    let options = GameRenderer::extract_options(
+                        &self.options.borrow(),
+                        self.hud_hidden.get(),
+                    );
+                    let level = self.level.borrow();
+                    let level = level.as_ref().expect("checked above");
+                    self.ensure_environment_attributes(game_renderer, level);
+                    let environment = self.level_environment(level);
+                    game_renderer.tick(
+                        true,
+                        self.player.borrow().as_ref(),
+                        Some(&environment),
+                        &options,
+                    );
+                }
                 // `level.tickEntities()`: the player is the only entity the level has
                 // (`ClientLevel.tickNonPassenger`).
                 {
@@ -239,6 +285,172 @@ impl Minecraft {
     pub fn set_level(&self, level: ClientLevel) {
         *self.level.borrow_mut() = Some(level);
         self.camera_entity.set(None);
+        if let Some(game_renderer) = self.game_renderer.borrow_mut().as_mut() {
+            game_renderer.set_level(true);
+        }
+    }
+
+    /// Makes the renderer, of the scenario's or the window's size, on the device, and the
+    /// window frames are presented to, if there's one.
+    pub fn init_renderer(
+        &self,
+        game_renderer: GameRenderer,
+        window: Option<(Window, Box<dyn GpuSurface>)>,
+    ) {
+        *self.game_renderer.borrow_mut() = Some(game_renderer);
+        *self.window.borrow_mut() = window;
+    }
+
+    /// `GameRenderer.update`, `extract` and `render` of a frame of the level at `partial_ticks`,
+    /// when there's a renderer and a level; true if it rendered.
+    pub fn render_level(&self, partial_ticks: f32) -> bool {
+        let mut game_renderer = self.game_renderer.borrow_mut();
+        let level = self.level.borrow();
+        let player = self.player.borrow();
+        let (Some(game_renderer), Some(level)) = (game_renderer.as_mut(), level.as_ref()) else {
+            return false;
+        };
+        let options = GameRenderer::extract_options(&self.options.borrow(), self.hud_hidden.get());
+        self.ensure_environment_attributes(game_renderer, level);
+        game_renderer.update(player.as_ref(), partial_ticks, &options);
+        let delta_ticks = self.delta_tracker.borrow().get_game_time_delta_ticks();
+        let eye_y = player.as_ref().map_or(0.0, |player| {
+            Mth::lerp_f64(
+                f64::from(partial_ticks),
+                player.old_position().y,
+                player.get_y(),
+            ) + f64::from(player.get_eye_height())
+        });
+        game_renderer.render_level_frame(
+            level,
+            level,
+            &self.level_environment(level),
+            &options,
+            partial_ticks,
+            delta_ticks,
+            level.get_game_time(),
+            eye_y,
+        );
+        true
+    }
+
+    /// What the level's environment attributes read of it, with the listener's clocks.
+    fn level_environment<'a>(&self, level: &'a ClientLevel) -> LevelEnvironment<'a> {
+        let clocks = self
+            .get_connection()
+            .map(|connection| connection.borrow().clock_manager().clone())
+            .unwrap_or_default();
+        LevelEnvironment::new(level, clocks)
+    }
+
+    /// The level's environment attributes, made once it's there: its dimension type's, from the
+    /// vanilla pack, with the server's biome registry. Java's level makes them in its constructor.
+    fn ensure_environment_attributes(&self, game_renderer: &mut GameRenderer, level: &ClientLevel) {
+        if !game_renderer.needs_environment_attributes() {
+            return;
+        }
+        let Some(connection) = self.get_connection() else {
+            return;
+        };
+        let connection = connection.borrow();
+        let biomes = connection
+            .registry_access()
+            .lookup_or_throw(Registries::BIOME);
+        let biome_keys: Vec<ResourceKey> = (0..biomes.size())
+            .map(|id| {
+                biomes
+                    .holder_by_id_or_throw(id)
+                    .unwrap_key()
+                    .expect("a registry's holder has its key")
+                    .clone()
+            })
+            .collect();
+        let dimension_type = level
+            .dimension_type_registration()
+            .unwrap_key()
+            .expect("a registry's holder has its key")
+            .identifier()
+            .clone();
+        // Level.canHaveWeather: sky light, no ceiling, not the end; of the vanilla types, the
+        // overworld's.
+        let can_have_weather = dimension_type == Identifier::with_default_namespace("overworld");
+        match EnvironmentAttributeSystem::for_client_level(
+            &dimension_type,
+            &biome_keys,
+            can_have_weather,
+        ) {
+            Ok(system) => game_renderer.set_environment_attributes(system),
+            Err(error) => panic!("the level's environment attributes: {error}"),
+        }
+    }
+
+    /// `RenderSystem.pollEvents`, with the window's input: the keyboard's and the mouse's
+    /// (`KeyboardHandler`, `MouseHandler`), a click grabbing the mouse, and closing the window.
+    fn poll_events(&self) {
+        let window = self.window.borrow();
+        let Some((window, _)) = window.as_ref() else {
+            return;
+        };
+        let mut event = SdlEvent::default();
+        while SDLEvents::SDL_PollEvent(&mut event) {
+            match event.event_type {
+                SDLEvents::SDL_EVENT_QUIT | SDLEvents::SDL_EVENT_WINDOW_CLOSE_REQUESTED => {
+                    self.stop();
+                }
+                SDLEvents::SDL_EVENT_KEY_DOWN | SDLEvents::SDL_EVENT_KEY_UP => {
+                    let down = event.event_type == SDLEvents::SDL_EVENT_KEY_DOWN;
+                    let action = KeyboardHandler::key_press(
+                        self,
+                        event.key_scancode(),
+                        down,
+                        event.key_repeat(),
+                    );
+                    if action == KeyAction::ReleaseMouse {
+                        self.mouse_handler.borrow_mut().set_mouse_grabbed(false);
+                        SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), false);
+                    }
+                }
+                SDLEvents::SDL_EVENT_MOUSE_MOTION => {
+                    let (x, y) = event.motion_relative();
+                    self.mouse_handler
+                        .borrow_mut()
+                        .on_move(f64::from(x), f64::from(y));
+                }
+                SDLEvents::SDL_EVENT_MOUSE_BUTTON_DOWN => {
+                    if !self.mouse_handler.borrow().is_mouse_grabbed() {
+                        self.mouse_handler.borrow_mut().set_mouse_grabbed(true);
+                        SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), true);
+                    }
+                }
+                SDLEvents::SDL_EVENT_WINDOW_FOCUS_LOST => {
+                    self.mouse_handler.borrow_mut().set_mouse_grabbed(false);
+                    SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), false);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `renderFrame`'s render: a frame of the level, presented to the window if there's one.
+    fn render_frame(&self) {
+        let partial_ticks = self
+            .delta_tracker
+            .borrow()
+            .get_game_time_delta_partial_tick(false);
+        if !self.render_level(partial_ticks) {
+            return;
+        }
+        if let Some((_, surface)) = self.window.borrow().as_ref()
+            && let Some(game_renderer) = self.game_renderer.borrow().as_ref()
+        {
+            surface.blit_from_texture(
+                game_renderer
+                    .main_render_target()
+                    .get_color_texture_view()
+                    .expect("the main target has color"),
+            );
+            surface.present();
+        }
     }
 
     pub fn set_connect_screen(&self, screen: ConnectScreen) {

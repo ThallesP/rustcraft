@@ -12,7 +12,7 @@
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::{self, GpuBuffer};
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer_slice::GpuBufferSlice;
 use crate::com::mojang::renderpearl::api::commands::render_pass::{
-    MAX_VERTEX_BUFFERS, RenderArea, RenderPass,
+    INDIRECT_INDEXED_DRAW_SIZE, MAX_VERTEX_BUFFERS, RenderArea, RenderPass,
 };
 use crate::com::mojang::renderpearl::api::device::device_features::DeviceFeatures;
 use crate::com::mojang::renderpearl::api::device::device_limits::DeviceLimits;
@@ -264,6 +264,34 @@ impl RenderPass for FrontendRenderPass<'_> {
         self.validate_draw();
         self.backend
             .draw(vertex_count, instance_count, first_vertex, first_instance);
+    }
+
+    /// Panics where Java throws, for a device without indirect draws, or commands that aren't
+    /// in an indirect buffer, don't fit or aren't aligned.
+    fn draw_indexed_indirect(&mut self, commands: &GpuBufferSlice, draw_count: i32) {
+        self.check_open();
+        assert!(
+            self.device_features.draw_indirect,
+            "device does not support drawIndirect"
+        );
+        assert!(
+            draw_count <= 1 || self.device_features.multi_draw_indirect,
+            "drawCount must be one when device does not support multiDrawIndirect"
+        );
+        assert!(
+            commands.buffer.usage() & gpu_buffer::USAGE_INDIRECT_PARAMETERS != 0,
+            "Indirect commands buffer must have GpuBuffer.USAGE_INDIRECT_PARAMETERS flag"
+        );
+        assert!(
+            commands.length >= i64::from(draw_count) * i64::from(INDIRECT_INDEXED_DRAW_SIZE),
+            "Commands buffer is not large enough to hold requested draw count at the given offset"
+        );
+        assert!(
+            commands.offset % 4 == 0,
+            "Commands offset must be multiple of 4"
+        );
+        self.validate_draw();
+        self.backend.draw_indexed_indirect(commands, draw_count);
     }
 }
 

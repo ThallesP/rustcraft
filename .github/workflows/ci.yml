@@ -31,7 +31,10 @@ jobs:
       # way), and the golden harness reads its capture instead of vanilla/<version>/oracle/walk/capture.jsonl. The
       # port's run also replays the walk on the server, whose trace and packets the replay tests check against vanilla's
       # digests.
+      # The walk takes screenshots, which the port renders offscreen under xvfb-run (see the tests' note on EGL below).
       - run: python3 tools/port_client.py capture walk --accept-eula
+        env:
+          SDL_VIDEO_FORCE_EGL: "1"
       - run: python3 tools/golden.py
         env:
           RUSTCRAFT_CHUNK_CAPTURE: ${{ github.workspace }}/target/oracle/walk/capture.jsonl

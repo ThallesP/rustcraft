@@ -1,8 +1,10 @@
 //! com/mojang/renderpearl/api/commands/RenderPass.java
 //!
-//! Drawing with one pipeline at a time, its uniforms bound by name, and vertex and index buffers.
-//! Not ported yet: debug groups, timestamps, push constants, and the multi-draws, indirect draws
-//! and `drawMultipleIndexed`, which come with the pipelines that use them.
+//! Drawing with one pipeline at a time, its uniforms bound by name, and vertex and index buffers,
+//! directly or from indirect commands. Debug groups are labels a GL debugger shows and change no
+//! pixel, so `pushDebugGroup` and `popDebugGroup` do nothing yet. Not ported yet: timestamps, push
+//! constants, the direct multi-draws and `drawMultipleIndexed`, which come with the pipelines
+//! that use them, and `drawIndirect`.
 
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::GpuBuffer;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer_slice::GpuBufferSlice;
@@ -58,6 +60,13 @@ pub trait RenderPass {
         first_vertex: i32,
         first_instance: i32,
     );
+
+    /// `drawCount` indexed draws whose `VkDrawIndexedIndirectCommand`s are in `commands`.
+    fn draw_indexed_indirect(&mut self, commands: &GpuBufferSlice, draw_count: i32);
+
+    fn push_debug_group(&mut self, _label: &str) {}
+
+    fn pop_debug_group(&mut self) {}
 }
 
 /// `RenderPass.RenderArea`.

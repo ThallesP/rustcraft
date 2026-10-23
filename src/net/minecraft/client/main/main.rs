@@ -8,8 +8,9 @@
 //!
 //! Options the port adds, which vanilla doesn't have:
 //! - `--server HOST:PORT`, the same as `--quickPlayMultiplayer HOST:PORT`;
-//! - `--headless`, no window. There is no window yet (the render track brings it), so every run
-//!   is headless for now;
+//! - `--headless`, no window: the client renders only to take a scenario's screenshots, offscreen.
+//!   Without it, the client opens a window (`--window` says so too) and renders a frame of the
+//!   level each time round its loop, like vanilla;
 //! - `--oracleScenario PATH`, which replays a scenario on the server the way the oracle client
 //!   does (`OracleGameTest`), and exits 0 when it finished, like `rustcraft.oracle.scenario`,
 //!   writing its trace into `--oracleOut DIR` (`target/oracle` by default), like
@@ -23,6 +24,12 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use crate::com::mojang::blaze3d::platform::window::Window;
+use crate::com::mojang::blaze3d::systems::render_system::RenderSystem;
+use crate::com::mojang::renderpearl::api::device::gpu_backend::GpuBackend;
+use crate::com::mojang::renderpearl::api::device::gpu_debug_options::GpuDebugOptions;
+use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
+use crate::com::mojang::renderpearl::backend::opengl::gl_backend::GlBackend;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
 use crate::net::minecraft::client::minecraft::Minecraft;
@@ -30,6 +37,7 @@ use crate::net::minecraft::client::multiplayer::resolver::server_address::Server
 use crate::net::minecraft::client::multiplayer::server_data::{self, ServerData};
 use crate::net::minecraft::client::multiplayer::server_status_pinger::ServerStatusPinger;
 use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::renderer::game_renderer::GameRenderer;
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::server::network::event_loop_group_holder::EventLoopGroupHolder;
@@ -154,11 +162,11 @@ impl Main {
             );
             return 2;
         };
-        if !option_set.has("headless") {
-            println!("There's no window yet, so the client runs headless");
-        }
+        let windowed = option_set.has("window") || !option_set.has("headless");
 
         let minecraft = Minecraft::new(user, Options::new());
+        let mut window_size = (854, 480);
+        let mut needs_renderer = windowed;
         let mut outcome = None;
         let mut server_data = ServerData::new(
             "Minecraft Server".to_string(),
@@ -174,10 +182,19 @@ impl Main {
                 }
             };
             let out_dir = Path::new(option_set.value_of("oracleOut").unwrap_or("target/oracle"));
+            window_size = (scenario.options.width, scenario.options.height);
+            needs_renderer |= OracleGameTest::has_screenshots(&scenario);
             let (driver, driver_outcome) = OracleGameTest::new(&minecraft, scenario, out_dir);
             minecraft.set_test_driver(Box::new(driver));
             outcome = Some(driver_outcome);
             server_data.name = "rustcraft oracle".to_string();
+        }
+
+        if needs_renderer {
+            // A client that can't render still joins: its screenshots are what's missing.
+            if let Err(error) = Main::init_renderer(&minecraft, windowed, window_size) {
+                eprintln!("Can't render: {error}");
+            }
         }
 
         ConnectScreen::start_connecting(
@@ -198,6 +215,34 @@ impl Main {
                 None => 0,
             },
         }
+    }
+
+    /// `Minecraft`'s window and renderer: SDL's video and the GL library, the device (which lives
+    /// as long as the game, like Java's `RenderSystem` device), the window if there's to be one,
+    /// and the game renderer with the vanilla pack's atlas and models.
+    fn init_renderer(
+        minecraft: &Minecraft,
+        windowed: bool,
+        (width, height): (i32, i32),
+    ) -> Result<(), String> {
+        RenderSystem::init_backend_system();
+        let mut backend = GlBackend::new();
+        backend.load_library().map_err(|error| error.to_string())?;
+        let device: &'static dyn GpuDevice = Box::leak(
+            backend
+                .create_device(&GpuDebugOptions::default())
+                .map_err(|error| error.to_string())?,
+        );
+        let window = windowed.then(|| {
+            let window = Window::new(&backend, width, height, "Minecraft* 26.3 (rustcraft)");
+            let surface = device.create_surface(window.handle());
+            (window, surface)
+        });
+        let (width, height) = window.as_ref().map_or((width, height), |(window, _)| {
+            (window.get_width(), window.get_height())
+        });
+        minecraft.init_renderer(GameRenderer::new(device, width, height), window);
+        Ok(())
     }
 
     /// `--ping`: what the server list does for one server, on the event loop until the pong comes,

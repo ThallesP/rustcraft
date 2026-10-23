@@ -54,6 +54,9 @@ pub trait CommandEncoder {
         clear_depth: f64,
     );
 
+    /// Every mip level of the depth texture.
+    fn clear_depth_texture(&self, depth_texture: &dyn GpuTexture, clear_depth: f64);
+
     /// `writeToBuffer(GpuBufferSlice, ByteBuffer)`: the data at the slice's start.
     fn write_to_buffer(&self, slice: &GpuBufferSlice, data: &[u8]);
 

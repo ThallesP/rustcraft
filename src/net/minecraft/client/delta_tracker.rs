@@ -1,7 +1,6 @@
 //! net/minecraft/client/DeltaTracker.java
 //!
-//! Not ported yet: the interface's partial-tick getters, which the renderer reads, and
-//! `advanceRealTime`, which comes with it. `Timer`'s target milliseconds per tick come from the
+//! Not ported yet: `getRealtimeDeltaTicks` and `advanceRealTime`. `Timer`'s target milliseconds per tick come from the
 //! level's tick rate manager (`Minecraft.getTickTargetMillis`), which isn't ported yet, so it's
 //! always the default 50.
 
@@ -76,5 +75,16 @@ impl Timer {
 
     pub fn get_game_time_delta_ticks(&self) -> f32 {
         self.delta_ticks
+    }
+
+    /// How far into the next tick the frame is: 1 while the game is frozen, unless that's ignored.
+    pub fn get_game_time_delta_partial_tick(&self, ignore_frozen_game: bool) -> f32 {
+        if !ignore_frozen_game && self.frozen {
+            1.0
+        } else if self.paused {
+            self.paused_delta_tick_residual
+        } else {
+            self.delta_tick_residual
+        }
     }
 }

@@ -257,6 +257,10 @@ public final class OracleGameTest implements FabricClientGameTest {
             options.vignette().set(false);
             // Otherwise joining a server shows the Social Interactions hint toast.
             options.joinedFirstServer = true;
+            // F1 (keyToggleGui, Gui.handleKeybinds), for scenarios that compare the level alone.
+            if (scenarioOptions.hideGui() != client.gui.hud.isHidden()) {
+                client.gui.hud.toggle();
+            }
             client.resizeGui();
         });
     }

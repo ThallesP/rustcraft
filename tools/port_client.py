@@ -30,6 +30,7 @@ vanilla/<version>/oracle-compressed-<threshold>/, which `check-join` records wit
 
 import argparse
 import json
+import os
 import shutil
 import signal
 import subprocess
@@ -45,6 +46,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PORT_BINARY = ROOT / "target" / "release" / "rustcraft"
 
 
+def has_screenshots(scenario):
+    """Whether the scenario takes screenshots, which the port renders."""
+    return any("screenshot" in step for step in json.loads(Path(scenario).read_text())["steps"])
+
+
 def run(scenario, out_dir, server, ping=False):
     """Replays the scenario in the port, joining `server`, or pings it with `ping`."""
     scenario_out = out_dir / (f"{scenario.stem}-ping" if ping else scenario.stem)
@@ -55,12 +61,18 @@ def run(scenario, out_dir, server, ping=False):
         PORT_BINARY, "--quickPlayMultiplayer", server, "--username", "rustcraft", "--headless",
         "--oracleScenario", scenario, "--oracleOut", out_dir,
     ]
+    env = dict(os.environ)
     if ping:
         command = [PORT_BINARY, "--ping", server]
+    elif has_screenshots(scenario) and shutil.which("xvfb-run"):
+        # Screenshots render offscreen, on Mesa's llvmpipe under a fresh Xvfb like the oracle client's
+        # (tests/opengl_frame.rs runs the same way).
+        command = ["xvfb-run", "-a", *command]
+        env.update(LIBGL_ALWAYS_SOFTWARE="1", GALLIUM_DRIVER="llvmpipe", SDL_VIDEO_DRIVER="x11")
     log_path = scenario_out / "client.log"
     print(f"running {scenario_out.name} in the port (log: {log_path})")
     with open(log_path, "w") as log:
-        result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=600)
+        result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=600, env=env)
     if result.returncode != 0:
         print("".join(log_path.read_text().splitlines(keepends=True)[-40:]))
         raise SystemExit(f"the port exited with {result.returncode}, see {log_path}")

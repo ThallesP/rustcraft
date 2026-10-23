@@ -6,6 +6,7 @@ pub mod model_baker;
 pub mod model_bakery;
 pub mod model_debug_name;
 pub mod model_discovery;
+pub mod model_manager;
 pub mod resolvable_model;
 pub mod resolved_model;
 pub mod simple_model_wrapper;

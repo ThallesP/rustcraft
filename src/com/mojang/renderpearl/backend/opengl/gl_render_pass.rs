@@ -163,4 +163,9 @@ impl RenderPassBackend for GlRenderPass<'_> {
             first_instance,
         );
     }
+    fn draw_indexed_indirect(&mut self, commands: &GpuBufferSlice, draw_count: i32) {
+        let index_type = self.index_type;
+        self.encoder
+            .execute_draw_indirect(self, Some(index_type), commands, draw_count);
+    }
 }

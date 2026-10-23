@@ -4,6 +4,7 @@
 //! and GL's process state stays out of the other tests. Without `xvfb-run` the tests say so and
 //! pass, since there's no display to open a context on.
 
+use md5::{Digest, Md5};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -318,4 +319,49 @@ fn draws_the_block_atlas_from_vanillas_sprites() {
             &expected[differing[0] * 4..differing[0] * 4 + 4]
         );
     }
+}
+
+/// The digest of vanilla's GUI-free walk spawn view
+/// (`vanilla/26.3/oracle/walk-no-gui/screenshots/spawn.png`'s RGBA bytes), which the oracle
+/// recorded.
+const VANILLA_WALK_SPAWN_MD5: &str = "a38fcf9081510059fb5d52b0f34716e9";
+
+/// The walk's spawn view, rendered offscreen from the level a capture of the walk's server fills
+/// (`--render-scenario`): vanilla's, pixel for pixel. The capture is the oracle's on a machine
+/// that has it, or the port's own (CI records it before the tests); without one the test says
+/// so and passes.
+#[test]
+fn renders_the_walks_spawn_view_like_vanilla() {
+    let capture = [
+        std::env::var("RUSTCRAFT_CHUNK_CAPTURE")
+            .ok()
+            .map(PathBuf::from),
+        Some(PathBuf::from("vanilla/26.3/oracle/walk/capture.jsonl")),
+        Some(PathBuf::from("target/oracle/walk/capture.jsonl")),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|path| path.exists());
+    let Some(capture) = capture else {
+        eprintln!("skipped: no capture of the walk (tools/port_client.py capture walk)");
+        return;
+    };
+    let Some((width, height, color_type, pixels)) = screenshot(
+        "walk-spawn.png",
+        &[
+            "--render-scenario",
+            "oracle/scenarios/walk-no-gui.json",
+            "--capture",
+            capture.to_str().expect("a UTF-8 path"),
+        ],
+    ) else {
+        return;
+    };
+    assert_eq!(
+        (width, height, color_type),
+        (854, 480, png::ColorType::Rgba)
+    );
+    let digest: [u8; 16] = Md5::digest(&pixels).into();
+    let digest: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(digest, VANILLA_WALK_SPAWN_MD5);
 }

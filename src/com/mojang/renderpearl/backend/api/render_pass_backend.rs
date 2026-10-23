@@ -47,4 +47,6 @@ pub trait RenderPassBackend {
         first_vertex: i32,
         first_instance: i32,
     );
+
+    fn draw_indexed_indirect(&mut self, commands: &GpuBufferSlice, draw_count: i32);
 }

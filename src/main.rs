@@ -1,7 +1,7 @@
 //! The client's entry point. With a server to join, it's `net/minecraft/client/main/Main.java`'s
 //! `main` (`Main`):
 //!
-//!   rustcraft --server HOST:PORT --username NAME   joins the server, headless for now
+//!   rustcraft --server HOST:PORT --username NAME   joins the server, in a window (--headless: none)
 //!   rustcraft --ping HOST:PORT                     pings it like the server list, printing its status
 //!
 //! The render track's frames on the OpenGL backend, the way vanilla starts it: SDL's video
@@ -18,6 +18,11 @@
 //!                                               renders a frame offscreen and writes it as a PNG
 //!   rustcraft --window [--size WxH] [--clear AARRGGBB] [--frames N] [--fill ...]...
 //!                                               shows frames in a window until it's closed
+//!   rustcraft --render-scenario SCENARIO --capture CAPTURE --screenshot out.png
+//!                                               renders the scenario's first view of the level a
+//!                                               capture's packets fill, offscreen, without a server:
+//!                                               the player put where the scenario says and left to
+//!                                               land, frames until the sections have compiled
 //!
 //! The clear color defaults to `GuiRenderState.clearColorOverride`'s, transparent black; the
 //! loading overlay's is its brand background, `FFEF323D`. `--quadrant` clears the lower left
@@ -73,10 +78,13 @@ enum Mode {
     DumpAtlas(PathBuf),
     Screenshot(PathBuf),
     Window,
+    RenderScenario(PathBuf),
 }
 
 struct Arguments {
     mode: Mode,
+    capture: Option<PathBuf>,
+    screenshot: Option<PathBuf>,
     width: i32,
     height: i32,
     clear_color: Vector4f,
@@ -119,13 +127,23 @@ fn parse_arguments() -> Result<Arguments, String> {
     let mut frames = None;
     let mut gui_scale = 1;
     let mut fills = Vec::new();
+    let mut capture = None;
+    let mut screenshot = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().ok_or(format!("{argument} needs a value"));
         match argument.as_str() {
             "--device-info" => mode = Some(Mode::DeviceInfo),
             "--compile-pipelines" => mode = Some(Mode::CompilePipelines),
-            "--screenshot" => mode = Some(Mode::Screenshot(PathBuf::from(value()?))),
+            "--screenshot" => {
+                let path = PathBuf::from(value()?);
+                if !matches!(mode, Some(Mode::RenderScenario(_))) {
+                    mode = Some(Mode::Screenshot(path.clone()));
+                }
+                screenshot = Some(path);
+            }
+            "--render-scenario" => mode = Some(Mode::RenderScenario(PathBuf::from(value()?))),
+            "--capture" => capture = Some(PathBuf::from(value()?)),
             "--window" => mode = Some(Mode::Window),
             "--dump-atlas" => mode = Some(Mode::DumpAtlas(PathBuf::from(value()?))),
             "--size" => {
@@ -167,6 +185,8 @@ fn parse_arguments() -> Result<Arguments, String> {
     Ok(Arguments {
         mode: mode
             .ok_or("pass --device-info, --compile-pipelines, --screenshot PATH or --window")?,
+        capture,
+        screenshot,
         width,
         height,
         clear_color,
@@ -416,6 +436,111 @@ fn render_frame(
     }
 }
 
+/// `--render-scenario`: the level a capture fills, its clocks set by the capture's `set_time`s,
+/// the player where the scenario puts it, settled like the oracle client's settle, a frame each
+/// tick until it has landed and the sections have compiled, and a screenshot of the last.
+fn render_scenario(
+    device: &'static dyn GpuDevice,
+    scenario: &Path,
+    capture: &Path,
+    out: &Path,
+) -> Result<(), String> {
+    use rustcraft::io::netty::buffer::unpooled::wrapped_buffer;
+    use rustcraft::net::minecraft::client::client_clock_manager::ClientClockManager;
+    use rustcraft::net::minecraft::client::options::Options;
+    use rustcraft::net::minecraft::client::player::local_player::LocalPlayer;
+    use rustcraft::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
+    use rustcraft::net::minecraft::client::renderer::game_renderer::GameRenderer;
+    use rustcraft::net::minecraft::core::registries::registries::Registries;
+    use rustcraft::net::minecraft::network::codec::stream_codec::StreamCodec;
+    use rustcraft::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
+    use rustcraft::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendlyByteBuf;
+    use rustcraft::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
+    use rustcraft::net::minecraft::world::phys::vec3::Vec3;
+    use rustcraft::rustcraft::oracle::client::oracle_game_test::OracleGameTest;
+    use rustcraft::rustcraft::oracle::client::replay::{Capture, CapturedLevel};
+    use rustcraft::rustcraft::oracle::client::scenario::Scenario;
+
+    let scenario = Scenario::load(scenario)?;
+    let capture = Capture::load(capture).ok_or(format!("can't read {}", capture.display()))?;
+    let captured = CapturedLevel::from_capture(&capture);
+    let level = captured.level;
+    let mut clocks = ClientClockManager::new();
+    for packet in &capture.packets {
+        if !packet.serverbound && packet.name == "minecraft:set_time" {
+            let mut input = RegistryFriendlyByteBuf::new(
+                wrapped_buffer(packet.payload.clone()),
+                std::sync::Arc::clone(&captured.registries),
+            );
+            let set_time = ClientboundSetTimePacket::STREAM_CODEC.decode(&mut input);
+            clocks.handle_updates(set_time.game_time(), &set_time.clock_updates());
+        }
+    }
+    let biomes = captured.registries.lookup_or_throw(Registries::BIOME);
+    let biome_keys: Vec<_> = (0..biomes.size())
+        .filter_map(|id| biomes.holder_by_id_or_throw(id).unwrap_key().cloned())
+        .collect();
+    let dimension_type = level
+        .dimension_type_registration()
+        .unwrap_key()
+        .ok_or("the login's dimension type has a key")?
+        .identifier()
+        .clone();
+
+    let options = Options::new();
+    let mut game_renderer =
+        GameRenderer::new(device, scenario.options.width, scenario.options.height);
+    game_renderer.set_environment_attributes(EnvironmentAttributeSystem::for_client_level(
+        &dimension_type,
+        &biome_keys,
+        true,
+    )?);
+    let render_options = OracleGameTest::render_options(&scenario);
+    let mut player = LocalPlayer::new(None);
+    player.set_pos(Vec3::new(
+        scenario.player.x,
+        scenario.player.y,
+        scenario.player.z,
+    ));
+    player.set_y_rot(scenario.player.y_rot);
+    player.set_x_rot(scenario.player.x_rot);
+    game_renderer.set_level(true);
+    let environment = LevelEnvironment::new(&level, clocks);
+    let mut ticks = 0;
+    while ticks < OracleGameTest::SETTLE_TICKS * 3 || !player.on_ground() {
+        game_renderer.tick(true, Some(&player), Some(&environment), &render_options);
+        player.common_tick();
+        player.tick(&level, &options);
+        game_renderer.update(Some(&player), 1.0, &render_options);
+        let eye_y = player.get_y() + f64::from(player.get_eye_height());
+        game_renderer.render_level_frame(
+            &level,
+            &level,
+            &environment,
+            &render_options,
+            1.0,
+            1.0,
+            level.get_game_time(),
+            eye_y,
+        );
+        ticks += 1;
+        if ticks > OracleGameTest::LOAD_TIMEOUT_TICKS {
+            return Err("the player never landed".to_string());
+        }
+    }
+    let image = game_renderer.take_screenshot();
+    image
+        .write_to_file(out)
+        .map_err(|error| format!("can't write {}: {error}", out.display()))?;
+    println!(
+        "wrote {} ({}x{})",
+        out.display(),
+        image.get_width(),
+        image.get_height()
+    );
+    Ok(())
+}
+
 fn run(arguments: Arguments) -> Result<(), String> {
     RenderSystem::init_backend_system();
     let mut backend = GlBackend::new();
@@ -472,6 +597,18 @@ fn run(arguments: Arguments) -> Result<(), String> {
             println!("compiled {compiled} of {} pipelines", pipelines.len());
         }
         Mode::DumpAtlas(ref dir) => dump_block_atlas(&*device, dir)?,
+        Mode::RenderScenario(ref scenario) => {
+            let capture = arguments
+                .capture
+                .as_ref()
+                .ok_or("--render-scenario needs --capture")?;
+            let path = arguments
+                .screenshot
+                .as_ref()
+                .ok_or("--render-scenario needs --screenshot")?;
+            render_scenario(Box::leak(device), scenario, capture, path)?;
+            return Ok(());
+        }
         Mode::Screenshot(ref path) => {
             let main_target = MainTarget::new(&*device, arguments.width, arguments.height);
             render_frame(&*device, &main_target, &arguments, &mut gui);
@@ -520,17 +657,21 @@ fn run(arguments: Arguments) -> Result<(), String> {
 }
 
 /// The render track's modes, which `parse_arguments` reads; anything else goes to `Main`.
-const RENDER_MODES: [&str; 5] = [
+const RENDER_MODES: [&str; 6] = [
     "--device-info",
     "--compile-pipelines",
     "--dump-atlas",
     "--screenshot",
     "--window",
+    "--render-scenario",
 ];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if !args.iter().any(|arg| RENDER_MODES.contains(&arg.as_str())) {
+    let joins = args
+        .iter()
+        .any(|arg| ["--server", "--quickPlayMultiplayer"].contains(&arg.as_str()));
+    if joins || !args.iter().any(|arg| RENDER_MODES.contains(&arg.as_str())) {
         // An exit status's low byte, like Java's `System.exit(-5)`.
         let status = rustcraft::net::minecraft::client::main::main::Main::main(&args);
         return ExitCode::from(status as u8);

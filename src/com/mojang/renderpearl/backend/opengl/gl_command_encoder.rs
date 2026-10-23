@@ -38,9 +38,10 @@ use crate::com::mojang::renderpearl::backend::opengl::gl_texture::GlTexture;
 use crate::com::mojang::renderpearl::backend::opengl::uniform::Uniform;
 use crate::com::mojang::renderpearl::frontend::frontend_render_pass::FrontendRenderPass;
 use crate::org::joml::vector4f::Vector4f;
-use crate::org::lwjgl::sdl::sdl_video::SdlWindow;
+use crate::org::lwjgl::sdl::sdl_video::{SDLVideo, SdlWindow};
 use glow::HasContext;
 use std::cell::{Cell, RefCell};
+use std::ffi::c_void;
 use std::rc::Rc;
 
 /// A framebuffer's attachments: each color target's texture and mip level, and the depth's.
@@ -176,6 +177,40 @@ impl GlCommandEncoder {
                     self.gl
                         .draw_arrays_instanced(topology, base_vertex, draw_count, instance_count)
                 }
+            }
+        }
+    }
+
+    /// `drawCount` draws whose commands are at the slice's offset in its buffer, bound as the
+    /// indirect buffer: `glMultiDrawElementsIndirect`, or `glDrawElementsIndirect` for one.
+    /// Panics for a draw without an index buffer, which nothing draws yet (`drawIndirect`).
+    pub(super) fn execute_draw_indirect(
+        &self,
+        render_pass: &mut GlRenderPass<'_>,
+        index_type: Option<IndexType>,
+        commands: &GpuBufferSlice,
+        draw_count: i32,
+    ) {
+        self.setup_draw(render_pass);
+        let topology = render_pass
+            .pipeline
+            .as_ref()
+            .expect("a pipeline")
+            .primitive_topology();
+        let index_type =
+            GlConst::to_gl_index_type(index_type.expect("glDrawArraysIndirect isn't ported"));
+        // SAFETY: the device's context is current, setupDraw bound the pass's buffers, and the
+        // commands buffer is the device's.
+        unsafe {
+            self.gl.bind_buffer(
+                glow::DRAW_INDIRECT_BUFFER,
+                Some(gl_buffer(&*commands.buffer).handle),
+            );
+            if draw_count > 1 {
+                multi_draw_elements_indirect(topology, index_type, commands.offset, draw_count, 0);
+            } else {
+                self.gl
+                    .draw_elements_indirect_offset(topology, index_type, commands.offset as i32);
             }
         }
     }
@@ -831,6 +866,36 @@ impl CommandEncoder for GlCommandEncoder {
         }
     }
 
+    fn clear_depth_texture(&self, depth_texture: &dyn GpuTexture, clear_depth: f64) {
+        // SAFETY: the device's context is current.
+        unsafe {
+            self.gl.clear_depth_f64(clear_depth);
+            self.gl.depth_mask(true);
+            self.gl.disable(glow::SCISSOR_TEST);
+            for i in 0..depth_texture.get_mip_levels() {
+                self.bind_frame_buffer_textures(
+                    self.draw_fbo,
+                    None,
+                    Some(gl_texture(depth_texture).id),
+                    i,
+                    glow::FRAMEBUFFER,
+                );
+                self.gl.draw_buffer(glow::NONE);
+                self.gl.clear(glow::DEPTH_BUFFER_BIT);
+            }
+
+            self.gl.draw_buffer(glow::COLOR_ATTACHMENT0);
+            self.gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::DEPTH_ATTACHMENT,
+                glow::TEXTURE_2D,
+                None,
+                0,
+            );
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+    }
+
     /// Java's frontend checks the copy's ranges; until it's ported, only the backend's part runs.
     fn copy_buffer_to_texture(
         &self,
@@ -953,5 +1018,42 @@ impl CommandEncoder for GlCommandEncoder {
                 source.get_label()
             );
         }
+    }
+}
+
+/// `ARBMultiDrawIndirect.glMultiDrawElementsIndirect`, which glow doesn't bind, looked up once.
+///
+/// # Safety
+///
+/// The device's context is current, and an indirect buffer holding the commands is bound.
+unsafe fn multi_draw_elements_indirect(
+    mode: u32,
+    index_type: u32,
+    offset: i64,
+    draw_count: i32,
+    stride: i32,
+) {
+    type MultiDrawElementsIndirect = unsafe extern "C" fn(u32, u32, *const c_void, i32, i32);
+    static FUNCTION: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let function = *FUNCTION.get_or_init(|| {
+        let name = std::ffi::CString::new("glMultiDrawElementsIndirect").expect("no NUL");
+        let function = SDLVideo::SDL_GL_GetProcAddress(&name);
+        assert!(
+            !function.is_null(),
+            "the driver lists GL_ARB_multi_draw_indirect without glMultiDrawElementsIndirect"
+        );
+        function as usize
+    });
+    // SAFETY: glMultiDrawElementsIndirect's signature, from a context that has it; the offset
+    // into the bound indirect buffer is passed as a pointer, like LWJGL's.
+    unsafe {
+        let function: MultiDrawElementsIndirect = std::mem::transmute::<usize, _>(function);
+        function(
+            mode,
+            index_type,
+            offset as *const c_void,
+            draw_count,
+            stride,
+        );
     }
 }

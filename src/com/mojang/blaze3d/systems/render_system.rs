@@ -1,20 +1,47 @@
 //! com/mojang/blaze3d/systems/RenderSystem.java
 //!
-//! Only `initBackendSystem` so far, SDL's hints and app metadata, then its video subsystem, and
-//! the shared index buffers (`AutoStorageIndexBuffer`). `SdlDebug.init()` (SDL's log callback)
-//! and the timer it returns come with the window loop. The device (`DEVICE`) and the shared index
-//! buffers (`getSequentialBuffer`) are passed around until the game's renderer holds them.
+//! `initBackendSystem` (SDL's hints and app metadata, then its video subsystem), the shared index
+//! buffers (`AutoStorageIndexBuffer`), and the state a frame's passes bind by default: the
+//! projection, the fog, the global settings and the lights (`bindDefaultUniforms`), and the model
+//! view stack. Java's statics are the render thread's here (`thread_local!`), which is the only
+//! thread that touches them. `SdlDebug.init()` (SDL's log callback) and the timer it returns come
+//! with the window loop. The device (`DEVICE`) and the shared index buffers
+//! (`getSequentialBuffer`) are passed around until the game's renderer holds them.
 
 use crate::com::mojang::blaze3d::buffers::std140_size_calculator::Std140SizeCalculator;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::{self, GpuBuffer};
+use crate::com::mojang::renderpearl::api::buffers::gpu_buffer_slice::GpuBufferSlice;
+use crate::com::mojang::renderpearl::api::commands::render_pass::RenderPass;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::index_type::IndexType;
 use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use crate::net::minecraft::util::mth::Mth;
+use crate::org::joml::matrix4f::Matrix4f;
+use crate::org::joml::matrix4f_stack::Matrix4fStack;
 use crate::org::lwjgl::sdl::sdl_error::SDLError;
 use crate::org::lwjgl::sdl::sdl_hints::SDLHints;
 use crate::org::lwjgl::sdl::sdl_init::SDLInit;
+use std::cell::RefCell;
 use std::rc::Rc;
+
+/// The uniforms `bindDefaultUniforms` binds, and the model view stack.
+struct State {
+    shader_fog: Option<GpuBufferSlice>,
+    shader_light_directions: Option<GpuBufferSlice>,
+    projection_matrix_buffer: Option<GpuBufferSlice>,
+    global_settings_uniform: Option<Rc<dyn GpuBuffer>>,
+    model_view_stack: Matrix4fStack,
+}
+
+thread_local! {
+    static STATE: RefCell<State> = RefCell::new(State {
+        shader_fog: None,
+        shader_light_directions: None,
+        projection_matrix_buffer: None,
+        global_settings_uniform: None,
+        model_view_stack: Matrix4fStack::new(16),
+    });
+}
 
 pub struct RenderSystem;
 
@@ -32,6 +59,65 @@ impl RenderSystem {
                 AutoStorageIndexBuffer::new(4, 6, |i| vec![i, i + 1, i + 2, i + 3, i + 2, i + 1])
             }
             _ => AutoStorageIndexBuffer::new(1, 1, |i| vec![i]),
+        }
+    }
+
+    pub fn set_shader_fog(fog: GpuBufferSlice) {
+        STATE.with_borrow_mut(|state| state.shader_fog = Some(fog));
+    }
+
+    pub fn get_shader_fog() -> Option<GpuBufferSlice> {
+        STATE.with_borrow(|state| state.shader_fog.clone())
+    }
+
+    pub fn set_shader_lights(buffer: GpuBufferSlice) {
+        STATE.with_borrow_mut(|state| state.shader_light_directions = Some(buffer));
+    }
+
+    /// `setProjectionMatrix`: the projection's buffer (its type only matters to the GUI's
+    /// sorting, which isn't ported).
+    pub fn set_projection_matrix(projection_matrix_buffer: GpuBufferSlice) {
+        STATE.with_borrow_mut(|state| {
+            state.projection_matrix_buffer = Some(projection_matrix_buffer);
+        });
+    }
+
+    pub fn set_global_settings_uniform(buffer: Rc<dyn GpuBuffer>) {
+        STATE.with_borrow_mut(|state| state.global_settings_uniform = Some(buffer));
+    }
+
+    /// `getModelViewStack()`, lent to `f`.
+    pub fn with_model_view_stack<R>(f: impl FnOnce(&mut Matrix4fStack) -> R) -> R {
+        STATE.with_borrow_mut(|state| f(&mut state.model_view_stack))
+    }
+
+    pub fn get_model_view_matrix_copy() -> Matrix4f {
+        STATE.with_borrow(|state| Matrix4f::from_matrix4f(&state.model_view_stack))
+    }
+
+    pub fn bind_default_uniforms(render_pass: &mut dyn RenderPass) {
+        let (projection_matrix, fog, global_uniform, shader_lights) = STATE.with_borrow(|state| {
+            (
+                state.projection_matrix_buffer.clone(),
+                state.shader_fog.clone(),
+                state.global_settings_uniform.clone(),
+                state.shader_light_directions.clone(),
+            )
+        });
+        if let Some(projection_matrix) = projection_matrix {
+            render_pass.set_uniform_slice("Projection", &projection_matrix);
+        }
+
+        if let Some(fog) = fog {
+            render_pass.set_uniform_slice("Fog", &fog);
+        }
+
+        if let Some(global_uniform) = global_uniform {
+            render_pass.set_uniform_buffer("Globals", &global_uniform);
+        }
+
+        if let Some(shader_lights) = shader_lights {
+            render_pass.set_uniform_slice("Lighting", &shader_lights);
         }
     }
 

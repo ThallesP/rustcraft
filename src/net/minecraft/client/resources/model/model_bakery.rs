@@ -238,13 +238,11 @@ impl ModelBaker for ModelBakerImpl<'_> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::collections::HashMap;
-    use std::sync::Arc;
 
     use md5::{Digest, Md5};
     use serde_json::{Value, json};
 
-    use super::{BakingResult, ModelBakery};
+    use super::BakingResult;
     use crate::golden::Golden;
     use crate::net::minecraft::client::renderer::block::dispatch::block_state_model::BlockStateModel;
     use crate::net::minecraft::client::renderer::block::dispatch::block_state_model_part::BlockStateModelPart;
@@ -255,16 +253,11 @@ pub(crate) mod tests {
         Preparations, SpriteLoader,
     };
     use crate::net::minecraft::client::renderer::texture::texture_atlas::TextureAtlas;
-    use crate::net::minecraft::client::resources::model::block_state_model_loader::BlockStateModelLoader;
-    use crate::net::minecraft::client::resources::model::cuboid::cuboid_model::CuboidModel;
-    use crate::net::minecraft::client::resources::model::cuboid::missing_cuboid_model::MissingCuboidModel;
     use crate::net::minecraft::client::resources::model::geometry::baked_quad::BakedQuad;
-    use crate::net::minecraft::client::resources::model::model_discovery::ModelDiscovery;
+    use crate::net::minecraft::client::resources::model::model_manager::ModelManager;
     use crate::net::minecraft::client::resources::model::sprite::material::Baked;
     use crate::net::minecraft::client::resources::model::sprite::material_baker::MaterialBaker;
-    use crate::net::minecraft::client::resources::model::unbaked_model::UnbakedModel;
     use crate::net::minecraft::core::direction::Direction;
-    use crate::net::minecraft::resources::file_to_id_converter::FileToIdConverter;
     use crate::net::minecraft::resources::identifier::Identifier;
     use crate::net::minecraft::server::packs::resources::multi_pack_resource_manager::tests::vanilla_resources;
     use crate::net::minecraft::server::packs::resources::resource_manager::ResourceManager;
@@ -298,35 +291,12 @@ pub(crate) mod tests {
         )
     }
 
-    /// `ModelManager`'s reload as far as block states go: every model file, the block states'
-    /// definitions, the models they need found, and the bake.
+    /// `ModelManager`'s reload as far as block states go.
     pub(crate) fn bake_block_states(
         manager: &dyn ResourceManager,
         materials: &MaterialBaker<'_>,
     ) -> BakingResult {
-        let lister = FileToIdConverter::json("models");
-        let mut models: HashMap<Identifier, Arc<dyn UnbakedModel>> = HashMap::new();
-        for (file, resource) in lister.list_matching_resources(manager) {
-            let parsed = resource
-                .read_all_as_string()
-                .map_err(|error| error.to_string())
-                .and_then(|text| CuboidModel::from_stream(&text));
-            match parsed {
-                Ok(model) => {
-                    models.insert(lister.file_to_id(&file), Arc::new(model));
-                }
-                Err(error) => eprintln!("Failed to load model {file}: {error}"),
-            }
-        }
-        let block_states = BlockStateModelLoader::load_block_states(manager);
-        let mut discovery =
-            ModelDiscovery::new(models, Arc::new(MissingCuboidModel::missing_model()));
-        for root in block_states.models.values() {
-            discovery.add_root(&**root);
-        }
-        let resolved = discovery.resolve();
-        ModelBakery::new(block_states.models, resolved, discovery.missing_model())
-            .bake_models(materials)
+        ModelManager::bake_block_state_models(manager, materials)
     }
 
     fn float(value: f32) -> Value {

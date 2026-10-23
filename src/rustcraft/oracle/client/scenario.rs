@@ -42,6 +42,8 @@ pub struct Options {
     pub fov: i32,
     pub gui_scale: i32,
     pub render_distance: i32,
+    /// Vanilla's F1 (`Hud.toggle`): no HUD, hand or crosshair.
+    pub hide_gui: bool,
 }
 
 /// Either a screenshot, or `ticks` ticks with `keys` held and an optional fixed `look`.
@@ -135,6 +137,11 @@ impl Scenario {
                 fov: number(field(&options, "fov")?)? as i32,
                 gui_scale: number(field(&options, "gui_scale")?)? as i32,
                 render_distance: number(field(&options, "render_distance")?)? as i32,
+                hide_gui: options
+                    .get("hide_gui")
+                    .map(|value| value.as_bool().ok_or("hide_gui isn't a boolean"))
+                    .transpose()?
+                    .unwrap_or(false),
             },
             setup,
             steps,
