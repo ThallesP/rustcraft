@@ -65,6 +65,14 @@ impl FileToIdConverter {
         manager.list_resources(&self.prefix, &|id| self.extension_matches(id))
     }
 
+    /// Every resource stack under the prefix with the extension.
+    pub fn list_matching_resource_stacks(
+        &self,
+        manager: &dyn ResourceManager,
+    ) -> BTreeMap<Identifier, Vec<Resource>> {
+        manager.list_resource_stacks(&self.prefix, &|id| self.extension_matches(id))
+    }
+
     pub fn extension_matches(&self, id: &Identifier) -> bool {
         id.get_path().ends_with(&self.extension)
     }

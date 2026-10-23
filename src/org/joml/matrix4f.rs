@@ -11,6 +11,7 @@
 
 use crate::java::lang::float::Float;
 use crate::org::joml::math::Math;
+use crate::org::joml::matrix3f::Matrix3f;
 use crate::org::joml::matrix3x2f::Matrix3x2f;
 use crate::org::joml::matrix4fc::{
     PROPERTY_AFFINE, PROPERTY_IDENTITY, PROPERTY_ORTHONORMAL, PROPERTY_PERSPECTIVE,
@@ -156,6 +157,36 @@ impl Matrix4f {
         };
         matrix.determine_properties();
         matrix
+    }
+
+    /// `new Matrix4f(Matrix3fc)`: the rotation part, with no translation, an affine matrix.
+    pub fn from_matrix3f(mat: &Matrix3f) -> Matrix4f {
+        let mut matrix = Matrix4f::ZERO;
+        matrix.set_matrix3f(mat);
+        matrix
+    }
+
+    pub fn set_matrix3f(&mut self, mat: &Matrix3f) -> &mut Self {
+        *self = Matrix4f {
+            properties: PROPERTY_AFFINE,
+            m00: mat.m00,
+            m01: mat.m01,
+            m02: mat.m02,
+            m03: 0.0,
+            m10: mat.m10,
+            m11: mat.m11,
+            m12: mat.m12,
+            m13: 0.0,
+            m20: mat.m20,
+            m21: mat.m21,
+            m22: mat.m22,
+            m23: 0.0,
+            m30: 0.0,
+            m31: 0.0,
+            m32: 0.0,
+            m33: 1.0,
+        };
+        self
     }
 
     pub fn determine_properties(&mut self) -> &mut Self {
@@ -1016,6 +1047,37 @@ impl Matrix4f {
         self.m12 = yz * one_minus_cos + x * sin;
         self.m22 = cos + z * z * one_minus_cos;
         self.properties = PROPERTY_AFFINE | PROPERTY_ORTHONORMAL;
+        self
+    }
+
+    pub fn rotation_zyx(&mut self, angle_z: f32, angle_y: f32, angle_x: f32) -> &mut Self {
+        let sin_x = Math::sin_f32(angle_x);
+        let cos_x = Math::cos_from_sin_f32(sin_x, angle_x);
+        let sin_y = Math::sin_f32(angle_y);
+        let cos_y = Math::cos_from_sin_f32(sin_y, angle_y);
+        let sin_z = Math::sin_f32(angle_z);
+        let cos_z = Math::cos_from_sin_f32(sin_z, angle_z);
+        let nm20 = cos_z * sin_y;
+        let nm21 = sin_z * sin_y;
+        *self = Matrix4f {
+            properties: PROPERTY_AFFINE | PROPERTY_ORTHONORMAL,
+            m00: cos_z * cos_y,
+            m01: sin_z * cos_y,
+            m02: -sin_y,
+            m03: 0.0,
+            m10: -sin_z * cos_x + nm20 * sin_x,
+            m11: cos_z * cos_x + nm21 * sin_x,
+            m12: cos_y * sin_x,
+            m13: 0.0,
+            m20: -sin_z * -sin_x + nm20 * cos_x,
+            m21: cos_z * -sin_x + nm21 * cos_x,
+            m22: cos_y * cos_x,
+            m23: 0.0,
+            m30: 0.0,
+            m31: 0.0,
+            m32: 0.0,
+            m33: 1.0,
+        };
         self
     }
 
@@ -2179,6 +2241,7 @@ fn rotation_of(quat: &Quaternionf) -> [f32; 9] {
 mod tests {
     use super::Matrix4f;
     use crate::golden::{Golden, encode_fields};
+    use crate::org::joml::matrix3f::Matrix3f;
     use crate::org::joml::matrix3x2f::Matrix3x2f;
     use crate::org::joml::quaternionf::Quaternionf;
     use crate::org::joml::vector3f::Vector3f;
@@ -2211,6 +2274,9 @@ mod tests {
         golden.check("<init>(FFFFFFFFFFFFFFFF)V", Matrix4f::from_values);
         golden.check("<init>(Lorg/joml/Matrix4fc;)V", |mat: Matrix4f| {
             Matrix4f::from_matrix4f(&mat)
+        });
+        golden.check("<init>(Lorg/joml/Matrix3fc;)V", |mat: Matrix3f| {
+            Matrix4f::from_matrix3f(&mat)
         });
         golden.check_method("properties()I", |this: &mut Matrix4f| this.properties());
         golden.check_method(
@@ -2313,6 +2379,12 @@ mod tests {
         golden.check_method(
             "rotationZ(F)Lorg/joml/Matrix4f;",
             |this: &mut Matrix4f, ang| *this.rotation_z(ang),
+        );
+        golden.check_method(
+            "rotationZYX(FFF)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, angle_z, angle_y, angle_x| {
+                *this.rotation_zyx(angle_z, angle_y, angle_x)
+            },
         );
         golden.check_method(
             "rotateX(F)Lorg/joml/Matrix4f;",

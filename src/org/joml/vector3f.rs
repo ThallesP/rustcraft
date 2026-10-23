@@ -93,6 +93,29 @@ impl Vector3f {
         self.mul_xyz(scalar, scalar, scalar)
     }
 
+    /// Multiplies by the scalar's reciprocal, like JOML.
+    pub fn div_scalar(&mut self, scalar: f32) -> &mut Self {
+        let inv = 1.0 / scalar;
+        self.x *= inv;
+        self.y *= inv;
+        self.z *= inv;
+        self
+    }
+
+    /// Java throws `IllegalArgumentException` past 2.
+    pub fn get(&self, component: i32) -> f32 {
+        match component {
+            0 => self.x,
+            1 => self.y,
+            2 => self.z,
+            _ => panic!("IllegalArgumentException"),
+        }
+    }
+
+    pub fn is_finite(&self) -> bool {
+        Math::is_finite_f32(self.x) && Math::is_finite_f32(self.y) && Math::is_finite_f32(self.z)
+    }
+
     pub fn mul_xyz(&mut self, x: f32, y: f32, z: f32) -> &mut Self {
         self.x *= x;
         self.y *= y;
@@ -419,6 +442,14 @@ mod tests {
             "mul(F)Lorg/joml/Vector3f;",
             |this: &mut Vector3f, scalar| *this.mul_scalar(scalar),
         );
+        golden.check_method(
+            "div(F)Lorg/joml/Vector3f;",
+            |this: &mut Vector3f, scalar| *this.div_scalar(scalar),
+        );
+        golden.check_method("get(I)F", |this: &mut Vector3f, component| {
+            this.get(component)
+        });
+        golden.check_method("isFinite()Z", |this: &mut Vector3f| this.is_finite());
         golden.check_method(
             "mul(FFF)Lorg/joml/Vector3f;",
             |this: &mut Vector3f, x, y, z| *this.mul_xyz(x, y, z),

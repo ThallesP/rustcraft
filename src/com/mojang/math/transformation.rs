@@ -157,6 +157,12 @@ impl Transformation {
         result
     }
 
+    /// Whether this is `IDENTITY` itself, what Java's `transformation == Transformation.IDENTITY`
+    /// asks (`FaceBakery`).
+    pub fn is_identity_constant(&self) -> bool {
+        self.identity
+    }
+
     pub fn get_matrix(&self) -> &Matrix4f {
         &self.matrix
     }

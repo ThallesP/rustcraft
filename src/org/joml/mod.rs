@@ -8,6 +8,7 @@
 //! passes `this`, keeps the name and returns `&mut Self`.
 
 pub mod frustum_intersection;
+pub mod geometry_utils;
 pub mod math;
 pub mod matrix3f;
 pub mod matrix3x2f;

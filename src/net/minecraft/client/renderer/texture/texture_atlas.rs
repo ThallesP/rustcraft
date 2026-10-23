@@ -39,6 +39,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// The two pipelines the atlas draws with, compiled (`RenderSystem.getCompiledPipeline`).
 pub struct AnimationPipelines {
@@ -49,7 +50,7 @@ pub struct AnimationPipelines {
 pub struct TextureAtlas {
     location: Identifier,
     max_supported_texture_size: i32,
-    sprites: Vec<TextureAtlasSprite>,
+    sprites: Vec<Arc<TextureAtlasSprite>>,
     animated_textures_states: Vec<AnimationState>,
     texture: Option<Rc<dyn GpuTexture>>,
     texture_view: Option<GpuTextureView>,
@@ -133,6 +134,7 @@ impl AnimationState {
 
 impl TextureAtlas {
     pub const LOCATION_BLOCKS: &str = "textures/atlas/blocks.png";
+    pub const LOCATION_ITEMS: &str = "textures/atlas/items.png";
 
     pub fn new(device: &dyn GpuDevice, location: Identifier) -> TextureAtlas {
         TextureAtlas {
@@ -345,6 +347,7 @@ impl TextureAtlas {
         let static_sprites: Vec<&TextureAtlasSprite> = self
             .sprites
             .iter()
+            .map(|sprite| &**sprite)
             .filter(|sprite| !sprite.is_animated())
             .collect();
         let mut buffer = vec![0; static_sprites.len() * ubo_block_size as usize];
@@ -436,7 +439,8 @@ impl TextureAtlas {
             image.write_to_file(&dir.join(format!("{output_id}_{level}.png")))?;
         }
         let mut output = std::fs::File::create(dir.join(format!("{output_id}.txt")))?;
-        let mut sprites: Vec<&TextureAtlasSprite> = self.sprites.iter().collect();
+        let mut sprites: Vec<&TextureAtlasSprite> =
+            self.sprites.iter().map(|sprite| &**sprite).collect();
         sprites.sort_by(|a, b| a.contents().name().cmp(b.contents().name()));
         for sprite in sprites {
             writeln!(
@@ -566,6 +570,7 @@ impl TextureAtlas {
     pub fn get_sprite(&self, location: &Identifier) -> &TextureAtlasSprite {
         self.sprites
             .iter()
+            .map(|sprite| &**sprite)
             .find(|sprite| sprite.contents().name() == location)
             .or_else(|| self.missing_sprite_or_none())
             .expect("Tried to lookup sprite, but atlas is not initialized")
@@ -575,6 +580,7 @@ impl TextureAtlas {
         let missing = MissingTextureAtlasSprite::get_location();
         self.sprites
             .iter()
+            .map(|sprite| &**sprite)
             .find(|sprite| *sprite.contents().name() == missing)
     }
 
@@ -583,7 +589,7 @@ impl TextureAtlas {
             .expect("Atlas not initialized")
     }
 
-    pub fn sprites(&self) -> &[TextureAtlasSprite] {
+    pub fn sprites(&self) -> &[Arc<TextureAtlasSprite>] {
         &self.sprites
     }
 
@@ -591,7 +597,7 @@ impl TextureAtlas {
     pub fn animated_sprites(&self) -> Vec<&TextureAtlasSprite> {
         self.animated_textures_states
             .iter()
-            .map(|state| &self.sprites[state.sprite])
+            .map(|state| &*self.sprites[state.sprite])
             .collect()
     }
 

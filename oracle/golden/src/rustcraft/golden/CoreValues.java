@@ -11,9 +11,13 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Stream;
+import com.mojang.math.OctahedralGroup;
+import com.mojang.math.Quadrant;
+import com.mojang.math.SymmetricGroup3;
 import net.minecraft.core.AxisCycle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.FrontAndTop;
 import net.minecraft.core.Position;
 import net.minecraft.core.Vec3i;
 import net.minecraft.core.registries.Registries;
@@ -49,6 +53,10 @@ final class CoreValues {
     static final Values.Generator TRAVERSAL_NODE_STATUS = new Constants<>(BlockPos.TraversalNodeStatus.class);
     static final Values.Generator HIT_RESULT_TYPE = new Constants<>(HitResult.Type.class);
     static final Values.Generator OUT_OF_BOUNDS_STRATEGY = new Constants<>(ByIdMap.OutOfBoundsStrategy.class);
+    static final Values.Generator SYMMETRIC_GROUP3 = new Constants<>(SymmetricGroup3.class);
+    static final Values.Generator OCTAHEDRAL_GROUP = new Constants<>(OctahedralGroup.class);
+    static final Values.Generator QUADRANT = new Constants<>(Quadrant.class);
+    static final Values.Generator FRONT_AND_TOP = new Constants<>(FrontAndTop.class);
 
     // Width and height of entities: the player standing, crouching and swimming, an item, an arrow, a minecart.
     private static final float[][] ENTITY_SIZES = {
@@ -279,6 +287,18 @@ final class CoreValues {
         }
         if (type == Rotation.class) {
             return ROTATION;
+        }
+        if (type == SymmetricGroup3.class) {
+            return SYMMETRIC_GROUP3;
+        }
+        if (type == OctahedralGroup.class) {
+            return OCTAHEDRAL_GROUP;
+        }
+        if (type == Quadrant.class) {
+            return QUADRANT;
+        }
+        if (type == FrontAndTop.class) {
+            return FRONT_AND_TOP;
         }
         if (type == BlockPos.TraversalNodeStatus.class) {
             return TRAVERSAL_NODE_STATUS;

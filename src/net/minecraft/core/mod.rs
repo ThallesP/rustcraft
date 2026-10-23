@@ -1,4 +1,5 @@
 pub mod axis_cycle;
+pub mod block_math;
 pub mod block_pos;
 pub mod cursor3d;
 pub mod direction;

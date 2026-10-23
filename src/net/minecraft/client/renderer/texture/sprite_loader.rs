@@ -7,6 +7,9 @@
 //! whose order only decides the order `TextureAtlas` draws sprites in, into places that don't
 //! overlap; here it's the stitcher's order.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::net::minecraft::client::renderer::texture::atlas::sprite_source_list::SpriteSourceList;
 use crate::net::minecraft::client::renderer::texture::missing_texture_atlas_sprite::MissingTextureAtlasSprite;
 use crate::net::minecraft::client::renderer::texture::sprite_contents::SpriteContents;
@@ -21,22 +24,43 @@ pub struct SpriteLoader {
     max_supported_texture_size: i32,
 }
 
-/// `SpriteLoader.Preparations`: the atlas's size and mip level, and its sprites by name.
+/// `SpriteLoader.Preparations`: the atlas's size and mip level, and its sprites by name. A
+/// sprite is shared with the models whose quads it textures (`BakedQuad.MaterialInfo`), so it's
+/// an `Arc`.
 pub struct Preparations {
     pub width: i32,
     pub height: i32,
     pub mip_level: i32,
-    pub regions: Vec<TextureAtlasSprite>,
+    pub regions: Vec<Arc<TextureAtlasSprite>>,
+    by_name: HashMap<Identifier, usize>,
 }
 
 impl Preparations {
-    pub fn get_sprite(&self, id: &Identifier) -> Option<&TextureAtlasSprite> {
-        self.regions
+    pub fn new(
+        width: i32,
+        height: i32,
+        mip_level: i32,
+        regions: Vec<Arc<TextureAtlasSprite>>,
+    ) -> Preparations {
+        let by_name = regions
             .iter()
-            .find(|sprite| sprite.contents().name() == id)
+            .enumerate()
+            .map(|(index, sprite)| (sprite.contents().name().clone(), index))
+            .collect();
+        Preparations {
+            width,
+            height,
+            mip_level,
+            regions,
+            by_name,
+        }
     }
 
-    pub fn missing(&self) -> Option<&TextureAtlasSprite> {
+    pub fn get_sprite(&self, id: &Identifier) -> Option<&Arc<TextureAtlasSprite>> {
+        self.by_name.get(id).map(|&index| &self.regions[index])
+    }
+
+    pub fn missing(&self) -> Option<&Arc<TextureAtlasSprite>> {
         self.get_sprite(&MissingTextureAtlasSprite::get_location())
     }
 }
@@ -92,7 +116,7 @@ impl SpriteLoader {
         let height = stitcher.get_height();
         let mut regions = Vec::new();
         stitcher.gather_sprites(|contents, x, y, padding| {
-            regions.push(TextureAtlasSprite::new(
+            regions.push(Arc::new(TextureAtlasSprite::new(
                 self.location.clone(),
                 contents,
                 width,
@@ -100,14 +124,9 @@ impl SpriteLoader {
                 x,
                 y,
                 padding,
-            ));
+            )));
         });
-        Ok(Preparations {
-            width,
-            height,
-            mip_level,
-            regions,
-        })
+        Ok(Preparations::new(width, height, mip_level, regions))
     }
 
     /// `stitch`, with `readyForUpload` run: every sprite's mip levels made.
@@ -120,7 +139,10 @@ impl SpriteLoader {
         let mut preparations = self.stitch_layout(sprites, max_mipmap_levels, anisotropy_bit)?;
         let mip_level = preparations.mip_level;
         for sprite in &mut preparations.regions {
-            sprite.contents_mut().increase_mip_level(mip_level);
+            Arc::get_mut(sprite)
+                .expect("no model holds a sprite before the atlas is ready")
+                .contents_mut()
+                .increase_mip_level(mip_level);
         }
         Ok(preparations)
     }

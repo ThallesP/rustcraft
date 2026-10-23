@@ -1,10 +1,10 @@
 //! net/minecraft/world/level/block/Rotation.java
 //!
-//! Not ported yet: `CODEC` and `LEGACY_CODEC`, which wait for DataFixerUpper's codecs, and
-//! `rotation()`, which waits for `OctahedralGroup`.
+//! Not ported yet: `CODEC` and `LEGACY_CODEC`, which wait for DataFixerUpper's codecs.
 
 use std::sync::LazyLock;
 
+use crate::com::mojang::math::octahedral_group::OctahedralGroup;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
@@ -67,6 +67,16 @@ impl Rotation {
     }
 
     /// This rotation followed by `rot`.
+    /// The turn about the y axis, as a cube symmetry.
+    pub fn rotation(&self) -> OctahedralGroup {
+        match self {
+            Rotation::NONE => OctahedralGroup::IDENTITY,
+            Rotation::CLOCKWISE_90 => OctahedralGroup::ROT_90_Y_NEG,
+            Rotation::CLOCKWISE_180 => OctahedralGroup::ROT_180_FACE_XZ,
+            Rotation::COUNTERCLOCKWISE_90 => OctahedralGroup::ROT_90_Y_POS,
+        }
+    }
+
     pub fn get_rotated(&self, rot: Rotation) -> Rotation {
         match rot {
             Rotation::CLOCKWISE_90 => match self {
@@ -161,9 +171,9 @@ mod tests {
         golden.pending("LEGACY_CODEC", "waits for DataFixerUpper's codecs");
         golden.check_codec("STREAM_CODEC", || Rotation::STREAM_CODEC);
         golden.check_function("BY_ID", || Rotation::BY_ID.as_ref());
-        golden.pending(
+        golden.check_method(
             "rotation()Lcom/mojang/math/OctahedralGroup;",
-            "waits for OctahedralGroup",
+            |this: &mut Rotation| this.rotation(),
         );
         for rotation in Rotation::VALUES {
             golden.field(&format!("{rotation:?}"), rotation);

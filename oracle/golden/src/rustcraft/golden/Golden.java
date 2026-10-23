@@ -292,6 +292,7 @@ public final class Golden {
             "add(FFF)Lorg/joml/Vector3f;", "add(Lorg/joml/Vector3fc;)Lorg/joml/Vector3f;",
             "sub(FFF)Lorg/joml/Vector3f;", "sub(Lorg/joml/Vector3fc;)Lorg/joml/Vector3f;",
             "mul(F)Lorg/joml/Vector3f;", "mul(FFF)Lorg/joml/Vector3f;", "mul(Lorg/joml/Vector3fc;)Lorg/joml/Vector3f;",
+            "div(F)Lorg/joml/Vector3f;", "get(I)F", "isFinite()Z",
             "mul(Lorg/joml/Matrix3fc;)Lorg/joml/Vector3f;", "mul(Lorg/joml/Matrix3fc;Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "negate()Lorg/joml/Vector3f;", "cross(FFF)Lorg/joml/Vector3f;", "cross(Lorg/joml/Vector3fc;)Lorg/joml/Vector3f;",
             "lerp(Lorg/joml/Vector3fc;F)Lorg/joml/Vector3f;", "lerp(Lorg/joml/Vector3fc;FLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
@@ -308,6 +309,8 @@ public final class Golden {
             "<init>()V", "<init>(FFFF)V", "<init>(Lorg/joml/Quaternionfc;)V",
             "set(FFFF)Lorg/joml/Quaternionf;", "set(Lorg/joml/Quaternionfc;)Lorg/joml/Quaternionf;", "identity()Lorg/joml/Quaternionf;",
             "rotationX(F)Lorg/joml/Quaternionf;", "rotationY(F)Lorg/joml/Quaternionf;", "rotationZ(F)Lorg/joml/Quaternionf;",
+            "rotateX(F)Lorg/joml/Quaternionf;", "rotateX(FLorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
+            "rotateY(F)Lorg/joml/Quaternionf;", "rotateY(FLorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
             "rotationXYZ(FFF)Lorg/joml/Quaternionf;", "rotationYXZ(FFF)Lorg/joml/Quaternionf;", "rotationZYX(FFF)Lorg/joml/Quaternionf;",
             "rotationAxis(FFFF)Lorg/joml/Quaternionf;", "rotationAxis(FLorg/joml/Vector3fc;)Lorg/joml/Quaternionf;",
             "conjugate()Lorg/joml/Quaternionf;", "conjugate(Lorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
@@ -324,6 +327,7 @@ public final class Golden {
             "<init>()V", "<init>(FFFFFFFFF)V", "<init>(Lorg/joml/Matrix3fc;)V", "<init>(Lorg/joml/Matrix4fc;)V",
             "set(Lorg/joml/Matrix3fc;)Lorg/joml/Matrix3f;", "set(Lorg/joml/Matrix4fc;)Lorg/joml/Matrix3f;",
             "set(FFFFFFFFF)Lorg/joml/Matrix3f;", "identity()Lorg/joml/Matrix3f;",
+            "zero()Lorg/joml/Matrix3f;", "scaling(FFF)Lorg/joml/Matrix3f;", "set(IIF)Lorg/joml/Matrix3f;",
             "mul(Lorg/joml/Matrix3fc;)Lorg/joml/Matrix3f;", "mul(Lorg/joml/Matrix3fc;Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             "invert()Lorg/joml/Matrix3f;", "invert(Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             "transpose()Lorg/joml/Matrix3f;", "transpose(Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
@@ -336,10 +340,13 @@ public final class Golden {
             "rotate(Lorg/joml/Quaternionfc;)Lorg/joml/Matrix3f;", "rotate(Lorg/joml/Quaternionfc;Lorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             "transform(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;", "transform(Lorg/joml/Vector3fc;Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "transform(FFFLorg/joml/Vector3f;)Lorg/joml/Vector3f;"
-        ),
+        )
+            // JOML writes the element with Unsafe, unchecked, so a column or row past 2 writes past the matrix.
+            .where("set(IIF)Lorg/joml/Matrix3f;", args -> elementInMatrix3f((Integer)args[1], (Integer)args[2]))
+            .extraInputs("set(IIF)Lorg/joml/Matrix3f;", matrix3fElements()),
         new InstanceSuite(
             Matrix4f.class,
-            "<init>()V", "<init>(FFFFFFFFFFFFFFFF)V", "<init>(Lorg/joml/Matrix4fc;)V",
+            "<init>()V", "<init>(FFFFFFFFFFFFFFFF)V", "<init>(Lorg/joml/Matrix4fc;)V", "<init>(Lorg/joml/Matrix3fc;)V",
             "properties()I", "determineProperties()Lorg/joml/Matrix4f;", "identity()Lorg/joml/Matrix4f;",
             "set(Lorg/joml/Matrix4fc;)Lorg/joml/Matrix4f;", "set(FFFFFFFFFFFFFFFF)Lorg/joml/Matrix4f;",
             "mul(Lorg/joml/Matrix4fc;)Lorg/joml/Matrix4f;", "mul(Lorg/joml/Matrix4fc;Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
@@ -347,6 +354,7 @@ public final class Golden {
             "translate(FFF)Lorg/joml/Matrix4f;", "translate(FFFLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
             "scaling(FFF)Lorg/joml/Matrix4f;", "scale(FFF)Lorg/joml/Matrix4f;", "scale(FFFLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
             "rotationX(F)Lorg/joml/Matrix4f;", "rotationY(F)Lorg/joml/Matrix4f;", "rotationZ(F)Lorg/joml/Matrix4f;",
+            "rotationZYX(FFF)Lorg/joml/Matrix4f;",
             "rotateX(F)Lorg/joml/Matrix4f;", "rotateX(FLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
             "rotateY(F)Lorg/joml/Matrix4f;", "rotateY(FLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
             "rotateZ(F)Lorg/joml/Matrix4f;", "rotateZ(FLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
@@ -1224,7 +1232,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), PlayerSuites.suites()).flatMap(List::stream).toList()) {
+        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), PlayerSuites.suites(), ModelSuites.suites()).flatMap(List::stream).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }
@@ -1801,6 +1809,25 @@ public final class Golden {
     }
 
     // BlockModelRotation's matrices, one per OctahedralGroup, which UnbakedCuboidGeometry turns faces' cull directions by.
+    private static boolean elementInMatrix3f(final int column, final int row) {
+        return column >= 0 && column <= 2 && row >= 0 && row <= 2;
+    }
+
+    // Every element of an identity and of a rotation, set to 1, -0.0 and NaN.
+    private static List<Object[]> matrix3fElements() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (Matrix3f matrix : List.of(new Matrix3f(), new Matrix3f().rotationXYZ(0.5F, 1.0F, 1.5F))) {
+            for (int column = 0; column <= 2; column++) {
+                for (int row = 0; row <= 2; row++) {
+                    for (float value : new float[]{1.0F, -0.0F, Float.NaN}) {
+                        inputs.add(new Object[]{new Matrix3f(matrix), column, row, value});
+                    }
+                }
+            }
+        }
+        return inputs;
+    }
+
     private static List<Object[]> modelRotations() {
         List<Object[]> inputs = new ArrayList<>();
         for (OctahedralGroup group : OctahedralGroup.values()) {

@@ -199,6 +199,33 @@ impl Matrix3f {
         self.set_values(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
     }
 
+    pub fn zero(&mut self) -> &mut Self {
+        self.set_values(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    }
+
+    pub fn scaling(&mut self, x: f32, y: f32, z: f32) -> &mut Self {
+        self.set_values(x, 0.0, 0.0, 0.0, y, 0.0, 0.0, 0.0, z)
+    }
+
+    /// `set(int column, int row, float value)`, `MemUtil`'s: Java throws
+    /// `IllegalArgumentException` for a column or row past 2.
+    pub fn set_element(&mut self, column: i32, row: i32, value: f32) -> &mut Self {
+        let field = match (column, row) {
+            (0, 0) => &mut self.m00,
+            (0, 1) => &mut self.m01,
+            (0, 2) => &mut self.m02,
+            (1, 0) => &mut self.m10,
+            (1, 1) => &mut self.m11,
+            (1, 2) => &mut self.m12,
+            (2, 0) => &mut self.m20,
+            (2, 1) => &mut self.m21,
+            (2, 2) => &mut self.m22,
+            _ => panic!("IllegalArgumentException"),
+        };
+        *field = value;
+        self
+    }
+
     pub fn scale(&mut self, x: f32, y: f32, z: f32) -> &mut Self {
         let this = *self;
         this.scale_into(x, y, z, self)
@@ -490,6 +517,17 @@ mod tests {
         golden.check_method("identity()Lorg/joml/Matrix3f;", |this: &mut Matrix3f| {
             *this.identity()
         });
+        golden.check_method("zero()Lorg/joml/Matrix3f;", |this: &mut Matrix3f| {
+            *this.zero()
+        });
+        golden.check_method(
+            "scaling(FFF)Lorg/joml/Matrix3f;",
+            |this: &mut Matrix3f, x, y, z| *this.scaling(x, y, z),
+        );
+        golden.check_method(
+            "set(IIF)Lorg/joml/Matrix3f;",
+            |this: &mut Matrix3f, column, row, value| *this.set_element(column, row, value),
+        );
         golden.check_method(
             "mul(Lorg/joml/Matrix3fc;)Lorg/joml/Matrix3f;",
             |this: &mut Matrix3f, right: Matrix3f| *this.mul(&right),

@@ -5,6 +5,9 @@
 //! decodes the kinds `SpriteSource` has by hand, and logs a definition it can't read like Java.
 
 use crate::net::minecraft::client::renderer::texture::atlas::sources::directory_lister::DirectoryLister;
+use crate::net::minecraft::client::renderer::texture::atlas::sources::paletted_permutations::{
+    DEFAULT_SEPARATOR, PalettedPermutations, PalettedSpriteSupplier,
+};
 use crate::net::minecraft::client::renderer::texture::atlas::sources::single_file::SingleFile;
 use crate::net::minecraft::client::renderer::texture::atlas::sprite_resource_loader::SpriteResourceLoader;
 use crate::net::minecraft::client::renderer::texture::atlas::sprite_source::{
@@ -22,10 +25,11 @@ pub struct SpriteSourceList {
     sources: Vec<SpriteSource>,
 }
 
-/// `SpriteSource.Loader`: the missing sprite, or a sprite's resource.
+/// `SpriteSource.Loader`: the missing sprite, a sprite's resource, or a permutation's supplier.
 pub enum Loader {
     Missing,
     Resource(Identifier, Resource),
+    Paletted(PalettedSpriteSupplier),
 }
 
 impl Loader {
@@ -33,6 +37,7 @@ impl Loader {
         match self {
             Loader::Missing => Some(MissingTextureAtlasSprite::create()),
             Loader::Resource(id, resource) => SpriteResourceLoader::load_sprite(id, resource),
+            Loader::Paletted(supplier) => supplier.get(),
         }
     }
 }
@@ -45,12 +50,7 @@ impl SpriteSourceList {
             source.run(resource_manager, &mut output);
         }
         let mut result = vec![Loader::Missing];
-        result.extend(
-            output
-                .sprites
-                .into_iter()
-                .map(|(id, resource)| Loader::Resource(id, resource)),
-        );
+        result.extend(output.sprites.into_values());
         result
     }
 
@@ -113,6 +113,40 @@ impl SpriteSourceList {
                     .map(identifier)
                     .transpose()?,
             })),
+            "paletted_permutations" => {
+                let identifiers = |key: &str| {
+                    source
+                        .get(key)
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| format!("No key {key} in MapLike"))?
+                        .iter()
+                        .map(|value| identifier(value.as_str().ok_or("Not a string")?))
+                        .collect::<Result<Vec<_>, String>>()
+                };
+                let permutations = source
+                    .get("permutations")
+                    .and_then(Value::as_object)
+                    .ok_or("No key permutations in MapLike")?
+                    .iter()
+                    .map(|(suffix, palette)| {
+                        Ok((
+                            suffix.clone(),
+                            identifier(palette.as_str().ok_or("Not a string")?)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(SpriteSource::PalettedPermutations(PalettedPermutations {
+                    textures: identifiers("textures")?,
+                    palette_key: identifier(string("palette_key")?)?,
+                    permutations,
+                    separator: source
+                        .get("separator")
+                        .map(|separator| separator.as_str().ok_or("Not a string"))
+                        .transpose()?
+                        .unwrap_or(DEFAULT_SEPARATOR)
+                        .to_owned(),
+                }))
+            }
             _ => Err(format!("Unknown element id: {kind}")),
         }
     }

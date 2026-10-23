@@ -90,6 +90,21 @@ impl NativeImage {
         })
     }
 
+    /// A new image of each pixel through `function`, as ARGB. Java throws
+    /// `IllegalArgumentException` for an image that isn't RGBA, which the port's images all are.
+    pub fn mapped_copy(&self, function: impl Fn(i32) -> i32) -> NativeImage {
+        let pixels = self
+            .pixels
+            .iter()
+            .map(|&pixel| ARGB::to_abgr(function(ARGB::from_abgr(pixel as i32))) as u32)
+            .collect();
+        NativeImage {
+            width: self.width,
+            height: self.height,
+            pixels,
+        }
+    }
+
     fn is_outside_bounds(&self, x: i32, y: i32) -> bool {
         x < 0 || x >= self.width || y < 0 || y >= self.height
     }

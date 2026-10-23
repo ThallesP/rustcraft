@@ -1,6 +1,8 @@
 pub mod bind_group_layouts;
 pub mod block;
+pub mod chunk;
 pub mod dynamic_gpu_data;
+pub mod face_info;
 pub mod level_renderer;
 pub mod oit;
 pub mod projection;

@@ -113,6 +113,39 @@ impl Quaternionf {
         self.set_xyzw(0.0, 0.0, sin, cos)
     }
 
+    /// Reads all of `this` before writing `dest`, so the fluent overload works on a copy.
+    pub fn rotate_x(&mut self, angle: f32) -> &mut Self {
+        let this = *self;
+        this.rotate_x_into(angle, self)
+    }
+
+    pub fn rotate_x_into<'a>(&self, angle: f32, dest: &'a mut Quaternionf) -> &'a mut Quaternionf {
+        let sin = Math::sin_f32(angle * 0.5);
+        let cos = Math::cos_from_sin_f32(sin, angle * 0.5);
+        dest.set_xyzw(
+            self.w * sin + self.x * cos,
+            self.y * cos + self.z * sin,
+            self.z * cos - self.y * sin,
+            self.w * cos - self.x * sin,
+        )
+    }
+
+    pub fn rotate_y(&mut self, angle: f32) -> &mut Self {
+        let this = *self;
+        this.rotate_y_into(angle, self)
+    }
+
+    pub fn rotate_y_into<'a>(&self, angle: f32, dest: &'a mut Quaternionf) -> &'a mut Quaternionf {
+        let sin = Math::sin_f32(angle * 0.5);
+        let cos = Math::cos_from_sin_f32(sin, angle * 0.5);
+        dest.set_xyzw(
+            self.x * cos - self.z * sin,
+            self.w * sin + self.y * cos,
+            self.x * sin + self.z * cos,
+            self.w * cos - self.y * sin,
+        )
+    }
+
     /// Spherical interpolation toward `target`, or linear where the two are within 1e-6 of
     /// parallel. The shorter way round: a target in the other hemisphere counts negated.
     pub fn slerp_into<'a>(
@@ -349,6 +382,26 @@ mod tests {
         golden.check_method(
             "rotationZ(F)Lorg/joml/Quaternionf;",
             |this: &mut Quaternionf, angle| *this.rotation_z(angle),
+        );
+        golden.check_method(
+            "rotateX(F)Lorg/joml/Quaternionf;",
+            |this: &mut Quaternionf, angle| *this.rotate_x(angle),
+        );
+        golden.check_method(
+            "rotateX(FLorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
+            |this: &mut Quaternionf, angle, mut dest: Quaternionf| {
+                *this.rotate_x_into(angle, &mut dest)
+            },
+        );
+        golden.check_method(
+            "rotateY(F)Lorg/joml/Quaternionf;",
+            |this: &mut Quaternionf, angle| *this.rotate_y(angle),
+        );
+        golden.check_method(
+            "rotateY(FLorg/joml/Quaternionf;)Lorg/joml/Quaternionf;",
+            |this: &mut Quaternionf, angle, mut dest: Quaternionf| {
+                *this.rotate_y_into(angle, &mut dest)
+            },
         );
         golden.check_method(
             "rotationXYZ(FFF)Lorg/joml/Quaternionf;",

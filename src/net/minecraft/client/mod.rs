@@ -4,6 +4,7 @@ pub mod gui;
 pub mod key_mapping;
 pub mod main;
 pub mod minecraft;
+pub mod model;
 pub mod multiplayer;
 pub mod options;
 pub mod player;

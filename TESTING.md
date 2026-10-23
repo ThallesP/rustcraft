@@ -249,6 +249,14 @@ The port reads the pack from `vanilla/<version>/resources/` (the client jar unpa
 
 The atlas's GPU half, drawing each sprite into each mip level, is a frame test (`tests/opengl_frame.rs`, below).
 
+### Block models
+
+`ModelSuites` covers block models, from the math that turns them to every block state's baked quads:
+- `SymmetricGroup3`, `OctahedralGroup`, `Quadrant` (with `parseJson` of every multiple of 45 degrees from -720 to 720 and the int limits) and `FrontAndTop` are `InstanceSuite.every`s, their constants every receiver and argument. `BlockMath` is a static suite whose `getFaceTransformation` also gets the 48 rotations' transformations, made the way `BlockModelRotation` makes them, with each side. JOML's `Matrix3f.set(int, int, float)` writes with `Unsafe` without checking the column and row, so random ones crashed the JVM: its cases keep to the nine elements, each set to 1, -0.0 and NaN in an identity and a rotation.
+- `BlockModelRotation`: each of the 48, its `toString`, transformation and face matrices, and its uv-locked state's. `FaceBakery` asks `isIdentity` about an inverse face matrix before anything else reads it, which adds properties to the shared matrix, so they're recorded as `FaceBakery` reads them, after that check (PORTING.md, "Block models"). The suite runs before the bake.
+- `LazilyParsedNumber`: every number in the vanilla pack's models and block states (286 different texts), as Gson reads it: `floatValue()` and `intValue()`.
+- `ModelBakery`: `ModelManager`'s reload, as far as block states go. The block and item atlases are stitched like `TextureSuites`' (a quad's UVs are its sprite's place in the atlas; `MaterialBaker` looks a material up in the item atlas first), every model file is read with `CuboidModel.fromStream`, the block states' definitions with `BlockStateModelLoader`, their models found and resolved by `ModelDiscovery` (item models aren't discovered: no block state's model needs one), and `ModelBakery.bakeModels` bakes them with a `MaterialBaker` over the two atlases. A model is `[kind, particle, materialFlags, contents]`: a single variant's part, a weighted list's `[weight, model]` entries, or a multipart's models the state selects. A part is `[useAmbientOcclusion, particle, materialFlags, quads]`, its quads unculled, then culled toward each direction in `Direction`'s order, and a quad `[positions, packedUVs, direction, [atlas, sprite, layer, tintIndex, shadeDirectionOverride, lightEmission]]`, a material `[atlas, sprite, forceTranslucent]`. `bake` is the MD5 of each block state's encoding (as Gson writes it, which is serde_json's text), for all 35,723, `bake[full]` the encoding itself for each block's default state, and `missingModels.block` the missing model's. The file is 6.8 MB. The quads' item render types aren't recorded: they come with item rendering.
+
 ## 2. Scenarios and tick traces
 
 A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:
