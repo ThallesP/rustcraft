@@ -1,6 +1,9 @@
-//! java.lang.Double, where it differs from Rust's std: what `equals` and `hashCode` methods use.
+//! java.lang.Double, where it differs from Rust's std: what `equals` and `hashCode` methods use,
+//! `toString`, and `parseDouble`, whose grammar is Java's (surrounding whitespace, `NaN`,
+//! `Infinity`, hexadecimal, a type suffix).
 
-use crate::jdk::internal::math::double_to_decimal;
+use crate::java::lang::number_format_exception::NumberFormatException;
+use crate::jdk::internal::math::{double_to_decimal, floating_decimal};
 
 pub struct Double;
 
@@ -25,6 +28,11 @@ impl Double {
     /// (`1.0`, `0.001`, `1.0E7`, `1.0E-4`, `NaN`).
     pub fn to_string(value: f64) -> String {
         double_to_decimal::to_string(value)
+    }
+
+    /// `parseDouble(String)`: the decimal or hexadecimal value, correctly rounded.
+    pub fn parse_double(s: &str) -> Result<f64, NumberFormatException> {
+        floating_decimal::parse_double(s)
     }
 }
 

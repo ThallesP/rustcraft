@@ -498,9 +498,13 @@ impl Connection {
             channel.prepender.encode(&encoded, &mut frame);
             channel.stream.write_all(&readable_bytes(&frame))
         };
+        // Java's write future fires `exceptionCaught` on failure (`FIRE_EXCEPTION_ON_FAILURE`),
+        // which logs and disconnects: a closed connection doesn't take the client down.
         if let Err(error) = written {
-            self.close_channel();
-            panic!("{error}");
+            eprintln!("Failed to send packet: {error}");
+            self.disconnect(DisconnectionDetails::new(format!(
+                "Internal Exception: {error}"
+            )));
         }
     }
 

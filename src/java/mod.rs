@@ -2,5 +2,6 @@
 
 pub mod io;
 pub mod lang;
+pub mod math;
 pub mod net;
 pub mod util;

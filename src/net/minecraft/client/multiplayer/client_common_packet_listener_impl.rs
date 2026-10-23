@@ -22,12 +22,14 @@ use crate::java::util::hash_map::HashMap;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::common_listener_cookie::CommonListenerCookie;
 use crate::net::minecraft::client::multiplayer::server_data::ServerData;
+use crate::net::minecraft::network::chat::formatted_text::FormattedText;
 use crate::net::minecraft::network::connection::Connection;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::protocol::common::client_common_packet_listener::ClientCommonPacketListener;
 use crate::net::minecraft::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_custom_payload_packet::ClientboundCustomPayloadPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_custom_report_details_packet::ClientboundCustomReportDetailsPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_disconnect_packet::ClientboundDisconnectPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_keep_alive_packet::ClientboundKeepAlivePacket;
 use crate::net::minecraft::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_post_effects_packet::ClientboundPostEffectsPacket;
@@ -324,6 +326,13 @@ impl<S: ServerCommonPacketListener + ?Sized + 'static> ClientCommonPacketListene
         self.connection.handle_disconnection();
     }
 
+    /// The server's reason, which the connection disconnects with (on the Netty thread, like
+    /// Java's).
+    pub fn handle_disconnect(&mut self, packet: &ClientboundDisconnectPacket) {
+        self.connection
+            .disconnect(DisconnectionDetails::new(packet.reason().get_string()));
+    }
+
     pub fn send_deferred_packets(&mut self) {
         let mut index = 0;
         while index < self.deferred_packets.len() {
@@ -452,6 +461,13 @@ macro_rules! client_common_handlers {
             ) {
                 let this = self.this.clone();
                 self.common.handle_transfer(&this, packet);
+            }
+
+            fn handle_disconnect(
+                &mut self,
+                packet: &$crate::net::minecraft::network::protocol::common::clientbound_disconnect_packet::ClientboundDisconnectPacket,
+            ) {
+                self.common.handle_disconnect(packet);
             }
 
             fn handle_custom_report_details(

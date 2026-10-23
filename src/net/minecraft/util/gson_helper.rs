@@ -3,7 +3,8 @@
 //! Only the getters models are read with. Java throws `JsonSyntaxException` for a member that's
 //! missing or of the wrong kind, which is the `Err` here, with Java's message.
 
-use crate::com::google::gson::json_element::{JsonElement, JsonObject};
+use crate::com::google::gson::json_element::JsonElement;
+use crate::com::google::gson::json_object::JsonObject;
 
 pub struct GsonHelper;
 
@@ -171,7 +172,7 @@ impl GsonHelper {
 
     /// What an element is, for messages. Java abbreviates the element's text to 10 characters.
     pub fn get_type(element: &JsonElement) -> String {
-        let text = element.to_json_string();
+        let text = element.to_string();
         let value = if text.chars().count() > 10 {
             let chars: Vec<char> = text.chars().collect();
             let start: String = chars[..4].iter().collect();

@@ -2,8 +2,8 @@
 //!
 //! What clicking a text does. Java's interface of records is an enum of them, each record's map
 //! codec reading its variant, and `CODEC` dispatches on the action under `"action"`. Not ported
-//! yet: `OpenUrl`, whose `URI` comes with `java.net.URI`, and `ShowDialog`, which holds a dialog's
-//! holder; their actions' codecs fail to decode (`map_codec::unported`). `OpenFile`'s `File` and
+//! yet: `ShowDialog`, which holds a dialog's holder; its action's codec fails to decode
+//! (`map_codec::unported`). `OpenFile`'s `File` and
 //! `Path` constructors aren't ported: the client never makes one from a server's text, and its
 //! action isn't allowed from one (`filterForSerialization`).
 
@@ -19,6 +19,7 @@ use crate::com::mojang::serialization::map_codec::SharedMapCodec;
 use crate::com::mojang::serialization::map_codec::{
     self, BoxedMapCodec, MapCodecExt, StaticMapCodec,
 };
+use crate::java::net::uri::URI;
 use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::util::extra_codecs::ExtraCodecs;
@@ -26,6 +27,9 @@ use crate::net::minecraft::util::string_representable::{self, StringRepresentabl
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClickEvent {
+    OpenUrl {
+        uri: URI,
+    },
     OpenFile {
         path: String,
     },
@@ -100,7 +104,7 @@ impl Action {
     /// `valueCodec()`: the map codec of the action's record.
     pub fn value_codec(self) -> BoxedMapCodec<ClickEvent> {
         match self {
-            Action::OPEN_URL => map_codec::unported("ClickEvent.OpenUrl").boxed(),
+            Action::OPEN_URL => OPEN_URL_CODEC.clone(),
             Action::OPEN_FILE => OPEN_FILE_CODEC.shared(),
             Action::RUN_COMMAND => RUN_COMMAND_CODEC.shared(),
             Action::SUGGEST_COMMAND => SUGGEST_COMMAND_CODEC.shared(),
@@ -144,6 +148,17 @@ macro_rules! field {
         }
     };
 }
+
+static OPEN_URL_CODEC: StaticMapCodec<ClickEvent> = LazyLock::new(|| {
+    record_codec_builder::map_codec(
+        (ExtraCodecs::UNTRUSTED_URI
+            .shared()
+            .field_of("url")
+            .for_getter(field!(OpenUrl, uri)),),
+        |uri| ClickEvent::OpenUrl { uri },
+    )
+    .boxed()
+});
 
 static OPEN_FILE_CODEC: StaticMapCodec<ClickEvent> = LazyLock::new(|| {
     record_codec_builder::map_codec(
@@ -228,6 +243,7 @@ impl ClickEvent {
 
     pub fn action(&self) -> Action {
         match self {
+            ClickEvent::OpenUrl { .. } => Action::OPEN_URL,
             ClickEvent::OpenFile { .. } => Action::OPEN_FILE,
             ClickEvent::RunCommand { .. } => Action::RUN_COMMAND,
             ClickEvent::SuggestCommand { .. } => Action::SUGGEST_COMMAND,
@@ -242,6 +258,7 @@ impl ClickEvent {
 impl fmt::Display for ClickEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ClickEvent::OpenUrl { uri } => write!(f, "OpenUrl[uri={uri}]"),
             ClickEvent::OpenFile { path } => write!(f, "OpenFile[path={path}]"),
             ClickEvent::RunCommand { command } => write!(f, "RunCommand[command={command}]"),
             ClickEvent::SuggestCommand { command } => {

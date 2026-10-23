@@ -200,7 +200,7 @@ impl AttributeType {
 fn decode_string(json: &JsonElement) -> Result<String, String> {
     match json.as_json_primitive() {
         Some(primitive) if primitive.is_string() => Ok(primitive.get_as_string()),
-        _ => Err(format!("Not a string: {}", json.to_json_string())),
+        _ => Err(format!("Not a string: {}", json)),
     }
 }
 
@@ -208,7 +208,7 @@ fn decode_string(json: &JsonElement) -> Result<String, String> {
 pub(crate) fn decode_float(json: &JsonElement) -> Result<f32, String> {
     match json.as_json_primitive() {
         Some(primitive) if primitive.is_number() => Ok(primitive.get_as_float()),
-        _ => Err(format!("Not a number: {}", json.to_json_string())),
+        _ => Err(format!("Not a number: {}", json)),
     }
 }
 
@@ -216,7 +216,7 @@ pub(crate) fn decode_float(json: &JsonElement) -> Result<f32, String> {
 pub(crate) fn decode_int(json: &JsonElement) -> Result<i32, String> {
     match json.as_json_primitive() {
         Some(primitive) if primitive.is_number() => Ok(primitive.get_as_int()),
-        _ => Err(format!("Not a number: {}", json.to_json_string())),
+        _ => Err(format!("Not a number: {}", json)),
     }
 }
 
@@ -225,7 +225,7 @@ pub(crate) fn decode_bool(json: &JsonElement) -> Result<bool, String> {
     match json.as_json_primitive() {
         Some(primitive) if primitive.is_boolean() => Ok(primitive.get_as_boolean()),
         Some(primitive) if primitive.is_number() => Ok(primitive.get_as_int() as i8 != 0),
-        _ => Err(format!("Not a boolean: {}", json.to_json_string())),
+        _ => Err(format!("Not a boolean: {}", json)),
     }
 }
 
@@ -250,7 +250,7 @@ fn decode_hex_color(json: &JsonElement, digits: usize) -> Result<i32, String> {
 fn decode_floats<const N: usize>(json: &JsonElement) -> Result<[f32; N], String> {
     let array = json
         .as_json_array()
-        .ok_or_else(|| format!("Not a list: {}", json.to_json_string()))?;
+        .ok_or_else(|| format!("Not a list: {}", json))?;
     if array.len() != N {
         return Err(format!("Input is not a list of {N} elements"));
     }

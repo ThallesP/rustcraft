@@ -56,6 +56,12 @@ pub trait DynamicOps<T: OpsValue>: fmt::Display {
     /// Which ops this is.
     fn kind(&self) -> OpsKind;
 
+    /// Which ops a delegating ops forwards to (`DelegatingOps.convertTo` compares it), else which
+    /// this is.
+    fn delegate_kind(&self) -> OpsKind {
+        self.kind()
+    }
+
     fn empty(&self) -> T;
 
     fn empty_map(&self) -> T {

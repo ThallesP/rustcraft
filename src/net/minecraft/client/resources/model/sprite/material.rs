@@ -59,7 +59,7 @@ impl Material {
         }
         let object = value
             .as_json_object()
-            .ok_or_else(|| format!("Not a material: {}", value.to_json_string()))?;
+            .ok_or_else(|| format!("Not a material: {value}"))?;
         let sprite = object
             .get("sprite")
             .and_then(JsonElement::as_json_primitive)
@@ -74,7 +74,7 @@ impl Material {
             Some(element) => match element.as_json_primitive() {
                 Some(primitive) if primitive.is_boolean() => primitive.get_as_boolean(),
                 Some(primitive) if primitive.is_number() => primitive.get_as_int() as i8 != 0,
-                _ => return Err(format!("Not a boolean: {}", element.to_json_string())),
+                _ => return Err(format!("Not a boolean: {element}")),
             },
         };
         Ok(Material {

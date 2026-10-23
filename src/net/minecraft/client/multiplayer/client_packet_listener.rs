@@ -40,6 +40,8 @@ use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
+use crate::net::minecraft::network::chat::component::Component;
+use crate::net::minecraft::network::chat::formatted_text::FormattedText;
 use crate::net::minecraft::network::connection::Connection;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::packet_listener::PacketListener;
@@ -68,6 +70,8 @@ use crate::net::minecraft::network::protocol::game::clientbound_player_position_
 use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_server_data_packet::ClientboundServerDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_action_bar_text_packet::ClientboundSetActionBarTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
@@ -77,8 +81,12 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_experience_p
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_subtitle_text_packet::ClientboundSetSubtitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_title_text_packet::ClientboundSetTitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
@@ -131,6 +139,9 @@ pub struct ClientPacketListener {
     clock_manager: ClientClockManager,
     /// What Java's player's recipe book (`ClientRecipeBook`, not ported) holds of its settings.
     recipe_book_settings: RecipeBookSettings,
+    // What `Gui` shows of the server's texts (titles, the action bar, the tab list), which isn't
+    // ported: kept here for it.
+    texts: ServerTexts,
 }
 
 impl ClientPacketListener {
@@ -159,6 +170,7 @@ impl ClientPacketListener {
                 chunks_in_finished_batches: 0,
                 clock_manager: ClientClockManager::new(),
                 recipe_book_settings: RecipeBookSettings::new(),
+                texts: ServerTexts::default(),
             })
         })
     }
@@ -190,6 +202,11 @@ impl ClientPacketListener {
     }
 
     /// The recipe books' settings the server sent, which Java keeps in the player's recipe book.
+    /// The titles, action bar text, tab list and message of the day the server sent last.
+    pub fn texts(&self) -> &ServerTexts {
+        &self.texts
+    }
+
     pub fn recipe_book_settings(&self) -> &RecipeBookSettings {
         &self.recipe_book_settings
     }
@@ -533,6 +550,17 @@ impl ClientPongPacketListener for ClientPacketListener {
     fn handle_pong_response(&mut self, packet: &ClientboundPongResponsePacket) {
         let _ = packet;
     }
+}
+
+/// The server's texts that `Gui` and the server list would show.
+#[derive(Clone, Debug, Default)]
+pub struct ServerTexts {
+    pub title: Option<Component>,
+    pub subtitle: Option<Component>,
+    pub action_bar: Option<Component>,
+    pub tab_list_header: Option<Component>,
+    pub tab_list_footer: Option<Component>,
+    pub motd: Option<Component>,
 }
 
 impl ClientGamePacketListener for ClientPacketListener {
@@ -1302,5 +1330,102 @@ impl ClientGamePacketListener for ClientPacketListener {
                 level.remove_entity(entity_id);
             }
         }
+    }
+
+    /// `ChatListener.handleSystemMessage`: a chat line, which `ChatComponent.addMessage` logs with
+    /// its line breaks escaped, or the action bar's text for an overlay.
+    fn handle_system_chat(&mut self, packet: &ClientboundSystemChatPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        if packet.overlay() {
+            self.texts.action_bar = Some(packet.content());
+        } else {
+            let text = packet.content().get_string();
+            eprintln!("[CHAT] {}", text.replace('\r', "\\r").replace('\n', "\\n"));
+        }
+    }
+
+    fn set_title_text(&mut self, packet: &ClientboundSetTitleTextPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.texts.title = Some(packet.text());
+    }
+
+    fn set_subtitle_text(&mut self, packet: &ClientboundSetSubtitleTextPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.texts.subtitle = Some(packet.text());
+    }
+
+    fn set_action_bar_text(&mut self, packet: &ClientboundSetActionBarTextPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.texts.action_bar = Some(packet.text());
+    }
+
+    /// `Gui.getTabList()`'s header and footer, an empty text clearing either.
+    fn handle_tab_list_customisation(&mut self, packet: &ClientboundTabListPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        let header = packet.header();
+        let footer = packet.footer();
+        self.texts.tab_list_header = (!header.get_string().is_empty()).then_some(header);
+        self.texts.tab_list_footer = (!footer.get_string().is_empty()).then_some(footer);
+    }
+
+    /// The server's message of the day, which Java puts on its `ServerData` (with the icon, not
+    /// kept here) and saves to the server list.
+    fn handle_server_data(&mut self, packet: &ClientboundServerDataPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.texts.motd = Some(packet.motd());
     }
 }

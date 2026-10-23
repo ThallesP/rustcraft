@@ -7,6 +7,7 @@
 use crate::net::minecraft::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_custom_payload_packet::ClientboundCustomPayloadPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_custom_report_details_packet::ClientboundCustomReportDetailsPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_disconnect_packet::ClientboundDisconnectPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_keep_alive_packet::ClientboundKeepAlivePacket;
 use crate::net::minecraft::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_post_effects_packet::ClientboundPostEffectsPacket;
@@ -31,6 +32,8 @@ pub trait ClientCommonPacketListener: ClientCookiePacketListener {
     fn handle_store_cookie(&mut self, packet: &ClientboundStoreCookiePacket);
 
     fn handle_transfer(&mut self, packet: &ClientboundTransferPacket);
+
+    fn handle_disconnect(&mut self, packet: &ClientboundDisconnectPacket);
 
     fn handle_custom_report_details(&mut self, packet: &ClientboundCustomReportDetailsPacket);
 
@@ -67,6 +70,10 @@ impl ClientCommonPacketListener
 
     fn handle_transfer(&mut self, packet: &ClientboundTransferPacket) {
         self.record("handleTransfer", packet);
+    }
+
+    fn handle_disconnect(&mut self, packet: &ClientboundDisconnectPacket) {
+        self.record("handleDisconnect", packet);
     }
 
     fn handle_custom_report_details(&mut self, packet: &ClientboundCustomReportDetailsPacket) {

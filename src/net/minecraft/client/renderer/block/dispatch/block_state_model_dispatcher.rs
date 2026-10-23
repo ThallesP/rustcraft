@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::com::google::gson::json_element::{JsonElement, JsonObject};
+use crate::com::google::gson::json_element::JsonElement;
+use crate::com::google::gson::json_object::JsonObject;
 use crate::net::minecraft::client::renderer::block::dispatch::block_state_model::{
     self, UnbakedRoot,
 };
@@ -45,7 +46,7 @@ impl BlockStateModelDispatcher {
     pub fn parse(json: &JsonElement) -> Result<BlockStateModelDispatcher, String> {
         let object = json
             .as_json_object()
-            .ok_or_else(|| format!("Not a JSON object: {}", json.to_json_string()))?;
+            .ok_or_else(|| format!("Not a JSON object: {json}"))?;
         let simple_models = object
             .get("variants")
             .map(SimpleModelSelectors::parse)
@@ -96,7 +97,7 @@ impl MultiPartDefinition {
     fn parse(json: &JsonElement) -> Result<MultiPartDefinition, String> {
         let list = json
             .as_json_array()
-            .ok_or_else(|| format!("Not a json array: {}", json.to_json_string()))?;
+            .ok_or_else(|| format!("Not a json array: {json}"))?;
         if list.is_empty() {
             return Err("List must have contents".to_owned());
         }
@@ -124,7 +125,7 @@ impl SimpleModelSelectors {
     fn parse(json: &JsonElement) -> Result<SimpleModelSelectors, String> {
         let object = json
             .as_json_object()
-            .ok_or_else(|| format!("Not a JSON object: {}", json.to_json_string()))?;
+            .ok_or_else(|| format!("Not a JSON object: {json}"))?;
         if object.is_empty() {
             return Err("Map must not be empty".to_owned());
         }
@@ -175,9 +176,9 @@ pub fn parse_unbaked(json: &JsonElement) -> Result<Arc<dyn block_state_model::Un
             }
             list.iter()
                 .map(|element| {
-                    let object = element.as_json_object().ok_or_else(|| {
-                        format!("Not a JSON object: {}", element.to_json_string())
-                    })?;
+                    let object = element
+                        .as_json_object()
+                        .ok_or_else(|| format!("Not a JSON object: {element}"))?;
                     let variant = Variant::parse(object)?;
                     let weight = parse_weight(object)?;
                     let model: Arc<dyn block_state_model::Unbaked> =
@@ -194,7 +195,7 @@ pub fn parse_unbaked(json: &JsonElement) -> Result<Arc<dyn block_state_model::Un
     }
     let object: &JsonObject = json
         .as_json_object()
-        .ok_or_else(|| format!("Not a JSON object: {}", json.to_json_string()))?;
+        .ok_or_else(|| format!("Not a JSON object: {json}"))?;
     Ok(Arc::new(single_variant::Unbaked {
         variant: Variant::parse(object)?,
     }))

@@ -33,7 +33,7 @@ impl Condition {
     pub fn parse(value: &JsonElement) -> Result<Condition, String> {
         let object = value
             .as_json_object()
-            .ok_or_else(|| format!("Not a JSON object: {}", value.to_json_string()))?;
+            .ok_or_else(|| format!("Not a JSON object: {value}"))?;
         let combiner = (|| {
             let mut entries = object.entry_set();
             let (key, terms) = entries.next()?;

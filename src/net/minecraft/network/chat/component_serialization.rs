@@ -6,13 +6,14 @@
 //! trying each kind's codec in turn and taking the first that reads (`FuzzyCodec`); written
 //! without the type. `CODEC` is recursive, a component's siblings and arguments being components.
 //!
-//! The stream codecs come with the packets, and `flatRestrictedCodec` with its first caller.
+//! The stream codecs read the component as NBT (`ByteBufCodecs.fromCodec…`), over the buffer's
+//! registries for the game protocol's. `flatRestrictedCodec` comes with its first caller.
 
 use std::sync::LazyLock;
 
 use crate::com::mojang::datafixers::util::either::Either;
 use crate::com::mojang::serialization::codec::{
-    self, BoxedCodec, CodecExt, RecursiveRef, STRING, StaticCodec,
+    self, BoxedCodec, CodecExt, RecursiveRef, STRING, SharedCodec, StaticCodec,
 };
 use crate::com::mojang::serialization::codecs::either_codec::EitherCodec;
 use crate::com::mojang::serialization::codecs::record_codec_builder;
@@ -26,10 +27,15 @@ use crate::com::mojang::serialization::map_decoder::MapDecoder;
 use crate::com::mojang::serialization::map_encoder::MapEncoder;
 use crate::com::mojang::serialization::map_like::MapLike;
 use crate::com::mojang::serialization::record_builder::RecordBuilder;
+use crate::io::netty::buffer::byte_buf::ByteBuf;
+use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
 use crate::net::minecraft::network::chat::component::Component;
 use crate::net::minecraft::network::chat::component_contents::{ComponentContents, ContentType};
 use crate::net::minecraft::network::chat::mutable_component::MutableComponent;
 use crate::net::minecraft::network::chat::style;
+use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
+use crate::net::minecraft::network::codec::stream_codec::StaticStreamCodec;
+use crate::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendlyByteBuf;
 use crate::net::minecraft::util::extra_codecs::{ExtraCodecs, LateBoundIdMapper};
 
 pub struct ComponentSerialization;
@@ -37,8 +43,53 @@ pub struct ComponentSerialization;
 static CODEC: StaticCodec<Component> =
     LazyLock::new(|| BoxedCodec::new(codec::recursive(ComponentSerialization::create_codec)));
 
+static STREAM_CODEC: StaticStreamCodec<RegistryFriendlyByteBuf, Component> = LazyLock::new(|| {
+    Box::new(ByteBufCodecs::from_codec_with_registries(
+        CODEC.shared(),
+        NbtAccounter::default_quota,
+    ))
+});
+
+static OPTIONAL_STREAM_CODEC: StaticStreamCodec<RegistryFriendlyByteBuf, Option<Component>> =
+    LazyLock::new(|| Box::new(ByteBufCodecs::optional(&**STREAM_CODEC)));
+
+static TRUSTED_STREAM_CODEC: StaticStreamCodec<RegistryFriendlyByteBuf, Component> =
+    LazyLock::new(|| {
+        Box::new(ByteBufCodecs::from_codec_with_registries(
+            CODEC.shared(),
+            NbtAccounter::unlimited_heap,
+        ))
+    });
+
+static TRUSTED_OPTIONAL_STREAM_CODEC: StaticStreamCodec<
+    RegistryFriendlyByteBuf,
+    Option<Component>,
+> = LazyLock::new(|| Box::new(ByteBufCodecs::optional(&**TRUSTED_STREAM_CODEC)));
+
+static TRUSTED_CONTEXT_FREE_STREAM_CODEC: StaticStreamCodec<ByteBuf, Component> =
+    LazyLock::new(|| {
+        Box::new(ByteBufCodecs::from_codec(
+            CODEC.shared(),
+            NbtAccounter::unlimited_heap,
+        ))
+    });
+
 impl ComponentSerialization {
     pub const CODEC: &'static StaticCodec<Component> = &CODEC;
+    pub const STREAM_CODEC: &'static StaticStreamCodec<RegistryFriendlyByteBuf, Component> =
+        &STREAM_CODEC;
+    pub const OPTIONAL_STREAM_CODEC: &'static StaticStreamCodec<
+        RegistryFriendlyByteBuf,
+        Option<Component>,
+    > = &OPTIONAL_STREAM_CODEC;
+    pub const TRUSTED_STREAM_CODEC: &'static StaticStreamCodec<RegistryFriendlyByteBuf, Component> =
+        &TRUSTED_STREAM_CODEC;
+    pub const TRUSTED_OPTIONAL_STREAM_CODEC: &'static StaticStreamCodec<
+        RegistryFriendlyByteBuf,
+        Option<Component>,
+    > = &TRUSTED_OPTIONAL_STREAM_CODEC;
+    pub const TRUSTED_CONTEXT_FREE_STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, Component> =
+        &TRUSTED_CONTEXT_FREE_STREAM_CODEC;
 
     // `createFromList`: the first component's copy, with the others appended.
     fn create_from_list(list: Vec<Component>) -> Component {
@@ -257,11 +308,15 @@ pub(crate) mod tests {
     use serde_json::Value;
 
     use super::ComponentSerialization;
+    use crate::com::google::gson::gson_builder::GsonBuilder;
+    use crate::com::google::gson::json_element::JsonElement;
     use crate::com::mojang::serialization::data_result::tests::encode_result;
     use crate::com::mojang::serialization::decoder::Decoder;
     use crate::com::mojang::serialization::encoder::Encoder;
+    use crate::com::mojang::serialization::json_ops::JsonOps;
     use crate::golden::{Decode, Encode, Golden};
     use crate::java::lang::number::tests::{decode_boxed, encode_boxed};
+    use crate::java::util::uuid::UUID;
     use crate::net::minecraft::nbt::nbt_ops::NbtOps;
     use crate::net::minecraft::nbt::tag::Tag;
     use crate::net::minecraft::network::chat::click_event::ClickEvent;
@@ -274,11 +329,29 @@ pub(crate) mod tests {
     };
     use crate::net::minecraft::network::chat::font_description::FontDescription;
     use crate::net::minecraft::network::chat::formatted_text::FormattedText;
-    use crate::net::minecraft::network::chat::hover_event::HoverEvent;
+    use crate::net::minecraft::network::chat::hover_event::{EntityTooltipInfo, HoverEvent};
     use crate::net::minecraft::network::chat::mutable_component::MutableComponent;
     use crate::net::minecraft::network::chat::style::Style;
     use crate::net::minecraft::network::chat::text_color::TextColor;
     use crate::net::minecraft::resources::identifier::Identifier;
+    use crate::net::minecraft::world::entity::entity_types;
+
+    /// A component as the suites give and record one: its spec (ComponentSuite).
+    impl Decode for Component {
+        fn decode(value: &Value) -> Self {
+            component(value)
+        }
+    }
+
+    impl Encode for Component {
+        fn encode(&self) -> Value {
+            spec(self).encode()
+        }
+
+        fn matches(&self, expected: &Value) -> bool {
+            spec(self).matches(expected)
+        }
+    }
 
     // The component a spec says (ComponentSuite).
     pub(crate) fn component(spec: &Value) -> Component {
@@ -336,14 +409,30 @@ pub(crate) mod tests {
                 },
                 "copy_to_clipboard" => ClickEvent::CopyToClipboard { value: field() },
                 "open_file" => ClickEvent::OpenFile { path: field() },
+                "open_url" => ClickEvent::OpenUrl {
+                    uri: crate::java::net::uri::URI::create(&field()),
+                },
                 _ => ClickEvent::Custom {
                     id: Identifier::parse(&field()),
                     payload: Option::<Tag>::decode(&click[2]),
                 },
             }
         });
-        let hover_event = spec[8].as_array().map(|hover| HoverEvent::ShowText {
-            value: component(&hover[1]),
+        let hover_event = spec[8].as_array().map(|hover| {
+            if hover[0] == "show_text" {
+                HoverEvent::ShowText {
+                    value: component(&hover[1]),
+                }
+            } else {
+                HoverEvent::ShowEntity {
+                    entity: EntityTooltipInfo {
+                        r#type: entity_types::REGISTRY
+                            .get_value(&Identifier::parse(&string(&hover[1]))),
+                        uuid: UUID::decode(&hover[2]),
+                        name: Option::<Value>::decode(&hover[3]).map(|name| component(&name)),
+                    },
+                }
+            }
         });
         let font = spec[10].as_array().map(|font| {
             if font[0] == "resource" {
@@ -397,7 +486,11 @@ pub(crate) mod tests {
                             TranslationArgument::Number(n) => {
                                 let boxed = encode_boxed(n).encode();
                                 let boxed = boxed.as_array().unwrap();
-                                Box::new(("number".to_owned(), boxed[0].clone(), NumberValue(*n)))
+                                Box::new((
+                                    "number".to_owned(),
+                                    boxed[0].clone(),
+                                    NumberValue(n.clone()),
+                                ))
                             }
                             TranslationArgument::Boolean(b) => Box::new(("boolean".to_owned(), *b)),
                             TranslationArgument::Component(c) => {
@@ -457,6 +550,7 @@ pub(crate) mod tests {
                 ClickEvent::ChangePage { page } => Box::new((name, *page)),
                 ClickEvent::CopyToClipboard { value } => Box::new((name, value.clone())),
                 ClickEvent::OpenFile { path } => Box::new((name, path.clone())),
+                ClickEvent::OpenUrl { uri } => Box::new((name, uri.to_string())),
                 ClickEvent::Custom { id, payload } => Box::new((name, id.to_string(), payload.clone())),
             }
         });
@@ -466,6 +560,12 @@ pub(crate) mod tests {
                     HoverEvent::ShowText { value } => {
                         Box::new(("show_text".to_owned(), spec(value)))
                     }
+                    HoverEvent::ShowEntity { entity } => Box::new((
+                        "show_entity".to_owned(),
+                        entity_types::REGISTRY.get_key(entity.r#type).to_string(),
+                        entity.uuid,
+                        entity.name.as_ref().map(spec),
+                    )),
                 }
             });
         let font: Option<Box<dyn Encode>> = style.font().map(|font| -> Box<dyn Encode> {
@@ -519,6 +619,31 @@ pub(crate) mod tests {
             encode_result(&ComponentSerialization::CODEC.decode(ops, &input), |pair| {
                 Box::new((spec(pair.get_first()), pair.get_second().clone()))
             })
+        });
+        let json = &JsonOps::INSTANCE;
+        golden.check("encodeJson", |spec_value: Value| {
+            let component = component(&spec_value);
+            encode_result(
+                &ComponentSerialization::CODEC.encode_start(json, &component),
+                |element| Box::new(element.clone()),
+            )
+        });
+        golden.check("toJson", |spec_value: Value| {
+            let component = component(&spec_value);
+            let element = ComponentSerialization::CODEC
+                .encode_start(json, &component)
+                .get_or_throw();
+            GsonBuilder::new()
+                .disable_html_escaping()
+                .create()
+                .to_json(&element)
+                .unwrap_or_else(|error| panic!("{error}"))
+        });
+        golden.check("decodeJson", |input: JsonElement| {
+            encode_result(
+                &ComponentSerialization::CODEC.decode(json, &input),
+                |pair| Box::new((spec(pair.get_first()), pair.get_second().clone())),
+            )
         });
         golden.finish();
     }

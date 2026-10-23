@@ -48,8 +48,8 @@ import net.minecraft.resources.Identifier;
  * a server sends) and key bindings, styled with every field, the click events a server may send and one it may not
  * ({@code open_file}), shown text, and the atlas fonts no codec writes. Decoded are their encodings, the encodings with
  * one tag inside replaced or removed, and hand-made tags: plain strings, lists of components, compounds with a
- * {@code type}, an empty {@code extra}, colors out of range, named colors that aren't, and any tags. Contents, click
- * and hover events and fonts the port doesn't have yet (scores, selectors, NBT, objects, URLs, dialogs, items,
+ * {@code type}, an empty {@code extra}, links of other schemes and none, colors out of range, named colors that aren't, and any tags. Contents, click
+ * and hover events and fonts the port doesn't have yet (scores, selectors, NBT, objects, dialogs, items,
  * entities, player sprites) aren't made.
  */
 final class ComponentSuite implements Suite {
@@ -62,6 +62,9 @@ final class ComponentSuite implements Suite {
     );
     private static final List<String> TEXTS = List.of("", "a", "Hello, world!", "§cRed", "multi\nline", "é", "😀", "%s", "\"quoted\"", "x".repeat(40));
     private static final List<String> KEYBINDS = List.of("key.jump", "key.attack", "key.inventory", "unknown");
+    private static final List<String> URLS = List.of(
+        "https://minecraft.net", "http://example.com/a?b=c#d", "HTTPS://Example.COM:8080/%20x", "https://[::1]/", "ftp://not.allowed/", "mailto:a@b"
+    );
     private static final List<String> COLORS = List.of("black", "dark_blue", "gold", "white", "red", "light_purple");
 
     @Override
@@ -93,12 +96,85 @@ final class ComponentSuite implements Suite {
         for (int i = 0; i < 100; i++) {
             inputs.add((Tag)NbtValues.TAGS.random(random));
         }
+        writeJson(writer, random, codec);
         for (Tag input : inputs) {
             JsonArray args = new JsonArray();
             args.add(NbtValues.encodeTag(input));
-            DataResult<Pair<Component, Tag>> decoded = codec.decode(NbtOps.INSTANCE, input);
-            writer.result("decode", args, DfuValues.result(decoded, pair -> DfuValues.pair(pair, ComponentSuite::spec, NbtValues::encodeTag)), null);
+            // A translation's argument that's a compound holding an end throws: JavaOps can't make a map with a null.
+            try {
+                DataResult<Pair<Component, Tag>> decoded = codec.decode(NbtOps.INSTANCE, input);
+                writer.result("decode", args, DfuValues.result(decoded, pair -> DfuValues.pair(pair, ComponentSuite::spec, NbtValues::encodeTag)), null);
+            } catch (NullPointerException e) {
+                writer.threw("decode", args, e, null);
+            }
         }
+    }
+
+    // The same on JSON: each component's encoding and the text lenientJson's Gson writes of it, then decodes of those
+    // encodings, some with a member replaced, and of hand-made JSON (parsed leniently, as the login's disconnect is).
+    private static void writeJson(final GoldenWriter writer, final Random random, final Codec<Component> codec) throws IOException {
+        com.google.gson.Gson gson = new com.google.gson.GsonBuilder().disableHtmlEscaping().create();
+        List<JsonElement> inputs = new ArrayList<>();
+        for (int i = 0; i < 600; i++) {
+            Component component = randomComponent(random, 0);
+            JsonArray args = new JsonArray();
+            args.add(spec(component));
+            DataResult<JsonElement> encoded = codec.encodeStart(com.mojang.serialization.JsonOps.INSTANCE, component);
+            writer.result("encodeJson", args, DfuValues.result(encoded, GsonSuites::encode), null);
+            encoded.result().ifPresent(json -> {
+                try {
+                    writer.result("toJson", args, new JsonPrimitive(gson.toJson(json)), null);
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+                inputs.add(json);
+                if (random.nextInt(3) == 0) {
+                    inputs.add(mutateJson(json.deepCopy(), random));
+                }
+            });
+        }
+        for (String text : List.of(
+            "\"plain\"", "\"\"", "[\"a\",{\"text\":\"b\",\"bold\":true}]", "[]", "{\"text\":\"x\",\"color\":null}", "{\"text\":\"x\",\"extra\":null}",
+            "{\"translate\":\"%s %s %s\",\"with\":[1,2.5,true]}", "{\"translate\":\"%s\",\"with\":[{\"text\":\"c\"}]}", "{\"translate\":\"%s\",\"with\":[[1]]}",
+            "{\"translate\":\"%s\",\"with\":[1e400]}", "{\"translate\":\"%s\",\"with\":[12345678901, 3.0, 300, -7]}",
+            "{\"type\":\"text\",\"text\":\"t\"}", "{\"type\":\"keybind\",\"keybind\":\"key.jump\"}", "{\"type\":\"bogus\"}", "{\"text\":1}", "{\"text\":true}",
+            "{\"text\":\"a\",\"color\":\"#00FF00\",\"bold\":1,\"italic\":\"true\"}", "{\"text\":\"a\",\"shadow_color\":[1.0,0.5,0.25,1.0]}",
+            "{\"text\":\"a\",\"shadow_color\":-16777216}", "{\"text\":\"a\",\"click_event\":{\"action\":\"open_url\",\"url\":\"https://x.y/z\"}}",
+            "{\"text\":\"a\",\"hover_event\":{\"action\":\"show_text\",\"value\":\"hi\"}}", "1", "true", "{text:unquoted}", "{\"text\":\"a\",\"extra\":[]}",
+            "{\"text\":\"a\",\"insertion\":\"i\",\"font\":\"minecraft:uniform\"}", "{\"keybind\":\"key.inventory\",\"underlined\":false}"
+        )) {
+            inputs.add(com.google.gson.JsonParser.parseString(text));
+        }
+        for (JsonElement input : inputs) {
+            JsonArray args = new JsonArray();
+            args.add(GsonSuites.encode(input));
+            try {
+                DataResult<Pair<Component, JsonElement>> decoded = codec.decode(com.mojang.serialization.JsonOps.INSTANCE, input);
+                writer.result("decodeJson", args, DfuValues.result(decoded, pair -> DfuValues.pair(pair, ComponentSuite::spec, GsonSuites::encode)), null);
+            } catch (NullPointerException | NumberFormatException e) {
+                // A null in a translation's arguments, and a NaN or infinite one, which BigDecimal can't hold.
+                writer.threw("decodeJson", args, e, null);
+            }
+        }
+    }
+
+    private static JsonElement mutateJson(final JsonElement json, final Random random) {
+        if (json instanceof com.google.gson.JsonObject object && !object.isEmpty()) {
+            List<String> keys = new ArrayList<>(object.keySet());
+            String key = keys.get(random.nextInt(keys.size()));
+            switch (random.nextInt(3)) {
+                case 0 -> object.remove(key);
+                case 1 -> object.add(key, mutateJson(object.get(key), random));
+                default -> object.add(key, new JsonPrimitive(random.nextInt(5)));
+            }
+            return object;
+        }
+        if (json instanceof JsonArray array && !array.isEmpty()) {
+            int index = random.nextInt(array.size());
+            array.set(index, mutateJson(array.get(index), random));
+            return array;
+        }
+        return random.nextBoolean() ? new JsonPrimitive(TEXTS.get(random.nextInt(TEXTS.size()))) : new JsonPrimitive(random.nextBoolean());
     }
 
     // Tags a server could send that encodings don't make.
@@ -133,6 +209,37 @@ final class ComponentSuite implements Suite {
             colored.putString("text", "c");
             colored.putString("color", color);
             tags.add(colored);
+        }
+        for (String url : List.of("https://ok.example", "not a url", "relative/path", "ftp://x", "https://a b", "")) {
+            CompoundTag linked = new CompoundTag();
+            linked.putString("text", "link");
+            CompoundTag click = new CompoundTag();
+            click.putString("action", "open_url");
+            click.putString("url", url);
+            linked.put("click_event", click);
+            tags.add(linked);
+        }
+        // Entity tooltips, as a server's player names have them: the UUID as four ints or a string, a name or none, and
+        // types and UUIDs that don't read.
+        for (int i = 0; i < 12; i++) {
+            CompoundTag named = new CompoundTag();
+            named.putString("text", "player");
+            CompoundTag hover = new CompoundTag();
+            hover.putString("action", "show_entity");
+            hover.putString("id", List.of("minecraft:player", "minecraft:zombie", "pig", "minecraft:nope", "Bad Id").get(i % 5));
+            switch (i % 4) {
+                case 0 -> hover.putIntArray("uuid", new int[]{1, 2, 3, 4});
+                case 1 -> hover.putString("uuid", "2e8fe3e3-15fa-36a7-9329-26262812f095");
+                case 2 -> hover.putString("uuid", List.of("not-a-uuid", "1-2-3-4-5", "zz-1-1-1-1", "", "12345678-1234-1234-1234-1234567890123").get(i % 5));
+                default -> hover.putIntArray("uuid", new int[]{1, 2, 3});
+            }
+            if (i % 3 != 0) {
+                CompoundTag name = new CompoundTag();
+                name.putString("text", "Name" + i);
+                hover.put("name", name);
+            }
+            named.put("hover_event", hover);
+            tags.add(named);
         }
         CompoundTag both = new CompoundTag();
         both.putString("text", "t");
@@ -175,6 +282,11 @@ final class ComponentSuite implements Suite {
             return list;
         }
         return random.nextBoolean() ? StringTag.valueOf(TEXTS.get(random.nextInt(TEXTS.size()))) : (Tag)NbtValues.TAGS.random(random);
+    }
+
+    /** A random component, as the suite makes them, for the packets that hold one. */
+    static Component randomComponent(final Random random) {
+        return randomComponent(random, 1);
     }
 
     private static MutableComponent randomComponent(final Random random, final int depth) {
@@ -241,7 +353,8 @@ final class ComponentSuite implements Suite {
             style = style.withObfuscated(random.nextBoolean());
         }
         if (random.nextInt(4) == 0) {
-            style = style.withClickEvent(switch (random.nextInt(7)) {
+            style = style.withClickEvent(switch (random.nextInt(8)) {
+                case 7 -> new ClickEvent.OpenUrl(java.net.URI.create(URLS.get(random.nextInt(URLS.size()))));
                 case 0 -> new ClickEvent.RunCommand("/say " + TEXTS.get(random.nextInt(3)));
                 case 1 -> new ClickEvent.SuggestCommand("/tp ");
                 case 2 -> new ClickEvent.ChangePage(random.nextInt(5) - 1);
@@ -359,6 +472,7 @@ final class ComponentSuite implements Suite {
                 case ClickEvent.ChangePage(int page) -> clickSpec.add(page);
                 case ClickEvent.CopyToClipboard(String value) -> clickSpec.add(value);
                 case ClickEvent.OpenFile(String path) -> clickSpec.add(path);
+                case ClickEvent.OpenUrl(java.net.URI uri) -> clickSpec.add(uri.toString());
                 case ClickEvent.Custom(Identifier id, Optional<Tag> payload) -> {
                     clickSpec.add(id.toString());
                     clickSpec.add(payload.<JsonElement>map(NbtValues::encodeTag).orElse(JsonNull.INSTANCE));
@@ -372,6 +486,13 @@ final class ComponentSuite implements Suite {
             JsonArray hoverSpec = new JsonArray();
             hoverSpec.add("show_text");
             hoverSpec.add(spec(value));
+            spec.add(hoverSpec);
+        } else if (hover instanceof HoverEvent.ShowEntity(HoverEvent.EntityTooltipInfo entity)) {
+            JsonArray hoverSpec = new JsonArray();
+            hoverSpec.add("show_entity");
+            hoverSpec.add(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(entity.type).toString());
+            hoverSpec.add(Values.encode(entity.uuid, java.util.UUID.class));
+            hoverSpec.add(entity.name.map(ComponentSuite::spec).orElse(JsonNull.INSTANCE));
             spec.add(hoverSpec);
         } else if (hover == null) {
             spec.add(JsonNull.INSTANCE);

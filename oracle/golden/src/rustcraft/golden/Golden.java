@@ -117,6 +117,13 @@ import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacke
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
 import net.minecraft.world.Difficulty;
+import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
+import net.minecraft.network.protocol.game.ClientboundServerDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
+import net.minecraft.network.protocol.game.ClientboundTabListPacket;
 import net.minecraft.network.protocol.game.ClientboundRecipeBookSettingsPacket;
 import net.minecraft.stats.RecipeBookSettings;
 import net.minecraft.world.inventory.RecipeBookType;
@@ -287,6 +294,21 @@ public final class Golden {
         "read(Lnet/minecraft/network/RegistryFriendlyByteBuf;I)Lnet/minecraft/network/syncher/SynchedEntityData$DataValue;";
     // The walk's set_time packets: the first, with both clocks (the end's, then the overworld's at 6000 and stopped), and
     // one with none.
+    // The walk's system_chat packets: the gamerules, difficulty, time and weather commands' answers, an entity not found,
+    // and the teleport, whose player name has a click, an insertion and an entity tooltip.
+    private static final List<byte[]> SYSTEM_CHATS = List.of(
+        HexFormat.of().parseHex("0a080005636f6c6f72000372656409000565787472610a00000001090004776974680800000002000c616476616e63655f74696d65000566616c73650800097472616e736c6174650019636f6d6d616e64732e67616d6572756c652e6e6f745f736574000800047465787400000000"),
+        HexFormat.of().parseHex("0a080005636f6c6f72000372656409000565787472610a00000001090004776974680800000002000f616476616e63655f77656174686572000566616c73650800097472616e736c6174650019636f6d6d616e64732e67616d6572756c652e6e6f745f736574000800047465787400000000"),
+        HexFormat.of().parseHex("0a080005636f6c6f72000372656409000565787472610a00000001090004776974680800000002001172616e646f6d5f7469636b5f73706565640001300800097472616e736c6174650019636f6d6d616e64732e67616d6572756c652e6e6f745f736574000800047465787400000000"),
+        HexFormat.of().parseHex("0a080005636f6c6f72000372656409000565787472610a00000001090004776974680800000002000a737061776e5f6d6f6273000566616c73650800097472616e736c6174650019636f6d6d616e64732e67616d6572756c652e6e6f745f736574000800047465787400000000"),
+        HexFormat.of().parseHex("0a090004776974680a000000010800097472616e736c61746500196f7074696f6e732e646966666963756c74792e6e6f726d616c000800097472616e736c617465001b636f6d6d616e64732e646966666963756c74792e737563636573730000"),
+        HexFormat.of().parseHex("0a080005636f6c6f72000372656409000565787472610a00000001090004776974680a0000000208000000136d696e6563726166743a6f766572776f726c640003000000001770000800097472616e736c6174650021636f6d6d616e64732e74696d652e7365742e616c72656164795f61745f74696d65000800047465787400000000"),
+        HexFormat.of().parseHex("0a0800097472616e736c617465001a636f6d6d616e64732e776561746865722e7365742e636c6561720000"),
+        HexFormat.of().parseHex("0a080005636f6c6f72000372656409000565787472610a000000010800097472616e736c617465001f617267756d656e742e656e746974792e6e6f74666f756e642e656e74697479000800047465787400000000"),
+        HexFormat.of().parseHex("0a090004776974680a000000040a000b636c69636b5f6576656e74080006616374696f6e000f737567676573745f636f6d6d616e64080007636f6d6d616e6400102f74656c6c207275737463726166742000080009696e73657274696f6e00097275737463726166740800047465787400097275737463726166740a000b686f7665725f6576656e740800046e616d650009727573746372616674080006616374696f6e000b73686f775f656e74697479080002696400106d696e6563726166743a706c617965720b000475756964000000042e8fe3e315fa36a7932926262812f09500000800000008302e35303030303000080000000a2d36302e303030303030000800000008302e353030303030000800097472616e736c6174650029636f6d6d616e64732e74656c65706f72742e737563636573732e6c6f636174696f6e2e73696e676c650000")
+    );
+    // The walk's server_data: the MOTD, no icon.
+    private static final List<byte[]> SERVER_DATAS = List.of(HexFormat.of().parseHex("08001241204d696e6563726166742053657276657200"));
     private static final List<byte[]> SET_TIMES = List.of(
         HexFormat.of().parseHex("0000000000000031020101000000000000000000f02e0000000000000000"), HexFormat.of().parseHex("000000000000003b00")
     );
@@ -1296,6 +1318,28 @@ public final class Golden {
             .exclude("equals(Ljava/lang/Object;)Z", SETTINGS_IN_RECORD)
             .exclude("hashCode()I", SETTINGS_IN_RECORD)
             .exclude("toString()Ljava/lang/String;", SETTINGS_IN_RECORD),
+        // Packets holding text components, which hash them (not ported); the server data's icon is an array, compared,
+        // hashed and printed by identity.
+        InstanceSuite.every(ClientboundDisconnectPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1)),
+        InstanceSuite.every(ClientboundSystemChatPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1))
+            .extraInputs("STREAM_CODEC.decode", registryBuffers(SYSTEM_CHATS)),
+        InstanceSuite.every(ClientboundServerDataPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1))
+            .extraInputs("STREAM_CODEC.decode", SERVER_DATAS.stream().map(bytes -> new Object[]{io.netty.buffer.Unpooled.wrappedBuffer(bytes)}).toList())
+            .exclude("equals(Ljava/lang/Object;)Z", ARRAY_IN_RECORD)
+            .exclude("hashCode()I", ARRAY_IN_RECORD)
+            .exclude("toString()Ljava/lang/String;", ARRAY_IN_RECORD)
+            .exclude("<init>(Lnet/minecraft/network/chat/Component;Ljava/util/Optional;)V", "an Optional argument is a Transformation's (the harness's only one), not an icon's bytes"),
+        InstanceSuite.every(ClientboundSetTitleTextPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1)),
+        InstanceSuite.every(ClientboundSetSubtitleTextPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1)),
+        InstanceSuite.every(ClientboundSetActionBarTextPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1)),
+        InstanceSuite.every(ClientboundTabListPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 2)),
         InstanceSuite.every(Rotations.class),
         InstanceSuite.every(Pose.class),
         InstanceSuite.every(SynchedEntityData.DataValue.class)
@@ -1339,7 +1383,9 @@ public final class Golden {
             .where("clear(II)V", args -> (Integer)args[2] <= 1 << 16 || (Integer)args[1] > (Integer)args[2]),
         // What a ServerboundHelloPacket's hashCode and toString use, and what makes an offline player's UUID.
         new InstanceSuite(UUID.class, "hashCode()I", "toString()Ljava/lang/String;", "nameUUIDFromBytes([B)Ljava/util/UUID;")
-            .extraInputs("nameUUIDFromBytes([B)Ljava/util/UUID;", offlinePlayerNames())
+            .extraInputs("nameUUIDFromBytes([B)Ljava/util/UUID;", offlinePlayerNames()),
+        // The link a text component's open_url click event holds, which Util.parseAndValidateUntrustedUri parses.
+        new UriSuite()
     );
 
     /** Writes every suite's file to the directory in the first argument, or only the suites the other arguments name. */
@@ -1357,7 +1403,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), BiomeSuites.suites(), PlayerSuites.suites(), ModelSuites.suites(), AttributeSuites.suites(), GuiSuites.suites()).flatMap(List::stream).toList()) {
+        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), BiomeSuites.suites(), PlayerSuites.suites(), ModelSuites.suites(), AttributeSuites.suites(), GuiSuites.suites(), GsonSuites.suites()).flatMap(List::stream).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }

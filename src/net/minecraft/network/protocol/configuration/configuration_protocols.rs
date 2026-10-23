@@ -9,6 +9,7 @@ use std::sync::{Arc, LazyLock};
 
 use crate::net::minecraft::network::connection_protocol::ConnectionProtocol;
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
+use crate::net::minecraft::network::protocol::common::clientbound_disconnect_packet::ClientboundDisconnectPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_custom_payload_packet::ClientboundCustomPayloadPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_custom_report_details_packet::ClientboundCustomReportDetailsPacket;
@@ -113,7 +114,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_DISCONNECT,
-                Unported::codec(CommonPacketTypes::CLIENTBOUND_DISCONNECT),
+                ClientboundDisconnectPacket::STREAM_CODEC,
             )
             .add_packet(
                 ConfigurationPacketTypes::CLIENTBOUND_FINISH_CONFIGURATION,

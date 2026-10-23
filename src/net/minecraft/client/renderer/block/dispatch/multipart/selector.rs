@@ -29,7 +29,7 @@ impl Selector {
     pub fn parse(value: &JsonElement) -> Result<Selector, String> {
         let object = value
             .as_json_object()
-            .ok_or_else(|| format!("Not a JSON object: {}", value.to_json_string()))?;
+            .ok_or_else(|| format!("Not a JSON object: {value}"))?;
         let condition = object.get("when").map(Condition::parse).transpose()?;
         let variant = parse_unbaked(object.get("apply").ok_or("No key apply in MapLike")?)?;
         Ok(Selector { condition, variant })

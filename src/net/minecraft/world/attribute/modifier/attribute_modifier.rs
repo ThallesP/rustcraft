@@ -138,7 +138,7 @@ impl OperationId {
             .as_json_primitive()
             .filter(|primitive| primitive.is_string())
             .map(|primitive| primitive.get_as_string())
-            .ok_or_else(|| format!("Not a string: {}", json.to_json_string()))?;
+            .ok_or_else(|| format!("Not a string: {}", json))?;
         let operation = OperationId::by_serialized_name(&name)
             .ok_or_else(|| format!("Unknown element name:{name}"))?;
         r#type

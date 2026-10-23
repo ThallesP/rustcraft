@@ -89,6 +89,14 @@ import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacke
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
 import net.minecraft.world.Difficulty;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
+import net.minecraft.network.protocol.game.ClientboundServerDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
+import net.minecraft.network.protocol.game.ClientboundTabListPacket;
 import net.minecraft.network.protocol.game.ClientboundRecipeBookSettingsPacket;
 import net.minecraft.stats.RecipeBookSettings;
 import net.minecraft.world.inventory.RecipeBookType;
@@ -698,6 +706,28 @@ final class PacketValues {
             ClientboundRecipeBookSettingsPacket.class, fields -> new ClientboundRecipeBookSettingsPacket((RecipeBookSettings)fields[0]), List.of(),
             recipeBookSettings
         );
+        // Text components, as ComponentSuite makes and records them: an empty literal and a translation first.
+        Values.Generator components = new Values.Simple(
+            List.of(Component.empty(), Component.translatable("multiplayer.disconnect.kicked")), ComponentSuite::randomComponent,
+            value -> ComponentSuite.spec((Component)value)
+        );
+        PAYLOADS.put(Component.class, components);
+        packet(ClientboundDisconnectPacket.class, fields -> new ClientboundDisconnectPacket((Component)fields[0]), List.of(), components);
+        packet(
+            ClientboundSystemChatPacket.class, fields -> new ClientboundSystemChatPacket((Component)fields[0], (Boolean)fields[1]), List.of(), components,
+            BOOLEANS
+        );
+        packet(
+            ClientboundServerDataPacket.class, fields -> new ClientboundServerDataPacket((Component)fields[0], (Optional<byte[]>)fields[1]), List.of(),
+            components, Codecs.optionalOf(Values.generator(byte[].class))
+        );
+        packet(ClientboundSetTitleTextPacket.class, fields -> new ClientboundSetTitleTextPacket((Component)fields[0]), List.of(), components);
+        packet(ClientboundSetSubtitleTextPacket.class, fields -> new ClientboundSetSubtitleTextPacket((Component)fields[0]), List.of(), components);
+        packet(ClientboundSetActionBarTextPacket.class, fields -> new ClientboundSetActionBarTextPacket((Component)fields[0]), List.of(), components);
+        packet(
+            ClientboundTabListPacket.class, fields -> new ClientboundTabListPacket((Component)fields[0], (Component)fields[1]), List.of(), components,
+            components
+        );
         PAYLOADS.put(Rotations.class, RegistryValues.ROTATIONS);
         PAYLOADS.put(Pose.class, RegistryValues.POSE);
         PAYLOADS.put(SynchedEntityData.DataValue.class, RegistryValues.DATA_VALUES);
@@ -852,6 +882,8 @@ final class PacketValues {
                 yield array;
             }
             case ProtocolInfo.DetailsProvider provider -> encodeDetails(provider.details());
+            // A text component, by its spec.
+            case Component component -> ComponentSuite.spec(component);
             // A class a packet holds that isn't a record (RecipeBookSettings) is its fields, like a packet's.
             default -> {
                 if (!FIELDS.containsKey(value.getClass())) {

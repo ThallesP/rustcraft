@@ -7,7 +7,8 @@
 
 use std::collections::HashMap;
 
-use crate::com::google::gson::json_element::{JsonElement, JsonObject};
+use crate::com::google::gson::json_element::JsonElement;
+use crate::com::google::gson::json_object::JsonObject;
 use crate::net::minecraft::client::resources::model::model_debug_name::ModelDebugName;
 use crate::net::minecraft::client::resources::model::sprite::material::Material;
 use crate::net::minecraft::util::gson_helper::GsonHelper;

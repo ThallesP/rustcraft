@@ -1,10 +1,16 @@
+pub mod arithmetic_exception;
+pub mod byte;
 pub mod character;
 pub mod double;
 pub mod r#enum;
 pub mod fd_libm;
 pub mod float;
 pub mod integer;
+pub mod long;
 pub mod math;
 pub mod number;
+pub mod number_format_exception;
 pub mod object;
+pub mod short;
 pub mod string;
+pub mod throwable;

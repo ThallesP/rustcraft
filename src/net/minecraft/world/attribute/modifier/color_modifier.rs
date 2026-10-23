@@ -175,7 +175,7 @@ impl BlendToGray {
     pub fn from_json(json: &JsonElement) -> Result<BlendToGray, String> {
         let object = json
             .as_json_object()
-            .ok_or_else(|| format!("Not an object: {}", json.to_json_string()))?;
+            .ok_or_else(|| format!("Not an object: {}", json))?;
         let unit = |name: &str| -> Result<f32, String> {
             let value = decode_float(
                 object

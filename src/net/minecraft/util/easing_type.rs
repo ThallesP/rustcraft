@@ -47,12 +47,9 @@ impl EasingType {
             .as_json_object()
             .and_then(|object| object.get("cubic_bezier"))
             .and_then(JsonElement::as_json_array)
-            .ok_or_else(|| format!("not an easing: {}", json.to_json_string()))?;
+            .ok_or_else(|| format!("not an easing: {}", json))?;
         let [x1, y1, x2, y2] = controls else {
-            return Err(format!(
-                "Input is not a list of 4 elements: {}",
-                json.to_json_string()
-            ));
+            return Err(format!("Input is not a list of 4 elements: {}", json));
         };
         let controls = CubicBezierControls {
             x1: x1.get_as_float(),

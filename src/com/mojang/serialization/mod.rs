@@ -5,6 +5,7 @@ pub mod decoder;
 pub mod dynamic_ops;
 pub mod encoder;
 pub mod java_ops;
+pub mod json_ops;
 pub mod keyable;
 pub mod lifecycle;
 pub mod list_builder;

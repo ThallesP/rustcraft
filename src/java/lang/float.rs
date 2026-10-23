@@ -1,6 +1,9 @@
-//! java.lang.Float, where it differs from Rust's std: what `equals` and `hashCode` methods use.
+//! java.lang.Float, where it differs from Rust's std: what `equals` and `hashCode` methods use,
+//! `toString`, and `parseFloat`, whose grammar is Java's (surrounding whitespace, `NaN`,
+//! `Infinity`, hexadecimal, a type suffix).
 
-use crate::jdk::internal::math::float_to_decimal;
+use crate::java::lang::number_format_exception::NumberFormatException;
+use crate::jdk::internal::math::{float_to_decimal, floating_decimal};
 
 pub struct Float;
 
@@ -23,6 +26,11 @@ impl Float {
     /// (`1.0`, `0.001`, `1.0E7`, `1.0E-4`, `NaN`).
     pub fn to_string(value: f32) -> String {
         float_to_decimal::to_string(value)
+    }
+
+    /// `parseFloat(String)`: the decimal or hexadecimal value, rounded straight to a float.
+    pub fn parse_float(s: &str) -> Result<f32, NumberFormatException> {
+        floating_decimal::parse_float(s)
     }
 }
 

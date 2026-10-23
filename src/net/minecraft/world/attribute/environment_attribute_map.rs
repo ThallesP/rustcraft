@@ -98,13 +98,9 @@ impl Entry {
                 modifier: AttributeModifier::Override,
             });
         }
-        let object = json.as_json_object().ok_or_else(|| {
-            format!(
-                "{}: not a value or an entry: {}",
-                info.name,
-                json.to_json_string()
-            )
-        })?;
+        let object = json
+            .as_json_object()
+            .ok_or_else(|| format!("{}: not a value or an entry: {}", info.name, json))?;
         let modifier = OperationId::decode_modifier(
             info.r#type,
             object.get("modifier").ok_or("No key modifier in MapLike")?,

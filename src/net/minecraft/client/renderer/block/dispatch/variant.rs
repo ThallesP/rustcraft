@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use crate::com::google::gson::json_element::{JsonElement, JsonObject};
+use crate::com::google::gson::json_element::JsonElement;
+use crate::com::google::gson::json_object::JsonObject;
 use crate::com::mojang::math::quadrant::Quadrant;
 use crate::net::minecraft::client::renderer::block::dispatch::block_model_rotation::BlockModelRotation;
 use crate::net::minecraft::client::renderer::block::dispatch::block_state_model_part::{
@@ -110,7 +111,7 @@ pub(crate) fn parse_int(value: &JsonElement) -> Result<i32, String> {
     match value.as_json_primitive() {
         Some(primitive) if primitive.is_number() => Ok(primitive.get_as_int()),
         Some(primitive) if primitive.is_boolean() => Ok(i32::from(primitive.get_as_boolean())),
-        _ => Err(format!("Not a number: {}", value.to_json_string())),
+        _ => Err(format!("Not a number: {value}")),
     }
 }
 
@@ -119,7 +120,7 @@ pub(crate) fn parse_bool(value: &JsonElement) -> Result<bool, String> {
     match value.as_json_primitive() {
         Some(primitive) if primitive.is_boolean() => Ok(primitive.get_as_boolean()),
         Some(primitive) if primitive.is_number() => Ok(primitive.get_as_int() as i8 != 0),
-        _ => Err(format!("Not a boolean: {}", value.to_json_string())),
+        _ => Err(format!("Not a boolean: {value}")),
     }
 }
 
@@ -127,7 +128,7 @@ pub(crate) fn parse_bool(value: &JsonElement) -> Result<bool, String> {
 pub(crate) fn parse_string(value: &JsonElement) -> Result<String, String> {
     match value.as_json_primitive() {
         Some(primitive) if primitive.is_string() => Ok(primitive.get_as_string()),
-        _ => Err(format!("Not a string: {}", value.to_json_string())),
+        _ => Err(format!("Not a string: {value}")),
     }
 }
 

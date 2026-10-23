@@ -93,7 +93,7 @@ impl<T: OpsValue> Encoder<T> for PrimitiveArgCodec {
     ) -> DataResult<T> {
         let value = match input {
             TranslationArgument::String(value) => JavaValue::String(value.clone()),
-            TranslationArgument::Number(value) => JavaValue::Number(*value),
+            TranslationArgument::Number(value) => JavaValue::Number(value.clone()),
             TranslationArgument::Boolean(value) => JavaValue::Boolean(*value),
             TranslationArgument::Component(_) => {
                 return DataResult::error(|| {

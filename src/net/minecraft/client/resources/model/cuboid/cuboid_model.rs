@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::com::google::gson::json_element::JsonObject;
+use crate::com::google::gson::json_object::JsonObject;
 use crate::com::google::gson::json_parser::JsonParser;
 use crate::net::minecraft::client::resources::model::cuboid::cuboid_model_element::CuboidModelElement;
 use crate::net::minecraft::client::resources::model::cuboid::unbaked_cuboid_geometry::UnbakedCuboidGeometry;
@@ -31,7 +31,7 @@ impl CuboidModel {
         let json = JsonParser::parse_strict(text)?;
         let object = json
             .as_json_object()
-            .ok_or_else(|| format!("Not a JSON Object: {}", json.to_json_string()))?;
+            .ok_or_else(|| format!("Not a JSON Object: {json}"))?;
         CuboidModel::deserialize(object)
     }
 

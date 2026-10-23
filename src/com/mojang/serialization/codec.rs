@@ -5,8 +5,7 @@
 //! `Decoder<T>` for every `OpsValue` `T` (and so `Codec<T>`), and one that a dispatch, a
 //! recursive codec or a static needs as a value is a `BoxedCodec`, which holds it once for each
 //! kind of data. Java's default methods making codecs (`xmap`, `fieldOf`, `listOf`…) are
-//! `CodecExt`'s, implemented for every codec of NBT, which every codec is: a codec of NBT only, or
-//! of JSON only, has no combinators.
+//! `CodecExt`'s, implemented for every codec of NBT and JSON, which every codec is.
 //!
 //! The primitive codecs are unit structs (`BOOL`, `INT`, `STRING`…). `PASSTHROUGH`, `EMPTY`,
 //! `pair`, `xor`, `compoundList`, `simpleMap`, `dispatchedMap`, `mapResult`, `orElse` and its
@@ -15,6 +14,7 @@
 
 use std::sync::{Arc, OnceLock, Weak};
 
+use crate::com::google::gson::json_element::JsonElement;
 use crate::com::mojang::datafixers::util::pair::Pair;
 use crate::com::mojang::serialization::codecs::either_codec::EitherCodec;
 use crate::com::mojang::serialization::codecs::field_decoder;
@@ -141,6 +141,14 @@ primitive!(
     |ops, value| ops.create_double(*value)
 );
 primitive!(
+    IntStream,
+    INT_STREAM,
+    Vec<i32>,
+    "IntStream",
+    |ops, input| ops.get_int_stream(input),
+    |ops, value| ops.create_int_list(value)
+);
+primitive!(
     StringCodec,
     STRING,
     String,
@@ -153,12 +161,14 @@ primitive!(
 /// dispatch's choice or a recursive codec holds. Cloning it shares the codec.
 pub struct BoxedCodec<A> {
     nbt: Arc<dyn Codec<Tag, Value = A> + Send + Sync>,
+    json: Arc<dyn Codec<JsonElement, Value = A> + Send + Sync>,
 }
 
 impl<A> Clone for BoxedCodec<A> {
     fn clone(&self) -> Self {
         BoxedCodec {
             nbt: self.nbt.clone(),
+            json: self.json.clone(),
         }
     }
 }
@@ -166,15 +176,23 @@ impl<A> Clone for BoxedCodec<A> {
 impl<A> BoxedCodec<A> {
     pub fn new<C>(codec: C) -> BoxedCodec<A>
     where
-        C: Codec<Tag, Value = A> + Send + Sync + 'static,
+        C: Codec<Tag, Value = A> + Codec<JsonElement, Value = A> + Send + Sync + 'static,
     {
         let codec = Arc::new(codec);
-        BoxedCodec { nbt: codec }
+        BoxedCodec {
+            nbt: codec.clone(),
+            json: codec,
+        }
     }
 
     /// The codec, for NBT.
     pub fn nbt(&self) -> &(dyn Codec<Tag, Value = A> + Send + Sync) {
         &*self.nbt
+    }
+
+    /// The codec, for JSON.
+    pub fn json(&self) -> &(dyn Codec<JsonElement, Value = A> + Send + Sync) {
+        &*self.json
     }
 }
 
@@ -209,7 +227,7 @@ impl<A> SharedCodec<A> for StaticCodec<A> {
 }
 
 /// Java's default methods that make codecs out of a codec.
-pub trait CodecExt: Codec<Tag> + Sized {
+pub trait CodecExt: Codec<Tag> + Codec<JsonElement> + Sized {
     /// `xmap`: the value mapped both ways.
     fn xmap<S, F, G>(self, to: F, from: G) -> Xmap<Self, F, G>
     where
@@ -385,7 +403,7 @@ pub trait CodecExt: Codec<Tag> + Sized {
     }
 }
 
-impl<C: Codec<Tag> + Sized> CodecExt for C {}
+impl<C: Codec<Tag> + Codec<JsonElement> + Sized> CodecExt for C {}
 
 /// `dispatch`'s codec.
 pub type KeyDispatchCodecOf<C, E> =

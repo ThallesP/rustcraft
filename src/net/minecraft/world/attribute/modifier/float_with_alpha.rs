@@ -27,7 +27,7 @@ impl FloatWithAlpha {
         }
         let object = json
             .as_json_object()
-            .ok_or_else(|| format!("Not a float or an object: {}", json.to_json_string()))?;
+            .ok_or_else(|| format!("Not a float or an object: {}", json))?;
         let value = decode_float(object.get("value").ok_or("No key value in MapLike")?)?;
         let alpha = match object.get("alpha") {
             Some(alpha) => decode_float(alpha)?,

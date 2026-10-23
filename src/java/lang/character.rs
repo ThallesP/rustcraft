@@ -1,7 +1,9 @@
 //! java/lang/Character.java
 //!
 //! Only `digit(char, int)` in radixes 10 and 16, which `Integer.parseInt` reads digits with (a
-//! text color's hex). The golden suite keeps to those two (`where()`).
+//! text color's hex). The golden suite keeps to those two (`where()`). And `isSpaceChar(char)` and
+//! `isISOControl(char)`, which `URI`'s parser tells the non-ASCII characters it allows unescaped
+//! with: `java.net.URI`'s goldens check them on every char outside the surrogates.
 
 pub struct Character;
 
@@ -13,6 +15,13 @@ const DIGIT_ZEROS: [u16; 37] = [
     0x0D66, 0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80,
     0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0,
     0xFF10,
+];
+
+// What `Character.isSpaceChar` takes for a space: Unicode's space, line and paragraph separators
+// (Zs, Zl and Zp) as the JDK 25 knows them, listed by running it over every char.
+const SPACE_CHARS: [u16; 19] = [
+    0x0020, 0x00A0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008,
+    0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000,
 ];
 
 impl Character {
@@ -38,6 +47,16 @@ impl Character {
             Some(value) if value < radix => value,
             _ => -1,
         }
+    }
+
+    /// `isSpaceChar(char)`: whether it's a space, line or paragraph separator.
+    pub fn is_space_char(ch: u16) -> bool {
+        SPACE_CHARS.contains(&ch)
+    }
+
+    /// `isISOControl(char)`: U+0000 to U+001F and U+007F to U+009F.
+    pub fn is_iso_control(ch: u16) -> bool {
+        ch <= 0x9F && (ch >= 0x7F || (ch >> 5) == 0)
     }
 }
 

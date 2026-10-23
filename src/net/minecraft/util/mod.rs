@@ -10,6 +10,7 @@ pub mod gson_helper;
 pub mod keyframe;
 pub mod keyframe_track;
 pub mod keyframe_track_sampler;
+pub mod lenient_json_parser;
 pub mod light_coords_util;
 pub mod linear_congruential_generator;
 pub mod mth;
@@ -17,6 +18,7 @@ pub mod png_info;
 pub mod random;
 pub mod random_source;
 pub mod simple_bit_storage;
+pub mod strict_json_parser;
 pub mod string_representable;
 pub mod string_util;
 // Java's net/minecraft/util/Util.java.

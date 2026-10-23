@@ -3,16 +3,45 @@
 //! A grab bag of helpers, ported as the classes calling them are. So far `getRandom` and
 //! `shuffledCopy` of an array, and `shuffle`, which `Direction` uses: its golden cases check
 //! them, since vanilla can't generate Java's generic arrays and lists. And `makeDescriptionId`,
-//! which a block's description id is made with, checked by `Block`'s. And `fixedSize` of a list,
-//! which `ExtraCodecs`' vectors read with, checked by their codecs' cases.
+//! which a block's description id is made with, checked by `Block`'s; `fixedSize` of a list,
+//! which `ExtraCodecs`' vectors read with, checked by their codecs' cases; and
+//! `parseAndValidateUntrustedUri`, which a click event's link is decoded with, checked by
+//! `java.net.URI`'s.
 
 use crate::com::mojang::serialization::data_result::DataResult;
+use crate::java::net::uri::URI;
+use crate::java::net::uri_syntax_exception::URISyntaxException;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::util::random_source::RandomSource;
 
 pub struct Util;
 
+const ALLOWED_UNTRUSTED_LINK_PROTOCOLS: [&str; 2] = ["http", "https"];
+
 impl Util {
+    /// The URI a string from outside (a text component's `open_url`) parses as, if its scheme is
+    /// http or https in any case. `ExtraCodecs.UNTRUSTED_URI` decodes to it, and fails with the
+    /// exception's message.
+    pub fn parse_and_validate_untrusted_uri(uri: &str) -> Result<URI, URISyntaxException> {
+        let parsed_uri = URI::new(uri)?;
+        let Some(scheme) = parsed_uri.get_scheme() else {
+            return Err(URISyntaxException::new(
+                uri,
+                &format!("Missing protocol in URI: {uri}"),
+            ));
+        };
+        // `toLowerCase(Locale.ROOT)`, which only meets ASCII: a scheme is letters, digits, `+`,
+        // `-` and `.`.
+        let protocol = scheme.to_ascii_lowercase();
+        if !ALLOWED_UNTRUSTED_LINK_PROTOCOLS.contains(&protocol.as_str()) {
+            return Err(URISyntaxException::new(
+                uri,
+                &format!("Unsupported protocol in URI: {uri}"),
+            ));
+        }
+        Ok(parsed_uri)
+    }
+
     /// `fixedSize(List, int)`: the list if it has the size, else an error, with the first `size`
     /// elements as its partial value when it has more.
     pub fn fixed_size<T>(mut list: Vec<T>, size: usize) -> DataResult<Vec<T>> {

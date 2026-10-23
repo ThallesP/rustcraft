@@ -12,6 +12,7 @@ use std::sync::LazyLock;
 use crate::net::minecraft::network::connection_protocol::ConnectionProtocol;
 use crate::net::minecraft::network::protocol::common::clientbound_clear_dialog_packet::ClientboundClearDialogPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_custom_report_details_packet::ClientboundCustomReportDetailsPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_disconnect_packet::ClientboundDisconnectPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_keep_alive_packet::ClientboundKeepAlivePacket;
 use crate::net::minecraft::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_post_effects_packet::ClientboundPostEffectsPacket;
@@ -51,6 +52,8 @@ use crate::net::minecraft::network::protocol::game::clientbound_player_position_
 use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_server_data_packet::ClientboundServerDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_action_bar_text_packet::ClientboundSetActionBarTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
@@ -60,8 +63,12 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_experience_p
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_subtitle_text_packet::ClientboundSetSubtitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_title_text_packet::ClientboundSetTitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
@@ -508,7 +515,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_DISCONNECT,
-                Unported::codec(CommonPacketTypes::CLIENTBOUND_DISCONNECT),
+                ClientboundDisconnectPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_DISGUISED_CHAT,
@@ -732,11 +739,11 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SERVER_DATA,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SERVER_DATA),
+                ClientboundServerDataPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_ACTION_BAR_TEXT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_ACTION_BAR_TEXT),
+                ClientboundSetActionBarTextPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_BORDER_CENTER,
@@ -836,7 +843,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_SUBTITLE_TEXT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_SUBTITLE_TEXT),
+                ClientboundSetSubtitleTextPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_TIME,
@@ -844,7 +851,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_TITLE_TEXT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_TITLE_TEXT),
+                ClientboundSetTitleTextPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_TITLES_ANIMATION,
@@ -876,11 +883,11 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SYSTEM_CHAT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SYSTEM_CHAT),
+                ClientboundSystemChatPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_TAB_LIST,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_TAB_LIST),
+                ClientboundTabListPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_TAG_QUERY,

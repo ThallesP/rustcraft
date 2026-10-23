@@ -1,16 +1,67 @@
 //! net/minecraft/core/UUIDUtil.java
 //!
-//! Not ported yet: the DataFixerUpper codecs (`CODEC`, `CODEC_SET`, `CODEC_LINKED_SET`,
-//! `STRING_CODEC`, `AUTHLIB_CODEC` and `LENIENT_CODEC`) and `readUUID(Dynamic)`, which wait for
-//! DataFixerUpper.
+//! `CODEC` (four ints), `STRING_CODEC` and `LENIENT_CODEC` (either), which an entity tooltip reads
+//! a UUID with. Not ported yet: `CODEC_SET`, `CODEC_LINKED_SET`, `AUTHLIB_CODEC` and
+//! `readUUID(Dynamic)`, which come with their callers.
 
 use std::sync::LazyLock;
 
 use crate::com::mojang::authlib::game_profile::GameProfile;
+use crate::com::mojang::serialization::codec::{
+    CodecExt, INT_STREAM, STRING, SharedCodec, StaticCodec,
+};
+use crate::com::mojang::serialization::data_result::DataResult;
+use crate::com::mojang::serialization::lifecycle::Lifecycle;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec};
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
+
+// `Codec.INT_STREAM.comapFlatMap(fixedSize(4) → uuidFromIntArray, uuidToIntArray)`.
+static CODEC: StaticCodec<UUID> = LazyLock::new(|| {
+    INT_STREAM
+        .comap_flat_map(
+            |ints: Vec<i32>| {
+                // `Util.fixedSize(IntStream, int)`: up to one more than the size is read.
+                let size = 4;
+                if ints.len() != size {
+                    let message = move || format!("Input is not a list of {size} ints");
+                    if ints.len() >= size {
+                        DataResult::error_partial(
+                            message,
+                            UUIDUtil::uuid_from_int_array(&ints[..size]),
+                        )
+                    } else {
+                        DataResult::error(message)
+                    }
+                } else {
+                    DataResult::success(UUIDUtil::uuid_from_int_array(&ints))
+                }
+            },
+            UUIDUtil::uuid_to_int_array,
+        )
+        .boxed()
+});
+
+// `Codec.STRING.comapFlatMap(UUID::fromString, UUID::toString)`, stable.
+static STRING_CODEC: StaticCodec<UUID> = LazyLock::new(|| {
+    STRING
+        .comap_flat_map(
+            |s: String| match UUID::from_string(&s) {
+                Ok(uuid) => DataResult::success_lifecycle(uuid, Lifecycle::stable()),
+                Err(message) => DataResult::error(|| format!("Invalid UUID {s}: {message}")),
+            },
+            UUID::to_string,
+        )
+        .boxed()
+});
+
+static LENIENT_CODEC: StaticCodec<UUID> = LazyLock::new(|| {
+    CODEC
+        .shared()
+        .with_alternative(STRING_CODEC.shared())
+        .boxed()
+});
 
 static STREAM_CODEC: StaticStreamCodec<ByteBuf, UUID> = LazyLock::new(|| {
     Box::new(stream_codec::of(
@@ -22,6 +73,9 @@ static STREAM_CODEC: StaticStreamCodec<ByteBuf, UUID> = LazyLock::new(|| {
 pub struct UUIDUtil;
 
 impl UUIDUtil {
+    pub const CODEC: &'static StaticCodec<UUID> = &CODEC;
+    pub const STRING_CODEC: &'static StaticCodec<UUID> = &STRING_CODEC;
+    pub const LENIENT_CODEC: &'static StaticCodec<UUID> = &LENIENT_CODEC;
     /// A UUID's two longs.
     pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, UUID> = &STREAM_CODEC;
     pub const UUID_BYTES: i32 = 16;

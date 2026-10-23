@@ -1,8 +1,7 @@
 //! net/minecraft/network/codec/ByteBufCodecs.java
 //!
 //! Not ported yet:
-//! - the ones made from DataFixerUpper's codecs (`fromCodec`, `fromCodecTrusted` and the
-//!   `fromCodecWithRegistries` ones), and `lenientJson`, which waits for Gson;
+//! - `fromCodec(DynamicOps, Codec)` and `lenientJson`, which wait for Gson;
 //! - `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
 //! - the registries' other codecs (`registry`, `holder`, `holderSet` and `idMapper(IdMap)`).
 //!   `holderRegistry` reads and writes an element's id in the registries a
@@ -14,12 +13,18 @@
 //! Its codecs are statics, which its constants refer to. Java throws Netty's `DecoderException`
 //! and `EncoderException`, which are panics here.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use crate::com::google::common::collect::immutable_multimap::ImmutableMultimap;
 use crate::com::mojang::authlib::game_profile::GameProfile;
 use crate::com::mojang::authlib::properties::property::Property;
 use crate::com::mojang::authlib::properties::property_map::PropertyMap;
+use crate::com::mojang::serialization::codec::BoxedCodec;
+use crate::com::mojang::serialization::data_result::DataResult;
+use crate::com::mojang::serialization::decoder::Decoder;
+use crate::com::mojang::serialization::dynamic_ops::DynamicOps;
+use crate::com::mojang::serialization::encoder::Encoder;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::io::netty::buffer::unpooled;
 use crate::java::util::array_list::ArrayList;
@@ -28,6 +33,7 @@ use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::nbt::compound_tag::CompoundTag;
 use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
+use crate::net::minecraft::nbt::nbt_ops::NbtOps;
 use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec, StreamCodec};
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
@@ -35,6 +41,7 @@ use crate::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendly
 use crate::net::minecraft::network::utf8_string::Utf8String;
 use crate::net::minecraft::network::var_int::VarInt;
 use crate::net::minecraft::network::var_long::VarLong;
+use crate::net::minecraft::resources::registry_ops::RegistryOps;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::mth::Mth;
@@ -408,6 +415,66 @@ impl ByteBufCodecs {
             move |input: &mut ByteBuf| {
                 FriendlyByteBuf::read_nbt_from_accounted(input, &mut accounter())
                     .expect("Expected non-null compound tag")
+            },
+        )
+    }
+
+    /// `fromCodec(Codec, Supplier)`: a tag read with the accounter, then decoded with NBT's ops;
+    /// panics where Java throws `DecoderException` or `EncoderException`, with the codec's message
+    /// and the tag or value. `fromCodecTrusted` is it with an unlimited heap.
+    pub fn from_codec<A: fmt::Display + 'static>(
+        codec: BoxedCodec<A>,
+        accounter: impl Fn() -> NbtAccounter + Send + Sync + 'static,
+    ) -> impl StreamCodec<Buffer = ByteBuf, Value = A> {
+        // The accounter only counts what's read.
+        let decode_tag = ByteBufCodecs::tag_codec(accounter);
+        let encode_tag = ByteBufCodecs::tag_codec(NbtAccounter::unlimited_heap);
+        let encoder = codec.clone();
+        stream_codec::of(
+            move |output: &mut ByteBuf, value: &A| {
+                let tag = match encoder.encode_start(&NbtOps::INSTANCE, value) {
+                    DataResult::Success(success) => success.into_value(),
+                    DataResult::Error(error) => panic!(
+                        "EncoderException: Failed to encode: {} {value}",
+                        error.message()
+                    ),
+                };
+                encode_tag.encode(output, &tag);
+            },
+            move |input: &mut ByteBuf| {
+                let tag = decode_tag.decode(input);
+                parse_or_throw(&codec, &NbtOps::INSTANCE, &tag)
+            },
+        )
+    }
+
+    /// `fromCodecWithRegistries(Codec, Supplier)`: the same over the buffer's registries
+    /// (`RegistryOps` of NBT's ops).
+    pub fn from_codec_with_registries<A: fmt::Display + 'static>(
+        codec: BoxedCodec<A>,
+        accounter: impl Fn() -> NbtAccounter + Send + Sync + 'static,
+    ) -> impl StreamCodec<Buffer = RegistryFriendlyByteBuf, Value = A> {
+        let tag_codec = ByteBufCodecs::tag_codec(accounter);
+        stream_codec::of(
+            {
+                let codec = codec.clone();
+                let tag_codec = ByteBufCodecs::tag_codec(NbtAccounter::unlimited_heap);
+                move |output: &mut RegistryFriendlyByteBuf, value: &A| {
+                    let ops = RegistryOps::create(&NbtOps::INSTANCE, output.registry_access());
+                    let tag = match codec.encode_start(&ops, value) {
+                        DataResult::Success(success) => success.into_value(),
+                        DataResult::Error(error) => panic!(
+                            "EncoderException: Failed to encode: {} {value}",
+                            error.message()
+                        ),
+                    };
+                    tag_codec.encode(AsMut::<ByteBuf>::as_mut(output), &tag);
+                }
+            },
+            move |input: &mut RegistryFriendlyByteBuf| {
+                let tag = tag_codec.decode(AsMut::<ByteBuf>::as_mut(input));
+                let ops = RegistryOps::create(&NbtOps::INSTANCE, input.registry_access());
+                parse_or_throw(&codec, &ops, &tag)
             },
         )
     }
@@ -847,6 +914,20 @@ where
         }
 
         result
+    }
+}
+
+// `codec.parse(ops, tag).getOrThrow(msg -> new DecoderException("Failed to decode: " + msg + " " +
+// tag))`.
+fn parse_or_throw<A>(codec: &BoxedCodec<A>, ops: &dyn DynamicOps<Tag>, tag: &Tag) -> A {
+    match codec.parse(ops, tag) {
+        DataResult::Success(success) => success.into_value(),
+        DataResult::Error(error) => {
+            panic!(
+                "DecoderException: Failed to decode: {} {tag}",
+                error.message()
+            )
+        }
     }
 }
 

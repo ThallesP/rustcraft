@@ -542,6 +542,24 @@ final class NbtValues {
      * same with more, and allocates at most that. A count read from random bytes can be in the billions, which a read
      * with a bigger quota (the trusted ones, or a usage whose sum overflows) would allocate an array of.
      */
+    /**
+     * Whether the buffer's first tags, read one after another as a packet of that many trusted tags reads them, each read
+     * within the default quota: an unlimited accounter would allocate whatever a random length says.
+     */
+    static boolean readsLittleTags(final ByteBuf buffer, final int count) {
+        ByteBuf unwrapped = buffer instanceof net.minecraft.network.FriendlyByteBuf friendly ? friendly.unwrap() : buffer;
+        ByteBufInputStream input = new ByteBufInputStream(NetworkValues.copy(unwrapped));
+        for (int i = 0; i < count; i++) {
+            NbtAccounter probe = accounter(NbtAccounter.DEFAULT_NBT_QUOTA, 0L, 512, 0);
+            try {
+                NbtIo.readAnyTag(input, probe);
+            } catch (RuntimeException | IOException e) {
+                return !(e.getMessage() != null && e.getMessage().contains("too big"));
+            }
+        }
+        return true;
+    }
+
     static boolean readsLittle(final ByteBuf buffer, final NbtAccounter accounter, final Reader reader) {
         if (accounter != null && usage(accounter) >= 0 && quota(accounter) <= NbtAccounter.DEFAULT_NBT_QUOTA) {
             return true;

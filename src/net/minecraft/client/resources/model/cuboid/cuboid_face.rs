@@ -1,6 +1,7 @@
 //! net/minecraft/client/resources/model/cuboid/CuboidFace.java
 
-use crate::com::google::gson::json_element::{JsonElement, JsonObject};
+use crate::com::google::gson::json_element::JsonElement;
+use crate::com::google::gson::json_object::JsonObject;
 use crate::com::mojang::math::quadrant::Quadrant;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::util::gson_helper::GsonHelper;

@@ -26,6 +26,8 @@ use crate::net::minecraft::network::protocol::game::clientbound_player_position_
 use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_server_data_packet::ClientboundServerDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_action_bar_text_packet::ClientboundSetActionBarTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
@@ -35,8 +37,12 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_experience_p
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_subtitle_text_packet::ClientboundSetSubtitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_title_text_packet::ClientboundSetTitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
@@ -112,6 +118,17 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
     fn handle_add_entity(&mut self, packet: &ClientboundAddEntityPacket);
 
     fn handle_remove_entities(&mut self, packet: &ClientboundRemoveEntitiesPacket);
+    fn handle_system_chat(&mut self, packet: &ClientboundSystemChatPacket);
+
+    fn set_title_text(&mut self, packet: &ClientboundSetTitleTextPacket);
+
+    fn set_subtitle_text(&mut self, packet: &ClientboundSetSubtitleTextPacket);
+
+    fn set_action_bar_text(&mut self, packet: &ClientboundSetActionBarTextPacket);
+
+    fn handle_tab_list_customisation(&mut self, packet: &ClientboundTabListPacket);
+
+    fn handle_server_data(&mut self, packet: &ClientboundServerDataPacket);
 }
 
 #[cfg(test)]
@@ -276,5 +293,28 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
 
     fn handle_remove_entities(&mut self, packet: &ClientboundRemoveEntitiesPacket) {
         self.record("handleRemoveEntities", packet);
+    }
+    fn handle_system_chat(&mut self, packet: &ClientboundSystemChatPacket) {
+        self.record("handleSystemChat", packet);
+    }
+
+    fn set_title_text(&mut self, packet: &ClientboundSetTitleTextPacket) {
+        self.record("setTitleText", packet);
+    }
+
+    fn set_subtitle_text(&mut self, packet: &ClientboundSetSubtitleTextPacket) {
+        self.record("setSubtitleText", packet);
+    }
+
+    fn set_action_bar_text(&mut self, packet: &ClientboundSetActionBarTextPacket) {
+        self.record("setActionBarText", packet);
+    }
+
+    fn handle_tab_list_customisation(&mut self, packet: &ClientboundTabListPacket) {
+        self.record("handleTabListCustomisation", packet);
+    }
+
+    fn handle_server_data(&mut self, packet: &ClientboundServerDataPacket) {
+        self.record("handleServerData", packet);
     }
 }

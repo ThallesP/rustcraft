@@ -1,7 +1,7 @@
 //! net/minecraft/util/ExtraCodecs.java
 //!
 //! The game's own codecs and combinators, as far as text components reach: `VECTOR4F`,
-//! `ARGB_COLOR_CODEC`, `POSITIVE_INT`, `CHAT_STRING`, `NBT` (`converter(NbtOps.INSTANCE)`, which
+//! `ARGB_COLOR_CODEC`, `POSITIVE_INT`, `UNTRUSTED_URI`, `CHAT_STRING`, `NBT` (`converter(NbtOps.INSTANCE)`, which
 //! reads any data as the tag it converts to), `nonEmptyList`, `orCompressed` of map codecs (the
 //! normal one, since no ops the game's codecs reach compresses), `idResolverCodec` of a codec of
 //! ids, and `LateBoundIdMapper`. The rest comes with its callers.
@@ -26,6 +26,7 @@ use crate::com::mojang::serialization::map_decoder::MapDecoder;
 use crate::com::mojang::serialization::map_encoder::MapEncoder;
 use crate::com::mojang::serialization::map_like::MapLike;
 use crate::com::mojang::serialization::record_builder::RecordBuilder;
+use crate::java::net::uri::URI;
 use crate::net::minecraft::nbt::nbt_ops::NbtOps;
 use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::util::argb::ARGB;
@@ -79,6 +80,19 @@ static CHAT_STRING: StaticCodec<String> = LazyLock::new(|| {
 
 static NBT: StaticCodec<Tag> = LazyLock::new(|| NbtConverter.boxed());
 
+// A link from outside: an http or https URI, or the parser's message.
+static UNTRUSTED_URI: StaticCodec<URI> = LazyLock::new(|| {
+    STRING
+        .comap_flat_map(
+            |string: String| match Util::parse_and_validate_untrusted_uri(&string) {
+                Ok(uri) => DataResult::success(uri),
+                Err(error) => DataResult::error(|| error.to_string()),
+            },
+            URI::to_string,
+        )
+        .boxed()
+});
+
 // `intRangeWithMessage`: an int in the range, or the message for it.
 fn int_range_with_message(
     min_inclusive: i32,
@@ -99,6 +113,7 @@ impl ExtraCodecs {
     pub const VECTOR4F: &'static StaticCodec<Vector4f> = &VECTOR4F;
     pub const ARGB_COLOR_CODEC: &'static StaticCodec<i32> = &ARGB_COLOR_CODEC;
     pub const POSITIVE_INT: &'static StaticCodec<i32> = &POSITIVE_INT;
+    pub const UNTRUSTED_URI: &'static StaticCodec<URI> = &UNTRUSTED_URI;
     pub const CHAT_STRING: &'static StaticCodec<String> = &CHAT_STRING;
     pub const NBT: &'static StaticCodec<Tag> = &NBT;
 
@@ -116,6 +131,12 @@ impl ExtraCodecs {
                 DataResult::success(list)
             }
         })
+    }
+
+    /// `overrideLifecycle` with a stable lifecycle both ways, which a built-in registry's entry
+    /// has: a decoded value's result and every encoded one are stable.
+    pub fn override_lifecycle_stable<C: CodecExt>(codec: C) -> OverrideLifecycleStable<C> {
+        OverrideLifecycleStable { codec }
     }
 
     /// `orCompressed(MapCodec, MapCodec)`: the normal map codec, or the compressed one for an ops
@@ -253,13 +274,18 @@ pub fn passthrough_encode<T: OpsValue>(
 }
 
 /// `Dynamic.convert(inOps, outOps, input)`: the value itself when the two ops are one, else
-/// `inOps.convertTo(outOps, input)`.
+/// `inOps.convertTo(outOps, input)`, which for a `RegistryOps` leaves the value as it is too when
+/// it's converted to its delegate (`DelegatingOps.convertTo`).
 pub fn convert<T: OpsValue, U: OpsValue>(
     in_ops: &dyn DynamicOps<T>,
     out_ops: &dyn DynamicOps<U>,
     input: &T,
 ) -> U {
-    if in_ops.kind() == out_ops.kind() && in_ops.kind() != OpsKind::Registry {
+    let same = in_ops.kind() == out_ops.kind() && in_ops.kind() != OpsKind::Registry;
+    let to_delegate = in_ops.kind() == OpsKind::Registry
+        && out_ops.kind() != OpsKind::Registry
+        && in_ops.delegate_kind() == out_ops.kind();
+    if same || to_delegate {
         // The same ops, so the same kind of value.
         let input: &dyn std::any::Any = input;
         if let Some(same) = input.downcast_ref::<U>() {
@@ -315,5 +341,34 @@ impl<I: Clone + PartialEq, V: Clone + PartialEq> LateBoundIdMapper<I, V> {
 impl<I: Clone + PartialEq, V: Clone + PartialEq> Default for LateBoundIdMapper<I, V> {
     fn default() -> Self {
         LateBoundIdMapper::new()
+    }
+}
+
+/// `overrideLifecycle(codec, stable)`'s codec (`mapResult`).
+#[derive(Clone)]
+pub struct OverrideLifecycleStable<C> {
+    codec: C,
+}
+
+impl<C: Valued> Valued for OverrideLifecycleStable<C> {
+    type Value = C::Value;
+}
+
+impl<T: OpsValue, C: Decoder<T>> Decoder<T> for OverrideLifecycleStable<C> {
+    fn decode(&self, ops: &dyn DynamicOps<T>, input: &T) -> DataResult<Pair<C::Value, T>> {
+        let result = self.codec.decode(ops, input);
+        if result.is_success() {
+            result.set_lifecycle(Lifecycle::stable())
+        } else {
+            result
+        }
+    }
+}
+
+impl<T: OpsValue, C: Encoder<T>> Encoder<T> for OverrideLifecycleStable<C> {
+    fn encode(&self, input: &C::Value, ops: &dyn DynamicOps<T>, prefix: T) -> DataResult<T> {
+        self.codec
+            .encode(input, ops, prefix)
+            .set_lifecycle(Lifecycle::stable())
     }
 }

@@ -91,6 +91,7 @@ impl OpsValue for JavaValue {
             JavaValue::Number(Number::Long(value)) => out_ops.create_long(*value),
             JavaValue::Number(Number::Float(value)) => out_ops.create_float(*value),
             JavaValue::Number(Number::Double(value)) => out_ops.create_double(*value),
+            JavaValue::Number(other) => out_ops.create_numeric(other.clone()),
         }
     }
 
@@ -129,7 +130,7 @@ impl DynamicOps<JavaValue> for JavaOps {
 
     fn get_number_value(&self, input: &JavaValue) -> DataResult<Number> {
         match input {
-            JavaValue::Number(value) => DataResult::success(*value),
+            JavaValue::Number(value) => DataResult::success(value.clone()),
             _ => DataResult::error(|| format!("Not a number: {input}")),
         }
     }
@@ -177,9 +178,20 @@ impl DynamicOps<JavaValue> for JavaOps {
         unreached()
     }
 
-    /// `ImmutableMap`'s entries, in order.
+    /// `ImmutableMap.toImmutableMap`'s entries, in order. A null value (an `EndTag` converted)
+    /// panics, where Java's map throws `NullPointerException`.
     fn create_map(&self, map: Vec<Pair<JavaValue, JavaValue>>) -> JavaValue {
-        JavaValue::Map(map.into_iter().map(Pair::into_parts).collect())
+        JavaValue::Map(
+            map.into_iter()
+                .map(|entry| {
+                    let (key, value) = entry.into_parts();
+                    if value == JavaValue::Null {
+                        panic!("NullPointerException: null value in entry: {key}=null");
+                    }
+                    (key, value)
+                })
+                .collect(),
+        )
     }
 
     fn get_map<'a>(&self, _input: &'a JavaValue) -> DataResult<Box<dyn MapLike<JavaValue> + 'a>> {

@@ -21,7 +21,8 @@
 
 use std::sync::LazyLock;
 
-use crate::com::google::gson::json_element::{JsonElement, JsonObject};
+use crate::com::google::gson::json_element::JsonElement;
+use crate::com::google::gson::json_object::JsonObject;
 use crate::net::minecraft::nbt::compound_tag::CompoundTag;
 use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::util::argb::ARGB;
@@ -126,7 +127,7 @@ impl Biome {
         let field = |name: &str| {
             object
                 .get(name)
-                .unwrap_or_else(|| panic!("No key {name} in {}", json.to_json_string()))
+                .unwrap_or_else(|| panic!("No key {name} in {json}"))
         };
         let climate_settings = ClimateSettings {
             has_precipitation: field("has_precipitation").get_as_boolean(),
@@ -157,12 +158,9 @@ impl Biome {
     }
 
     fn json_color(color: &JsonElement) -> i32 {
-        let primitive = color.as_json_primitive().unwrap_or_else(|| {
-            panic!(
-                "a colour the temporary reader takes: {}",
-                color.to_json_string()
-            )
-        });
+        let primitive = color
+            .as_json_primitive()
+            .unwrap_or_else(|| panic!("a colour the temporary reader takes: {color}"));
         if primitive.is_string() {
             Biome::hex_color(&primitive.get_as_string())
         } else {

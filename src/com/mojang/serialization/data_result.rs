@@ -43,6 +43,11 @@ impl<R> Success<R> {
         &self.value
     }
 
+    /// `value()`, taking it.
+    pub fn into_value(self) -> R {
+        self.value
+    }
+
     pub fn lifecycle(&self) -> Lifecycle {
         self.lifecycle
     }

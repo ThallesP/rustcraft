@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use crate::com::google::gson::json_element::JsonElement;
 use crate::com::mojang::datafixers::util::pair::Pair;
 use crate::com::mojang::serialization::codec::{BoxedCodec, CodecExt, FieldOf};
 use crate::com::mojang::serialization::codecs::key_dispatch_codec::KeyDispatchCodec;
@@ -34,12 +35,14 @@ impl<T: OpsValue, M: MapEncoder<T> + MapDecoder<T> + ?Sized> MapCodec<T> for M {
 /// A map codec held once for each kind of data, like `BoxedCodec`.
 pub struct BoxedMapCodec<A> {
     nbt: Arc<dyn MapCodec<Tag, Value = A> + Send + Sync>,
+    json: Arc<dyn MapCodec<JsonElement, Value = A> + Send + Sync>,
 }
 
 impl<A> Clone for BoxedMapCodec<A> {
     fn clone(&self) -> Self {
         BoxedMapCodec {
             nbt: self.nbt.clone(),
+            json: self.json.clone(),
         }
     }
 }
@@ -47,15 +50,23 @@ impl<A> Clone for BoxedMapCodec<A> {
 impl<A> BoxedMapCodec<A> {
     pub fn new<M>(codec: M) -> BoxedMapCodec<A>
     where
-        M: MapCodec<Tag, Value = A> + Send + Sync + 'static,
+        M: MapCodec<Tag, Value = A> + MapCodec<JsonElement, Value = A> + Send + Sync + 'static,
     {
         let codec = Arc::new(codec);
-        BoxedMapCodec { nbt: codec }
+        BoxedMapCodec {
+            nbt: codec.clone(),
+            json: codec,
+        }
     }
 
     /// The map codec, for NBT.
     pub fn nbt(&self) -> &(dyn MapCodec<Tag, Value = A> + Send + Sync) {
         &*self.nbt
+    }
+
+    /// The map codec, for JSON.
+    pub fn json(&self) -> &(dyn MapCodec<JsonElement, Value = A> + Send + Sync) {
+        &*self.json
     }
 }
 
@@ -96,7 +107,7 @@ impl<A> SharedMapCodec<A> for StaticMapCodec<A> {
 }
 
 /// Java's methods that make map codecs out of a map codec.
-pub trait MapCodecExt: MapCodec<Tag> + Sized {
+pub trait MapCodecExt: MapCodec<Tag> + MapCodec<JsonElement> + Sized {
     /// `codec()`: the map codec as a codec of a map.
     fn codec(self) -> MapCodecCodec<Self> {
         MapCodecCodec { codec: self }
@@ -205,7 +216,7 @@ pub trait MapCodecExt: MapCodec<Tag> + Sized {
     }
 }
 
-impl<M: MapCodec<Tag> + Sized> MapCodecExt for M {}
+impl<M: MapCodec<Tag> + MapCodec<JsonElement> + Sized> MapCodecExt for M {}
 
 /// `MapCodec.MapCodecCodec`: the input read as a map (stable) and decoded, with the input as the
 /// rest; written into the ops' record builder, then built on the prefix.
@@ -396,7 +407,7 @@ impl<T: OpsValue, A: Clone> MapDecoder<T> for Unit<A> {
 /// `BoxedCodec` of a map codec's `codec()`.
 pub fn boxed_codec<M>(codec: M) -> BoxedCodec<M::Value>
 where
-    M: MapCodec<Tag> + Send + Sync + 'static,
+    M: MapCodec<Tag> + MapCodec<JsonElement> + Send + Sync + 'static,
 {
     BoxedCodec::new(codec.codec())
 }

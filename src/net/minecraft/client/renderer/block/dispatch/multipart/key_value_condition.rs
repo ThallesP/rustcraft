@@ -4,7 +4,8 @@
 //! written as one) is decoded by hand (`KeyValueCondition::parse`). Java warns about a condition
 //! that's always true or always false; the port doesn't.
 
-use crate::com::google::gson::json_element::{JsonElement, JsonObject};
+use crate::com::google::gson::json_element::JsonElement;
+use crate::com::google::gson::json_object::JsonObject;
 use crate::net::minecraft::client::renderer::block::dispatch::variant_selector::Predicate;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::property::{
@@ -80,7 +81,7 @@ impl Terms {
             Some(primitive) if primitive.is_string() => primitive.get_as_string(),
             Some(primitive) if primitive.is_number() => primitive.get_as_int().to_string(),
             Some(primitive) if primitive.is_boolean() => primitive.get_as_boolean().to_string(),
-            _ => return Err(format!("Not a string: {}", value.to_json_string())),
+            _ => return Err(format!("Not a string: {value}")),
         };
         Terms::parse(&text)
     }
