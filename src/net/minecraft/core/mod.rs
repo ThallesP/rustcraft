@@ -1,5 +1,6 @@
 pub mod axis_cycle;
 pub mod block_pos;
+pub mod cursor3d;
 pub mod direction;
 pub mod front_and_top;
 pub mod global_pos;

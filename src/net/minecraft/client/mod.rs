@@ -1,6 +1,7 @@
 pub mod client_brand_retriever;
 pub mod delta_tracker;
 pub mod gui;
+pub mod key_mapping;
 pub mod main;
 pub mod minecraft;
 pub mod multiplayer;

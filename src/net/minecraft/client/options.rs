@@ -5,8 +5,11 @@
 //! server side. Loading and saving `options.txt` comes with the rest; until then a run has the
 //! defaults, and what the runner sets (the scenario's render distance, the oracle's particles).
 //! The player's model parts are their masks combined (`PlayerModelPart`, all seven by default),
-//! and the text filter is the user's profanity filter flag, off for an offline user.
+//! and the text filter is the user's profanity filter flag, off for an offline user. The
+//! movement keys (as `KeyMapping`s held down or not), `autoJump` and `sprintWindow` are here for
+//! the player.
 
+use crate::net::minecraft::client::key_mapping::KeyMapping;
 use crate::net::minecraft::server::level::client_information::ClientInformation;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
 use crate::net::minecraft::world::entity::humanoid_arm::HumanoidArm;
@@ -25,6 +28,15 @@ pub struct Options {
     allow_server_listing: bool,
     particles: ParticleStatus,
     pub joined_first_server: bool,
+    pub key_up: KeyMapping,
+    pub key_left: KeyMapping,
+    pub key_down: KeyMapping,
+    pub key_right: KeyMapping,
+    pub key_jump: KeyMapping,
+    pub key_shift: KeyMapping,
+    pub key_sprint: KeyMapping,
+    auto_jump: bool,
+    sprint_window: i32,
 }
 
 impl Default for Options {
@@ -49,7 +61,26 @@ impl Options {
             allow_server_listing: true,
             particles: ParticleStatus::ALL,
             joined_first_server: false,
+            key_up: KeyMapping::new("key.forward"),
+            key_left: KeyMapping::new("key.left"),
+            key_down: KeyMapping::new("key.back"),
+            key_right: KeyMapping::new("key.right"),
+            key_jump: KeyMapping::new("key.jump"),
+            key_shift: KeyMapping::new("key.sneak"),
+            key_sprint: KeyMapping::new("key.sprint"),
+            auto_jump: false,
+            sprint_window: 7,
         }
+    }
+
+    /// `autoJump().get()`.
+    pub fn auto_jump(&self) -> bool {
+        self.auto_jump
+    }
+
+    /// `sprintWindow().get()`: the ticks a second forward press has to sprint.
+    pub fn sprint_window(&self) -> i32 {
+        self.sprint_window
     }
 
     /// `renderDistance().get()`.

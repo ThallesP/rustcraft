@@ -337,7 +337,7 @@ impl ClientGamePacketListener for ClientPacketListener {
         );
         minecraft.set_level(level);
         if minecraft.player.borrow().is_none() {
-            let mut player = LocalPlayer::new(this);
+            let mut player = LocalPlayer::new(Some(this));
             player.set_y_rot(-180.0);
             *minecraft.player.borrow_mut() = Some(player);
         }

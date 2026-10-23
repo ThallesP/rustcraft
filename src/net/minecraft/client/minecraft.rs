@@ -164,7 +164,9 @@ impl Minecraft {
             if !self.pause.get() {
                 let mut player = self.player.borrow_mut();
                 if let Some(player) = player.as_mut() {
-                    player.tick();
+                    // `level.tickEntities()`: the level has no blocks yet (the world track's),
+                    // so only `commonTick` runs, and the player stands where the server puts it.
+                    player.common_tick();
                     player.send_changes(self);
                 }
             }
@@ -209,7 +211,7 @@ impl Minecraft {
         self.player
             .borrow()
             .as_ref()
-            .map(|player| Rc::clone(&player.connection))
+            .and_then(|player| player.connection.clone())
     }
 
     pub fn get_camera_entity(&self) -> Option<i32> {

@@ -93,7 +93,7 @@ final class ShapeSuites {
     }
 
     static List<Suite> suites() {
-        return List.of(new ShapesSuite(), new VoxelShapeSuite(), new DiscreteVoxelShapeSuite());
+        return List.of(new ShapesSuite(), new VoxelShapeSuite(), new DiscreteVoxelShapeSuite(), new EntitySuite(), new LivingEntitySuite());
     }
 
     /** A shape argument: its recipe, and how to make it afresh. */

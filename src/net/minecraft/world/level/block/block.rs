@@ -3,7 +3,7 @@
 //! Only what makes a block and its states, and what it keeps from its `Properties`: its state
 //! definition and default state, `BLOCK_STATE_REGISTRY` with `getId` and `stateById`, the
 //! getters of what `BlockBehaviour` copied (`getFriction`, `getExplosionResistance`…),
-//! `toString`, and `box`, the shapes' helper in sixteenths (the player track's, with the shapes).
+//! `toString`, and `box` and `isShapeFullBlock`, the shapes' helpers (the player track's).
 //! Not ported yet: every behaviour method (`playerDestroy`, `fallOn`, `getStateForPlacement`…),
 //! the other shape helpers (`column`, `isShapeFullBlock`, `shouldRenderFace`…), `asItem`,
 //! `getName` and `withPropertiesOf`, which come with what calls them.
@@ -32,6 +32,7 @@ use crate::net::minecraft::world::level::block::state::state_definition::{
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 use crate::net::minecraft::world::level::material::map_color::MapColor;
+use crate::net::minecraft::world::phys::shapes::boolean_op::BooleanOp;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
@@ -231,6 +232,23 @@ impl Block {
             max_y / 16.0,
             max_z / 16.0,
         )
+    }
+
+    /// `instanceof`: whether the block's class is `class` or extends it.
+    pub fn is_instance_of(&self, class: &'static BlockClass) -> bool {
+        let mut current = Some(Block::data(*self).class());
+        while let Some(candidate) = current {
+            if std::ptr::eq(candidate, class) {
+                return true;
+            }
+            current = candidate.parent;
+        }
+        false
+    }
+
+    /// Whether the shape is the whole block, voxel for voxel.
+    pub fn is_shape_full_block(shape: &VoxelShape) -> bool {
+        !Shapes::join_is_not_empty(&Shapes::block(), shape, BooleanOp::NOT_SAME)
     }
 
     /// The block whose id it is, as a field of `Blocks` names it.

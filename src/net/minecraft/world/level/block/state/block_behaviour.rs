@@ -6,8 +6,15 @@
 //! `getPistonPushReaction`, `getDestroySpeed`, `getMapColor`, `emissiveRendering`,
 //! `isRandomlyTicking`, `getPostProcessPos`, the predicates that answer from the state alone…).
 //!
-//! Not ported yet: every behaviour method (`useWithoutItem`, `tick`, `getShape`, `updateShape`…),
-//! which come with the blocks' classes; `Properties.sound` and `SoundType`, `isValidSpawn` (it
+//! The shapes: `getShape` and `getCollisionShape` with `BlockBehaviour`'s defaults (the block,
+//! empty without collision) and `AirBlock`'s, `isCollisionShapeFullBlock`, `hasLargeCollisionShape`
+//! and `isSuffocating` at a position, worked out when asked rather than cached by `initCache`, which
+//! gives the same shapes for a block without a dynamic shape. A block whose class (or a parent)
+//! overrides `getShape` or `getCollisionShape` in Java panics when asked, until its override is
+//! ported (`SHAPE_OVERRIDES`).
+//!
+//! Not ported yet: every other behaviour method (`useWithoutItem`, `tick`, `updateShape`…), which
+//! come with the blocks' classes; `Properties.sound` and `SoundType`, `isValidSpawn` (it
 //! takes an `EntityType`) and `requiredFeatures` (`FeatureFlag`), which Blocks' registrations
 //! leave out until they come; `initCache`'s shape-dependent part (`isSolid`, `isSolidRender`,
 //! `getOcclusionShape`, `propagatesSkylightDown`, `getLightDampening`,
@@ -24,6 +31,7 @@ use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use std::sync::Arc;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Axis;
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::util::Util;
@@ -32,8 +40,12 @@ use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::blocks::REGISTRY;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::note_block_instrument::NoteBlockInstrument;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::map_color::MapColor;
 use crate::net::minecraft::world::level::material::push_reaction::PushReaction;
+use crate::net::minecraft::world::phys::shapes::collision_context::{self, CollisionContext};
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 /// `BlockBehaviour.StatePredicate`, as `Properties` holds one for `isRedstoneConductor` and
 /// `isSuffocating`.
@@ -690,6 +702,259 @@ impl BlockState {
                 panic!("isViewBlocking needs the block's shapes, which aren't ported")
             }
         }
+    }
+}
+
+/// The block classes that override `getShape` or `getCollisionShape` in Java, whose overrides
+/// aren't ported yet. `AirBlock`'s is.
+const SHAPE_OVERRIDES: &[&str] = &[
+    "net.minecraft.world.level.block.AbstractCauldronBlock",
+    "net.minecraft.world.level.block.AmethystClusterBlock",
+    "net.minecraft.world.level.block.AnvilBlock",
+    "net.minecraft.world.level.block.AttachedStemBlock",
+    "net.minecraft.world.level.block.AzaleaBlock",
+    "net.minecraft.world.level.block.BambooSaplingBlock",
+    "net.minecraft.world.level.block.BambooStalkBlock",
+    "net.minecraft.world.level.block.BannerBlock",
+    "net.minecraft.world.level.block.BaseCoralFanBlock",
+    "net.minecraft.world.level.block.BaseCoralPlantBlock",
+    "net.minecraft.world.level.block.BaseCoralPlantTypeBlock",
+    "net.minecraft.world.level.block.BaseCoralWallFanBlock",
+    "net.minecraft.world.level.block.BaseFireBlock",
+    "net.minecraft.world.level.block.BasePressurePlateBlock",
+    "net.minecraft.world.level.block.BaseRailBlock",
+    "net.minecraft.world.level.block.BaseTorchBlock",
+    "net.minecraft.world.level.block.BedBlock",
+    "net.minecraft.world.level.block.BeetrootBlock",
+    "net.minecraft.world.level.block.BellBlock",
+    "net.minecraft.world.level.block.BigDripleafBlock",
+    "net.minecraft.world.level.block.BigDripleafStemBlock",
+    "net.minecraft.world.level.block.BrewingStandBlock",
+    "net.minecraft.world.level.block.BubbleColumnBlock",
+    "net.minecraft.world.level.block.BushBlock",
+    "net.minecraft.world.level.block.ButtonBlock",
+    "net.minecraft.world.level.block.CactusBlock",
+    "net.minecraft.world.level.block.CactusFlowerBlock",
+    "net.minecraft.world.level.block.CakeBlock",
+    "net.minecraft.world.level.block.CampfireBlock",
+    "net.minecraft.world.level.block.CandleBlock",
+    "net.minecraft.world.level.block.CandleCakeBlock",
+    "net.minecraft.world.level.block.CarpetBlock",
+    "net.minecraft.world.level.block.CarrotBlock",
+    "net.minecraft.world.level.block.CeilingHangingSignBlock",
+    "net.minecraft.world.level.block.ChainBlock",
+    "net.minecraft.world.level.block.ChestBlock",
+    "net.minecraft.world.level.block.CocoaBlock",
+    "net.minecraft.world.level.block.ComposterBlock",
+    "net.minecraft.world.level.block.ConduitBlock",
+    "net.minecraft.world.level.block.CopperGolemStatueBlock",
+    "net.minecraft.world.level.block.CoralPlantBlock",
+    "net.minecraft.world.level.block.CropBlock",
+    "net.minecraft.world.level.block.CrossCollisionBlock",
+    "net.minecraft.world.level.block.DaylightDetectorBlock",
+    "net.minecraft.world.level.block.DecoratedPotBlock",
+    "net.minecraft.world.level.block.DiodeBlock",
+    "net.minecraft.world.level.block.DoorBlock",
+    "net.minecraft.world.level.block.DragonEggBlock",
+    "net.minecraft.world.level.block.DriedGhastBlock",
+    "net.minecraft.world.level.block.DryVegetationBlock",
+    "net.minecraft.world.level.block.EnchantingTableBlock",
+    "net.minecraft.world.level.block.EndPortalBlock",
+    "net.minecraft.world.level.block.EndPortalFrameBlock",
+    "net.minecraft.world.level.block.EnderChestBlock",
+    "net.minecraft.world.level.block.FarmlandBlock",
+    "net.minecraft.world.level.block.FenceGateBlock",
+    "net.minecraft.world.level.block.FireBlock",
+    "net.minecraft.world.level.block.FlowerBedBlock",
+    "net.minecraft.world.level.block.FlowerBlock",
+    "net.minecraft.world.level.block.FlowerPotBlock",
+    "net.minecraft.world.level.block.FrogspawnBlock",
+    "net.minecraft.world.level.block.GrindstoneBlock",
+    "net.minecraft.world.level.block.GrowingPlantBlock",
+    "net.minecraft.world.level.block.HangingMossBlock",
+    "net.minecraft.world.level.block.HangingRootsBlock",
+    "net.minecraft.world.level.block.HeavyCoreBlock",
+    "net.minecraft.world.level.block.HoneyBlock",
+    "net.minecraft.world.level.block.HopperBlock",
+    "net.minecraft.world.level.block.LadderBlock",
+    "net.minecraft.world.level.block.LanternBlock",
+    "net.minecraft.world.level.block.LeafLitterBlock",
+    "net.minecraft.world.level.block.LecternBlock",
+    "net.minecraft.world.level.block.LeverBlock",
+    "net.minecraft.world.level.block.LightBlock",
+    "net.minecraft.world.level.block.LilyPadBlock",
+    "net.minecraft.world.level.block.LiquidBlock",
+    "net.minecraft.world.level.block.MangrovePropaguleBlock",
+    "net.minecraft.world.level.block.MossyCarpetBlock",
+    "net.minecraft.world.level.block.MudBlock",
+    "net.minecraft.world.level.block.MultifaceBlock",
+    "net.minecraft.world.level.block.MushroomBlock",
+    "net.minecraft.world.level.block.NetherFungusBlock",
+    "net.minecraft.world.level.block.NetherPortalBlock",
+    "net.minecraft.world.level.block.NetherRootsBlock",
+    "net.minecraft.world.level.block.NetherSproutsBlock",
+    "net.minecraft.world.level.block.NetherWartBlock",
+    "net.minecraft.world.level.block.PathBlock",
+    "net.minecraft.world.level.block.PiglinWallSkullBlock",
+    "net.minecraft.world.level.block.PipeBlock",
+    "net.minecraft.world.level.block.PitcherCropBlock",
+    "net.minecraft.world.level.block.PotatoBlock",
+    "net.minecraft.world.level.block.PowderSnowBlock",
+    "net.minecraft.world.level.block.RedstoneWallTorchBlock",
+    "net.minecraft.world.level.block.RedstoneWireBlock",
+    "net.minecraft.world.level.block.RodBlock",
+    "net.minecraft.world.level.block.SaplingBlock",
+    "net.minecraft.world.level.block.ScaffoldingBlock",
+    "net.minecraft.world.level.block.SculkSensorBlock",
+    "net.minecraft.world.level.block.SculkShriekerBlock",
+    "net.minecraft.world.level.block.SeaPickleBlock",
+    "net.minecraft.world.level.block.SeagrassBlock",
+    "net.minecraft.world.level.block.ShelfBlock",
+    "net.minecraft.world.level.block.ShelfMushroomBlock",
+    "net.minecraft.world.level.block.ShortDryGrassBlock",
+    "net.minecraft.world.level.block.ShulkerBoxBlock",
+    "net.minecraft.world.level.block.SignBlock",
+    "net.minecraft.world.level.block.SkullBlock",
+    "net.minecraft.world.level.block.SlabBlock",
+    "net.minecraft.world.level.block.SmallDripleafBlock",
+    "net.minecraft.world.level.block.SnifferEggBlock",
+    "net.minecraft.world.level.block.SnowLayerBlock",
+    "net.minecraft.world.level.block.SoulSandBlock",
+    "net.minecraft.world.level.block.SpeleothemBlock",
+    "net.minecraft.world.level.block.SporeBlossomBlock",
+    "net.minecraft.world.level.block.StairBlock",
+    "net.minecraft.world.level.block.StemBlock",
+    "net.minecraft.world.level.block.StonecutterBlock",
+    "net.minecraft.world.level.block.StrawBedBlock",
+    "net.minecraft.world.level.block.StructureVoidBlock",
+    "net.minecraft.world.level.block.SugarCaneBlock",
+    "net.minecraft.world.level.block.SweetBerryBushBlock",
+    "net.minecraft.world.level.block.TallDryGrassBlock",
+    "net.minecraft.world.level.block.TallGrassBlock",
+    "net.minecraft.world.level.block.TallSeagrassBlock",
+    "net.minecraft.world.level.block.TorchflowerCropBlock",
+    "net.minecraft.world.level.block.TrapDoorBlock",
+    "net.minecraft.world.level.block.TripWireBlock",
+    "net.minecraft.world.level.block.TripWireHookBlock",
+    "net.minecraft.world.level.block.TurtleEggBlock",
+    "net.minecraft.world.level.block.VineBlock",
+    "net.minecraft.world.level.block.WallBannerBlock",
+    "net.minecraft.world.level.block.WallBlock",
+    "net.minecraft.world.level.block.WallHangingSignBlock",
+    "net.minecraft.world.level.block.WallSignBlock",
+    "net.minecraft.world.level.block.WallSkullBlock",
+    "net.minecraft.world.level.block.WallTorchBlock",
+    "net.minecraft.world.level.block.piston.MovingPistonBlock",
+    "net.minecraft.world.level.block.piston.PistonBaseBlock",
+    "net.minecraft.world.level.block.piston.PistonHeadBlock",
+];
+
+/// The shapes, which go by the block's class.
+impl BlockState {
+    /// Panics when the block's class, or a parent, overrides its shapes in a way not ported yet.
+    fn check_shapes_ported(&self) {
+        let mut class = Some(Block::data(self.get_block()).class());
+        while let Some(current) = class {
+            assert!(
+                !SHAPE_OVERRIDES.contains(&current.name),
+                "the shapes of {} ({}) aren't ported",
+                self.get_block(),
+                current.name
+            );
+            class = current.parent;
+        }
+    }
+
+    fn is_air_block(&self) -> bool {
+        let mut class = Some(Block::data(self.get_block()).class());
+        while let Some(current) = class {
+            if current.name == "net.minecraft.world.level.block.AirBlock" {
+                return true;
+            }
+            class = current.parent;
+        }
+        false
+    }
+
+    /// `getShape(BlockGetter, BlockPos, CollisionContext)`: `BlockBehaviour`'s whole block, or
+    /// `AirBlock`'s nothing.
+    pub fn get_shape_in(
+        &self,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        if self.is_air_block() {
+            return Shapes::empty();
+        }
+        self.check_shapes_ported();
+        Shapes::block()
+    }
+
+    /// `getCollisionShape(BlockGetter, BlockPos, CollisionContext)`: the shape, or nothing for a
+    /// block without collision.
+    pub fn get_collision_shape_in(
+        &self,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        self.check_shapes_ported();
+        // `state.getShape(level, pos)`, which asks with an empty context.
+        if Block::data(self.get_block()).has_collision() {
+            self.get_shape_in(level, pos, &collision_context::empty())
+        } else {
+            Shapes::empty()
+        }
+    }
+
+    /// `getCollisionShape(BlockGetter, BlockPos)`, with an empty context.
+    pub fn get_collision_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
+        self.get_collision_shape_in(level, pos, &collision_context::empty())
+    }
+
+    pub fn is_collision_shape_full_block(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        Block::is_shape_full_block(&self.get_collision_shape(level, pos))
+    }
+
+    /// Whether the collision shape reaches past the block, which is always taken to be so for a
+    /// block with a dynamic shape (no cache).
+    pub fn has_large_collision_shape(&self) -> bool {
+        if Block::data(self.get_block()).has_dynamic_shape() {
+            return true;
+        }
+        let shape = self.get_collision_shape(&EmptyBlockGetter, &BlockPos::ZERO);
+        Axis::VALUES
+            .into_iter()
+            .any(|axis| shape.min(axis) < 0.0 || shape.max(axis) > 1.0)
+    }
+
+    /// `isSuffocating(BlockGetter, BlockPos)`. Properties' default needs the
+    /// `causes_suffocation` tag, which isn't ported, so it panics for a block whose collision
+    /// shape is the full block (one that isn't never suffocates).
+    pub fn is_suffocating_at(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        match self.base().is_suffocating {
+            StatePredicate::State(_, test) => test(*self),
+            StatePredicate::Default => {
+                self.is_collision_shape_full_block(level, pos)
+                    && panic!(
+                        "whether {} suffocates needs the causes_suffocation tag, which isn't ported",
+                        self.get_block()
+                    )
+            }
+            StatePredicate::NotClosedShulker => {
+                panic!("NOT_CLOSED_SHULKER asks the shulker box's block entity, which isn't ported")
+            }
+        }
+    }
+}
+
+/// `EmptyBlockGetter.INSTANCE`: air everywhere, which shapes are cached with.
+struct EmptyBlockGetter;
+
+impl BlockGetter for EmptyBlockGetter {
+    fn get_block_state(&self, _pos: &BlockPos) -> BlockState {
+        crate::net::minecraft::world::level::block::blocks::Blocks::AIR.default_block_state()
     }
 }
 
