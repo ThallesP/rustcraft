@@ -82,7 +82,7 @@ Every step of the loop updates this table.
 | World | Environment attributes (sky and fog colours, the sun's angle, the light's colours…) from the dimension, the biomes, the timelines and the weather | Partial: the 41 attributes the client reads of the sky, fog, light, music and gameplay, their layers, modifiers, timelines and the camera's probe, from the vanilla pack's data; the rest of the attribute types not yet | goldens (1,044 cases over the three dimensions, 29 times and 4 weathers, 48 probe programs) | same values |
 | Rendering | HUD (hotbar, hearts, hunger, crosshair), first-person hand | Not started | screenshots | |
 | Screens | Title, pause, inventory, chat, F3 | Not started | screenshots | |
-| Entities | Players, mobs, items, block entities | Not started | | |
+| Entities | Players, mobs, items, block entities | Partial: the entity types (`EntityType`, all 161 of `EntityTypes`, `BuiltInRegistries.ENTITY_TYPE`) and the level's lookup and tick list; no entities in the level yet but the local player | goldens (every type's values, `EntityType.STREAM_CODEC`) | same types, dimensions, tracking ranges and update intervals |
 | Sound | | Not started | | |
 | Performance | FPS, frame time, chunk-meshing throughput | Not measured | benchmark scenario | |
 

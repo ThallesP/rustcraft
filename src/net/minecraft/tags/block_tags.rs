@@ -1,6 +1,7 @@
 //! net/minecraft/tags/BlockTags.java
 //!
-//! Only the tags an entity's movement asks about. In Java a block's tags are bound to its registry
+//! Only the tags an entity's movement asks about, and the ones entity types are immune to
+//! (`EntityType.Builder.immuneTo`). In Java a block's tags are bound to its registry
 //! holder from what the server sends (`ClientboundUpdateTagsPacket`, in configuration), which
 //! isn't ported yet. A vanilla server sends its data pack's, so until the packet comes,
 //! `BlockState::is_tag` answers from vanilla's data pack (`data/minecraft/tags/block/` in
@@ -30,6 +31,13 @@ impl BlockTags {
     pub const CAUSES_SUFFOCATION: TagKey = TagKey("causes_suffocation");
     pub const BLOCKS_FLUID_FLOW: TagKey = TagKey("blocks_fluid_flow");
     pub const FALL_DAMAGE_RESETTING: TagKey = TagKey("fall_damage_resetting");
+    pub const FOX_IMMUNE_TO: TagKey = TagKey("fox_immune_to");
+    pub const POLAR_BEAR_IMMUNE_TO: TagKey = TagKey("polar_bear_immune_to");
+    pub const SNOW_GOLEM_IMMUNE_TO: TagKey = TagKey("snow_golem_immune_to");
+    pub const STRAY_IMMUNE_TO: TagKey = TagKey("stray_immune_to");
+    pub const WITHER_IMMUNE_TO: TagKey = TagKey("wither_immune_to");
+    pub const WITHER_SKELETON_IMMUNE_TO: TagKey = TagKey("wither_skeleton_immune_to");
+    pub const DEFAULT_IMMUNE_TO: TagKey = TagKey("default_immune_to");
 }
 
 /// Each tag's blocks by registered name, resolved as they're first asked for.

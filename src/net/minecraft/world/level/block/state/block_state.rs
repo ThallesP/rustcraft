@@ -172,7 +172,7 @@ mod tests {
 
     /// How many states' light is known: those whose classes' shapes are ported, or whose light
     /// needs none.
-    const LIGHT_PORTED_STATES: usize = 15835;
+    const LIGHT_PORTED_STATES: usize = 26224;
 
     #[test]
     fn matches_vanilla() {

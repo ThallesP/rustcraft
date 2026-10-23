@@ -32,6 +32,7 @@
 
 use crate::java::lang::float::Float;
 use crate::java::lang::math::Math;
+use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::tags::block_tags::BlockTags;
@@ -39,6 +40,7 @@ use crate::net::minecraft::tags::fluid_tags::{FluidTagKey, FluidTags};
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
 use crate::net::minecraft::world::entity::entity_fluid_interaction::EntityFluidInteraction;
+use crate::net::minecraft::world::entity::entity_type::EntityType;
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
@@ -58,7 +60,9 @@ use crate::net::minecraft::world::phys::vec3::Vec3;
 /// What every entity has.
 #[derive(Clone, Debug)]
 pub struct Entity {
+    r#type: EntityType,
     id: i32,
+    uuid: UUID,
     position: Vec3,
     block_position: BlockPos,
     delta_movement: Vec3,
@@ -105,11 +109,13 @@ impl Entity {
     /// `FLUIDS_WITH_CURRENT`.
     const FLUIDS_WITH_CURRENT: [FluidTagKey; 2] = [FluidTags::WATER, FluidTags::LAVA];
 
-    /// An entity of a type of these dimensions at the level's origin, like Java's constructor
-    /// before anything moves it.
-    pub fn new(dimensions: EntityDimensions) -> Entity {
+    /// An entity of the type, of these dimensions (the type's, or a living entity's for its
+    /// pose), at the level's origin, like Java's constructor before anything moves it.
+    pub fn new(r#type: EntityType, dimensions: EntityDimensions) -> Entity {
         Entity {
+            r#type,
             id: 0,
+            uuid: UUID::new(0, 0),
             position: Vec3::ZERO,
             block_position: BlockPos::ZERO,
             delta_movement: Vec3::ZERO,
@@ -151,6 +157,42 @@ impl Entity {
 
     pub fn set_id(&mut self, id: i32) {
         self.id = id;
+    }
+
+    /// `getType()`.
+    pub fn get_type(&self) -> EntityType {
+        self.r#type
+    }
+
+    pub fn get_uuid(&self) -> UUID {
+        self.uuid
+    }
+
+    pub fn set_uuid(&mut self, uuid: UUID) {
+        self.uuid = uuid;
+    }
+
+    /// `snapTo(double, double, double, float, float)`: there, looking that way, as if it had been
+    /// there the tick before too.
+    pub fn snap_to(&mut self, x: f64, y: f64, z: f64, y_rot: f32, x_rot: f32) {
+        self.set_pos_raw(x, y, z);
+        self.set_y_rot(y_rot);
+        self.set_x_rot(x_rot);
+        self.set_old_pos_and_rot();
+        self.reapply_position();
+    }
+
+    /// `absSnapTo(double, double, double, float, float)`: `snapTo` within the world's thirty
+    /// million blocks, the rotations wrapped and clamped first.
+    pub fn abs_snap_to(&mut self, x: f64, y: f64, z: f64, y_rot: f32, x_rot: f32) {
+        let cx = Mth::clamp_f64(x, -3.0E7, 3.0E7);
+        let cz = Mth::clamp_f64(z, -3.0E7, 3.0E7);
+        self.old_position = Vec3::new(cx, y, cz);
+        self.set_pos(cx, y, cz);
+        self.set_y_rot(y_rot % 360.0);
+        self.set_x_rot(Mth::clamp_f32(x_rot, -90.0, 90.0) % 360.0);
+        self.y_rot_o = self.get_y_rot();
+        self.x_rot_o = self.get_x_rot();
     }
 
     pub fn position(&self) -> Vec3 {

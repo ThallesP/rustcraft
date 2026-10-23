@@ -13,6 +13,7 @@ pub mod color_map_color_util;
 pub mod color_resolver;
 pub mod dimension;
 pub mod dry_foliage_color;
+pub mod entity;
 pub mod foliage_color;
 pub mod game_type;
 pub mod grass_color;

@@ -30,6 +30,7 @@ use crate::net::minecraft::world::entity::ai::attributes::attribute_modifier::{
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
 use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
 use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
+use crate::net::minecraft::world::entity::entity_type::EntityType;
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
@@ -96,11 +97,15 @@ impl LivingEntity {
         EntityDimensions::fixed_size(0.2, 0.2).with_eye_height(0.2)
     }
 
-    /// A living entity of a type with these dimensions and attributes, at full health.
-    pub fn new(dimensions: EntityDimensions, attributes: AttributeMap) -> LivingEntity {
+    /// A living entity of the type, with these dimensions and attributes, at full health.
+    pub fn new(
+        r#type: EntityType,
+        dimensions: EntityDimensions,
+        attributes: AttributeMap,
+    ) -> LivingEntity {
         let health = attributes.get_value(Attributes::MAX_HEALTH) as f32;
         LivingEntity {
-            entity: Entity::new(dimensions),
+            entity: Entity::new(r#type, dimensions),
             attributes,
             speed: 0.0,
             jumping: false,

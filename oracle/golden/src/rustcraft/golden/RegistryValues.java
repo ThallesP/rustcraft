@@ -44,6 +44,7 @@ import net.minecraft.tags.TagLoader;
 import net.minecraft.world.clock.ClockNetworkState;
 import net.minecraft.world.clock.WorldClock;
 import net.minecraft.world.damagesource.DamageType;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.Attribute;
@@ -238,12 +239,14 @@ final class RegistryValues {
     }
 
     static boolean canEncode(final Class<?> type) {
-        return Holder.class.isAssignableFrom(type) || type == SynchedEntityData.DataValue.class;
+        return Holder.class.isAssignableFrom(type) || type == SynchedEntityData.DataValue.class || type == EntityType.class;
     }
 
+    /** A holder is its key, and an entity type, an element of a static registry, its registered name. */
     static JsonElement encode(final Object value) {
         return switch (value) {
             case Holder<?> holder -> CoreValues.RESOURCE_KEY.encode(holder.unwrapKey().orElseThrow());
+            case EntityType<?> type -> new JsonPrimitive(EntityType.getKey(type).toString());
             case SynchedEntityData.DataValue<?> item -> DATA_VALUES.encode(item);
             default -> throw new IllegalArgumentException("no encoder for " + value.getClass().getName());
         };

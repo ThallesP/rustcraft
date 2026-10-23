@@ -22,6 +22,7 @@ use crate::net::minecraft::world::entity::ai::attributes::attribute_map::Attribu
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
 use crate::net::minecraft::world::entity::avatar::Avatar;
 use crate::net::minecraft::world::entity::entity;
+use crate::net::minecraft::world::entity::entity_types::EntityTypes;
 use crate::net::minecraft::world::entity::living_entity::{self, LivingEntity, LivingEntityClass};
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::player::abilities::Abilities;
@@ -88,6 +89,7 @@ impl Player {
     pub fn new() -> Player {
         Player {
             living_entity: LivingEntity::new(
+                EntityTypes::PLAYER,
                 Avatar::standing_dimensions(),
                 AttributeMap::new(&Player::create_attributes()),
             ),
