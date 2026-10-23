@@ -13,8 +13,11 @@
 use std::collections::BTreeMap;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::holder::Holder;
+use crate::net::minecraft::core::quart_pos::QuartPos;
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_packet_data::ClientboundLevelChunkPacketData;
+use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
@@ -142,6 +145,19 @@ impl LevelChunk {
             self.set_heightmap(r#type, data);
         }
         self.initialize_light_sources();
+    }
+
+    /// `ChunkAccess.getNoiseBiome`: the biome at the quart, its y kept in the chunk's height.
+    pub fn get_noise_biome(&self, quart_x: i32, quart_y: i32, quart_z: i32) -> Holder {
+        let quart_min_y = QuartPos::from_block(self.get_min_y());
+        let quart_max_y = quart_min_y + QuartPos::from_block(self.get_height()) - 1;
+        let clamped_quart_y = Mth::clamp_i32(quart_y, quart_min_y, quart_max_y);
+        let section_index = self.get_section_index(QuartPos::to_block(clamped_quart_y));
+        self.sections[section_index as usize].get_noise_biome(
+            quart_x & 3,
+            clamped_quart_y & 3,
+            quart_z & 3,
+        )
     }
 
     /// `replaceBiomes`: every section's biomes read from the buffer in turn.

@@ -1,4 +1,5 @@
 pub mod bind_group_layouts;
+pub mod biome_colors;
 pub mod block;
 pub mod chunk;
 pub mod dynamic_gpu_data;

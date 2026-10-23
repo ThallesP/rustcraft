@@ -210,6 +210,16 @@ The game compares blocks and states by reference and numbers them in the order `
 - **A state's light comes from its class like its fluid**: `initCache` keeps `useShapeForLightOcclusion`, the occlusion shape with its faces and `isSolidRender`, `propagatesSkylightDown` and `getLightDampening` in the state's table entry, from `BlockClass` overrides (`use_shape_for_light_occlusion`, `propagates_skylight_down`, `get_light_dampening`) and the shape a class keeps. Each part a class's unported shapes would decide is unknown, and asking for it panics, like the shapes.
 - **Light updates are closures of the level.** Java queues `Runnable`s that close over the packet listener; all they touch is the level, so `ClientLevel::queue_light_update` takes a `Box<dyn FnOnce(&mut ClientLevel)>`, and the handlers' light code (`applyLightData`, `enableChunkLight`, `queueLightRemoval`) is the listener's associated functions of the level.
 
+## Biomes and tints
+
+- **A registry holds its elements' values where they're ported**: the biome registry keeps each `Biome` in id order (`Registry::with_biomes`), and `value_biome(holder)` is `Holder.value()`. A level keeps a copy of the biome registry, the synchronized one the login handed it.
+- **Elements the codecs would read are read by temporary readers** until DataFixerUpper's `Codec`s land (the net track's): `Biome::from_network_json` (the vanilla pack's JSON through Gson's tree, for a known pack's element) and `from_network_nbt` (the server's NBT), each reading `NETWORK_CODEC`'s fields with their defaults and panicking where the codec gives an error. `RegistryDataCollector` picks one by whether the entry has data, as `RegistryDataLoader` does; the known pack is the vanilla pack's `data/`.
+- **A `ColorResolver` is a named function in a static**, `BiomeColors`' four, which a level tells apart by reference (`ColorResolver::same`, Java's identity map of tint caches), and `getBlockTint` takes a `&'static ColorResolver`.
+- **The tint caches are the game thread's**: `BlockTintCache` keeps Java's chunks (the 256 latest, oldest out first), layers and latest chunk in cells, without the locks and thread-locals the section compile threads need; its source, Java's function of the level, is a parameter of `get_color`.
+- **The colormaps are statics the reload sets**, like Java's (`GrassColor.init`), behind a lock; `GrassColorReloadListener` and the others read them through `LegacyStuffWrapper.getPixels` (`NativeImage.read` and `makePixelArray`).
+- **A level's back-references are parameters of what reads them**: `BiomeManager` takes the level (its `BiomeResolver`) in `get_biome`, and the blend radius, which Java's level reads from the game's options, is the level's (`set_biome_blend_radius`, set on login).
+- `Biome.BIOME_INFO_NOISE` is a `SimplexNoise` of a `WorldgenRandom` over a `LegacyRandomSource`, whose bits `WorldgenRandom` draws from the legacy source, so the port makes the noise from the legacy source itself.
+
 ## Native libraries and the renderer
 
 The game renders through native libraries that LWJGL binds: shaderc compiles its GLSL to SPIR-V, SPIRV-Cross translates that to the GLSL the OpenGL backend hands the driver, and SDL3 opens the window and the GL context. The port calls the very same builds, so the shader text the driver gets is vanilla's, byte for byte.

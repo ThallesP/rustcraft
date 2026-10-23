@@ -1,3 +1,4 @@
+pub mod biome;
 pub mod block;
 pub mod block_and_light_getter;
 pub mod block_collisions;
@@ -7,8 +8,13 @@ pub mod cardinal_lighting;
 pub mod chunk;
 pub mod chunk_pos;
 pub mod collision_getter;
+pub mod color_map_color_util;
+pub mod color_resolver;
 pub mod dimension;
+pub mod dry_foliage_color;
+pub mod foliage_color;
 pub mod game_type;
+pub mod grass_color;
 #[allow(clippy::module_inception)]
 pub mod level;
 pub mod level_height_accessor;

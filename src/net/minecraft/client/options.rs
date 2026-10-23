@@ -37,6 +37,7 @@ pub struct Options {
     pub key_sprint: KeyMapping,
     auto_jump: bool,
     sprint_window: i32,
+    biome_blend_radius: i32,
 }
 
 impl Default for Options {
@@ -48,6 +49,8 @@ impl Default for Options {
 impl Options {
     /// Every `PlayerModelPart`'s mask.
     const ALL_MODEL_PARTS: i32 = 0x7f;
+    /// `biomeBlendRadius`'s default, which the oracle's `options.txt` keeps.
+    pub const DEFAULT_BIOME_BLEND_RADIUS: i32 = 2;
 
     pub fn new() -> Options {
         Options {
@@ -70,6 +73,7 @@ impl Options {
             key_sprint: KeyMapping::new("key.sprint"),
             auto_jump: false,
             sprint_window: 7,
+            biome_blend_radius: Options::DEFAULT_BIOME_BLEND_RADIUS,
         }
     }
 
@@ -79,6 +83,15 @@ impl Options {
     }
 
     /// `sprintWindow().get()`: the ticks a second forward press has to sprint.
+    /// `biomeBlendRadius()`: how many blocks around a block its tints blend over, 0 to 7.
+    pub fn biome_blend_radius(&self) -> i32 {
+        self.biome_blend_radius
+    }
+
+    pub fn set_biome_blend_radius(&mut self, biome_blend_radius: i32) {
+        self.biome_blend_radius = biome_blend_radius;
+    }
+
     pub fn sprint_window(&self) -> i32 {
         self.sprint_window
     }

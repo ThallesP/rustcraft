@@ -265,9 +265,14 @@ impl ClientPacketListener {
     ) {
         let x = packet.x();
         let z = packet.z();
-        level
+        // `ClientChunkCache.replaceWithPacketData` tells the level of a chunk it took.
+        if level
             .get_chunk_source_mut()
-            .replace_with_packet_data(x, z, packet.chunk_data());
+            .replace_with_packet_data(x, z, packet.chunk_data())
+            .is_some()
+        {
+            level.on_chunk_loaded(ChunkPos::new(x, z));
+        }
         let light_data = packet.light_data().clone();
         level.queue_light_update(Box::new(move |level| {
             ClientPacketListener::apply_light_data(level, x, z, &light_data, false);
@@ -275,6 +280,26 @@ impl ClientPacketListener {
                 ClientPacketListener::enable_chunk_light(level, x, z);
             }
         }));
+    }
+
+    /// `handleChunksBiomes`' body on the game thread, on the level: each chunk's biomes, then its
+    /// tints worked out again. Java then marks the sections around each dirty for the renderer,
+    /// which isn't ported.
+    pub fn handle_chunks_biomes_in(
+        level: &mut ClientLevel,
+        packet: &ClientboundChunksBiomesPacket,
+    ) {
+        for data in packet.chunk_biome_data() {
+            level.get_chunk_source_mut().replace_biomes(
+                data.pos().x(),
+                data.pos().z(),
+                &mut data.get_read_buffer(),
+            );
+        }
+
+        for data in packet.chunk_biome_data() {
+            level.on_chunk_loaded(ChunkPos::new(data.pos().x(), data.pos().z()));
+        }
     }
 
     /// `handleLightUpdatePacket`'s body on the game thread, on the level.
@@ -528,7 +553,7 @@ impl ClientGamePacketListener for ClientPacketListener {
         self.levels = packet.levels().keys().to_vec();
         self.server_chunk_radius = packet.chunk_radius();
         self.server_simulation_distance = packet.simulation_distance();
-        let level = ClientLevel::new(
+        let mut level = ClientLevel::new(
             &self.registry_access,
             packet.hardcore(),
             spawn_info.is_flat(),
@@ -540,6 +565,8 @@ impl ClientGamePacketListener for ClientPacketListener {
             spawn_info.seed(),
             spawn_info.sea_level(),
         );
+        // What Java's level reads from the game's options when it blends tints.
+        level.set_biome_blend_radius(minecraft.options.borrow().biome_blend_radius());
         minecraft.set_level(level);
         if minecraft.player.borrow().is_none() {
             let mut player = LocalPlayer::new(Some(this));
@@ -774,8 +801,7 @@ impl ClientGamePacketListener for ClientPacketListener {
         }
     }
 
-    /// Each chunk's biomes, read into the chunk the level has. Java then tells the tint caches
-    /// and the renderer, which aren't ported.
+    /// Each chunk's biomes, read into the chunk the level has.
     fn handle_chunks_biomes(&mut self, packet: &ClientboundChunksBiomesPacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
         if PacketUtils::ensure_running_on_same_thread(
@@ -788,13 +814,7 @@ impl ClientGamePacketListener for ClientPacketListener {
             return;
         }
         if let Some(level) = minecraft.level.borrow_mut().as_mut() {
-            for data in packet.chunk_biome_data() {
-                level.get_chunk_source_mut().replace_biomes(
-                    data.pos().x(),
-                    data.pos().z(),
-                    &mut data.get_read_buffer(),
-                );
-            }
+            ClientPacketListener::handle_chunks_biomes_in(level, packet);
         }
     }
 

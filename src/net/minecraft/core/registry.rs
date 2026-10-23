@@ -5,22 +5,61 @@
 //! their network id needs, `asHolderIdMap()`'s `byIdOrThrow` and `getIdOrThrow`: the registry's
 //! key, and its elements' keys in id order, which is the order the server sent them in
 //! (`RegistryDataLoader.loadContentsFromNetwork` registers them as they come). The elements'
-//! values come with the registries' classes (`DimensionType`, `Biome`, …).
+//! values come with the registries' classes: so far the biomes' (`Biome`), which the biome
+//! registry holds in id order (`with_biomes`), and which `value_biome` hands out for a holder.
+
+use std::sync::Arc;
 
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::id_map::IdMap;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::world::level::biome::biome::Biome;
 
 /// A registry's elements, by network id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Registry {
     key: ResourceKey,
     by_id: Vec<ResourceKey>,
+    biomes: Option<Arc<Vec<Biome>>>,
 }
 
 impl Registry {
     pub fn new(key: ResourceKey, by_id: Vec<ResourceKey>) -> Registry {
-        Registry { key, by_id }
+        Registry {
+            key,
+            by_id,
+            biomes: None,
+        }
+    }
+
+    /// The biome registry, with its elements' values in id order.
+    pub fn with_biomes(key: ResourceKey, by_id: Vec<ResourceKey>, biomes: Vec<Biome>) -> Registry {
+        assert_eq!(by_id.len(), biomes.len(), "a value for each element");
+        Registry {
+            key,
+            by_id,
+            biomes: Some(Arc::new(biomes)),
+        }
+    }
+
+    /// `Holder.value()` of one of its biomes. Panics for a registry without them, or a holder
+    /// it doesn't have.
+    pub fn value_biome(&self, holder: &Holder) -> &Biome {
+        let biomes = self
+            .biomes
+            .as_ref()
+            .unwrap_or_else(|| panic!("{} holds no biomes", self.key));
+        &biomes[self.holder_id_or_throw(holder) as usize]
+    }
+
+    /// `getOrThrow(key)`'s holder: panics for a key it doesn't have, where Java throws
+    /// `IllegalStateException`.
+    pub fn get_or_throw(&self, key: &ResourceKey) -> Holder {
+        if self.by_id.contains(key) {
+            Holder::Reference(key.clone())
+        } else {
+            panic!("Missing element {key}")
+        }
     }
 
     pub fn key(&self) -> &ResourceKey {

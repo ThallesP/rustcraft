@@ -363,6 +363,7 @@ pub(crate) mod tests {
     use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGetter;
     use crate::net::minecraft::world::level::block_getter::BlockGetter;
     use crate::net::minecraft::world::level::cardinal_lighting::CardinalLighting;
+    use crate::net::minecraft::world::level::color_resolver::ColorResolver;
     use crate::net::minecraft::world::level::light_layer::LightLayer;
     use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
     use crate::net::minecraft::world::level::material::fluid_state::FluidState;
@@ -465,6 +466,12 @@ pub(crate) mod tests {
     impl BlockAndTintGetter for MeshLevel {
         fn cardinal_lighting(&self) -> CardinalLighting {
             CardinalLighting::DEFAULT
+        }
+
+        /// What `BlockAndTintGetter.EMPTY` answers: the suite meshes with an empty `BlockColors`,
+        /// so nothing asks.
+        fn get_block_tint(&self, _pos: &BlockPos, _color: &'static ColorResolver) -> i32 {
+            -1
         }
     }
 

@@ -6,8 +6,14 @@
 //! what an entity's movement asks of it (`CollisionGetter` and the entity's `Level`; its world
 //! border is the default one until the border packets set it). Not ported: entities (so no entity
 //! collides), block entities, the block state predictions (`blockStatePredictionHandler`, which
-//! the player's own block changes make), the tint caches, neighbour updates and the renderer's
-//! dirty sections (`setBlocksDirty`, `sendBlockUpdated`, `setSectionDirtyWithNeighbors`).
+//! the player's own block changes make), neighbour updates and the renderer's dirty sections
+//! (`setBlocksDirty`, `sendBlockUpdated`, `setSectionDirtyWithNeighbors`).
+//!
+//! Its biomes are its chunks' (`getNoiseBiome`, plains where it has no chunk), zoomed by its
+//! `BiomeManager`, and their values the synchronized biome registry's, which the level keeps a
+//! copy of. Its tints (`getBlockTint`) are `BiomeColors`' four resolvers' blends, each cached in a
+//! `BlockTintCache`; the blend radius is the options', which Java reads from the game
+//! (`Minecraft.getInstance().options`) and the level is given (`set_biome_blend_radius`).
 //!
 //! Java's light updates are `Runnable`s that close over the packet listener; here they're closures
 //! of the level (`queue_light_update`), since all they touch is the level.
@@ -24,14 +30,26 @@
 use std::collections::VecDeque;
 use std::fmt;
 
+use crate::net::minecraft::client::color::block::block_tint_cache::BlockTintCache;
 use crate::net::minecraft::client::multiplayer::client_chunk_cache::ClientChunkCache;
+use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::renderer::biome_colors;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::cursor3d::Cursor3D;
 use crate::net::minecraft::core::holder::Holder;
+use crate::net::minecraft::core::quart_pos::QuartPos;
+use crate::net::minecraft::core::registries::registries::Registries;
+use crate::net::minecraft::core::registry::Registry;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::level::biome::biome::Biome;
+use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
+use crate::net::minecraft::world::level::biome::biome_resolver::BiomeResolver;
+use crate::net::minecraft::world::level::biome::biomes::Biomes;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGetter;
@@ -42,6 +60,7 @@ use crate::net::minecraft::world::level::chunk::light_chunk_getter::LightChunkGe
 use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
+use crate::net::minecraft::world::level::color_resolver::ColorResolver;
 use crate::net::minecraft::world::level::dimension::dimension_type::DimensionType;
 use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::level::level_height_accessor::{Height, LevelHeightAccessor};
@@ -69,6 +88,10 @@ pub struct ClientLevel {
     game_time: i64,
     respawn_data: RespawnData,
     light_update_queue: VecDeque<LightUpdate>,
+    biomes: Registry,
+    biome_manager: BiomeManager,
+    tint_caches: [(&'static ColorResolver, BlockTintCache); 4],
+    biome_blend_radius: i32,
 }
 
 /// A light update queued for the level, Java's `Runnable`.
@@ -92,6 +115,7 @@ impl ClientLevel {
     ) -> ClientLevel {
         let height = DimensionType::height_of(&dimension_type);
         let factory = PalettedContainerFactory::create(registry_access);
+        let biomes = registry_access.lookup_or_throw(Registries::BIOME).clone();
         let has_sky_light = DimensionType::has_sky_light_of(&dimension_type);
         ClientLevel {
             dimension,
@@ -114,7 +138,93 @@ impl ClientLevel {
             game_time: 0,
             respawn_data: RespawnData::clone(RespawnData::DEFAULT),
             light_update_queue: VecDeque::new(),
+            biomes,
+            biome_manager: BiomeManager::new(biome_zoom_seed),
+            tint_caches: [
+                (&biome_colors::GRASS_COLOR_RESOLVER, BlockTintCache::new()),
+                (&biome_colors::FOLIAGE_COLOR_RESOLVER, BlockTintCache::new()),
+                (
+                    &biome_colors::DRY_FOLIAGE_COLOR_RESOLVER,
+                    BlockTintCache::new(),
+                ),
+                (&biome_colors::WATER_COLOR_RESOLVER, BlockTintCache::new()),
+            ],
+            biome_blend_radius: Options::DEFAULT_BIOME_BLEND_RADIUS,
         }
+    }
+
+    /// The options' `biomeBlendRadius`, which the tints blend over.
+    pub fn set_biome_blend_radius(&mut self, biome_blend_radius: i32) {
+        self.biome_blend_radius = biome_blend_radius;
+    }
+
+    /// `getBiome(pos)`: the biome the level's `BiomeManager` picks for the block.
+    pub fn get_biome(&self, pos: &BlockPos) -> Holder {
+        self.biome_manager.get_biome(self, pos)
+    }
+
+    /// `Holder.value()` of one of the level's biomes.
+    pub fn biome_value(&self, biome: &Holder) -> &Biome {
+        self.biomes.value_biome(biome)
+    }
+
+    /// `getUncachedNoiseBiome`: plains, where the level has no chunk.
+    pub fn get_uncached_noise_biome(&self, _quart_x: i32, _quart_y: i32, _quart_z: i32) -> Holder {
+        self.biomes.get_or_throw(Biomes::PLAINS)
+    }
+
+    /// `onChunkLoaded`: the tints around the chunk are worked out again. Java also starts its
+    /// entities ticking, which aren't ported.
+    pub fn on_chunk_loaded(&self, pos: ChunkPos) {
+        for (_, cache) in &self.tint_caches {
+            cache.invalidate_for_chunk(pos.x(), pos.z());
+        }
+    }
+
+    pub fn clear_tint_caches(&self) {
+        for (_, cache) in &self.tint_caches {
+            cache.invalidate_all();
+        }
+    }
+
+    /// The resolver's colour at the block, averaged over the blend radius's square of columns
+    /// around it at its height.
+    pub fn calculate_block_tint(&self, pos: &BlockPos, color_resolver: &ColorResolver) -> i32 {
+        let dist = self.biome_blend_radius;
+        if dist == 0 {
+            return color_resolver.get_color(
+                self.biome_value(&self.get_biome(pos)),
+                f64::from(pos.get_x()),
+                f64::from(pos.get_z()),
+            );
+        }
+
+        let count = (dist * 2 + 1) * (dist * 2 + 1);
+        let mut total_red = 0;
+        let mut total_green = 0;
+        let mut total_blue = 0;
+        let mut cursor = Cursor3D::new(
+            pos.get_x() - dist,
+            pos.get_y(),
+            pos.get_z() - dist,
+            pos.get_x() + dist,
+            pos.get_y(),
+            pos.get_z() + dist,
+        );
+
+        while cursor.advance() {
+            let next_pos = BlockPos::new(cursor.next_x(), cursor.next_y(), cursor.next_z());
+            let color = color_resolver.get_color(
+                self.biome_value(&self.get_biome(&next_pos)),
+                f64::from(next_pos.get_x()),
+                f64::from(next_pos.get_z()),
+            );
+            total_red += ARGB::red(color);
+            total_green += ARGB::green(color);
+            total_blue += ARGB::blue(color);
+        }
+
+        ARGB::color_rgb(total_red / count, total_green / count, total_blue / count)
     }
 
     const NORMAL_LIGHT_UPDATES_PER_FRAME: usize = 10;
@@ -336,6 +446,31 @@ impl BlockAndTintGetter for ClientLevel {
     fn cardinal_lighting(&self) -> CardinalLighting {
         DimensionType::cardinal_light_type_of(&self.dimension_type).get()
     }
+
+    /// The resolver's cached tint. Panics for a resolver that isn't one of `BiomeColors`', where
+    /// Java's map has no cache and throws `NullPointerException`.
+    fn get_block_tint(&self, pos: &BlockPos, resolver: &'static ColorResolver) -> i32 {
+        let (_, cache) = self
+            .tint_caches
+            .iter()
+            .find(|(cached, _)| ColorResolver::same(cached, resolver))
+            .unwrap_or_else(|| panic!("no tint cache for the resolver {}", resolver.name()));
+        cache.get_color(pos, |pos| self.calculate_block_tint(pos, resolver))
+    }
+}
+
+/// `LevelReader.getNoiseBiome`: the chunk's biome at the quart, or the uncached one where the
+/// level has no chunk.
+impl BiomeResolver for ClientLevel {
+    fn get_noise_biome(&self, quart_x: i32, quart_y: i32, quart_z: i32) -> Holder {
+        match self
+            .chunk_source
+            .get_chunk(QuartPos::to_section(quart_x), QuartPos::to_section(quart_z))
+        {
+            Some(chunk) => chunk.get_noise_biome(quart_x, quart_y, quart_z),
+            None => self.get_uncached_noise_biome(quart_x, quart_y, quart_z),
+        }
+    }
 }
 
 /// What collisions ask: the chunk's blocks, the border, and the entities' shapes, of which there
@@ -409,5 +544,115 @@ impl fmt::Debug for ClientLevel {
             .field("dimension_type", &self.dimension_type)
             .field("chunks", &self.chunk_source.get_loaded_chunks_count())
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClientLevel;
+    use crate::golden::{Decode, Golden, unhex};
+    use crate::io::netty::buffer::unpooled;
+    use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
+    use crate::net::minecraft::client::renderer::biome_colors;
+    use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
+    use crate::net::minecraft::core::block_pos::BlockPos;
+    use crate::net::minecraft::core::holder::Holder;
+    use crate::net::minecraft::core::registries::registries::Registries;
+    use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
+    use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+    use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
+    use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::tests::registry_reader;
+    use crate::net::minecraft::resources::identifier::Identifier;
+    use crate::net::minecraft::resources::resource_key::ResourceKey;
+    use crate::net::minecraft::world::level::biome::biome::tests::biome_registries;
+    use crate::net::minecraft::world::level::color_map_color_util::tests::load_colormaps;
+    use crate::net::minecraft::world::level::color_resolver::ColorResolver;
+
+    const HEIGHTS: [i32; 3] = [-61, 0, 70];
+
+    /// The walk's chunks, biomes laid on them by a `chunks_biomes` packet, and every resolver's
+    /// tint at each column (at three heights) as vanilla's `calculateBlockTint` blends them: from
+    /// the level's tint caches, so read twice (the second time cached), and the second layout
+    /// laid on the first's level, whose tints the packet's chunks must forget.
+    #[test]
+    fn tints_match_vanillas_blend() {
+        load_colormaps();
+        let chunk_golden = Golden::load(
+            "net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket",
+        );
+        let registries = biome_registries(&chunk_golden.input("BIOMES"));
+        let mut packets = Vec::new();
+        for (args, _) in chunk_golden.cases("captured") {
+            let mut input = registry_reader(unhex(args[0].as_str().expect("hex")));
+            packets.push(ClientboundLevelChunkWithLightPacket::STREAM_CODEC.decode(&mut input));
+        }
+        let resolvers: [&'static ColorResolver; 4] = [
+            &biome_colors::GRASS_COLOR_RESOLVER,
+            &biome_colors::FOLIAGE_COLOR_RESOLVER,
+            &biome_colors::DRY_FOLIAGE_COLOR_RESOLVER,
+            &biome_colors::WATER_COLOR_RESOLVER,
+        ];
+
+        let golden = Golden::load("net.minecraft.client.multiplayer.ClientLevel");
+        let layouts = golden.cases("layouts");
+        assert_eq!(layouts.len(), 4);
+        let mut level = None;
+        let mut level_radius = -1;
+        for (number, (args, expected)) in layouts.iter().enumerate() {
+            let radius = args[0].as_i64().expect("a radius") as i32;
+            if radius != level_radius {
+                let mut new_level = ClientLevel::new(
+                    &registries,
+                    false,
+                    true,
+                    ResourceKey::create(
+                        Registries::DIMENSION,
+                        Identifier::with_default_namespace("overworld"),
+                    ),
+                    Holder::Reference(ResourceKey::create(
+                        Registries::DIMENSION_TYPE,
+                        Identifier::with_default_namespace("overworld"),
+                    )),
+                    8,
+                    8,
+                    false,
+                    i64::decode(&golden.input("ZOOM_SEED")),
+                    -63,
+                );
+                new_level.set_biome_blend_radius(radius);
+                for packet in &packets {
+                    ClientPacketListener::handle_level_chunk_with_light_in(&mut new_level, packet);
+                }
+                level = Some(new_level);
+                level_radius = radius;
+            }
+            let level = level.as_mut().expect("made above");
+            let mut buffer = unpooled::wrapped_buffer(unhex(args[1].as_str().expect("hex")));
+            let biomes = ClientboundChunksBiomesPacket::STREAM_CODEC.decode(&mut buffer);
+            ClientPacketListener::handle_chunks_biomes_in(level, &biomes);
+
+            let expected = expected.as_array().expect("tints");
+            for pass in 0..2 {
+                let mut index = 0;
+                for column in args[2].as_array().expect("columns") {
+                    let x = column[0].as_i64().expect("x") as i32;
+                    let z = column[1].as_i64().expect("z") as i32;
+                    for y in HEIGHTS {
+                        for resolver in resolvers {
+                            let pos = BlockPos::new(x, y, z);
+                            assert_eq!(
+                                i64::from(level.get_block_tint(&pos, resolver)),
+                                expected[index].as_i64().expect("a tint"),
+                                "layout {number} (pass {pass}): {} at {pos:?}",
+                                resolver.name()
+                            );
+                            index += 1;
+                        }
+                    }
+                }
+                assert_eq!(index, expected.len());
+            }
+        }
+        golden.finish();
     }
 }

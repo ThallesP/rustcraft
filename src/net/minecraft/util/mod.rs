@@ -6,6 +6,7 @@ pub mod delegate_data_output;
 pub mod file_util;
 pub mod gson_helper;
 pub mod light_coords_util;
+pub mod linear_congruential_generator;
 pub mod mth;
 pub mod png_info;
 pub mod random;

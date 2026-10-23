@@ -5,6 +5,7 @@ pub mod marsaglia_polar_gaussian;
 pub mod positional_random_factory;
 pub mod random_support;
 pub mod single_threaded_random_source;
+pub mod synth;
 pub mod thread_safe_legacy_random_source;
 pub mod xoroshiro128_plus_plus;
 pub mod xoroshiro_random_source;

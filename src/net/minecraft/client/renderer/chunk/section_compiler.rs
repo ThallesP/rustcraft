@@ -234,6 +234,7 @@ mod tests {
     use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGetter;
     use crate::net::minecraft::world::level::block_getter::BlockGetter;
     use crate::net::minecraft::world::level::cardinal_lighting::CardinalLighting;
+    use crate::net::minecraft::world::level::color_resolver::ColorResolver;
     use crate::net::minecraft::world::level::chunk::level_chunk_section::tests::registries;
     use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
     use crate::net::minecraft::world::level::light_layer::LightLayer;
@@ -275,6 +276,12 @@ mod tests {
     impl BlockAndTintGetter for Lighting {
         fn cardinal_lighting(&self) -> CardinalLighting {
             CardinalLighting::DEFAULT
+        }
+
+        /// What `BlockAndTintGetter.EMPTY` answers: the suite meshes with an empty `BlockColors`,
+        /// so nothing asks.
+        fn get_block_tint(&self, _pos: &BlockPos, _color: &'static ColorResolver) -> i32 {
+            -1
         }
     }
 

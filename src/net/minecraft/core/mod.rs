@@ -9,6 +9,7 @@ pub mod holder;
 pub mod id_map;
 pub mod id_mapper;
 pub mod position;
+pub mod quart_pos;
 pub mod registries;
 pub mod registry;
 pub mod registry_access;

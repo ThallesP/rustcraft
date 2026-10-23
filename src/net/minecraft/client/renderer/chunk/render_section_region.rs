@@ -16,6 +16,7 @@ use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGetter;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::cardinal_lighting::CardinalLighting;
+use crate::net::minecraft::world::level::color_resolver::ColorResolver;
 use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
@@ -105,5 +106,10 @@ impl BlockAndLightGetter for RenderSectionRegion<'_> {
 impl BlockAndTintGetter for RenderSectionRegion<'_> {
     fn cardinal_lighting(&self) -> CardinalLighting {
         self.cardinal_lighting
+    }
+
+    /// The level's.
+    fn get_block_tint(&self, pos: &BlockPos, resolver: &'static ColorResolver) -> i32 {
+        self.level.get_block_tint(pos, resolver)
     }
 }

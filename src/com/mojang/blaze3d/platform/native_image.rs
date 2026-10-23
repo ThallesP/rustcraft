@@ -152,6 +152,18 @@ impl NativeImage {
         self.set_pixel_abgr(x, y, ARGB::to_abgr(pixel));
     }
 
+    /// `makePixelArray()`: every pixel as ARGB, row by row. Java checks the image is RGBA, which
+    /// the port's always is.
+    pub fn make_pixel_array(&self) -> Vec<i32> {
+        let mut pixels = Vec::with_capacity((self.width * self.height) as usize);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                pixels.push(self.get_pixel(x, y));
+            }
+        }
+        pixels
+    }
+
     /// `getPixelsABGR()`.
     pub fn get_pixels_abgr(&self) -> &[u32] {
         &self.pixels
