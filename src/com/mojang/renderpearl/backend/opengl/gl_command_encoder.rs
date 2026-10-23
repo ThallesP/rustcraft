@@ -28,6 +28,9 @@ use crate::com::mojang::renderpearl::api::pipeline::index_type::IndexType;
 use crate::com::mojang::renderpearl::api::textures::gpu_texture::{self, GpuTexture};
 use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
 use crate::com::mojang::renderpearl::backend::api::render_pass_backend::UniformValue;
+use crate::com::mojang::renderpearl::backend::opengl::frame_buffer_cache::{
+    FrameBufferCache, FrameBufferKey,
+};
 use crate::com::mojang::renderpearl::backend::opengl::gl_buffer::GlBuffer;
 use crate::com::mojang::renderpearl::backend::opengl::gl_const::GlConst;
 use crate::com::mojang::renderpearl::backend::opengl::gl_device::GlDevice;
@@ -44,19 +47,13 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::rc::Rc;
 
-/// A framebuffer's attachments: each color target's texture and mip level, and the depth's.
-type FrameBufferKey = (
-    Vec<Option<(glow::NativeTexture, i32)>>,
-    Option<(glow::NativeTexture, i32)>,
-);
-
 pub struct GlCommandEncoder {
     gl: Rc<glow::Context>,
     features: DeviceFeatures,
     limits: DeviceLimits,
     read_fbo: glow::NativeFramebuffer,
     draw_fbo: glow::NativeFramebuffer,
-    frame_buffers: RefCell<Vec<(FrameBufferKey, glow::NativeFramebuffer)>>,
+    frame_buffers: Rc<FrameBufferCache>,
     fenced_tasks: RefCell<Vec<Box<dyn FnOnce()>>>,
     last_pipeline: RefCell<Option<Rc<GlRenderPipeline>>>,
     /// The frontend's `isInRenderPass`.
@@ -96,7 +93,7 @@ impl GlCommandEncoder {
             limits,
             read_fbo,
             draw_fbo,
-            frame_buffers: RefCell::default(),
+            frame_buffers: Rc::default(),
             fenced_tasks: RefCell::default(),
             last_pipeline: RefCell::default(),
             is_in_render_pass: Cell::new(false),
@@ -378,13 +375,8 @@ impl GlCommandEncoder {
             colors.iter().map(|view| view.map(attachment)).collect(),
             depth.map(attachment),
         );
-        if let Some((_, fbo)) = self
-            .frame_buffers
-            .borrow()
-            .iter()
-            .find(|(existing, _)| *existing == key)
-        {
-            return *fbo;
+        if let Some(fbo) = self.frame_buffers.get(&key) {
+            return fbo;
         }
         // SAFETY: the textures are the context's.
         let fbo = unsafe {
@@ -412,7 +404,7 @@ impl GlCommandEncoder {
             }
             fbo
         };
-        self.frame_buffers.borrow_mut().push((key, fbo));
+        self.frame_buffers.insert(key, fbo);
         fbo
     }
 
@@ -460,13 +452,16 @@ impl GlCommandEncoder {
         }
     }
 
+    /// The framebuffers' cache, which the device's textures share.
+    pub(super) fn frame_buffer_cache(&self) -> &Rc<FrameBufferCache> {
+        &self.frame_buffers
+    }
+
     /// Deletes the encoder's framebuffers, while the device's context is still current.
     pub(super) fn close(&self) {
         // SAFETY: the framebuffers are the context's.
+        self.frame_buffers.close(&self.gl);
         unsafe {
-            for (_, fbo) in self.frame_buffers.borrow_mut().drain(..) {
-                self.gl.delete_framebuffer(fbo);
-            }
             self.gl.delete_framebuffer(self.read_fbo);
             self.gl.delete_framebuffer(self.draw_fbo);
         }

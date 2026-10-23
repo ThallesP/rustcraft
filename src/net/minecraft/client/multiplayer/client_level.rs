@@ -13,8 +13,10 @@
 //! entity ticks from when it's added, where Java waits for its chunk to tick (the chunk is loaded
 //! first in all the server sends). Not ported: entity sections and their visibility, other
 //! entities' collisions with the player, block entities, the block state predictions (`blockStatePredictionHandler`, which
-//! the player's own block changes make), neighbour updates and the renderer's dirty sections
-//! (`setBlocksDirty`, `sendBlockUpdated`, `setSectionDirtyWithNeighbors`).
+//! the player's own block changes make) and neighbour updates. What the renderer is told of the
+//! level's changes (`setBlocksDirty`, `sendBlockUpdated`, `setSectionDirtyWithNeighbors`,
+//! `setSectionRangeDirty`) goes to the `LevelExtractor` the level shares with its chunk cache and
+//! the level renderer, Java's `Minecraft.levelExtractor`.
 //!
 //! Its biomes are its chunks' (`getNoiseBiome`, plains where it has no chunk), zoomed by its
 //! `BiomeManager`, and their values the synchronized biome registry's, which the level keeps a
@@ -35,12 +37,14 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::rc::Rc;
 
 use crate::net::minecraft::client::color::block::block_tint_cache::BlockTintCache;
 use crate::net::minecraft::client::multiplayer::client_chunk_cache::ClientChunkCache;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::renderer::biome_colors;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
+use crate::net::minecraft::client::renderer::extract::level_extractor::LevelExtractor;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::cursor3d::Cursor3D;
 use crate::net::minecraft::core::holder::Holder;
@@ -104,6 +108,8 @@ pub struct ClientLevel {
     /// `entityStorage`'s entities and `tickingEntities`, the player's aside.
     entity_storage: EntityLookup<Entity>,
     ticking_entities: EntityTickList,
+    /// `Minecraft.levelExtractor`, which the level's changes mark sections dirty in.
+    level_extractor: Rc<LevelExtractor>,
 }
 
 /// A light update queued for the level, Java's `Runnable`.
@@ -132,6 +138,7 @@ impl ClientLevel {
         let factory = PalettedContainerFactory::create(registry_access);
         let biomes = registry_access.lookup_or_throw(Registries::BIOME).clone();
         let has_sky_light = dimension_type_value.has_sky_light();
+        let level_extractor = Rc::new(LevelExtractor::new());
         ClientLevel {
             dimension,
             dimension_type,
@@ -142,6 +149,7 @@ impl ClientLevel {
                 has_sky_light,
                 factory,
                 server_chunk_radius,
+                Rc::clone(&level_extractor),
             ),
             server_chunk_radius,
             server_simulation_distance,
@@ -168,6 +176,7 @@ impl ClientLevel {
             biome_blend_radius: Options::DEFAULT_BIOME_BLEND_RADIUS,
             entity_storage: EntityLookup::new(),
             ticking_entities: EntityTickList::new(),
+            level_extractor,
         }
     }
 
@@ -432,13 +441,14 @@ impl ClientLevel {
         self.set_block(pos, block_state, update_flag, 512);
     }
 
-    /// `Level.setBlock`: whether the chunk took the state. The neighbour and shape updates, and
-    /// what the renderer is told, aren't ported.
+    /// `Level.setBlock`: whether the chunk took the state, and the renderer told of the change
+    /// (`setBlocksDirty`, and `sendBlockUpdated` with `Block.UPDATE_CLIENTS` but not
+    /// `UPDATE_INVISIBLE`). The neighbour and shape updates aren't ported.
     pub fn set_block(
         &mut self,
         pos: &BlockPos,
         block_state: BlockState,
-        _update_flags: i32,
+        update_flags: i32,
         _update_limit: i32,
     ) -> bool {
         if !self.is_in_valid_bounds(pos) {
@@ -448,15 +458,74 @@ impl ClientLevel {
         let chunk_x = SectionPos::block_to_section_coord(pos.get_x());
         let chunk_z = SectionPos::block_to_section_coord(pos.get_z());
         // Java's level hands out its empty chunk for one it doesn't have, which takes no blocks.
-        match self
+        let old_state = match self
             .chunk_source
             .get_chunk_and_light_engine_mut(chunk_x, chunk_z)
         {
-            Some((chunk, light_engine)) => chunk
-                .set_block_state(pos, block_state, light_engine)
-                .is_some(),
-            None => false,
+            Some((chunk, light_engine)) => chunk.set_block_state(pos, block_state, light_engine),
+            None => None,
+        };
+        let Some(old_state) = old_state else {
+            return false;
+        };
+
+        let new_state = self.get_block_state(pos);
+        if new_state == block_state {
+            if old_state != new_state {
+                self.set_blocks_dirty(pos, old_state, new_state);
+            }
+
+            if (update_flags & 2) != 0 && (update_flags & 4) == 0 {
+                self.send_block_updated(pos, old_state, block_state, update_flags);
+            }
         }
+        true
+    }
+
+    /// `sendBlockUpdated`: the sections around the block are dirty.
+    pub fn send_block_updated(
+        &self,
+        pos: &BlockPos,
+        _old: BlockState,
+        _current: BlockState,
+        update_flags: i32,
+    ) {
+        self.level_extractor.block_changed(pos, update_flags);
+    }
+
+    /// `setBlocksDirty`: the sections around the block are dirty when its look changed.
+    pub fn set_blocks_dirty(&self, pos: &BlockPos, old_state: BlockState, new_state: BlockState) {
+        self.level_extractor
+            .set_block_dirty_states(pos, old_state, new_state);
+    }
+
+    pub fn set_section_dirty_with_neighbors(&self, chunk_x: i32, chunk_y: i32, chunk_z: i32) {
+        self.level_extractor
+            .set_section_dirty_with_neighbors(chunk_x, chunk_y, chunk_z);
+    }
+
+    pub fn set_section_range_dirty(
+        &self,
+        min_section_x: i32,
+        min_section_y: i32,
+        min_section_z: i32,
+        max_section_x: i32,
+        max_section_y: i32,
+        max_section_z: i32,
+    ) {
+        self.level_extractor.set_section_range_dirty(
+            min_section_x,
+            min_section_y,
+            min_section_z,
+            max_section_x,
+            max_section_y,
+            max_section_z,
+        );
+    }
+
+    /// `Minecraft.levelExtractor`'s dirty sections, which the level renderer takes each frame.
+    pub fn level_extractor(&self) -> &Rc<LevelExtractor> {
+        &self.level_extractor
     }
 }
 

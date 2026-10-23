@@ -44,6 +44,7 @@ use crate::net::minecraft::client::multiplayer::common_listener_cookie::CommonLi
 use crate::net::minecraft::client::multiplayer::level_load_tracker::LevelLoadTracker;
 use crate::net::minecraft::client::multiplayer::multi_player_game_mode::MultiPlayerGameMode;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
+use crate::net::minecraft::client::renderer::extract::level_extractor::LevelExtractor;
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
@@ -315,8 +316,7 @@ impl ClientPacketListener {
     }
 
     /// `handleChunksBiomes`' body on the game thread, on the level: each chunk's biomes, then its
-    /// tints worked out again. Java then marks the sections around each dirty for the renderer,
-    /// which isn't ported.
+    /// tints worked out again, then the sections of it and around it are dirty for the renderer.
     pub fn handle_chunks_biomes_in(
         level: &mut ClientLevel,
         packet: &ClientboundChunksBiomesPacket,
@@ -331,6 +331,20 @@ impl ClientPacketListener {
 
         for data in packet.chunk_biome_data() {
             level.on_chunk_loaded(ChunkPos::new(data.pos().x(), data.pos().z()));
+        }
+
+        for data in packet.chunk_biome_data() {
+            for x_offset in -1..=1 {
+                for z_offset in -1..=1 {
+                    for y in level.get_min_section_y()..=level.get_max_section_y() {
+                        level.level_extractor().set_section_dirty(
+                            data.pos().x() + x_offset,
+                            y,
+                            data.pos().z() + z_offset,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -357,8 +371,7 @@ impl ClientPacketListener {
     }
 
     /// Each section's emptiness, which turns the light engine's storage of it on, for a chunk the
-    /// level has. Java then marks the sections around it dirty for the renderer, which isn't
-    /// ported.
+    /// level has, then the sections around it are dirty for the renderer.
     fn enable_chunk_light(level: &mut ClientLevel, x: i32, z: i32) {
         let chunk = level
             .get_chunk_source()
@@ -379,6 +392,15 @@ impl ClientPacketListener {
                 has_only_air,
             );
         }
+
+        level.set_section_range_dirty(
+            x - 1,
+            level.get_min_section_y(),
+            z - 1,
+            x + 1,
+            level.get_max_section_y(),
+            z + 1,
+        );
     }
 
     /// The chunk's light goes off, its queued layers are dropped, and its sections stop being
@@ -407,8 +429,8 @@ impl ClientPacketListener {
     }
 
     /// The server's light for a chunk: each layer's sections queued, then the chunk's light on.
-    /// With `schedule_rebuild`, Java marks each section it read dirty for the renderer, which
-    /// isn't ported.
+    /// With `schedule_rebuild`, each section it read and its neighbours are dirty for the
+    /// renderer.
     fn apply_light_data(
         level: &mut ClientLevel,
         x: i32,
@@ -416,11 +438,13 @@ impl ClientPacketListener {
         light_data: &ClientboundLightUpdatePacketData,
         schedule_rebuild: bool,
     ) {
+        let level_extractor = Rc::clone(level.level_extractor());
         let (light_engine, chunks) = level.get_light_engine_mut();
         ClientPacketListener::read_section_list(
             x,
             z,
             light_engine,
+            &level_extractor,
             LightLayer::SKY,
             light_data.sky_y_mask(),
             light_data.empty_sky_y_mask(),
@@ -431,6 +455,7 @@ impl ClientPacketListener {
             x,
             z,
             light_engine,
+            &level_extractor,
             LightLayer::BLOCK,
             light_data.block_y_mask(),
             light_data.empty_block_y_mask(),
@@ -447,11 +472,12 @@ impl ClientPacketListener {
         chunk_x: i32,
         chunk_z: i32,
         light_engine: &mut LevelLightEngine,
+        level_extractor: &LevelExtractor,
         layer: LightLayer,
         y_mask: &BitSet,
         empty_y_mask: &BitSet,
         updates: &mut impl Iterator<Item = &'a Vec<i8>>,
-        _schedule_rebuild: bool,
+        schedule_rebuild: bool,
     ) {
         for section_index in 0..light_engine.get_light_section_count() {
             let section_y = light_engine.get_min_light_section() + section_index;
@@ -468,6 +494,10 @@ impl ClientPacketListener {
                     &SectionPos::of(chunk_x, section_y, chunk_z),
                     Some(data),
                 );
+                if schedule_rebuild {
+                    // The level's setSectionDirtyWithNeighbors.
+                    level_extractor.set_section_dirty_with_neighbors(chunk_x, section_y, chunk_z);
+                }
             }
         }
     }

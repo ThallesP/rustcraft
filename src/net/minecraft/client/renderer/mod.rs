@@ -5,6 +5,7 @@ pub mod chunk;
 pub mod culling;
 pub mod dynamic_gpu_data;
 pub mod entity;
+pub mod extract;
 pub mod face_info;
 pub mod feature;
 pub mod first_person_hands_and_items_renderer;

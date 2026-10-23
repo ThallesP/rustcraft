@@ -28,6 +28,11 @@ log has a panic or unported code, printing those lines with their counts and the
 
     flock /tmp/rustcraft-oracle.lock python3 tools/port_client.py soak --preset normal --accept-eula
     flock /tmp/rustcraft-oracle.lock python3 tools/port_client.py soak --preset normal --accept-eula --seed 0 --seconds-per-stop 20
+    flock /tmp/rustcraft-oracle.lock python3 tools/port_client.py soak --preset normal --accept-eula --render
+
+`--render` runs the client in a window under `xvfb-run`, rendering a frame of the level each time
+round its loop like vanilla, so the tour goes through the renderer too: every section the stops
+show compiled, the sky, the fog and the fluids.
 
 The server's ticks are frozen (`tick freeze`), so no fluid flows into what the soak builds, and
 each stop has the player standing on a block it built, in a chunk section with no fluid: the
@@ -408,15 +413,17 @@ def tour(console, client, server_log, spawn, seconds_per_stop, visited, skipped)
         stop["position"], stop["on_ground"] = player_position(console)
 
 
-def stop_process(process, timeout):
-    """Stops a process that's still running with SIGTERM, then SIGKILL if it hasn't exited after `timeout` seconds."""
+def stop_process(process, timeout, group=False):
+    """Stops a process that's still running with SIGTERM, then SIGKILL if it hasn't exited after `timeout` seconds; with
+    `group`, its whole process group (one started in a session of its own)."""
     if process is None or process.poll() is not None:
         return
-    process.terminate()
+    signal_process = (lambda sig: os.killpg(process.pid, sig)) if group else process.send_signal
+    signal_process(signal.SIGTERM)
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
+        signal_process(signal.SIGKILL)
         process.wait()
 
 
@@ -434,7 +441,7 @@ def stop_server(server):
         server.wait()
 
 
-def soak(preset, seed, seconds_per_stop, accept_eula):
+def soak(preset, seed, seconds_per_stop, accept_eula, render=False):
     """Tours a fresh world with the port's client, True when it got through without a panic or unported code."""
     build_port()
     logs = Path(tempfile.mkdtemp(prefix="port-soak-"))
@@ -472,9 +479,17 @@ def soak(preset, seed, seconds_per_stop, accept_eula):
         console.run(f"setworldspawn {x} {feet} {z}", expect=("Set the world spawn point",))
 
         command = [PORT_BINARY, "--quickPlayMultiplayer", f"127.0.0.1:{SERVER_PORT}", "--username", OP_NAME, "--headless"]
+        env = dict(os.environ)
+        if render:
+            # A window on a fresh Xvfb with llvmpipe, like the screenshot scenarios' runs.
+            command = ["xvfb-run", "-a", *command[:-1], "--window"]
+            env.update(LIBGL_ALWAYS_SOFTWARE="1", GALLIUM_DRIVER="llvmpipe", SDL_VIDEO_DRIVER="x11")
         print(f"joining in the port (log: {client_log})", flush=True)
         with open(client_log, "w") as log:
-            client = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+            # In a session of its own, so stopping it stops xvfb-run's Xvfb and client too.
+            client = subprocess.Popen(
+                command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True
+            )
         deadline = time.monotonic() + 180
         while f"{OP_NAME} joined the game" not in server_log.read_text(errors="replace"):
             check_client(client, server_log)
@@ -488,7 +503,7 @@ def soak(preset, seed, seconds_per_stop, accept_eula):
     except ClientGone as error:
         gone = str(error)
     finally:
-        stop_process(client, 10)
+        stop_process(client, 10, group=True)
         stop_server(server)
 
     return report(client_log, server_log, gone, visited, skipped, time.monotonic() - started)
@@ -636,13 +651,14 @@ def main():
     soak_parser.add_argument("--seed", type=int, default=0)
     soak_parser.add_argument("--seconds-per-stop", type=float, default=20, help="how long the player stays at each stop (default: 20)")
     soak_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
+    soak_parser.add_argument("--render", action="store_true", help="render each frame in a window under xvfb-run, like vanilla")
     stall_parser = commands.add_parser("stall", help="stall the port's game thread past a keep-alive's wait, failing if it disconnects")
     stall_parser.add_argument("--seconds", type=float, default=40, help="how long the game thread stalls (default: 40)")
     stall_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
     args = parser.parse_args()
 
     if args.command == "soak":
-        if not soak(args.preset, args.seed, args.seconds_per_stop, args.accept_eula):
+        if not soak(args.preset, args.seed, args.seconds_per_stop, args.accept_eula, args.render):
             raise SystemExit(1)
         return
     if args.command == "stall":

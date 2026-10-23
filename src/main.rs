@@ -18,12 +18,14 @@
 //!                                               renders a frame offscreen and writes it as a PNG
 //!   rustcraft --window [--size WxH] [--clear AARRGGBB] [--frames N] [--fill ...]...
 //!                                               shows frames in a window until it's closed
-//!   rustcraft --render-scenario SCENARIO --capture CAPTURE --screenshot out.png
+//!   rustcraft --render-scenario SCENARIO --capture CAPTURE --screenshot out.png [--start-size WxH]
 //!                                               renders the scenario's first view of the level a
 //!                                               capture's packets fill, offscreen, without a server:
 //!                                               the player put where the scenario says and left to
 //!                                               land, frames until the sections have compiled, and
-//!                                               the HUD unless the scenario hides it
+//!                                               the HUD unless the scenario hides it; with
+//!                                               `--start-size`, the first frame at that size, then
+//!                                               the window resized to the scenario's
 //!
 //! The clear color defaults to `GuiRenderState.clearColorOverride`'s, transparent black; the
 //! loading overlay's is its brand background, `FFEF323D`. `--quadrant` clears the lower left
@@ -86,6 +88,7 @@ struct Arguments {
     mode: Mode,
     capture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
+    start_size: Option<(i32, i32)>,
     width: i32,
     height: i32,
     clear_color: Vector4f,
@@ -130,6 +133,7 @@ fn parse_arguments() -> Result<Arguments, String> {
     let mut fills = Vec::new();
     let mut capture = None;
     let mut screenshot = None;
+    let mut start_size = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().ok_or(format!("{argument} needs a value"));
@@ -154,6 +158,16 @@ fn parse_arguments() -> Result<Arguments, String> {
                     .ok_or(format!("--size takes WxH, not {size}"))?;
                 width = w.parse().map_err(|_| format!("bad width {w}"))?;
                 height = h.parse().map_err(|_| format!("bad height {h}"))?;
+            }
+            "--start-size" => {
+                let size = value()?;
+                let (w, h) = size
+                    .split_once('x')
+                    .ok_or(format!("--start-size takes WxH, not {size}"))?;
+                start_size = Some((
+                    w.parse().map_err(|_| format!("bad width {w}"))?,
+                    h.parse().map_err(|_| format!("bad height {h}"))?,
+                ));
             }
             "--clear" => {
                 let hex = value()?;
@@ -188,6 +202,7 @@ fn parse_arguments() -> Result<Arguments, String> {
             .ok_or("pass --device-info, --compile-pipelines, --screenshot PATH or --window")?,
         capture,
         screenshot,
+        start_size,
         width,
         height,
         clear_color,
@@ -446,6 +461,7 @@ fn render_scenario(
     scenario: &Path,
     capture: &Path,
     out: &Path,
+    start_size: Option<(i32, i32)>,
 ) -> Result<(), String> {
     use rustcraft::io::netty::buffer::unpooled::wrapped_buffer;
     use rustcraft::net::minecraft::client::client_clock_manager::ClientClockManager;
@@ -502,8 +518,8 @@ fn render_scenario(
         "spectator" => GameType::SPECTATOR,
         _ => GameType::SURVIVAL,
     };
-    let mut game_renderer =
-        GameRenderer::new(device, scenario.options.width, scenario.options.height);
+    let (width, height) = start_size.unwrap_or((scenario.options.width, scenario.options.height));
+    let mut game_renderer = GameRenderer::new(device, width, height);
     game_renderer.set_environment_attributes(EnvironmentAttributeSystem::for_client_level(
         &dimension_type,
         &biome_keys,
@@ -537,6 +553,11 @@ fn render_scenario(
     game_renderer.restart_texture_animations();
     let mut ticks = 0;
     while ticks < OracleGameTest::SETTLE_TICKS * 3 || !player.on_ground() {
+        // The window resized to the scenario's size after the first frame, like
+        // `Minecraft.render_level`'s.
+        if ticks == 1 {
+            game_renderer.follow_window_size(scenario.options.width, scenario.options.height);
+        }
         gui.tick(false);
         game_renderer.tick(true, Some(&player), Some(&environment), &render_options);
         player.common_tick();
@@ -658,7 +679,13 @@ fn run(arguments: Arguments) -> Result<(), String> {
                 .screenshot
                 .as_ref()
                 .ok_or("--render-scenario needs --screenshot")?;
-            render_scenario(Box::leak(device), scenario, capture, path)?;
+            render_scenario(
+                Box::leak(device),
+                scenario,
+                capture,
+                path,
+                arguments.start_size,
+            )?;
             return Ok(());
         }
         Mode::Screenshot(ref path) => {

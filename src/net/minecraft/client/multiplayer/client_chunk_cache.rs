@@ -4,13 +4,16 @@
 //! position modulo its width, so moving the view center needs no copying, and the level's light
 //! engine, which lights them (the storage is its `LightChunkGetter`). Not ported yet: the empty
 //! chunk Java hands out for one it doesn't have (`EmptyLevelChunk`, whose blocks are all void air:
-//! `get_chunk` answers `None`, and the level answers void air), `onLightUpdate`'s dirty sections
-//! and the sets of sections and chunks added and removed since the renderer last looked
+//! `get_chunk` answers `None`, and the level answers void air) and the sets of sections and chunks added and removed since the renderer last looked
 //! (`addedEmptySections` and the rest, `flipUpdateTrackingSets`), which come with the renderer's
 //! section compiler. A chunk dropped or replaced unloads in Java's level (`ClientLevel.unload`),
 //! which turns its light off; its block entities and entities aren't ported.
 
+use std::rc::Rc;
+
 use crate::java::lang::math::Math;
+use crate::net::minecraft::client::renderer::extract::level_extractor::LevelExtractor;
+use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_packet_data::ClientboundLevelChunkPacketData;
 use crate::net::minecraft::world::level::chunk::level_chunk::LevelChunk;
@@ -19,6 +22,7 @@ use crate::net::minecraft::world::level::chunk::light_chunk_getter::LightChunkGe
 use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 use crate::net::minecraft::world::level::level_height_accessor::Height;
+use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
 use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 
@@ -38,12 +42,14 @@ impl ClientChunkCache {
         has_sky_light: bool,
         container_factory: PalettedContainerFactory,
         server_chunk_radius: i32,
+        level_extractor: Rc<LevelExtractor>,
     ) -> ClientChunkCache {
         ClientChunkCache {
             light_engine: LevelLightEngine::new(level_height, true, has_sky_light),
-            storage: Storage::new(ClientChunkCache::calculate_storage_range(
-                server_chunk_radius,
-            )),
+            storage: Storage::new(
+                ClientChunkCache::calculate_storage_range(server_chunk_radius),
+                level_extractor,
+            ),
             level_height,
             container_factory,
         }
@@ -163,7 +169,8 @@ impl ClientChunkCache {
         let chunk_radius = self.storage.chunk_radius;
         let new_chunk_radius = ClientChunkCache::calculate_storage_range(view_range);
         if chunk_radius != new_chunk_radius {
-            let mut new_storage = Storage::new(new_chunk_radius);
+            let mut new_storage =
+                Storage::new(new_chunk_radius, Rc::clone(&self.storage.level_extractor));
             new_storage.view_center_x = self.storage.view_center_x;
             new_storage.view_center_z = self.storage.view_center_z;
 
@@ -209,10 +216,12 @@ struct Storage {
     view_center_x: i32,
     view_center_z: i32,
     chunk_count: i32,
+    /// `Minecraft.levelExtractor`, which `onLightUpdate` tells.
+    level_extractor: Rc<LevelExtractor>,
 }
 
 impl Storage {
-    fn new(chunk_radius: i32) -> Storage {
+    fn new(chunk_radius: i32, level_extractor: Rc<LevelExtractor>) -> Storage {
         let view_range = chunk_radius * 2 + 1;
         Storage {
             chunks: (0..view_range * view_range).map(|_| None).collect(),
@@ -221,6 +230,7 @@ impl Storage {
             view_center_x: 0,
             view_center_z: 0,
             chunk_count: 0,
+            level_extractor,
         }
     }
 
@@ -280,11 +290,16 @@ impl Storage {
     }
 }
 
-/// `getChunkForLighting(x, z)`: the chunk, if the cache has it. Java's `onLightUpdate` marks the
-/// section dirty for the renderer, which isn't ported.
+/// `getChunkForLighting(x, z)`: the chunk, if the cache has it; `onLightUpdate` marks the section
+/// dirty for the renderer.
 impl LightChunkGetter for Storage {
     fn get_chunk_for_lighting(&self, x: i32, z: i32) -> Option<&dyn LightChunk> {
         self.get_chunk(x, z).map(|chunk| chunk as &dyn LightChunk)
+    }
+
+    fn on_light_update(&self, _layer: LightLayer, pos: SectionPos) {
+        self.level_extractor
+            .set_section_dirty(pos.x(), pos.y(), pos.z());
     }
 }
 

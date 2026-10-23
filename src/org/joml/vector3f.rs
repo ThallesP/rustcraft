@@ -326,6 +326,27 @@ impl Vector3f {
         dest
     }
 
+    pub fn normalize_length(&mut self, length: f32) -> &mut Self {
+        let this = *self;
+        this.normalize_length_into(length, self)
+    }
+
+    pub fn normalize_length_into<'a>(
+        &self,
+        length: f32,
+        dest: &'a mut Vector3f,
+    ) -> &'a mut Vector3f {
+        let scalar = Math::invsqrt_f32(Math::fma_f32(
+            self.x,
+            self.x,
+            Math::fma_f32(self.y, self.y, self.z * self.z),
+        )) * length;
+        dest.x = self.x * scalar;
+        dest.y = self.y * scalar;
+        dest.z = self.z * scalar;
+        dest
+    }
+
     pub fn cross(&mut self, v: &Vector3f) -> &mut Self {
         self.cross_xyz(v.x, v.y, v.z)
     }
@@ -519,6 +540,16 @@ mod tests {
         golden.check_method(
             "normalize(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             |this: &mut Vector3f, mut dest: Vector3f| *this.normalize_into(&mut dest),
+        );
+        golden.check_method(
+            "normalize(F)Lorg/joml/Vector3f;",
+            |this: &mut Vector3f, length| *this.normalize_length(length),
+        );
+        golden.check_method(
+            "normalize(FLorg/joml/Vector3f;)Lorg/joml/Vector3f;",
+            |this: &mut Vector3f, length, mut dest: Vector3f| {
+                *this.normalize_length_into(length, &mut dest)
+            },
         );
         golden.check_method(
             "rotate(Lorg/joml/Quaternionfc;)Lorg/joml/Vector3f;",

@@ -1,0 +1,10 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 90000, "game_mode": "survival"},
+  "player": {"pos": [0.5, -60.0, 0.5], "y_rot": 0.0, "x_rot": -90.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4, "hide_gui": true},
+  "steps": [
+    {"screenshot": "zenith"},
+    {"ticks": 10, "keys": ["forward"], "look": [30.0, -35.0]},
+    {"screenshot": "stars"}
+  ]
+}

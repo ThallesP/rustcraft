@@ -1,16 +1,18 @@
 //! com/mojang/renderpearl/backend/opengl/GlTexture.java
 //!
-//! The texture's name is deleted when it's dropped (Java's `close()`). Its framebuffers, which
-//! Java caches per texture, are the command encoder's for now.
+//! The texture's name is deleted when it's dropped (Java's `close()`), after the framebuffers it's
+//! attached to (`FrameBufferCache`).
 
 use crate::com::mojang::renderpearl::api::gpu_format::GpuFormat;
 use crate::com::mojang::renderpearl::api::textures::gpu_texture::GpuTexture;
+use crate::com::mojang::renderpearl::backend::opengl::frame_buffer_cache::FrameBufferCache;
 use glow::HasContext;
 use std::any::Any;
 use std::rc::Rc;
 
 pub struct GlTexture {
     gl: Rc<glow::Context>,
+    frame_buffer_cache: Rc<FrameBufferCache>,
     pub(super) id: glow::NativeTexture,
     usage: i32,
     label: String,
@@ -23,8 +25,10 @@ pub struct GlTexture {
 
 impl GlTexture {
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         gl: Rc<glow::Context>,
+        frame_buffer_cache: Rc<FrameBufferCache>,
         usage: i32,
         label: String,
         format: GpuFormat,
@@ -36,6 +40,7 @@ impl GlTexture {
     ) -> GlTexture {
         GlTexture {
             gl,
+            frame_buffer_cache,
             id,
             usage,
             label,
@@ -87,7 +92,9 @@ impl GpuTexture for GlTexture {
 }
 
 impl Drop for GlTexture {
+    /// `destroyImmediately`.
     fn drop(&mut self) {
+        self.frame_buffer_cache.destroy_fbos_of(&self.gl, self.id);
         // SAFETY: the texture is the context's, which outlives it.
         unsafe { self.gl.delete_texture(self.id) }
     }

@@ -1,7 +1,8 @@
 //! org/lwjgl/sdl/SDLEvents.java (LWJGL 3.4.3)
 //!
-//! Only polling, the event types the window loop reads, and the keyboard's, the mouse's and the
-//! mouse buttons' fields (`SDL_KeyboardEvent`, `SDL_MouseMotionEvent`, `SDL_MouseButtonEvent`).
+//! Only polling, the event types the window loop reads, and the keyboard's, the mouse's, the
+//! mouse buttons' and the window's fields (`SDL_KeyboardEvent`, `SDL_MouseMotionEvent`,
+//! `SDL_MouseButtonEvent`, `SDL_WindowEvent`).
 
 use crate::org::lwjgl::system::shared_library_loader;
 
@@ -43,6 +44,14 @@ impl SdlEvent {
         )
     }
 
+    /// `SDL_WindowEvent.data1` and `data2`: the new size, for a resize.
+    pub fn window_data(&self) -> (i32, i32) {
+        (
+            i32::from_ne_bytes(self.bytes(20)),
+            i32::from_ne_bytes(self.bytes(24)),
+        )
+    }
+
     /// `SDL_MouseButtonEvent.button`.
     pub fn mouse_button(&self) -> u8 {
         self.bytes::<1>(24)[0]
@@ -63,6 +72,8 @@ pub struct SDLEvents;
 #[allow(non_snake_case)]
 impl SDLEvents {
     pub const SDL_EVENT_QUIT: u32 = 0x100;
+    pub const SDL_EVENT_WINDOW_RESIZED: u32 = 0x206;
+    pub const SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: u32 = 0x207;
     pub const SDL_EVENT_WINDOW_FOCUS_LOST: u32 = 0x20F;
     pub const SDL_EVENT_WINDOW_CLOSE_REQUESTED: u32 = 0x210;
     pub const SDL_EVENT_KEY_DOWN: u32 = 0x300;

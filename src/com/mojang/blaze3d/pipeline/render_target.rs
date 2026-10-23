@@ -1,7 +1,7 @@
 //! com/mojang/blaze3d/pipeline/RenderTarget.java
 //!
-//! A color texture and a depth texture of one size, which passes draw into. Only making them and
-//! handing them out so far; resizing, blitting and destroying come with the frame graph.
+//! A color texture and a depth texture of one size, which passes draw into: making them, handing
+//! them out, and making them again at another size. Blitting comes with the frame graph.
 
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::gpu_format::GpuFormat;
@@ -38,6 +38,20 @@ impl RenderTarget {
             depth_texture: None,
             depth_texture_view: None,
         }
+    }
+
+    /// The textures again, at the new size.
+    pub fn resize(&mut self, device: &dyn GpuDevice, width: i32, height: i32) {
+        self.destroy_buffers();
+        self.create_buffers(device, width, height);
+    }
+
+    /// The textures and their views go (Java's `close`, the GL names deleted as they drop).
+    pub fn destroy_buffers(&mut self) {
+        self.depth_texture = None;
+        self.depth_texture_view = None;
+        self.color_texture = None;
+        self.color_texture_view = None;
     }
 
     /// Every usage (15): copied from and to, sampled, and rendered into.

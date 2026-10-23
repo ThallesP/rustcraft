@@ -1,10 +1,11 @@
 //! com/mojang/blaze3d/platform/Window.java
 //!
-//! Only making the window so far: resizable, high pixel density, at least 320 by 240, at the
-//! size asked (Java first takes it from the options and its display, at least 320 by 240), and
-//! the GUI's scale for a framebuffer's size (`calculateScale`, `setGuiScale`), as functions of the
-//! size, which an offscreen renderer has without a window. Fullscreen, icons, video modes and
-//! events come with the window loop.
+//! Making the window: resizable, high pixel density, at least 320 by 240, at the size asked (Java
+//! first takes it from the options and its display, at least 320 by 240); its sizes as it's
+//! resized (`onResize`, `onFramebufferResize`), the framebuffer's being what the game renders at
+//! (`getWidth`, `getHeight`); and the GUI's scale for a framebuffer's size (`calculateScale`,
+//! `setGuiScale`), as functions of the size, which an offscreen renderer has without a window.
+//! Fullscreen, icons, video modes and the mouse's grab on a resize aren't ported yet.
 
 use crate::com::mojang::renderpearl::api::device::gpu_backend::GpuBackend;
 use crate::org::lwjgl::sdl::sdl_error::SDLError;
@@ -12,8 +13,12 @@ use crate::org::lwjgl::sdl::sdl_video::{SDLVideo, SdlWindow};
 
 pub struct Window {
     handle: SdlWindow,
-    width: i32,
-    height: i32,
+    /// The window's size, in screen coordinates.
+    windowed_width: i32,
+    windowed_height: i32,
+    /// The framebuffer's, in pixels.
+    framebuffer_width: i32,
+    framebuffer_height: i32,
 }
 
 impl Window {
@@ -21,10 +26,40 @@ impl Window {
     pub fn new(backend: &dyn GpuBackend, width: i32, height: i32, title: &str) -> Window {
         let width = Window::allowed_window_min_size(width, 320);
         let height = Window::allowed_window_min_size(height, 240);
-        Window {
+        let mut window = Window {
             handle: Window::create_window(backend, width, height, title),
-            width,
-            height,
+            windowed_width: width,
+            windowed_height: height,
+            framebuffer_width: width,
+            framebuffer_height: height,
+        };
+        window.refresh_framebuffer_size();
+        window
+    }
+
+    /// `onResize`: the window's new size, at least 320 by 240 while windowed.
+    pub fn on_resize(&mut self, new_width: i32, new_height: i32) {
+        self.windowed_width = Window::allowed_window_min_size(new_width, 320);
+        self.windowed_height = Window::allowed_window_min_size(new_height, 240);
+    }
+
+    /// `onFramebufferResize`: the framebuffer's new size, unless it's empty (minimized); true when
+    /// it took it, after which Java's `framebufferSizeChanged` runs.
+    pub fn on_framebuffer_resize(&mut self, new_width: i32, new_height: i32) -> bool {
+        if new_width > 0 && new_height > 0 {
+            self.framebuffer_width = new_width;
+            self.framebuffer_height = new_height;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// `refreshFramebufferSize`: the framebuffer's size as SDL has it now.
+    fn refresh_framebuffer_size(&mut self) {
+        if let Some((width, height)) = SDLVideo::SDL_GetWindowSizeInPixels(self.handle) {
+            self.framebuffer_width = width;
+            self.framebuffer_height = height;
         }
     }
 
@@ -83,12 +118,21 @@ impl Window {
         self.handle
     }
 
+    /// The framebuffer's width, like Java's.
     pub fn get_width(&self) -> i32 {
-        self.width
+        self.framebuffer_width
     }
 
     pub fn get_height(&self) -> i32 {
-        self.height
+        self.framebuffer_height
+    }
+
+    pub fn get_screen_width(&self) -> i32 {
+        self.windowed_width
+    }
+
+    pub fn get_screen_height(&self) -> i32 {
+        self.windowed_height
     }
 }
 

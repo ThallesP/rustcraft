@@ -121,6 +121,7 @@ use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::cardinal_lighting;
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
+use crate::net::minecraft::world::level::dimension::dimension_type::Skybox;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
 use crate::net::minecraft::world::level::material::fog_type::FogType;
 use crate::net::minecraft::world::phys::hit_result::Type as HitType;
@@ -249,6 +250,9 @@ pub struct GameRenderer {
     atmospheric_fog: AtmosphericFogEnvironment,
     /// `AtlasManager`'s GUI atlas (`AtlasIds.GUI`, `Sheets.GUI_SHEET`).
     gui_atlas: TextureAtlas,
+    /// `AtlasManager`'s celestials atlas (`AtlasIds.CELESTIALS`, `Sheets.CELESTIAL_SHEET`), which
+    /// the sky's sun and moon are drawn from.
+    celestials_atlas: TextureAtlas,
     texture_manager: TextureManager,
     gui_render_state: GuiRenderState,
     gui_renderer: GuiRenderer,
@@ -361,6 +365,24 @@ impl GameRenderer {
         )
         .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
         gui_atlas.upload(device, &sampler_cache, &animation_pipelines, gui);
+        // The sun's, the moon's and the end flash's atlas: no mipmaps.
+        let mut celestials_atlas = TextureAtlas::new(
+            device,
+            Identifier::with_default_namespace("textures/atlas/celestials.png"),
+        );
+        let celestials = SpriteLoader::new(
+            celestials_atlas.location().clone(),
+            celestials_atlas.max_supported_texture_size(),
+        )
+        .load_and_stitch(
+            &*manager,
+            &Identifier::with_default_namespace("celestials"),
+            0,
+            0,
+            &[],
+        )
+        .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
+        celestials_atlas.upload(device, &sampler_cache, &animation_pipelines, celestials);
         // FontManager's reload, with no font options (Unicode and Japanese variants off).
         let font = Rc::new(Font::new(
             Rc::new(FontManager::load(Some(device), &*manager, &[])),
@@ -402,6 +424,7 @@ impl GameRenderer {
             environment_attributes: None,
             atmospheric_fog: AtmosphericFogEnvironment::default(),
             gui_atlas,
+            celestials_atlas,
             texture_manager,
             gui_render_state: GuiRenderState::new(),
             gui_renderer: GuiRenderer::new(device),
@@ -426,6 +449,22 @@ impl GameRenderer {
 
     pub fn font(&self) -> &Rc<Font> {
         &self.font
+    }
+
+    /// `render`'s check of the window's size (`extractWindow`'s, the framebuffer's): the main
+    /// target follows it (`resize`). The port does it at the frame's start, before the camera and
+    /// the GUI read the size, which they read from the window in Java, so both see the new size
+    /// either way.
+    pub fn follow_window_size(&mut self, width: i32, height: i32) {
+        if width != self.main_render_target.width || height != self.main_render_target.height {
+            self.resize(width, height);
+        }
+    }
+
+    /// `resize`: the main target and the level renderer at the new size.
+    pub fn resize(&mut self, width: i32, height: i32) {
+        self.main_render_target.resize(self.device, width, height);
+        self.level_renderer.resize(width, height);
     }
 
     /// `Sheets.GUI_SHEET`, the GUI atlas's texture.
@@ -592,6 +631,7 @@ impl GameRenderer {
         is_flat: bool,
         fog_type: FogType,
         camera_entity: &CameraEntityState,
+        skybox: Skybox,
     ) -> FrameEnvironment {
         // ClientLevelData.getHorizonHeight.
         let horizon_height = if is_flat { f64::from(min_y) } else { 63.0 };
@@ -668,49 +708,59 @@ impl GameRenderer {
         fog.render_distance_start = render_distance_in_blocks - render_distance_fog_span;
         fog.render_distance_end = render_distance_in_blocks;
 
-        // SkyRenderer.extractRenderState, for the overworld's sky.
+        // SkyRenderer.extractRenderState: the overworld's sky; the end's flashes aren't ported.
         let probe = camera.attribute_probe_mut();
-        let degrees = (std::f64::consts::PI / 180.0) as f32;
         let sky = &mut environment.sky;
-        sky.sun_angle = probe.get_value(
-            system,
-            level,
-            &EnvironmentAttributes::SUN_ANGLE,
-            partial_ticks,
-        ) * degrees;
-        sky.moon_angle = probe.get_value(
-            system,
-            level,
-            &EnvironmentAttributes::MOON_ANGLE,
-            partial_ticks,
-        ) * degrees;
-        sky.star_angle = probe.get_value(
-            system,
-            level,
-            &EnvironmentAttributes::STAR_ANGLE,
-            partial_ticks,
-        ) * degrees;
-        sky.rain_brightness = 1.0 - level.rain_level();
-        sky.star_brightness = probe.get_value(
-            system,
-            level,
-            &EnvironmentAttributes::STAR_BRIGHTNESS,
-            partial_ticks,
-        );
-        sky.sunrise_and_sunset_color = probe.get_value(
-            system,
-            level,
-            &EnvironmentAttributes::SUNRISE_SUNSET_COLOR,
-            partial_ticks,
-        );
-        sky.sky_color = probe.get_value(
-            system,
-            level,
-            &EnvironmentAttributes::SKY_COLOR,
-            partial_ticks,
-        );
-        // shouldRenderDarkDisc.
-        sky.should_render_dark_disc = eye_y - horizon_height < 0.0 && !camera_entity.is_under_water;
+        sky.skybox = skybox;
+        if skybox == Skybox::OVERWORLD {
+            let degrees = (std::f64::consts::PI / 180.0) as f32;
+            sky.sun_angle = probe.get_value(
+                system,
+                level,
+                &EnvironmentAttributes::SUN_ANGLE,
+                partial_ticks,
+            ) * degrees;
+            sky.moon_angle = probe.get_value(
+                system,
+                level,
+                &EnvironmentAttributes::MOON_ANGLE,
+                partial_ticks,
+            ) * degrees;
+            sky.star_angle = probe.get_value(
+                system,
+                level,
+                &EnvironmentAttributes::STAR_ANGLE,
+                partial_ticks,
+            ) * degrees;
+            sky.rain_brightness = 1.0 - level.rain_level();
+            sky.star_brightness = probe.get_value(
+                system,
+                level,
+                &EnvironmentAttributes::STAR_BRIGHTNESS,
+                partial_ticks,
+            );
+            sky.sunrise_and_sunset_color = probe.get_value(
+                system,
+                level,
+                &EnvironmentAttributes::SUNRISE_SUNSET_COLOR,
+                partial_ticks,
+            );
+            sky.moon_phase = probe.get_value(
+                system,
+                level,
+                &EnvironmentAttributes::MOON_PHASE,
+                partial_ticks,
+            );
+            sky.sky_color = probe.get_value(
+                system,
+                level,
+                &EnvironmentAttributes::SKY_COLOR,
+                partial_ticks,
+            );
+            // shouldRenderDarkDisc.
+            sky.should_render_dark_disc =
+                eye_y - horizon_height < 0.0 && !camera_entity.is_under_water;
+        }
 
         // LightmapRenderStateExtractor.extract, without the end's flashes, the darkness effect or
         // night vision (mob effects aren't ported); the flicker and the gamma are the frame's.
@@ -831,6 +881,7 @@ impl GameRenderer {
             level.is_flat(),
             self.camera_render_state.fog_type,
             camera_entity,
+            level.dimension_type().skybox(),
         );
         self.camera_render_state.fog_data = environment.fog.clone();
         let level_options = LevelRenderOptions {
@@ -924,11 +975,19 @@ impl GameRenderer {
         };
         let sky_pipelines = SkyPipelines {
             sky: self.pipelines.get(device, &RenderPipelines::get().SKY),
+            sunrise_sunset: self
+                .pipelines
+                .get(device, &RenderPipelines::get().SUNRISE_SUNSET),
+            celestial: self
+                .pipelines
+                .get(device, &RenderPipelines::get().CELESTIAL),
+            stars: self.pipelines.get(device, &RenderPipelines::get().STARS),
         };
         let lightmap_sampler = Rc::clone(self.sampler_cache.get_clamp_to_edge(FilterMode::LINEAR));
         let mut resources = LevelResources {
             terrain_pipelines: &terrain_pipelines,
             sky_pipelines: &sky_pipelines,
+            celestials_atlas: &self.celestials_atlas,
             block_atlas: self
                 .block_atlas
                 .get_texture_view()

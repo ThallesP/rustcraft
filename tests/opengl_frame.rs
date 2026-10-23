@@ -381,6 +381,12 @@ const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
     ),
     ("walk", "spawn", "40f5b5f93bd28c499cf9d2ec70243fed"),
     ("walk", "after-walk", "b4f2a3b57e31c51be4992e54dd84d878"),
+    ("sky-sunset", "west", "c3f3c068f86e1c6960d345d041bf8c8e"),
+    ("sky-sunset", "east", "d2d52caf94690f2a6afd31f959fc81c6"),
+    ("sky-night", "zenith", "b216b4432026b50cd7733bb5bc18b25d"),
+    ("sky-night", "stars", "976de7b4bb8226cc5099e593b3415ea1"),
+    ("sky-sunrise", "east", "a8003efca04138403a4812fced227287"),
+    ("sky-sunrise", "up", "945a20075d656a90f21083e91d038dcf"),
 ];
 
 fn rgba_digest(pixels: &[u8]) -> String {
@@ -402,6 +408,19 @@ fn vanilla_screenshot(scenario: &str, name: &str) -> &'static str {
 /// own (CI records it before the tests); without one the test says so and passes.
 #[test]
 fn renders_the_walks_spawn_view_like_vanilla() {
+    render_the_walks_spawn_view("walk-spawn.png", &[]);
+}
+
+/// The same view, the window resized from 427 by 241 after the first frame (`Window`'s
+/// framebuffer resize, `GameRenderer.resize`): the main target made again at the new size, the
+/// framebuffers of the old one gone with it, the projection and the visible sections following.
+/// The same pixels as vanilla's at that size from the start.
+#[test]
+fn renders_the_walks_spawn_view_like_vanilla_after_a_resize() {
+    render_the_walks_spawn_view("walk-spawn-resized.png", &["--start-size", "427x241"]);
+}
+
+fn render_the_walks_spawn_view(name: &str, more_arguments: &[&str]) {
     let capture = [
         std::env::var("RUSTCRAFT_CHUNK_CAPTURE")
             .ok()
@@ -416,15 +435,14 @@ fn renders_the_walks_spawn_view_like_vanilla() {
         skip("no capture of the walk (tools/port_client.py capture walk)");
         return;
     };
-    let Some((width, height, color_type, pixels)) = screenshot(
-        "walk-spawn.png",
-        &[
-            "--render-scenario",
-            "oracle/scenarios/walk-no-gui.json",
-            "--capture",
-            capture.to_str().expect("a UTF-8 path"),
-        ],
-    ) else {
+    let mut arguments = vec![
+        "--render-scenario",
+        "oracle/scenarios/walk-no-gui.json",
+        "--capture",
+        capture.to_str().expect("a UTF-8 path"),
+    ];
+    arguments.extend_from_slice(more_arguments);
+    let Some((width, height, color_type, pixels)) = screenshot(name, &arguments) else {
         return;
     };
     assert_eq!(

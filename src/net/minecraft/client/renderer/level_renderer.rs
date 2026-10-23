@@ -54,11 +54,12 @@ use crate::net::minecraft::client::renderer::fog::fog_renderer::{FogMode, FogRen
 use crate::net::minecraft::client::renderer::rendertype::render_types::RenderTypes;
 use crate::net::minecraft::client::renderer::section_occlusion_graph::SectionOcclusionGraph;
 use crate::net::minecraft::client::renderer::sky_renderer::{
-    SkyPipelines, SkyRenderState, SkyRenderer,
+    SkyPipelines, SkyRenderState, SkyRenderer, SkyResources,
 };
 use crate::net::minecraft::client::renderer::state::level::block_outline_render_state::BlockOutlineRenderState;
 use crate::net::minecraft::client::renderer::state::level::camera_render_state::CameraRenderState;
 use crate::net::minecraft::client::renderer::submit_node_storage::SubmitNodeStorage;
+use crate::net::minecraft::client::renderer::texture::texture_atlas::TextureAtlas;
 use crate::net::minecraft::client::renderer::view_area::ViewArea;
 use crate::net::minecraft::client::section_update_tracker::SectionUpdateTracker;
 use crate::net::minecraft::core::block_pos::BlockPos;
@@ -66,7 +67,9 @@ use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::level::block::leaves_block::LeavesBlock;
+use crate::net::minecraft::world::level::dimension::dimension_type::Skybox;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
+use crate::net::minecraft::world::level::material::fog_type::FogType;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::joml::matrix4f::Matrix4f;
 use crate::org::joml::vector4f::Vector4f;
@@ -87,6 +90,7 @@ pub struct LevelRenderOptions {
 pub struct LevelResources<'a> {
     pub terrain_pipelines: &'a TerrainPipelines,
     pub sky_pipelines: &'a SkyPipelines,
+    pub celestials_atlas: &'a TextureAtlas,
     pub block_atlas: &'a GpuTextureView,
     pub lightmap: &'a GpuTextureView,
     pub lightmap_sampler: &'a Rc<dyn GpuSampler>,
@@ -200,6 +204,8 @@ impl LevelRenderer {
         block_colors: &Arc<BlockColors>,
     ) {
         self.last_view_distance = options.render_distance;
+        // The new tracker has every section dirty, so what the level marked before is moot.
+        level.level_extractor().listen();
         let mut tracker = SectionUpdateTracker::new(level, options.render_distance);
         tracker.reposition_camera(camera_section_pos);
         self.section_update_tracker = Some(tracker);
@@ -231,6 +237,12 @@ impl LevelRenderer {
         self.clear_visible_sections();
         view_area.reposition_camera(camera_section_pos);
         self.view_area = Some(view_area);
+    }
+
+    /// `resize`: the visible sections are worked out again (the entity outline's target isn't
+    /// ported).
+    pub fn resize(&mut self, _width: i32, _height: i32) {
+        self.section_occlusion_graph.invalidate();
     }
 
     pub fn reset_level_render_data(&mut self) {
@@ -270,7 +282,13 @@ impl LevelRenderer {
             );
         }
 
+        // What the level's changes marked since the last frame, which Java's tracker got as they
+        // came.
+        let dirty_sections = level.level_extractor().take_dirty_sections();
         if let Some(tracker) = &mut self.section_update_tracker {
+            for (x, y, z, player_changed) in dirty_sections {
+                tracker.set_dirty(x, y, z, player_changed);
+            }
             tracker.reposition_camera(camera_section_pos);
         }
 
@@ -357,18 +375,35 @@ impl LevelRenderer {
                 &**main_target.get_depth_texture().expect("depth"),
                 0.0,
             );
-        // "sky".
-        let sky_renderer = self
-            .sky_renderer
-            .get_or_insert_with(|| SkyRenderer::new(device));
-        sky_renderer.render(
-            device,
-            resources.sky_pipelines,
-            &terrain_fog,
-            color,
-            depth,
-            sky_state,
-        );
+        // addSkyPass: none in powder snow or lava, or for a dimension without a sky (mob effects
+        // that hide it aren't ported).
+        let fog_type = camera_state.fog_type;
+        if fog_type != FogType::POWDER_SNOW && fog_type != FogType::LAVA {
+            let celestials_atlas = resources.celestials_atlas;
+            let sky_renderer = self
+                .sky_renderer
+                .get_or_insert_with(|| SkyRenderer::new(device, celestials_atlas));
+            if sky_state.skybox != Skybox::NONE {
+                let mut sky_resources = SkyResources {
+                    pipelines: resources.sky_pipelines,
+                    celestials: celestials_atlas
+                        .get_texture_view()
+                        .expect("the atlas is uploaded"),
+                    celestials_sampler: celestials_atlas
+                        .get_sampler()
+                        .expect("the atlas is uploaded"),
+                    quad_indices: resources.quad_indices,
+                };
+                sky_renderer.render(
+                    device,
+                    &mut sky_resources,
+                    &terrain_fog,
+                    color,
+                    depth,
+                    sky_state,
+                );
+            }
+        }
         // "main".
         let terrain_matrix = Matrix4f::from_matrix4f(&camera_state.view_rotation_matrix);
         let chunk_sections_to_render =

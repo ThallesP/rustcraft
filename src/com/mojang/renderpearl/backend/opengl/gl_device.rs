@@ -389,6 +389,7 @@ impl GpuDevice for GlDevice {
             assert!(error == glow::NO_ERROR, "OpenGL error {error}");
             Rc::new(GlTexture::new(
                 self.gl.clone(),
+                Rc::clone(self.encoder.frame_buffer_cache()),
                 usage,
                 label,
                 format,

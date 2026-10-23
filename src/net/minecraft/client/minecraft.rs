@@ -333,6 +333,9 @@ impl Minecraft {
         let (Some(game_renderer), Some(level)) = (game_renderer.as_mut(), level.as_ref()) else {
             return false;
         };
+        if let Some((window, _)) = self.window.borrow().as_ref() {
+            game_renderer.follow_window_size(window.get_width(), window.get_height());
+        }
         let options = GameRenderer::extract_options(&self.options.borrow(), self.hud_hidden.get());
         self.ensure_environment_attributes(game_renderer, level);
         game_renderer.update(
@@ -450,8 +453,8 @@ impl Minecraft {
     /// `RenderSystem.pollEvents`, with the window's input: the keyboard's and the mouse's
     /// (`KeyboardHandler`, `MouseHandler`), a click grabbing the mouse, and closing the window.
     fn poll_events(&self) {
-        let window = self.window.borrow();
-        let Some((window, _)) = window.as_ref() else {
+        let mut window = self.window.borrow_mut();
+        let Some((window, _)) = window.as_mut() else {
             return;
         };
         let mut event = SdlEvent::default();
@@ -484,6 +487,16 @@ impl Minecraft {
                         self.mouse_handler.borrow_mut().set_mouse_grabbed(true);
                         SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), true);
                     }
+                }
+                SDLEvents::SDL_EVENT_WINDOW_RESIZED => {
+                    let (width, height) = event.window_data();
+                    window.on_resize(width, height);
+                }
+                SDLEvents::SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => {
+                    // framebufferSizeChanged: the surface follows the window's pixels when it
+                    // blits, and the GUI's scale and the main target follow its size each frame.
+                    let (width, height) = event.window_data();
+                    window.on_framebuffer_resize(width, height);
                 }
                 SDLEvents::SDL_EVENT_WINDOW_FOCUS_LOST => {
                     self.mouse_handler.borrow_mut().set_mouse_grabbed(false);

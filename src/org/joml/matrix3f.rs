@@ -360,6 +360,80 @@ impl Matrix3f {
         dest
     }
 
+    pub fn rotate_towards(&mut self, direction: &Vector3f, up: &Vector3f) -> &mut Self {
+        self.rotate_towards_xyz(direction.x, direction.y, direction.z, up.x, up.y, up.z)
+    }
+
+    pub fn rotate_towards_xyz(
+        &mut self,
+        dir_x: f32,
+        dir_y: f32,
+        dir_z: f32,
+        up_x: f32,
+        up_y: f32,
+        up_z: f32,
+    ) -> &mut Self {
+        let this = *self;
+        this.rotate_towards_xyz_into(dir_x, dir_y, dir_z, up_x, up_y, up_z, self)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn rotate_towards_xyz_into<'a>(
+        &self,
+        dir_x: f32,
+        dir_y: f32,
+        dir_z: f32,
+        up_x: f32,
+        up_y: f32,
+        up_z: f32,
+        dest: &'a mut Matrix3f,
+    ) -> &'a mut Matrix3f {
+        // Normalize direction
+        let inv_dir_length = Math::invsqrt_f32(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z);
+        let ndir_x = dir_x * inv_dir_length;
+        let ndir_y = dir_y * inv_dir_length;
+        let ndir_z = dir_z * inv_dir_length;
+        // left = up x direction
+        let mut left_x = up_y * ndir_z - up_z * ndir_y;
+        let mut left_y = up_z * ndir_x - up_x * ndir_z;
+        let mut left_z = up_x * ndir_y - up_y * ndir_x;
+        // normalize left
+        let inv_left_length =
+            Math::invsqrt_f32(left_x * left_x + left_y * left_y + left_z * left_z);
+        left_x *= inv_left_length;
+        left_y *= inv_left_length;
+        left_z *= inv_left_length;
+        // up = direction x left
+        let upn_x = ndir_y * left_z - ndir_z * left_y;
+        let upn_y = ndir_z * left_x - ndir_x * left_z;
+        let upn_z = ndir_x * left_y - ndir_y * left_x;
+        let rm00 = left_x;
+        let rm01 = left_y;
+        let rm02 = left_z;
+        let rm10 = upn_x;
+        let rm11 = upn_y;
+        let rm12 = upn_z;
+        let rm20 = ndir_x;
+        let rm21 = ndir_y;
+        let rm22 = ndir_z;
+        let nm00 = self.m00 * rm00 + self.m10 * rm01 + self.m20 * rm02;
+        let nm01 = self.m01 * rm00 + self.m11 * rm01 + self.m21 * rm02;
+        let nm02 = self.m02 * rm00 + self.m12 * rm01 + self.m22 * rm02;
+        let nm10 = self.m00 * rm10 + self.m10 * rm11 + self.m20 * rm12;
+        let nm11 = self.m01 * rm10 + self.m11 * rm11 + self.m21 * rm12;
+        let nm12 = self.m02 * rm10 + self.m12 * rm11 + self.m22 * rm12;
+        dest.m20 = self.m00 * rm20 + self.m10 * rm21 + self.m20 * rm22;
+        dest.m21 = self.m01 * rm20 + self.m11 * rm21 + self.m21 * rm22;
+        dest.m22 = self.m02 * rm20 + self.m12 * rm21 + self.m22 * rm22;
+        dest.m00 = nm00;
+        dest.m01 = nm01;
+        dest.m02 = nm02;
+        dest.m10 = nm10;
+        dest.m11 = nm11;
+        dest.m12 = nm12;
+        dest
+    }
+
     pub fn rotate_axis_xyz(&mut self, ang: f32, x: f32, y: f32, z: f32) -> &mut Self {
         let this = *self;
         this.rotate_axis_xyz_into(ang, x, y, z, self)
@@ -586,6 +660,24 @@ mod tests {
         golden.check_method(
             "rotateZ(FLorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
             |this: &mut Matrix3f, ang, mut dest: Matrix3f| *this.rotate_z_into(ang, &mut dest),
+        );
+        golden.check_method(
+            "rotateTowards(Lorg/joml/Vector3fc;Lorg/joml/Vector3fc;)Lorg/joml/Matrix3f;",
+            |this: &mut Matrix3f, direction: Vector3f, up: Vector3f| {
+                *this.rotate_towards(&direction, &up)
+            },
+        );
+        golden.check_method(
+            "rotateTowards(FFFFFF)Lorg/joml/Matrix3f;",
+            |this: &mut Matrix3f, dir_x, dir_y, dir_z, up_x, up_y, up_z| {
+                *this.rotate_towards_xyz(dir_x, dir_y, dir_z, up_x, up_y, up_z)
+            },
+        );
+        golden.check_method(
+            "rotateTowards(FFFFFFLorg/joml/Matrix3f;)Lorg/joml/Matrix3f;",
+            |this: &mut Matrix3f, dir_x, dir_y, dir_z, up_x, up_y, up_z, mut dest: Matrix3f| {
+                *this.rotate_towards_xyz_into(dir_x, dir_y, dir_z, up_x, up_y, up_z, &mut dest)
+            },
         );
         golden.check_method(
             "rotate(FFFF)Lorg/joml/Matrix3f;",
