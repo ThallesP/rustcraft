@@ -9,6 +9,10 @@ target/oracle/<scenario>/capture.jsonl, to compare with vanilla's:
     python3 tools/port_client.py capture walk --accept-eula
     cargo run -p oracle-diff -- packets --join vanilla/26.3/oracle/walk/capture.jsonl target/oracle/walk/capture.jsonl
 
+`--ping` pings the scenario's server like the server list does (`rustcraft --ping`) instead of
+joining it, into target/oracle/<scenario>-ping/, to compare with `oracle_client.py capture
+<scenario> --ping`'s.
+
 `check-join` does both, gate 1 end to end, and exits 0 when the join phases match:
 
     python3 tools/port_client.py check-join walk --accept-eula
@@ -39,9 +43,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PORT_BINARY = ROOT / "target" / "release" / "rustcraft"
 
 
-def run(scenario, out_dir, server):
-    """Replays the scenario in the port, joining `server`."""
-    scenario_out = out_dir / scenario.stem
+def run(scenario, out_dir, server, ping=False):
+    """Replays the scenario in the port, joining `server`, or pings it with `ping`."""
+    scenario_out = out_dir / (f"{scenario.stem}-ping" if ping else scenario.stem)
     shutil.rmtree(scenario_out, ignore_errors=True)
     scenario_out.mkdir(parents=True)
 
@@ -49,8 +53,10 @@ def run(scenario, out_dir, server):
         PORT_BINARY, "--quickPlayMultiplayer", server, "--username", "rustcraft", "--headless",
         "--oracleScenario", scenario,
     ]
+    if ping:
+        command = [PORT_BINARY, "--ping", server]
     log_path = scenario_out / "client.log"
-    print(f"running {scenario.stem} in the port (log: {log_path})")
+    print(f"running {scenario_out.name} in the port (log: {log_path})")
     with open(log_path, "w") as log:
         result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=600)
     if result.returncode != 0:
@@ -59,7 +65,7 @@ def run(scenario, out_dir, server):
     return scenario_out
 
 
-def capture(scenario, out_dir, accept_eula, compression_threshold):
+def capture(scenario, out_dir, accept_eula, compression_threshold, ping=False):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run."""
     subprocess.run(["cargo", "build", "--quiet", "--release", "-p", "rustcraft"], cwd=ROOT, check=True)
     subprocess.run(["cargo", "build", "--quiet", "-p", "packet-proxy"], cwd=ROOT, check=True)
@@ -84,7 +90,7 @@ def capture(scenario, out_dir, accept_eula, compression_threshold):
             proxy = subprocess.Popen(proxy_command, stdout=proxy_log, stderr=subprocess.STDOUT)
         wait_for_line(logs / "proxy.log", "capturing to", proxy)
 
-        scenario_out = run(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}")
+        scenario_out = run(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", ping)
         proxy.wait(timeout=30)
     finally:
         if proxy is not None and proxy.poll() is None:
@@ -125,6 +131,7 @@ def main():
     capture_parser.add_argument("--out", type=Path, default=ROOT / "target" / "oracle", help="output directory (default: target/oracle)")
     capture_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
     capture_parser.add_argument("--compression-threshold", type=int, help="turn the server's compression on, from this packet size")
+    capture_parser.add_argument("--ping", action="store_true", help="ping the server like the server list does (--ping) instead of joining it")
     check_parser = commands.add_parser("check-join", help="capture the port's run and compare its join phase with vanilla's (gate 1)")
     check_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     check_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
@@ -133,7 +140,7 @@ def main():
 
     scenario = resolve_scenario(args.scenario)
     if args.command == "capture":
-        capture(scenario, args.out, args.accept_eula, args.compression_threshold)
+        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping)
     elif not check_join(scenario, args.accept_eula, args.compression_threshold):
         raise SystemExit(1)
 

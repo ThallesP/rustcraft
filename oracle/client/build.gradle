@@ -22,6 +22,7 @@ loom {
             vmArg "-Drustcraft.oracle.out=${findProperty('oracle.out') ?: ''}"
             vmArg "-Drustcraft.oracle.server=${findProperty('oracle.server') ?: ''}"
             vmArg "-Drustcraft.oracle.serverReady=${findProperty('oracle.serverReady') ?: ''}"
+            vmArg "-Drustcraft.oracle.ping=${findProperty('oracle.ping') ?: ''}"
             programArgs '--username', 'rustcraft', '--graphicsBackend', 'opengl'
         }
     }

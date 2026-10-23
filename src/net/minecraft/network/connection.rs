@@ -2,8 +2,7 @@
 //!
 //! Not ported yet: encryption (`setEncryptionKey`, `CipherDecoder` and `CipherEncoder`), which
 //! online-mode servers turn on; the in-memory connections to an integrated server
-//! (`connectToLocalServer`, `fromChannel`, `configureInMemoryPipeline`); the status connection
-//! (`initiateServerboundStatusConnection`), which waits for the status protocol; the server's
+//! (`connectToLocalServer`, `fromChannel`, `configureInMemoryPipeline`); the server's
 //! side (`setListenerForServerboundHandshake`, sending a disconnect packet on a fault); the
 //! bundle packer the game protocol's `bundlerInfo` adds after the decoder, so a bundle's packets
 //! are handled one by one as they come; `validateListener`, which only catches a programming
@@ -53,6 +52,8 @@ use crate::net::minecraft::network::protocol::login::client_login_packet_listene
 use crate::net::minecraft::network::protocol::login::login_protocols::LoginProtocols;
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_flow::PacketFlow;
+use crate::net::minecraft::network::protocol::status::client_status_packet_listener::ClientStatusPacketListener;
+use crate::net::minecraft::network::protocol::status::status_protocols::StatusProtocols;
 use crate::net::minecraft::network::protocol_info::ProtocolInfo;
 use crate::net::minecraft::network::varint21_frame_decoder::Varint21FrameDecoder;
 use crate::net::minecraft::network::varint21_length_field_prepender::Varint21LengthFieldPrepender;
@@ -356,6 +357,22 @@ impl Connection {
         *self.encoder.borrow_mut() = Some(Rc::new(OutboundProtocol {
             encoder: PacketEncoder::new(protocol),
         }));
+    }
+
+    pub fn initiate_serverbound_status_connection(
+        &self,
+        host_name: &str,
+        port: i32,
+        listener: Rc<RefCell<dyn ClientStatusPacketListener>>,
+    ) {
+        self.initiate_serverbound_connection(
+            host_name,
+            port,
+            Box::new(&***StatusProtocols::SERVERBOUND),
+            Box::new(&***StatusProtocols::CLIENTBOUND),
+            listener,
+            ClientIntent::STATUS,
+        );
     }
 
     pub fn initiate_serverbound_play_connection(

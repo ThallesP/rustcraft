@@ -1,19 +1,34 @@
 //! net/minecraft/client/multiplayer/ServerData.java
 //!
-//! Not ported yet: everything but the name, address and type: the status a ping fills in, the
-//! resource pack setting, the accepted codes of conduct, and saving the server list.
+//! Not ported yet: the resource pack setting, the accepted codes of conduct, the icon, the state,
+//! saving the server list, and the parts of the status a ping fills in that are text components
+//! (`status`, `motd`, `version`, `playerList`) or come from the status's parts (`players`,
+//! `protocol`): `ServerStatus` holds its JSON until text components come, and so does
+//! `server_status`, which stands in for them.
+
+use crate::net::minecraft::network::protocol::status::server_status::ServerStatus;
 
 /// A server the player joins, as the server list has it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerData {
     pub name: String,
     pub ip: String,
+    /// The round trip of the last ping, in milliseconds.
+    pub ping: i64,
+    /// The status the last ping got, standing in for the fields Java fills in from it.
+    pub server_status: Option<ServerStatus>,
     r#type: Type,
 }
 
 impl ServerData {
     pub fn new(name: String, ip: String, r#type: Type) -> ServerData {
-        ServerData { name, ip, r#type }
+        ServerData {
+            name,
+            ip,
+            ping: 0,
+            server_status: None,
+            r#type,
+        }
     }
 
     pub fn r#type(&self) -> Type {

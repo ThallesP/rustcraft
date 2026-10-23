@@ -125,7 +125,12 @@ import net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
 import net.minecraft.network.protocol.login.ServerboundKeyPacket;
 import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
+import net.minecraft.network.protocol.ping.ClientboundPongResponsePacket;
 import net.minecraft.network.protocol.ping.PingPacketTypes;
+import net.minecraft.network.protocol.ping.ServerboundPingRequestPacket;
+import net.minecraft.network.protocol.status.ServerboundStatusRequestPacket;
+import net.minecraft.network.protocol.status.StatusPacketTypes;
+import net.minecraft.network.protocol.status.StatusProtocols;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryPayload;
 import net.minecraft.resources.Identifier;
@@ -946,6 +951,13 @@ public final class Golden {
         InstanceSuite.every(ClientboundLoginFinishedPacket.class),
         new StaticSuite(LoginPacketTypes.class),
         new ProtocolSuite(LoginProtocols.class),
+        // The status protocol, the server list's ping, with the ping packets play shares. Its response's status is read with
+        // DataFixerUpper's codecs from JSON, which have no generator yet, so its clientbound codec is skipped.
+        new StaticSuite(StatusPacketTypes.class),
+        new ProtocolSuite(StatusProtocols.class),
+        InstanceSuite.every(ServerboundStatusRequestPacket.class),
+        InstanceSuite.every(ServerboundPingRequestPacket.class),
+        InstanceSuite.every(ClientboundPongResponsePacket.class),
         // The profile the login's last packet carries: authlib's, with its properties in a Guava multimap, which a
         // PropertyMap forwards its Multimap methods to.
         InstanceSuite.every(GameProfile.class),

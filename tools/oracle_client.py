@@ -8,7 +8,8 @@ in the formats from TESTING.md. Needs tools/setup_vanilla.py to have run, and xv
     python3 tools/oracle_client.py run walk                          # singleplayer
     python3 tools/oracle_client.py run walk --server 127.0.0.1:25566   # join a running server
     python3 tools/oracle_client.py capture walk --accept-eula        # fresh vanilla server + packet-proxy
-    python3 tools/oracle_client.py capture walk --accept-eula --compression-threshold 256 --out vanilla/26.3/oracle-compressed
+    python3 tools/oracle_client.py capture walk --accept-eula --compression-threshold 256 --out vanilla/26.3/oracle-compressed-256
+    python3 tools/oracle_client.py capture walk --accept-eula --ping   # the server list's ping, into oracle/walk-ping
     python3 tools/oracle_client.py check-determinism walk            # run twice, diff with oracle-diff
     python3 tools/oracle_client.py check-determinism walk --capture --accept-eula
 """
@@ -78,12 +79,15 @@ def expected_ticks(scenario):
     return sum(step.get("ticks", 0) for step in steps), [step["screenshot"] for step in steps if "screenshot" in step]
 
 
-def start(scenario, out_dir, server=None, server_ready=None):
-    """Starts the client replaying the scenario, joining `server` once `server_ready` exists if it's given."""
+def start(scenario, out_dir, server=None, server_ready=None, ping=False):
+    """Starts the client replaying the scenario, joining `server` once `server_ready` exists if it's given.
+
+    With `ping`, the client pings `server` the way the server list does instead, into `<out_dir>/<scenario>-ping`.
+    """
     if shutil.which("xvfb-run") is None:
         raise SystemExit("xvfb-run is missing: sudo apt install xvfb")
 
-    scenario_out = out_dir / scenario.stem
+    scenario_out = out_dir / (f"{scenario.stem}-ping" if ping else scenario.stem)
     shutil.rmtree(scenario_out, ignore_errors=True)
     scenario_out.mkdir(parents=True)
     (CLIENT_DIR / "run").mkdir(exist_ok=True)
@@ -96,12 +100,12 @@ def start(scenario, out_dir, server=None, server_ready=None):
         f"-Poracle.out={out_dir.resolve()}",
     ]
     if server:
-        command.append(f"-Poracle.server={server}")
+        command.append(f"-Poracle.ping={server}" if ping else f"-Poracle.server={server}")
     if server_ready:
         command.append(f"-Poracle.serverReady={server_ready}")
 
     log_path = scenario_out / "client.log"
-    print(f"running {scenario.stem} in the vanilla client (log: {log_path})")
+    print(f"running {scenario_out.name} in the vanilla client (log: {log_path})")
     with open(log_path, "w") as log:
         # Its own process group, so stop() reaches the game under xvfb-run and Gradle.
         client = subprocess.Popen(
@@ -117,12 +121,14 @@ def stop(client):
         client.wait(timeout=60)
 
 
-def finish(scenario, client, scenario_out):
+def finish(scenario, client, scenario_out, ping=False):
     """Waits for the client to exit and checks it wrote the whole trace and every screenshot."""
     log_path = scenario_out / "client.log"
     if client.wait() != 0:
         print("".join(log_path.read_text().splitlines(keepends=True)[-40:]))
         raise SystemExit(f"the client exited with {client.returncode}, see {log_path}")
+    if ping:
+        return scenario_out
 
     ticks, screenshots = expected_ticks(scenario)
     trace = scenario_out / "trace.jsonl"
@@ -150,19 +156,20 @@ def wait_for_line(log_path, needle, process):
         time.sleep(0.5)
 
 
-def capture(scenario, out_dir, accept_eula, compression_threshold=None):
+def capture(scenario, out_dir, accept_eula, compression_threshold=None, ping=False):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run.
 
     The client starts first and waits on the title screen: the server starts once it's up, and the client joins as soon
     as the server is ready, like the port does (port_client.py). The server's timers then fall at the same points of
-    both runs, wherever the client's startup takes its time.
+    both runs, wherever the client's startup takes its time. With `ping`, the client pings the scenario's server like
+    the server list does instead of joining it, into `<out_dir>/<scenario>-ping`.
     """
     subprocess.run(["cargo", "build", "--quiet", "-p", "packet-proxy"], cwd=ROOT, check=True)
     logs = Path(tempfile.mkdtemp(prefix=f"oracle-{scenario.stem}-"))
     seed = json.loads(scenario.read_text())["world"]["seed"]
     server_ready = logs / "server-ready"
 
-    client, scenario_out = start(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", server_ready)
+    client, scenario_out = start(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", server_ready, ping)
     server = None
     proxy = None
     try:
@@ -184,7 +191,7 @@ def capture(scenario, out_dir, accept_eula, compression_threshold=None):
         wait_for_line(logs / "proxy.log", "capturing to", proxy)
         server_ready.touch()
 
-        finish(scenario, client, scenario_out)
+        finish(scenario, client, scenario_out, ping)
         proxy.wait(timeout=30)
     finally:
         stop(client)
@@ -221,6 +228,7 @@ def main():
     capture_parser.add_argument("--out", type=Path, default=VERSION_DIR / "oracle", help="output directory (default: vanilla/<version>/oracle)")
     capture_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
     capture_parser.add_argument("--compression-threshold", type=int, help="turn the server's compression on, from this packet size")
+    capture_parser.add_argument("--ping", action="store_true", help="ping the server like the server list does instead of joining it")
     check_parser = commands.add_parser("check-determinism", help="replay a scenario twice and diff the runs")
     check_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     check_parser.add_argument("--capture", action="store_true", help="run on a vanilla server and compare packets too")
@@ -231,7 +239,7 @@ def main():
     if args.command == "run":
         run(scenario, args.out, args.server)
     elif args.command == "capture":
-        capture(scenario, args.out, args.accept_eula, args.compression_threshold)
+        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping)
     else:
         check_determinism(scenario, args.capture, args.accept_eula)
 

@@ -11,18 +11,26 @@
 //! - `--headless`, no window. There is no window yet (the render track brings it), so every run
 //!   is headless for now;
 //! - `--oracleScenario PATH`, which replays a scenario on the server the way the oracle client
-//!   does (`OracleGameTest`), and exits 0 when it finished, like `rustcraft.oracle.scenario`.
+//!   does (`OracleGameTest`), and exits 0 when it finished, like `rustcraft.oracle.scenario`;
+//! - `--ping HOST:PORT`, which pings the server the way the server list does
+//!   (`ServerStatusPinger`), prints its status's JSON and the round trip, and exits 0 when the
+//!   pong came, without joining.
 
+use std::cell::{Cell, RefCell};
 use std::path::Path;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::resolver::server_address::ServerAddress;
 use crate::net::minecraft::client::multiplayer::server_data::{self, ServerData};
+use crate::net::minecraft::client::multiplayer::server_status_pinger::ServerStatusPinger;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
+use crate::net::minecraft::server::network::event_loop_group_holder::EventLoopGroupHolder;
 use crate::rustcraft::oracle::client::oracle_game_test::{OracleGameTest, Outcome};
 use crate::rustcraft::oracle::client::scenario::Scenario;
 
@@ -36,7 +44,7 @@ struct OptionSet {
 
 impl OptionSet {
     /// The options that take a value, which is the next argument.
-    const WITH_ARGUMENT: [&'static str; 9] = [
+    const WITH_ARGUMENT: [&'static str; 10] = [
         "username",
         "uuid",
         "accessToken",
@@ -46,6 +54,7 @@ impl OptionSet {
         "xuid",
         "clientId",
         "oracleScenario",
+        "ping",
     ];
 
     fn parse(args: &[String]) -> Result<OptionSet, String> {
@@ -127,6 +136,10 @@ impl Main {
                 .map(str::to_string),
         );
 
+        if let Some(address) = option_set.value_of("ping") {
+            return Main::ping(address);
+        }
+
         let Some(server_address) = option_set
             .value_of("quickPlayMultiplayer")
             .or(option_set.value_of("server"))
@@ -180,6 +193,42 @@ impl Main {
                 }
                 None => 0,
             },
+        }
+    }
+
+    /// `--ping`: what the server list does for one server, on the event loop until the pong comes,
+    /// the connection ends, or 30 seconds (Netty's read timeout) pass.
+    fn ping(address: &str) -> i32 {
+        let data = Rc::new(RefCell::new(ServerData::new(
+            "Minecraft Server".to_string(),
+            address.to_string(),
+            server_data::Type::OTHER,
+        )));
+        let pinger = ServerStatusPinger::new();
+        let ponged = Rc::new(Cell::new(false));
+        let on_pong = Rc::clone(&ponged);
+        if let Err(error) =
+            pinger.ping_server(Rc::clone(&data), Box::new(move || on_pong.set(true)))
+        {
+            eprintln!("Can't ping {address}: {error}");
+            return 1;
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while pinger.is_pinging() && Instant::now() < deadline {
+            EventLoopGroupHolder::remote().run_until(Instant::now() + Duration::from_millis(50));
+            pinger.tick();
+        }
+        pinger.remove_all();
+
+        let data = data.borrow();
+        match (&data.server_status, ponged.get()) {
+            (Some(status), true) => {
+                println!("{}", status.json());
+                println!("ping: {} ms", data.ping);
+                0
+            }
+            _ => 1,
         }
     }
 

@@ -1,9 +1,8 @@
 //! net/minecraft/network/protocol/game/ClientGamePacketListener.java
 //!
 //! Not ported yet: the handlers of the packets the game protocol has the `Unported` stand-in for
-//! (GameProtocols), which come with their packets (the world data's with the world track), its `protocol()`, which comes with
-//! `PacketListener`'s, and its parent `ClientPongPacketListener`, which comes with the pong
-//! packet.
+//! (GameProtocols), which come with their packets (the world data's with the world track), and
+//! its `protocol()`, which comes with `PacketListener`'s.
 
 use crate::net::minecraft::network::protocol::common::client_common_packet_listener::ClientCommonPacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
@@ -13,9 +12,10 @@ use crate::net::minecraft::network::protocol::game::clientbound_game_event_packe
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
+use crate::net::minecraft::network::protocol::ping::client_pong_packet_listener::ClientPongPacketListener;
 
 /// The client's listener in the game protocol.
-pub trait ClientGamePacketListener: ClientCommonPacketListener {
+pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacketListener {
     fn handle_login(&mut self, packet: &ClientboundLoginPacket);
 
     fn handle_move_player(&mut self, packet: &ClientboundPlayerPositionPacket);

@@ -92,6 +92,9 @@ import net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
 import net.minecraft.network.protocol.login.ServerboundKeyPacket;
 import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
+import net.minecraft.network.protocol.ping.ClientboundPongResponsePacket;
+import net.minecraft.network.protocol.ping.ServerboundPingRequestPacket;
+import net.minecraft.network.protocol.status.ServerboundStatusRequestPacket;
 import net.minecraft.network.protocol.login.custom.CustomQueryAnswerPayload;
 import net.minecraft.network.protocol.login.custom.CustomQueryPayload;
 import net.minecraft.network.protocol.login.custom.DiscardedQueryAnswerPayload;
@@ -333,6 +336,10 @@ final class PacketValues {
             fields -> new ClientboundLoginFinishedPacket((GameProfile)fields[0], (UUID)fields[1]), List.of(), ProfileValues.GAME_PROFILES, UUIDS
         );
         packet(ServerboundLoginAcknowledgedPacket.class, fields -> ServerboundLoginAcknowledgedPacket.INSTANCE, List.of());
+        // The status protocol's (the server list's ping) and the ping packets, which play shares: any time.
+        packet(ServerboundStatusRequestPacket.class, fields -> ServerboundStatusRequestPacket.INSTANCE, List.of());
+        packet(ServerboundPingRequestPacket.class, fields -> new ServerboundPingRequestPacket((Long)fields[0]), List.of("time"), LONGS);
+        packet(ClientboundPongResponsePacket.class, fields -> new ClientboundPongResponsePacket((Long)fields[0]), List.of(), LONGS);
         packet(
             ClientboundLoginCompressionPacket.class, fields -> new ClientboundLoginCompressionPacket((Integer)fields[0]),
             List.of("compressionThreshold"), INTS

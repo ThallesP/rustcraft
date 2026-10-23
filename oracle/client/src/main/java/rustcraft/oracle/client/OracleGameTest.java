@@ -1,11 +1,14 @@
 package rustcraft.oracle.client;
 
+import java.io.UncheckedIOException;
+import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
@@ -22,6 +25,7 @@ import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.worldselection.WorldCreationUiState;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.multiplayer.ServerStatusPinger;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
@@ -30,6 +34,7 @@ import net.minecraft.network.protocol.common.custom.DiscardedPayload;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ParticleStatus;
+import net.minecraft.server.network.EventLoopGroupHolder;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.gamerules.GameRules;
@@ -40,6 +45,7 @@ import net.minecraft.world.level.levelgen.presets.WorldPreset;
  *
  * <p>Inputs come from system properties set by tools/oracle_client.py: {@code rustcraft.oracle.scenario},
  * {@code rustcraft.oracle.out} and, to join a server instead of a singleplayer world, {@code rustcraft.oracle.server}.
+ * With {@code rustcraft.oracle.ping} instead, it pings that server the way the server list does, and replays nothing.
  */
 public final class OracleGameTest implements FabricClientGameTest {
     private static final String PLAYER_NAME = "rustcraft";
@@ -65,6 +71,12 @@ public final class OracleGameTest implements FabricClientGameTest {
 
     @Override
     public void runTest(ClientGameTestContext context) {
+        String ping = System.getProperty("rustcraft.oracle.ping", "");
+        if (!ping.isEmpty()) {
+            ping(context, ping);
+            return;
+        }
+
         Scenario scenario = Scenario.load(Path.of(requiredProperty("rustcraft.oracle.scenario")));
         Path outDir = Path.of(requiredProperty("rustcraft.oracle.out")).resolve(scenario.name());
         String server = System.getProperty("rustcraft.oracle.server", "");
@@ -89,15 +101,45 @@ public final class OracleGameTest implements FabricClientGameTest {
         }
     }
 
-    private static void runMultiplayer(ClientGameTestContext context, Scenario scenario, Path outDir, String address) {
-        // tools/oracle_client.py capture starts the server once the client is up and creates this file when it's ready, so
-        // the server has ticked as long when the client joins as when the port joins it: the server's timers (the
-        // players' latency, every 600 ticks) then fall at the same points of both runs.
+    /**
+     * What the server list does for one server (ServerSelectionList's entry, ticked like JoinMultiplayerScreen ticks its
+     * pinger): asks for its status, then pings it, and closes the connection once the pong comes.
+     */
+    private static void ping(ClientGameTestContext context, String address) {
+        waitForServer(context);
+        ServerStatusPinger pinger = new ServerStatusPinger();
+        ServerData data = new ServerData("Minecraft Server", address, ServerData.Type.OTHER);
+        AtomicBoolean ponged = new AtomicBoolean();
+        context.runOnClient(client -> {
+            try {
+                pinger.pingServer(data, () -> {}, () -> ponged.set(true), EventLoopGroupHolder.remote(client.options.useNativeTransport()));
+            } catch (UnknownHostException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+        context.waitFor(client -> {
+            pinger.tick();
+            return ponged.get();
+        }, LOAD_TIMEOUT_TICKS);
+        // The pong closed the connection; the next tick hands the pinger the disconnection.
+        context.waitTicks(2);
+        context.runOnClient(client -> pinger.tick());
+        System.out.println("rustcraft oracle: pinged " + address + ": " + data.motd.getString() + ", " + data.ping + " ms");
+    }
+
+    // tools/oracle_client.py capture starts the server once the client is up and creates this file when it's ready, so the
+    // server has ticked as long when the client joins as when the port joins it: the server's timers (the players'
+    // latency, every 600 ticks) then fall at the same points of both runs.
+    private static void waitForServer(ClientGameTestContext context) {
         String serverReady = System.getProperty("rustcraft.oracle.serverReady", "");
         if (!serverReady.isEmpty()) {
             System.out.println(WAITING_FOR_SERVER);
             context.waitFor(client -> Files.exists(Path.of(serverReady)), SERVER_TIMEOUT_TICKS);
         }
+    }
+
+    private static void runMultiplayer(ClientGameTestContext context, Scenario scenario, Path outDir, String address) {
+        waitForServer(context);
         context.runOnClient(client -> ConnectScreen.startConnecting(
             client.gui.screen(),
             client,

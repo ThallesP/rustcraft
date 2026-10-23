@@ -1,9 +1,9 @@
 //! net/minecraft/network/protocol/game/ServerGamePacketListener.java
 //!
 //! Not ported yet: the handlers of the packets the game protocol has the `Unported` stand-in for
-//! (GameProtocols), which come with their packets, its `protocol()`, which comes with
-//! `PacketListener`'s, and its parent `ServerPingPacketListener`, which comes with the ping
-//! packet. The port only sends these packets, so only the golden cases' recorder handles them.
+//! (GameProtocols), which come with their packets, and its `protocol()`, which comes with
+//! `PacketListener`'s. The port only sends these packets, so only the golden cases' recorder
+//! handles them.
 
 use crate::net::minecraft::network::protocol::common::server_common_packet_listener::ServerCommonPacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_accept_teleportation_packet::ServerboundAcceptTeleportationPacket;
@@ -13,9 +13,10 @@ use crate::net::minecraft::network::protocol::game::serverbound_client_tick_end_
 use crate::net::minecraft::network::protocol::game::serverbound_configuration_acknowledged_packet::ServerboundConfigurationAcknowledgedPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_move_player_packet::ServerboundMovePlayerPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_player_loaded_packet::ServerboundPlayerLoadedPacket;
+use crate::net::minecraft::network::protocol::ping::server_ping_packet_listener::ServerPingPacketListener;
 
 /// The server's listener in the game protocol.
-pub trait ServerGamePacketListener: ServerCommonPacketListener {
+pub trait ServerGamePacketListener: ServerCommonPacketListener + ServerPingPacketListener {
     fn handle_accept_teleport_packet(&mut self, packet: &ServerboundAcceptTeleportationPacket);
 
     fn handle_chat_command(&mut self, packet: &ServerboundChatCommandPacket);

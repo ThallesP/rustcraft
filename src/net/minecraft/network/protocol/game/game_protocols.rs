@@ -45,7 +45,9 @@ use crate::net::minecraft::network::protocol::game::serverbound_client_tick_end_
 use crate::net::minecraft::network::protocol::game::serverbound_configuration_acknowledged_packet::ServerboundConfigurationAcknowledgedPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_move_player_packet;
 use crate::net::minecraft::network::protocol::game::serverbound_player_loaded_packet::ServerboundPlayerLoadedPacket;
+use crate::net::minecraft::network::protocol::ping::clientbound_pong_response_packet::ClientboundPongResponsePacket;
 use crate::net::minecraft::network::protocol::ping::ping_packet_types::PingPacketTypes;
+use crate::net::minecraft::network::protocol::ping::serverbound_ping_request_packet::ServerboundPingRequestPacket;
 use crate::net::minecraft::network::protocol::protocol_info_builder::ProtocolInfoBuilder;
 use crate::net::minecraft::network::protocol::simple_unbound_protocol::StaticSimpleUnboundProtocol;
 use crate::net::minecraft::network::protocol::unbound_protocol::StaticUnboundProtocol;
@@ -213,7 +215,7 @@ static SERVERBOUND_TEMPLATE: StaticUnboundProtocol<
             )
             .add_packet(
                 PingPacketTypes::SERVERBOUND_PING_REQUEST,
-                Unported::codec(PingPacketTypes::SERVERBOUND_PING_REQUEST),
+                ServerboundPingRequestPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::SERVERBOUND_PLACE_RECIPE,
@@ -598,7 +600,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 PingPacketTypes::CLIENTBOUND_PONG_RESPONSE,
-                Unported::codec(PingPacketTypes::CLIENTBOUND_PONG_RESPONSE),
+                ClientboundPongResponsePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_PLACE_GHOST_RECIPE,

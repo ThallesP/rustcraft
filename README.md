@@ -57,10 +57,10 @@ Every step of the loop updates this table.
 | Network | Compression | Done (zlib, through `flate2`) | unit tests, captures (`check-join walk --compression-threshold 256`) | join phase matches vanilla's with compression on |
 | Network | Encryption, online-mode login | Not started: the port joins offline-mode servers, and leaves one that asks to encrypt | | |
 | Network | Handshake | Done (1 of 1 packets) | goldens, captures | same bytes |
-| Network | Server list ping | Not started (0 of 4) | | |
+| Network | Server list ping | Partial: the status protocol (4 of 4 packets), `ServerStatusPinger`'s ping, `rustcraft --ping HOST:PORT`; the status is its JSON until text components come, and there's no legacy ping for pre-1.7 servers | goldens, captures (`capture walk --ping`) | same packets as vanilla's ping |
 | Network | Login, offline mode | Partial: 10 of 11 packets (disconnect waits for text components, `Unported`) | goldens, captures | same packets |
 | Network | Configuration | Partial: 10 of 10 serverbound, 16 of 21 clientbound (disconnect, resource pack push, server links, tags and dialogs are `Unported`) | goldens, captures | same packets |
-| Network | Play | Partial: 16 of 144 clientbound, 17 of 69 serverbound; the rest are `Unported`: skipped, and answered by nothing (the world data's packets are the world track's) | goldens (the login packet reads the registries, and vanilla's captured login checks it) | |
+| Network | Play | Partial: 17 of 144 clientbound, 18 of 69 serverbound; the rest are `Unported`: skipped, and answered by nothing (the world data's packets are the world track's) | goldens (the login packet reads the registries, and vanilla's captured login checks it) | |
 | Network | Joining a server: `Connection`, the client's listeners, the tick loop, `--server HOST:PORT` | Partial: joins and stays (keep-alives, pings, known packs, teleports, chunk batches, `player_loaded`), headless; a still player, no movement yet | captures (`tools/port_client.py check-join walk`: `oracle-diff packets --join`) | gate 1: the join phase matches vanilla's, plain and compressed |
 | Network | Server addresses: lookups, SRV records, the server blocklist | Partial: lookups like Java's (the handshake names `127.0.0.1` `localhost`); SRV and the blocklist not started | unit tests, captures | |
 | World | Blocks and block states (1,286 blocks, 35,723 states) | Partial: every block and state with vanilla's ids, properties, default states and what each keeps from its `Properties` (light, occlusion, map colour, random ticks…); no shapes, fluid states or behaviour yet | goldens (every state), `blocks.json` | same ids, values and flags for all 35,723 states |
@@ -90,6 +90,7 @@ cargo test                              # check the port against them
 python3 tools/oracle_client.py run walk # replay a scenario in the real client
 cargo run -- --window                   # a frame of the port in a window (--screenshot out.png renders one offscreen)
 cargo run --release -- --server HOST:PORT --username rustcraft   # join a server (offline mode, headless for now)
+cargo run --release -- --ping HOST:PORT                          # ping it like the server list, printing its status
 python3 tools/port_client.py capture walk --accept-eula          # the port's run of a scenario on a fresh vanilla server
 python3 tools/port_client.py check-join walk --accept-eula       # gate 1: that run's join phase against vanilla's
 ```

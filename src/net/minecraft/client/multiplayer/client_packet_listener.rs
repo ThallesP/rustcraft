@@ -48,6 +48,8 @@ use crate::net::minecraft::network::protocol::game::serverbound_configuration_ac
 use crate::net::minecraft::network::protocol::game::serverbound_player_loaded_packet::ServerboundPlayerLoadedPacket;
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_utils::PacketUtils;
+use crate::net::minecraft::network::protocol::ping::client_pong_packet_listener::ClientPongPacketListener;
+use crate::net::minecraft::network::protocol::ping::clientbound_pong_response_packet::ClientboundPongResponsePacket;
 use crate::net::minecraft::network::tickable_packet_listener::TickablePacketListener;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
@@ -267,6 +269,15 @@ impl TickablePacketListener for ClientPacketListener {
 }
 
 client_common_handlers!(ClientPacketListener);
+
+/// On the Netty thread, like Java's. Java logs the round trip in the debug screen's ping chart,
+/// which isn't ported, and pings only while that chart shows (`PingDebugMonitor`), so a server
+/// only sends a pong to a client that asked.
+impl ClientPongPacketListener for ClientPacketListener {
+    fn handle_pong_response(&mut self, packet: &ClientboundPongResponsePacket) {
+        let _ = packet;
+    }
+}
 
 impl ClientGamePacketListener for ClientPacketListener {
     fn handle_login(&mut self, packet: &ClientboundLoginPacket) {

@@ -2,6 +2,7 @@
 //! `main` (`Main`):
 //!
 //!   rustcraft --server HOST:PORT --username NAME   joins the server, headless for now
+//!   rustcraft --ping HOST:PORT                     pings it like the server list, printing its status
 //!
 //! The render track's frames on the OpenGL backend, the way vanilla starts it: SDL's video
 //! subsystem, the GL library, the device on its hidden window, then the main render target

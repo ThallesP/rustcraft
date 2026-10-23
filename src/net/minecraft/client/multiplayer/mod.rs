@@ -11,3 +11,4 @@ pub mod multi_player_game_mode;
 pub mod registry_data_collector;
 pub mod resolver;
 pub mod server_data;
+pub mod server_status_pinger;
