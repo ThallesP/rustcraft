@@ -494,6 +494,19 @@ def soak(preset, seed, seconds_per_stop, accept_eula):
     return report(client_log, server_log, gone, visited, skipped, time.monotonic() - started)
 
 
+def thread_dump(process):
+    """Every thread's backtrace of a running process, through gdb when the machine has it."""
+    if process.poll() is not None or not shutil.which("gdb"):
+        return "(no thread dump: the process has exited, or there's no gdb)"
+    # Attaching to a process that isn't one's child needs ptrace's permission (Yama's ptrace_scope), which sudo has on CI.
+    gdb = ["gdb", "-p", str(process.pid), "-batch", "-ex", "thread apply all bt"]
+    for command in (gdb, ["sudo", "-n", *gdb]):
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        if "Thread 1" in result.stdout:
+            return result.stdout
+    return result.stdout + result.stderr
+
+
 def stall(seconds, accept_eula):
     """Stalls the port's game thread on a fresh flat world, True when the client stayed connected through it."""
     build_port()
@@ -509,22 +522,31 @@ def stall(seconds, accept_eula):
     with open(server_log, "w") as log:
         server = subprocess.Popen(server_command, stdout=log, stderr=subprocess.STDOUT)
     client = None
+    returncode = None
     try:
         wait_for_line(server_log, "ready on", server)
         command = [PORT_BINARY, "--quickPlayMultiplayer", f"127.0.0.1:{SERVER_PORT}", "--username", OP_NAME, "--headless"]
         command += ["--stall", str(seconds)]
         print(f"joining in the port, which stalls for {seconds} s (log: {client_log})", flush=True)
         with open(client_log, "w") as log:
-            client = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
-        returncode = client.wait(timeout=seconds + 180)
+            client = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, RUST_BACKTRACE="1"))
+        try:
+            returncode = client.wait(timeout=seconds + 180)
+        except subprocess.TimeoutExpired:
+            print(f"the client hasn't exited after {seconds + 180} s; its threads:", flush=True)
+            print(thread_dump(client), flush=True)
     finally:
         stop_process(client, 10)
         stop_server(server)
 
     lines = client_log.read_text(errors="replace").splitlines()
-    print("\n".join(shorten(line) for line in lines[-20:]))
+    print(f"--- the last lines of {client_log}:")
+    print("\n".join(shorten(line) for line in lines[-40:]))
     left = [SERVER_LOG_PREFIX.sub("", line) for line in server_log.read_text(errors="replace").splitlines()
             if f"{OP_NAME} lost connection" in line]
+    if returncode != 0:
+        print(f"--- the last lines of {server_log}:")
+        print("".join(server_log.read_text(errors="replace").splitlines(keepends=True)[-30:]))
     for line in left:
         print(f"server: {line}")
     stalled = any(line.startswith("stalled for") for line in lines)

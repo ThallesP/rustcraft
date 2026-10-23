@@ -10,8 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Xvfb and Mesa's llvmpipe (GLX and EGL), which tests/opengl_frame.rs renders with, like the oracle client.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0
+      # Xvfb and Mesa's llvmpipe (GLX and EGL), which tests/opengl_frame.rs renders with, like the oracle client; gdb for the
+      # stall check's thread dump when the client hangs.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 gdb
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
