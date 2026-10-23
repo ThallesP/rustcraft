@@ -109,6 +109,9 @@ import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.network.protocol.game.ClientboundSetExperiencePacket;
 import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
@@ -123,6 +126,7 @@ import net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPac
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.clock.ClockNetworkState;
 import net.minecraft.world.clock.WorldClock;
@@ -291,6 +295,8 @@ public final class Golden {
         HexFormat.of().parseHex("01011a3fb99999a000000001136d696e6563726166743a737072696e74696e673fd333334000000002"),
         HexFormat.of().parseHex("01011a3fb99999a000000000")
     );
+    // The walk's entity_event packet: the player's permission level, an owner's (28).
+    private static final byte[] ENTITY_EVENT = HexFormat.of().parseHex("000000011c");
     private static final String SPARSE = "sparse(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/function/IntFunction;";
 
     private static final List<Suite> SUITES = List.of(
@@ -1243,6 +1249,11 @@ public final class Golden {
         InstanceSuite.every(ClientboundTickingStepPacket.class),
         InstanceSuite.every(ClientboundPlayerAbilitiesPacket.class),
         InstanceSuite.every(ClientboundInitializeBorderPacket.class),
+        // The packets about an entity: its motion, its hurt animation and its events, whose reader also reads the walk's.
+        InstanceSuite.every(ClientboundSetEntityMotionPacket.class),
+        InstanceSuite.every(ClientboundHurtAnimationPacket.class),
+        InstanceSuite.every(ClientboundEntityEventPacket.class)
+            .extraInputs("STREAM_CODEC.decode", friendly(List.<Object[]>of(new Object[]{NetworkValues.buffer(0, 0, ENTITY_EVENT)}))),
         InstanceSuite.every(Difficulty.class)
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/Difficulty;", names(Difficulty.values()))
             .extraInputs(
@@ -1250,12 +1261,13 @@ public final class Golden {
                 each(List.of("peaceful", "easy", "normal", "hard", "NORMAL", "Normal", "", "normal ", "custom"))
             ),
         InstanceSuite.every(ClientboundChangeDifficultyPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
-        // The game protocol's packets that read the registries, and what they hold: the registries a RegistryFriendlyByteBuf
-        // carries (RegistryValues), the clocks' time, an entity's attributes, the world's spawn and an entity's data.
         new DataResultSuite(),
         new NbtOpsSuite(),
         new DfuCodecSuite(),
         new ComponentSuite(),
+        // The game protocol's packets that read the registries, and what they hold: the registries a RegistryFriendlyByteBuf
+        // carries (RegistryValues), the clocks' time, an entity's attributes, the world's spawn, an entity's data and its
+        // damage.
         new RegistryValues.RegistriesSuite(),
         new StaticSuite(Attributes.class),
         InstanceSuite.every(WorldClock.class),
@@ -1291,6 +1303,7 @@ public final class Golden {
             .exclude("toString()Ljava/lang/String;", SERIALIZER_IN_RECORD)
             .where("STREAM_CODEC.decode", args -> !RegistryValues.reachesUnported(args[0], true))
             .extraInputs("STREAM_CODEC.decode", registryBuffers(RegistryValues.dataValueBuffers())),
+        InstanceSuite.every(ClientboundDamageEventPacket.class).exclude("hashCode()I", HOLDER_IN_RECORD),
         // The registries the server sends, by their keys, and their elements.
         InstanceSuite.every(ResourceKey.class),
         new StaticSuite(Registries.class),

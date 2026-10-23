@@ -7,6 +7,7 @@
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
+use crate::net::minecraft::world::phys::aabb::AABB;
 
 /// A level, as an entity's tick reads it.
 pub trait Level: CollisionGetter {
@@ -28,6 +29,28 @@ pub trait Level: CollisionGetter {
         section_y0: i32,
         section_y1: i32,
     ) -> Option<bool>;
+
+    /// `environmentAttributes().getDimensionValue(EnvironmentAttributes.FAST_LAVA)`: whether lava
+    /// flows fast here, and pushes harder.
+    fn has_fast_lava(&self) -> bool;
+}
+
+/// `LevelReader.containsAnyLiquid(AABB)`: whether a block from the box's lower corner's to its
+/// upper corner's holds a fluid. Java scans by section, skipping those without one, which finds
+/// the same.
+pub fn contains_any_liquid(level: &dyn Level, r#box: &AABB) -> bool {
+    let from = BlockPos::containing_xyz(r#box.min_x, r#box.min_y, r#box.min_z);
+    let to = BlockPos::containing_xyz(r#box.max_x, r#box.max_y, r#box.max_z);
+    for x in from.get_x().min(to.get_x())..=from.get_x().max(to.get_x()) {
+        for y in from.get_y().min(to.get_y())..=from.get_y().max(to.get_y()) {
+            for z in from.get_z().min(to.get_z())..=from.get_z().max(to.get_z()) {
+                if !level.get_fluid_state(&BlockPos::new(x, y, z)).is_empty() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// The level as the collisions see it.

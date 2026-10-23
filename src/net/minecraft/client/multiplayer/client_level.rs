@@ -535,6 +535,11 @@ impl Level for ClientLevel {
         }
         Some(has_fluid)
     }
+
+    /// The vanilla pack's dimension types' `gameplay/fast_lava`.
+    fn has_fast_lava(&self) -> bool {
+        DimensionType::fast_lava_of(&self.dimension_type)
+    }
 }
 
 impl fmt::Debug for ClientLevel {

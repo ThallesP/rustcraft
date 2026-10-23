@@ -3,11 +3,18 @@
 //! A fluid state is a `StateHolder` of its fluid in Java. A fluid has at most two properties
 //! (`FlowingFluid.FALLING`, and `LEVEL_FLOWING` for a flowing one), so here a state is its fluid
 //! and their values, `Copy` and compared by value, which is comparing Java's references since a
-//! definition holds one state for each combination. Not ported yet: `Fluid.FLUID_STATE_REGISTRY`'s
-//! ids and the behaviour methods (`getHeight`, `getShape`, ticking), which come with what calls
-//! them.
+//! definition holds one state for each combination. Its heights and flow (`getHeight`,
+//! `getHeightForCamera`, `getOwnHeight`, `getFlow`) ask its fluid (`Fluid`). Not ported yet:
+//! `Fluid.FLUID_STATE_REGISTRY`'s ids and the other behaviour methods (`getShape`, ticking), which
+//! come with what calls them.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::tags::fluid_tags::FluidTagKey;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use crate::net::minecraft::world::phys::vec3::Vec3;
 
 /// One of a fluid's states.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -72,6 +79,47 @@ impl FluidState {
 
     pub fn is_randomly_ticking(&self) -> bool {
         self.fluid.is_randomly_ticking()
+    }
+
+    /// `is(TagKey<Fluid>)`: whether its fluid is in the tag.
+    pub fn is_tag(&self, tag: FluidTagKey) -> bool {
+        self.fluid.is_tag(tag)
+    }
+
+    /// `getHeight(BlockGetter, BlockPos)`: how high it reaches in its block.
+    pub fn get_height(&self, level: &dyn BlockGetter, pos: &BlockPos) -> f32 {
+        self.fluid.get_height(*self, level, pos)
+    }
+
+    /// `getHeightForCamera`: a whole block for a source under a block whose bottom is sturdy, else
+    /// its height.
+    pub fn get_height_for_camera(&self, level: &dyn BlockGetter, pos: &BlockPos) -> f32 {
+        if self.is_source() {
+            let pos_above = pos.above();
+            if level
+                .get_block_state(&pos_above)
+                .is_face_sturdy(level, &pos_above, Direction::DOWN)
+            {
+                return 1.0;
+            }
+        }
+
+        self.get_height(level, pos)
+    }
+
+    /// `getOwnHeight()`: its height without what's above it.
+    pub fn get_own_height(&self) -> f32 {
+        self.fluid.get_own_height(*self)
+    }
+
+    /// `getShape(BlockGetter, BlockPos)`.
+    pub fn get_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
+        self.fluid.get_shape(*self, level, pos)
+    }
+
+    /// `getFlow(BlockGetter, BlockPos)`: the direction it flows in, a unit vector or zero.
+    pub fn get_flow(&self, level: &dyn BlockGetter, pos: &BlockPos) -> Vec3 {
+        self.fluid.get_flow(level, pos, *self)
     }
 }
 

@@ -1,5 +1,10 @@
+pub mod empty_fluid;
+pub mod flowing_fluid;
+pub mod fluid;
 pub mod fluid_state;
 pub mod fluids;
 pub mod fog_type;
+pub mod lava_fluid;
 pub mod map_color;
 pub mod push_reaction;
+pub mod water_fluid;

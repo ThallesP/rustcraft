@@ -1,0 +1,21 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "player": {"pos": [0.5, -60.0, 1.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill -3 -63 3 3 -61 12 minecraft:water strict"
+  ],
+  "steps": [
+    {"ticks": 12, "keys": ["forward"]},
+    {"ticks": 20, "keys": []},
+    {"ticks": 16, "keys": ["jump"]},
+    {"ticks": 10, "keys": []},
+    {"ticks": 12, "keys": ["sneak"]},
+    {"ticks": 8, "keys": ["jump"]},
+    {"ticks": 14, "keys": ["forward", "sprint"], "look": [0.0, 15.0]},
+    {"ticks": 12, "keys": ["forward", "sprint"], "look": [0.0, -35.0]},
+    {"ticks": 12, "keys": [], "look": [0.0, 0.0]},
+    {"ticks": 40, "keys": ["forward", "jump"]},
+    {"ticks": 10, "keys": ["forward"]}
+  ]
+}

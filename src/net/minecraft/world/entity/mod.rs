@@ -3,6 +3,7 @@ pub mod avatar;
 #[allow(clippy::module_inception)]
 pub mod entity;
 pub mod entity_dimensions;
+pub mod entity_fluid_interaction;
 pub mod humanoid_arm;
 pub mod living_entity;
 pub mod mover_type;

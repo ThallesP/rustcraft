@@ -4,8 +4,10 @@
 //! The player the client plays as: the concrete class of the entity hierarchy the port has
 //! (PORTING.md, "Entities"), which implements `EntityClass`, `LivingEntityClass` and
 //! `PlayerClass` with Java's overrides along its chain. Its movement is `tick` on a level of
-//! blocks: `aiStep`'s crouching, sprinting and `moveTowardsClosestSpace`, the keyboard's input
-//! (`applyInput`, `modifyInput`), and `move`, through `Player`, `LivingEntity` and `Entity`.
+//! blocks: `aiStep`'s crouching, sprinting (and swimming's), `moveTowardsClosestSpace` and going
+//! down in water, the keyboard's input (`applyInput`, `modifyInput`), whether it's under water
+//! (`wasUnderwater`, as of the start of its tick), and `move`, through `Player`, `LivingEntity` and
+//! `Entity`.
 //!
 //! `sendChanges` tells the server what it holds (`player_input`), whether it sprints
 //! (`player_command`) and where it is (the four kinds of `move_player`), in Java's order. The
@@ -13,7 +15,8 @@
 //!
 //! Not ported yet: auto-jump's look-ahead (`updateAutoJump`, which panics if auto-jump is on: it's
 //! off by default), portals and the spinning effect, the tutorial, flying's toggle (`mayfly` is
-//! false in survival), riding, gliding, using items, water vision, sounds, the recipe book,
+//! false in survival), riding, gliding, using items, water vision (`waterVisionTime`, which only
+//! rendering reads), sounds (going under water and coming out), the recipe book,
 //! permissions, chat and screens.
 //!
 //! Java's player holds the game (`minecraft`), which is a parameter here, and its connection is
@@ -79,6 +82,8 @@ pub struct LocalPlayer {
     sprint_trigger_time: i32,
     auto_jump_enabled: bool,
     auto_jump_time: i32,
+    flash_on_set_health: bool,
+    last_hurt: f32,
     /// What the tick reads of the game's options (`minecraft.options`), set by `tick`.
     options: Options,
 }
@@ -121,6 +126,8 @@ impl LocalPlayer {
             sprint_trigger_time: 0,
             auto_jump_enabled: true,
             auto_jump_time: 0,
+            flash_on_set_health: false,
+            last_hurt: 0.0,
             options: Options::new(),
         };
         entity::refresh_dimensions(&mut player);
@@ -166,6 +173,30 @@ impl LocalPlayer {
         self.entity_mut().set_x_rot(0.0);
         let max_health = self.living_entity().get_max_health();
         self.living_entity_mut().set_health(max_health);
+    }
+
+    /// `hurtTo(float)`: the health the server says it has, with the hurt animation when it went
+    /// down, but the first time.
+    pub fn hurt_to(&mut self, new_health: f32) {
+        if self.flash_on_set_health {
+            let dmg = self.living_entity().get_health() - new_health;
+            if dmg <= 0.0 {
+                self.living_entity_mut().set_health(new_health);
+                if dmg < 0.0 {
+                    self.living_entity_mut().damage_cooldown_time = 10;
+                }
+            } else {
+                self.last_hurt = dmg;
+                let living = self.living_entity_mut();
+                living.damage_cooldown_time = 20;
+                living.set_health(new_health);
+                living.hurt_duration = 10;
+                living.hurt_time = living.hurt_duration;
+            }
+        } else {
+            self.living_entity_mut().set_health(new_health);
+            self.flash_on_set_health = true;
+        }
     }
 
     /// `ClientLevel.tickNonPassenger`'s first part, `commonTick`: where it was and looked.
@@ -312,6 +343,14 @@ impl LocalPlayer {
             || self.horizontal_collision && !self.minor_horizontal_collision
     }
 
+    fn should_stop_swim_sprinting(&self) -> bool {
+        !self.is_sprinting_possible(true)
+            || !self.is_in_water()
+            || !self.input.has_forward_impulse()
+                && !self.on_ground()
+                && !self.input.key_presses.shift
+    }
+
     /// `LocalPlayer.aiStep()`: whether it crouches, the input, being pushed out of blocks,
     /// sprinting, then `Player`'s.
     fn local_ai_step(&mut self, level: &dyn Level) {
@@ -371,8 +410,11 @@ impl LocalPlayer {
         }
 
         if self.is_sprinting() {
-            assert!(!self.is_swimming(), "swimming isn't ported");
-            if self.should_stop_run_sprinting() {
+            if self.is_swimming() {
+                if self.should_stop_swim_sprinting() {
+                    self.set_sprinting(false);
+                }
+            } else if self.should_stop_run_sprinting() {
                 self.set_sprinting(false);
             }
         }
@@ -381,10 +423,9 @@ impl LocalPlayer {
         // A jump's first tick would start gliding, which needs an elytra: the player has no
         // equipment, so it never does.
         let _ = was_jumping;
-        assert!(
-            !(self.is_in_water() && self.input.key_presses.shift && self.is_affected_by_fluids()),
-            "going down in water isn't ported"
-        );
+        if self.is_in_water() && self.input.key_presses.shift && self.is_affected_by_fluids() {
+            self.go_down_in_water();
+        }
 
         // AbstractClientPlayer.aiStep's bob, which only rendering reads, then Player's.
         player::ai_step(self, level);
@@ -551,6 +592,20 @@ impl EntityClass for LocalPlayer {
 
     fn is_swimming(&self) -> bool {
         player::is_swimming(self)
+    }
+
+    fn is_player(&self) -> bool {
+        true
+    }
+
+    /// `LocalPlayer.isUnderWater()`: its eyes were in water when its tick began
+    /// (`wasUnderwater`).
+    fn is_under_water(&self) -> bool {
+        self.was_underwater
+    }
+
+    fn update_swimming(&mut self, level: &dyn Level) {
+        player::update_swimming(self, level);
     }
 
     fn max_up_step(&self) -> f32 {

@@ -11,8 +11,11 @@ use crate::net::minecraft::network::protocol::game::clientbound_change_difficult
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
@@ -25,6 +28,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
@@ -94,6 +98,14 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
     fn handle_set_entity_data(&mut self, packet: &ClientboundSetEntityDataPacket);
 
     fn handle_recipe_book_settings(&mut self, packet: &ClientboundRecipeBookSettingsPacket);
+
+    fn handle_set_entity_motion(&mut self, packet: &ClientboundSetEntityMotionPacket);
+
+    fn handle_hurt_animation(&mut self, packet: &ClientboundHurtAnimationPacket);
+
+    fn handle_entity_event(&mut self, packet: &ClientboundEntityEventPacket);
+
+    fn handle_damage_event(&mut self, packet: &ClientboundDamageEventPacket);
 }
 
 #[cfg(test)]
@@ -234,5 +246,21 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
 
     fn handle_recipe_book_settings(&mut self, packet: &ClientboundRecipeBookSettingsPacket) {
         self.record("handleRecipeBookSettings", packet);
+    }
+
+    fn handle_set_entity_motion(&mut self, packet: &ClientboundSetEntityMotionPacket) {
+        self.record("handleSetEntityMotion", packet);
+    }
+
+    fn handle_hurt_animation(&mut self, packet: &ClientboundHurtAnimationPacket) {
+        self.record("handleHurtAnimation", packet);
+    }
+
+    fn handle_entity_event(&mut self, packet: &ClientboundEntityEventPacket) {
+        self.record("handleEntityEvent", packet);
+    }
+
+    fn handle_damage_event(&mut self, packet: &ClientboundDamageEventPacket) {
+        self.record("handleDamageEvent", packet);
     }
 }

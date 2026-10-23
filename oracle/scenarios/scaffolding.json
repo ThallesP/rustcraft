@@ -1,0 +1,22 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "player": {"pos": [0.5, -60.0, 2.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill 0 -60 5 0 -57 5 minecraft:scaffolding[bottom=false,distance=0,waterlogged=false] strict",
+    "fill 3 -60 5 3 -60 7 minecraft:scaffolding[bottom=true,distance=1,waterlogged=false] strict"
+  ],
+  "steps": [
+    {"ticks": 14, "keys": ["forward"]},
+    {"ticks": 36, "keys": ["jump"]},
+    {"ticks": 10, "keys": []},
+    {"ticks": 14, "keys": ["sneak"]},
+    {"ticks": 10, "keys": ["jump"]},
+    {"ticks": 30, "keys": ["sneak"]},
+    {"ticks": 10, "keys": ["back"]},
+    {"ticks": 16, "keys": ["left"]},
+    {"ticks": 20, "keys": ["forward"]},
+    {"ticks": 10, "keys": ["sneak"]},
+    {"ticks": 10, "keys": []}
+  ]
+}

@@ -1,16 +1,31 @@
 //! net/minecraft/world/level/block/MudBlock.java
 //!
-//! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
+//! Its shapes: a collision shape two sixteenths short of a block, like soul sand's, and the whole
+//! block as its support. Not ported yet: the rest of its behaviour (visual and shade, and
+//! pathfinding).
 
+use std::sync::LazyLock;
+
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 0.0, 14.0));
 
 pub struct MudBlock;
 
-pub static CLASS: BlockClass =
-    BlockClass::new("net.minecraft.world.level.block.MudBlock", &block::CLASS);
+pub static CLASS: BlockClass = BlockClass {
+    get_collision_shape: Some(MudBlock::get_collision_shape),
+    get_block_support_shape: Some(MudBlock::get_block_support_shape),
+    ..BlockClass::new("net.minecraft.world.level.block.MudBlock", &block::CLASS)
+};
 
 impl MudBlock {
     pub fn new(properties: Properties) -> BlockData {
@@ -23,5 +38,26 @@ impl MudBlock {
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         Block::new_with(properties, class, definition)
+    }
+}
+
+impl MudBlock {
+    fn get_collision_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPE.clone()
+    }
+
+    fn get_block_support_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> VoxelShape {
+        Shapes::block()
     }
 }

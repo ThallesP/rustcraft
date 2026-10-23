@@ -7,8 +7,8 @@
 //! ones. The chunks, their light, block updates and biomes fill the level (`ClientLevel`), whose
 //! light updates the handlers queue like Java's. The chunk cache's center, the player's abilities,
 //! health, experience and held slot, the difficulty, the world border and the tick rate are read
-//! too, and their handlers leave what they set (the player's, the level's) for the tracks that
-//! port it. The time sets the level's game time and the clocks (`clockManager`, which the sky's
+//! too, and so are an entity's motion, hurt animation, events and damage, and their handlers leave
+//! what they set (the player's, the level's, the entities') for the tracks that port it. The time sets the level's game time and the clocks (`clockManager`, which the sky's
 //! timelines read), the spawn the level's, and the player's attributes and synced data are kept on
 //! the player for the player track (`LocalPlayer`); other entities' aren't ported, like the
 //! entities. Every other packet is `Unported`, and answers nothing. Also not ported: chat signing,
@@ -45,6 +45,10 @@ use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::packet_listener::PacketListener;
 use crate::net::minecraft::network::protocol::configuration::client_configuration_packet_listener::ClientConfigurationPacketListener;
 use crate::net::minecraft::network::protocol::configuration::configuration_protocols::ConfigurationProtocols;
+use crate::net::minecraft::network::protocol::game::clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
@@ -950,8 +954,11 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
-        // Java sets the player's health (`hurtTo`) and food data, which the player track ports.
-        let _ = packet;
+        // Saturation, which only the server's hunger reads, isn't kept.
+        if let Some(player) = minecraft.player.borrow_mut().as_mut() {
+            player.hurt_to(packet.get_health());
+            player.food_level = packet.get_food();
+        }
     }
 
     fn handle_set_held_slot(&mut self, packet: &ClientboundSetHeldSlotPacket) {
@@ -1155,5 +1162,97 @@ impl ClientGamePacketListener for ClientPacketListener {
         // Java sets them on the player's recipe book and rebuilds its collections, which the
         // recipe book's screen shows (`refreshRecipeBook`); neither is ported.
         self.recipe_book_settings = packet.book_settings();
+    }
+
+    fn handle_set_entity_motion(&mut self, packet: &ClientboundSetEntityMotionPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java looks the entity up in the level, whose only entity so far is the player.
+        if let Some(player) = minecraft
+            .player
+            .borrow_mut()
+            .as_mut()
+            .filter(|player| player.get_id() == packet.id())
+        {
+            player.entity_mut().lerp_motion(packet.movement());
+        }
+    }
+
+    fn handle_hurt_animation(&mut self, packet: &ClientboundHurtAnimationPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java looks the entity up in the level, whose only entity so far is the player, and
+        // starts its hurt animation (`animateHurt`: the timers, and a player's `hurtDir`, which
+        // only rendering reads).
+        if let Some(player) = minecraft
+            .player
+            .borrow_mut()
+            .as_mut()
+            .filter(|player| player.get_id() == packet.id())
+        {
+            let living = player.living_entity_mut();
+            living.hurt_duration = 10;
+            living.hurt_time = living.hurt_duration;
+        }
+    }
+
+    fn handle_entity_event(&mut self, packet: &ClientboundEntityEventPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java looks the entity up in the level (`getEntity`) and plays the event: a guardian's
+        // attack sound (21), a totem's particles, sound and item activation (35), a sniffer's
+        // sounds (63), and any other through the entity's `handleEntityEvent`. The player's are
+        // its permission level (24 to 28, which the server sends as it joins), using an item, the
+        // reduced debug info and the death animation, none of which movement reads: not ported
+        // yet.
+        let _ = packet;
+    }
+
+    fn handle_damage_event(&mut self, packet: &ClientboundDamageEventPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java looks the entity up in the level, whose only entity so far is the player, and hands
+        // it the damage source the packet makes of the level's entities (`getSource`), which only
+        // the hurt sound and the last damage source read: the timers are what's ported.
+        if let Some(player) = minecraft
+            .player
+            .borrow_mut()
+            .as_mut()
+            .filter(|player| player.get_id() == packet.entity_id())
+        {
+            player.handle_damage_event();
+        }
     }
 }

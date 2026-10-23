@@ -46,13 +46,17 @@ pub struct Options {
     pub hide_gui: bool,
 }
 
-/// Either a screenshot, or `ticks` ticks with `keys` held and an optional fixed `look`.
+/// Either a screenshot, or `ticks` ticks with `keys` held and an optional fixed `look`, and
+/// optionally clientbound packets to wait for after its last tick (`wait_for`, TESTING.md).
 #[derive(Clone, Debug)]
 pub struct Step {
     pub ticks: i32,
     pub keys: Vec<String>,
     pub look: Option<[f32; 2]>,
     pub screenshot: Option<String>,
+    /// Clientbound packet types (`minecraft:set_health`) that must each have come since the step
+    /// began before its last tick's trace line, which comes after the client has handled them.
+    pub wait_for: Vec<String>,
 }
 
 impl Scenario {
@@ -155,6 +159,7 @@ impl Scenario {
                 keys: Vec::new(),
                 look: None,
                 screenshot: Some(screenshot.as_str().unwrap_or_default().to_string()),
+                wait_for: Vec::new(),
             });
         }
 
@@ -184,14 +189,34 @@ impl Scenario {
             ]
         });
 
+        let mut wait_for = Vec::new();
+        for packet in step
+            .get("wait_for")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            wait_for.push(
+                packet
+                    .as_str()
+                    .ok_or("a wait_for packet isn't a string")?
+                    .to_string(),
+            );
+        }
+
+        let ticks = step
+            .get("ticks")
+            .and_then(Value::as_i64)
+            .ok_or("a step needs ticks")? as i32;
+        if !wait_for.is_empty() && ticks < 1 {
+            return Err("a step that waits for packets needs a tick".to_string());
+        }
         Ok(Step {
-            ticks: step
-                .get("ticks")
-                .and_then(Value::as_i64)
-                .ok_or("a step needs ticks")? as i32,
+            ticks,
             keys,
             look,
             screenshot: None,
+            wait_for,
         })
     }
 }

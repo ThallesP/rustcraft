@@ -326,6 +326,7 @@ A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:
 - `look` sets `[y_rot, x_rot]` in degrees at the start of every tick of the step.
 - `screenshot` captures the current frame as `<name>.png` without advancing the game.
 - `hide_gui`, optional, is vanilla's F1 (`Hud.toggle`) for the whole run: no HUD, hand or crosshair, so the screenshots are the level alone. Both clients set it before joining (`walk-no-gui` is the walk with it).
+- `wait_for`, optional, lists clientbound packet types (`"minecraft:set_health"`) the server sends in answer to the step's last tick, like the damage of a landing that tick. After that tick and its trace line, the client doesn't tick until each type has been queued for its game thread more often than when the step began; then it handles everything queued, which it would have at its next frame anyway, and goes on. Below, "The server's answers".
 - `setup`, optional, is a list of commands (without their slash) that build the scenario's course on the flat world, like `"fill -2 -60 8 2 -60 8 minecraft:oak_stairs[facing=south,half=bottom,shape=straight,waterlogged=false] strict"`. Physics scenarios use `fill` and `setblock` in their `strict` mode, which places each state as written, without shape updates from or to its neighbours (a fence's connections, a stair's corners), so the course is exactly what the commands say.
 
 Before tick 0, both modes put the world in the scenario's state with the same commands, the scenario's `setup` before the player is put in place. A port joining a server must send the same ones:
@@ -348,7 +349,7 @@ Then the client waits for chunks to render, plus at least 20 ticks until the pla
 
 On a server, the client then sends a marker right before tick 0: a serverbound `minecraft:custom_payload` with the identifier `rustcraft:scenario_start` and no data (payload `18` followed by the identifier's ASCII). A vanilla server ignores it. Packet diffs use it to tell the join phase from the scenario, so a port joining a server must send it at the same point.
 
-A run writes `<out>/<scenario>/trace.jsonl`, one line per client tick after the tick ran:
+A run writes `<out>/<scenario>/trace.jsonl`, one line per client tick, as the tick ends (before the packets the client handles before its next tick):
 
 ```json
 {"tick":0,"pos":["…","…","…"],"delta":["…","…","…"],"y_rot":"…","x_rot":"…","on_ground":true,"horizontal_collision":false,"vertical_collision":true,"sprinting":false,"crouching":false,"pose":"STANDING"}
@@ -358,7 +359,20 @@ A run writes `<out>/<scenario>/trace.jsonl`, one line per client tick after the 
 
 A scenario should move the player from tick 0: the client sends its position when it moved, or every 20 ticks without (`positionReminder`), and how many ticks the join took before the marker varies from run to run, so a scenario that starts standing still could send a reminder at a different tick each run.
 
-A scenario also keeps clear of what the server answers by changing the player, like fall damage: landing from more than three blocks makes the server send the player's motion back (`set_entity_motion`, with `damage_event` and `set_health`), which the client applies between ticks, and the oracle client writes a tick's trace line from its own thread after the tick, once the client gets to it, so whether that line already has the server's motion depends on timing (it did in the first recording of a five-block fall, at the landing's next tick). Physics scenarios fall two blocks at most.
+### The server's answers
+
+What the server sends back that changes the player arrives between client ticks, and when depends on the network and the server's clock: the client is stepped one tick at a time, much faster than the server's 20 a second, which runs in real time. A clientbound play packet is decoded on the Netty thread and queued for the game thread (`PacketUtils.ensureRunningOnSameThread`, `PacketProcessor.scheduleIfPossible`), and the game thread handles the queue at the start of every frame (`Minecraft.runTick`: `processQueuedPackets`, then `runAllTasks`, then `tick`), never inside a tick. Fabric's client game test parks the client right after `runAllTasks` of a frame that ticks (`MinecraftMixin`'s `postRunTasks`), and `runOnClient` runs its task right there, not through the game's queues.
+
+So the oracle client used to write a tick's line from the next frame's pause, after that frame's packets: whatever had come in meanwhile was in it, or not. Landing from five blocks shows it: the server answers the move that lands (`ServerGamePacketListenerImpl.handleMovePlayer`, `doCheckFallDamage`, `Block.fallOn`, `causeFallDamage`) with `damage_event` at once, and at the end of the same server tick `set_entity_data` (the health), `set_entity_motion` (fall damage marks the player hurt, `markHurt`) and `set_health`, all to the player itself; the first recording of a five-block fall had that motion in the landing's next line. Two things make it deterministic, and both clients do them:
+
+- the trace line is written as the tick ends: the oracle client's `MinecraftTickMixin` writes it at `Minecraft.tick`'s return (`TickTrace`), and the port's `OracleGameTest` after its `Minecraft::tick`. Re-recorded with it, the scenarios recorded before had the same traces, digest for digest (PROGRESS.md, 2026-10-23);
+- a step that ends on such a tick waits for the answer (`wait_for`), so it's handled before the next tick, not at whichever tick it happens to come. The oracle client counts the packets queued by type (`PacketProcessorMixin`, `PacketArrivals`), sleeps while the client is parked, then has the client handle its queue (`client.packetProcessor().processQueuedPackets()`); the port counts in its `PacketProcessor` (`arrivals`) and runs the network without ticking.
+
+What the answer holds isn't the client's, though. Players move on both sides (`MoveSimulationType.AUTHORITATIVE_SIDE_AND_SERVER`): every server tick, `ServerPlayer.doTick` runs the player's travel with gravity, then puts it back where the client last said it was (`absSnapTo`). So the motion the server sends (its player's `getDeltaMovement`) and the fall distance its damage comes from depend on how many of the server's ticks fell while the client was in the air: two recordings of the same five-block fall got a motion of (0, -0.0784, 0) and (0, -0.2305, 0), and 2 and 3 damage. A scenario takes care that this doesn't reach the trace: the answer is handled after the landing's line, and on the ground the next tick's collision ends whatever vertical motion it had; its horizontal motion (zero, the server's player has no input) is the same every run. The answer's packets themselves differ from run to run, so `oracle-diff`'s clientbound multiset can't match on a scenario with damage.
+
+`set_health` also comes on the server's own clock while the player regenerates (natural regeneration, every 10 ticks or so with a full food bar), so a scenario that waits for it turns regeneration off in its `setup` (`gamerule natural_health_regeneration false`).
+
+The offline replay has the server's answers from a capture: at a step's `wait_for`, it takes the capture's clientbound packets after the marker in the order they came, up to the waited-for ones, and applies those that change the player (`set_entity_motion`, `set_health`, `damage_event`), after the tick's line like the live clients. A scenario that waits is only replayed where a capture is, so CI records `falls` with the port's own client, like the walk.
 
 The server's own packets differ from run to run where a scenario's course is built: the server sends a section's block changes once a tick (`section_blocks_update`, or `block_update` for one), so how the setup's commands fall into its ticks decides how they're grouped, and a scenario that ends just after the player crosses into a new chunk may or may not catch the server's `set_chunk_cache_center` before the client leaves. Both show in `oracle-diff`'s clientbound multiset (the live `slabs-and-fences` run's did), not in what the client sends or its trace.
 
@@ -371,6 +385,8 @@ The level is replayed two ways:
 - where a capture of the scenario is (vanilla's, or the port's own in `target/oracle/<scenario>/`, which CI records for the walk), a `ClientLevel` filled from it the way the client's listener fills it: the configuration's registries, the login's level, and every chunk, forgotten chunk, block update and change of view before the marker, in order. Its blocks below y = -32 must be the flat level's, block for block, so a course is what its commands say.
 
 Where the port's own run on a server (`tools/port_client.py capture <scenario>`) wrote its `trace.jsonl`, its trace and its packets from the marker on are checked against the same digests. CI records the walk's, so CI checks the live client's walk too.
+
+A new scenario is drafted on the port before vanilla records it: `SCENARIO=<name> cargo test --lib replays_a_draft -- --ignored` replays it on the flat level into `target/oracle/<name>-draft/` (checking nothing), which shows where the player lands and when, to put a `wait_for` on the right tick.
 
 ## 3. Packet captures
 

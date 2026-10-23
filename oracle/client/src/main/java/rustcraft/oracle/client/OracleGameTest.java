@@ -5,6 +5,7 @@ import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,6 +54,7 @@ public final class OracleGameTest implements FabricClientGameTest {
     private static final int SETTLE_TICKS = 20;
     private static final int LOAD_TIMEOUT_TICKS = 60 * 20;
     private static final int SERVER_TIMEOUT_TICKS = 5 * 60 * 20;
+    private static final long WAIT_FOR_TIMEOUT_MILLIS = 30_000;
     // Sent as a custom payload with no data; vanilla servers discard unknown payloads.
     private static final Identifier SCENARIO_START = Identifier.fromNamespaceAndPath("rustcraft", "scenario_start");
     // tools/oracle_client.py starts the server when the client prints this.
@@ -205,18 +207,49 @@ public final class OracleGameTest implements FabricClientGameTest {
                     continue;
                 }
 
+                Map<String, Integer> waitingSince = new HashMap<>();
+                for (String packet : step.waitFor()) {
+                    waitingSince.put(packet, PacketArrivals.count(packet));
+                }
+
                 holdOnly(input, step.keys());
                 for (int i = 0; i < step.ticks(); i++) {
                     if (step.look() != null) {
                         input.lookAt(step.look()[0], step.look()[1]);
                     }
+                    // The line is written as the tick ends (TickTrace), before the packets that come after it.
+                    TickTrace.arm(tick++);
                     context.waitTick();
-                    int traceTick = tick++;
-                    trace.write(context.computeOnClient(client -> TraceWriter.line(traceTick, client.player)));
+                    trace.write(TickTrace.take());
+                    if (i == step.ticks() - 1 && !waitingSince.isEmpty()) {
+                        // The server's answer to this tick: once it has come, the client handles what it has queued,
+                        // which it would at its next frame anyway, before the next tick.
+                        waitForPackets(waitingSince);
+                        context.runOnClient(client -> client.packetProcessor().processQueuedPackets());
+                    }
                 }
             }
         }
         holdOnly(input, Set.of());
+    }
+
+    /**
+     * Waits, the client parked between ticks and the network running, until each packet type has been queued for the
+     * client's game thread more often than it had been when the step began (PacketArrivals).
+     */
+    private static void waitForPackets(Map<String, Integer> waitingSince) {
+        long deadline = System.currentTimeMillis() + WAIT_FOR_TIMEOUT_MILLIS;
+        while (!waitingSince.entrySet().stream().allMatch(entry -> PacketArrivals.count(entry.getKey()) > entry.getValue())) {
+            if (System.currentTimeMillis() > deadline) {
+                throw new IllegalStateException("timed out waiting for " + waitingSince.keySet());
+            }
+            try {
+                Thread.sleep(5);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(exception);
+            }
+        }
     }
 
     private static void holdOnly(TestInput input, Set<String> keys) {

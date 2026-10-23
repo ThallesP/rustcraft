@@ -52,6 +52,9 @@ pub type CreateBlockStateDefinition = fn(&mut Builder);
 pub type ShapeMethod =
     fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos, &dyn CollisionContext) -> VoxelShape;
 
+/// A shape method without a context: `getBlockSupportShape(BlockState, BlockGetter, BlockPos)`.
+pub type SupportShapeMethod = fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos) -> VoxelShape;
+
 /// A block class: Java's `Class<? extends Block>` and the overrides that matter so far.
 pub struct BlockClass {
     /// `getName()`, the binary name.
@@ -76,6 +79,8 @@ pub struct BlockClass {
     pub get_light_dampening: Option<fn(&BlockData, BlockState) -> i32>,
     /// `getOcclusionShape(BlockState)`, if it overrides it.
     pub get_occlusion_shape: Option<fn(&BlockData, BlockState) -> VoxelShape>,
+    /// `getBlockSupportShape(BlockState, BlockGetter, BlockPos)`, if it overrides it.
+    pub get_block_support_shape: Option<SupportShapeMethod>,
 }
 
 impl BlockClass {
@@ -93,6 +98,7 @@ impl BlockClass {
             propagates_skylight_down: None,
             get_light_dampening: None,
             get_occlusion_shape: None,
+            get_block_support_shape: None,
         }
     }
 
@@ -119,6 +125,7 @@ pub static CLASS: BlockClass = BlockClass {
     propagates_skylight_down: None,
     get_light_dampening: None,
     get_occlusion_shape: None,
+    get_block_support_shape: None,
 };
 
 /// What a Java `Block` object holds: `BlockBehaviour`'s fields, which it derefs to, its state
@@ -336,6 +343,18 @@ impl Block {
         Block::column_xz(size_x, size_z, 8.0 - half_y, 8.0 + half_y)
     }
 
+    /// `boxZ(double, double, double)`: a box as wide as it's high, centered on x and y, from
+    /// `min_z` to `max_z`.
+    pub fn box_z_square(size_xy: f64, min_z: f64, max_z: f64) -> VoxelShape {
+        Block::box_z_sized(size_xy, size_xy, min_z, max_z)
+    }
+
+    /// `boxZ(double, double, double, double)`: a box centered on x and y, from `min_z` to `max_z`.
+    pub fn box_z_sized(size_x: f64, size_y: f64, min_z: f64, max_z: f64) -> VoxelShape {
+        let half_y = size_y / 2.0;
+        Block::box_z(size_x, 8.0 - half_y, 8.0 + half_y, min_z, max_z)
+    }
+
     /// `boxZ(double, double, double, double, double)`: a box centered along x, from `min_z` to
     /// `max_z`.
     pub fn box_z(size_x: f64, min_y: f64, max_y: f64, min_z: f64, max_z: f64) -> VoxelShape {
@@ -394,6 +413,11 @@ impl Block {
         }
 
         Shapes::join_is_not_empty(&shape, &occluder, BooleanOp::ONLY_FIRST)
+    }
+
+    /// `isFaceFull`: whether the shape's face toward `direction` is the whole face.
+    pub fn is_face_full(shape: &VoxelShape, direction: Direction) -> bool {
+        Block::is_shape_full_block(&shape.get_face_shape(direction))
     }
 
     /// Whether the shape is the whole block, voxel for voxel.

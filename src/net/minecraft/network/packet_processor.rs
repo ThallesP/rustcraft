@@ -6,10 +6,14 @@
 //! running its pipeline: a handler called from there is on "the Netty thread", like Java's, and
 //! one the game calls from `process_queued_packets` is on the game's. The `Exception` a queued
 //! handler throws is a panic, caught and handed to the listener's `on_packet_error` like Java's.
+//!
+//! It also counts the packets it queues by type (`arrivals`), which Java's doesn't: that's the
+//! oracle client's `PacketProcessorMixin`, which a scenario step's `wait_for` waits on in both
+//! clients (TESTING.md).
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
 use std::rc::Rc;
 
@@ -21,6 +25,8 @@ use crate::net::minecraft::network::protocol::packet::Packet;
 pub struct PacketProcessor {
     packets_to_be_handled: RefCell<VecDeque<ListenerAndPacket>>,
     closed: Cell<bool>,
+    /// How many packets of each type it has queued, by the type's id.
+    arrivals: RefCell<HashMap<String, i32>>,
 }
 
 impl Default for PacketProcessor {
@@ -35,6 +41,7 @@ impl PacketProcessor {
         PacketProcessor {
             packets_to_be_handled: RefCell::new(VecDeque::new()),
             closed: Cell::new(false),
+            arrivals: RefCell::new(HashMap::new()),
         }
     }
 
@@ -53,6 +60,11 @@ impl PacketProcessor {
             !self.closed.get(),
             "RejectedExecutionException: Server already shutting down"
         );
+        *self
+            .arrivals
+            .borrow_mut()
+            .entry(packet.r#type().id().to_string())
+            .or_insert(0) += 1;
 
         self.packets_to_be_handled
             .borrow_mut()
@@ -72,6 +84,16 @@ impl PacketProcessor {
                 (next.handle)();
             }
         }
+    }
+
+    /// How many packets of the type (`minecraft:set_health`) it has queued so far: the oracle
+    /// client's count, for `wait_for`.
+    pub fn arrivals(&self, packet_type: &str) -> i32 {
+        self.arrivals
+            .borrow()
+            .get(packet_type)
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn close(&self) {

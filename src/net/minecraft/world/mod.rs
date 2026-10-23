@@ -1,5 +1,6 @@
 pub mod attribute;
 pub mod clock;
+pub mod damagesource;
 pub mod difficulty;
 pub mod entity;
 pub mod inventory;

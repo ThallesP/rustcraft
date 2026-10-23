@@ -935,17 +935,14 @@ const SHAPE_OVERRIDES: &[&str] = &[
     "net.minecraft.world.level.block.HeavyCoreBlock",
     "net.minecraft.world.level.block.HoneyBlock",
     "net.minecraft.world.level.block.HopperBlock",
-    "net.minecraft.world.level.block.LadderBlock",
     "net.minecraft.world.level.block.LanternBlock",
     "net.minecraft.world.level.block.LeafLitterBlock",
     "net.minecraft.world.level.block.LecternBlock",
     "net.minecraft.world.level.block.LeverBlock",
     "net.minecraft.world.level.block.LightBlock",
     "net.minecraft.world.level.block.LilyPadBlock",
-    "net.minecraft.world.level.block.LiquidBlock",
     "net.minecraft.world.level.block.MangrovePropaguleBlock",
     "net.minecraft.world.level.block.MossyCarpetBlock",
-    "net.minecraft.world.level.block.MudBlock",
     "net.minecraft.world.level.block.MultifaceBlock",
     "net.minecraft.world.level.block.MushroomBlock",
     "net.minecraft.world.level.block.NetherFungusBlock",
@@ -963,7 +960,6 @@ const SHAPE_OVERRIDES: &[&str] = &[
     "net.minecraft.world.level.block.RedstoneWireBlock",
     "net.minecraft.world.level.block.RodBlock",
     "net.minecraft.world.level.block.SaplingBlock",
-    "net.minecraft.world.level.block.ScaffoldingBlock",
     "net.minecraft.world.level.block.SculkSensorBlock",
     "net.minecraft.world.level.block.SculkShriekerBlock",
     "net.minecraft.world.level.block.SeaPickleBlock",
@@ -993,9 +989,7 @@ const SHAPE_OVERRIDES: &[&str] = &[
     "net.minecraft.world.level.block.TripWireBlock",
     "net.minecraft.world.level.block.TripWireHookBlock",
     "net.minecraft.world.level.block.TurtleEggBlock",
-    "net.minecraft.world.level.block.VineBlock",
     "net.minecraft.world.level.block.WallBannerBlock",
-    "net.minecraft.world.level.block.WallBlock",
     "net.minecraft.world.level.block.WallHangingSignBlock",
     "net.minecraft.world.level.block.WallSignBlock",
     "net.minecraft.world.level.block.WallSkullBlock",
@@ -1003,6 +997,17 @@ const SHAPE_OVERRIDES: &[&str] = &[
     "net.minecraft.world.level.block.piston.MovingPistonBlock",
     "net.minecraft.world.level.block.piston.PistonBaseBlock",
     "net.minecraft.world.level.block.piston.PistonHeadBlock",
+];
+
+/// Block classes overriding `getBlockSupportShape` in a way not ported yet: they panic, like the
+/// shapes' guard.
+const SUPPORT_SHAPE_OVERRIDES: &[&str] = &[
+    "net.minecraft.world.level.block.CeilingHangingSignBlock",
+    "net.minecraft.world.level.block.ChorusFlowerBlock",
+    "net.minecraft.world.level.block.FenceGateBlock",
+    "net.minecraft.world.level.block.ShulkerBoxBlock",
+    "net.minecraft.world.level.block.SnowLayerBlock",
+    "net.minecraft.world.level.block.WallHangingSignBlock",
 ];
 
 /// The shapes, which go by the block's class.
@@ -1083,6 +1088,62 @@ impl BlockState {
     /// `getCollisionShape(BlockGetter, BlockPos)`, with an empty context.
     pub fn get_collision_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
         self.get_collision_shape_in(level, pos, &collision_context::empty())
+    }
+
+    /// `getBlockSupportShape(BlockGetter, BlockPos)`: the class's, or `BlockBehaviour`'s, the
+    /// collision shape with an empty context. Panics at a class whose override isn't ported.
+    pub fn get_block_support_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
+        let mut class = Some(Block::data(self.get_block()).class());
+        while let Some(current) = class {
+            if let Some(get_block_support_shape) = current.get_block_support_shape {
+                return get_block_support_shape(Block::data(self.get_block()), *self, level, pos);
+            }
+            assert!(
+                !SUPPORT_SHAPE_OVERRIDES.contains(&current.name),
+                "the support shape of {} ({}) isn't ported",
+                self.get_block(),
+                current.name
+            );
+            class = current.parent;
+        }
+        self.get_collision_shape_in(level, pos, &collision_context::empty())
+    }
+
+    /// `getInteractionShape(BlockGetter, BlockPos)`: `BlockBehaviour`'s none, scaffolding's whole
+    /// block. Panics at a class whose override isn't ported (cauldrons, composters, hoppers).
+    pub fn get_interaction_shape(&self, _level: &dyn BlockGetter, _pos: &BlockPos) -> VoxelShape {
+        if self.class_is("net.minecraft.world.level.block.ScaffoldingBlock") {
+            return Shapes::block();
+        }
+        for class in [
+            "net.minecraft.world.level.block.AbstractCauldronBlock",
+            "net.minecraft.world.level.block.ComposterBlock",
+            "net.minecraft.world.level.block.HopperBlock",
+        ] {
+            assert!(
+                !self.class_is(class),
+                "the interaction shape of {} ({class}) isn't ported",
+                self.get_block()
+            );
+        }
+        Shapes::empty()
+    }
+
+    /// `isFaceSturdy(BlockGetter, BlockPos, Direction)`: `SupportType.FULL`, whether the support
+    /// shape's face is whole. Java's cache asks it with no level around the state
+    /// (`EmptyBlockGetter`, `BlockPos.ZERO`), unless the block's shape is dynamic.
+    pub fn is_face_sturdy(
+        &self,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction: Direction,
+    ) -> bool {
+        let support_shape = if Block::data(self.get_block()).has_dynamic_shape() {
+            self.get_block_support_shape(level, pos)
+        } else {
+            self.get_block_support_shape(&EmptyBlockGetter, &BlockPos::ZERO)
+        };
+        Block::is_face_full(&support_shape, direction)
     }
 
     pub fn is_collision_shape_full_block(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
@@ -1303,10 +1364,12 @@ mod tests {
     use super::EmptyBlockGetter;
     use crate::golden::Golden;
     use crate::net::minecraft::core::block_pos::BlockPos;
+    use crate::net::minecraft::core::direction::Direction;
     use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 
     /// The shapes of every state of the blocks whose classes' shapes are ported, as a state
-    /// reports them with no level around it (`ShapeSuites.BlockStateShapeSuite`).
+    /// reports them with no level around it, and which of their faces are sturdy
+    /// (`ShapeSuites.BlockStateShapeSuite`).
     #[test]
     fn state_shapes_match_vanilla() {
         let golden =
@@ -1318,6 +1381,12 @@ mod tests {
         golden.check(
             "getCollisionShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
             |state: BlockState| state.get_collision_shape(&EmptyBlockGetter, &BlockPos::ZERO),
+        );
+        golden.check(
+            "isFaceSturdy(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)Z",
+            |state: BlockState, direction: Direction| {
+                state.is_face_sturdy(&EmptyBlockGetter, &BlockPos::ZERO, direction)
+            },
         );
         golden.finish();
     }

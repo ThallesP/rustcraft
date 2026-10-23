@@ -35,6 +35,9 @@ jobs:
       - run: python3 tools/port_client.py capture walk --accept-eula
         env:
           SDL_VIDEO_FORCE_EGL: "1"
+      # The falls scenario waits for the server's answers to its landings, which its replay test takes from a capture
+      # (TESTING.md, "The server's answers"): the port's own, here, whose trace and packets are checked too.
+      - run: python3 tools/port_client.py capture falls --accept-eula
       - run: python3 tools/golden.py
         env:
           RUSTCRAFT_CHUNK_CAPTURE: ${{ github.workspace }}/target/oracle/walk/capture.jsonl

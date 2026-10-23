@@ -23,8 +23,11 @@ public record Scenario(String name, World world, Player player, Options options,
     /** {@code hideGui} is vanilla's F1 ({@code Hud.toggle}): no HUD, hand or crosshair. */
     public record Options(int width, int height, int fov, int guiScale, int renderDistance, boolean hideGui) {}
 
-    /** Either a screenshot, or {@code ticks} ticks with {@code keys} held and an optional fixed {@code look}. */
-    public record Step(int ticks, Set<String> keys, float @Nullable [] look, @Nullable String screenshot) {}
+    /**
+     * Either a screenshot, or {@code ticks} ticks with {@code keys} held and an optional fixed {@code look}, and the
+     * clientbound packet types to wait for after its last tick ({@code waitFor}, TESTING.md).
+     */
+    public record Step(int ticks, Set<String> keys, float @Nullable [] look, @Nullable String screenshot, List<String> waitFor) {}
 
     public static final Set<String> KEYS = Set.of("forward", "back", "left", "right", "jump", "sneak", "sprint", "attack", "use");
 
@@ -77,7 +80,7 @@ public record Scenario(String name, World world, Player player, Options options,
 
     private static Step parseStep(JsonObject step) {
         if (step.has("screenshot")) {
-            return new Step(0, Set.of(), null, step.get("screenshot").getAsString());
+            return new Step(0, Set.of(), null, step.get("screenshot").getAsString(), List.of());
         }
 
         Set<String> keys = new LinkedHashSet<>();
@@ -97,6 +100,18 @@ public record Scenario(String name, World world, Player player, Options options,
             look = new float[]{rotation.get(0).getAsFloat(), rotation.get(1).getAsFloat()};
         }
 
-        return new Step(step.get("ticks").getAsInt(), Set.copyOf(keys), look, null);
+        // Packets that must each have come since the step began before its last tick's trace line (TESTING.md).
+        List<String> waitFor = new ArrayList<>();
+        if (step.has("wait_for")) {
+            for (JsonElement packet : step.getAsJsonArray("wait_for")) {
+                waitFor.add(packet.getAsString());
+            }
+        }
+
+        int ticks = step.get("ticks").getAsInt();
+        if (!waitFor.isEmpty() && ticks < 1) {
+            throw new IllegalArgumentException("a step that waits for packets needs a tick");
+        }
+        return new Step(ticks, Set.copyOf(keys), look, null, List.copyOf(waitFor));
     }
 }

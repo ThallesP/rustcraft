@@ -10,14 +10,15 @@
 //! What's here is an entity's movement: `move` with `collide` (step-up included),
 //! `collideBoundingBox` and `collideWithShapes`, the collision flags, the supporting block and
 //! `getOnPos`, the fall distance, `restituteMovementAfterCollisions`, the blocks' speed and jump
-//! factors, `moveRelative`, its position, box, pose and size, the shared flags, the fluids
-//! `baseTick` reads and `commonTick`.
+//! factors, `moveRelative`, its position, box, pose and size, the shared flags, the fluids it's
+//! in (`updateFluidInteraction` through `EntityFluidInteraction`, with their currents pushing it),
+//! swimming (`updateSwimming`), `baseTick` and `commonTick`.
 //!
 //! Not ported yet, with what they need:
-//! - an entity in fluids (`EntityFluidInteraction`'s heights, flows and currents), which panics
-//!   where a chunk section has a fluid;
-//! - `Level.clip` (`move`'s fall distance reset after moving a block or more with a fall
-//!   distance, which panics), pistons (`limitPistonMovement`, which panics), the blocks' `fallOn`,
+//! - water's splash (`doWaterSplashEffect`), which only plays a sound and makes particles, from
+//!   the entity's random source; lava's speed in a dimension with fast lava
+//!   (`EnvironmentAttributes.FAST_LAVA`, the nether's), which panics;
+//! - pistons (`limitPistonMovement`, which panics), the blocks' `fallOn`,
 //!   `bounceOn` (which panics when an entity would bounce), `stepOn` and `entityInside`
 //!   (`applyEffectsFromBlocks`: none of the blocks ported so far does anything there), and the
 //!   movement's sounds and game events (`applyMovementEmissionAndPlaySound`), which change nothing
@@ -34,16 +35,21 @@ use crate::java::lang::math::Math;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::tags::fluid_tags::{FluidTagKey, FluidTags};
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
+use crate::net::minecraft::world::entity::entity_fluid_interaction::EntityFluidInteraction;
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::fence_gate_block;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block_getter;
+use crate::net::minecraft::world::level::clip_context::{self, ClipContext};
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
 use crate::net::minecraft::world::level::level::{self, Level};
 use crate::net::minecraft::world::phys::aabb::AABB;
+use crate::net::minecraft::world::phys::hit_result::Type;
 use crate::net::minecraft::world::phys::shapes::entity_collision_context::EntityCollisionContext;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
@@ -74,11 +80,9 @@ pub struct Entity {
     stuck_speed_multiplier: Vec3,
     main_supporting_block_pos: Option<BlockPos>,
     on_ground_no_blocks: bool,
+    fluid_interaction: EntityFluidInteraction,
     was_touching_water: bool,
     was_eye_in_water: bool,
-    in_water: bool,
-    in_lava: bool,
-    eye_in_water: bool,
     pub was_in_powder_snow: bool,
     pub is_in_powder_snow: bool,
     pub first_tick: bool,
@@ -97,6 +101,9 @@ impl Entity {
     pub const FLAG_INVISIBLE: i32 = 5;
     pub const FLAG_GLOWING: i32 = 6;
     pub const FLAG_FALL_FLYING: i32 = 7;
+
+    /// `FLUIDS_WITH_CURRENT`.
+    const FLUIDS_WITH_CURRENT: [FluidTagKey; 2] = [FluidTags::WATER, FluidTags::LAVA];
 
     /// An entity of a type of these dimensions at the level's origin, like Java's constructor
     /// before anything moves it.
@@ -124,11 +131,9 @@ impl Entity {
             stuck_speed_multiplier: Vec3::ZERO,
             main_supporting_block_pos: None,
             on_ground_no_blocks: false,
+            fluid_interaction: EntityFluidInteraction::new(&Entity::FLUIDS_WITH_CURRENT),
             was_touching_water: false,
             was_eye_in_water: false,
-            in_water: false,
-            in_lava: false,
-            eye_in_water: false,
             was_in_powder_snow: false,
             is_in_powder_snow: false,
             first_tick: true,
@@ -182,6 +187,11 @@ impl Entity {
 
     pub fn set_delta_movement_xyz(&mut self, xd: f64, yd: f64, zd: f64) {
         self.set_delta_movement(Vec3::new(xd, yd, zd));
+    }
+
+    /// `lerpMotion(Vec3)`: the movement the server says it has.
+    pub fn lerp_motion(&mut self, movement: Vec3) {
+        self.set_delta_movement(movement);
     }
 
     pub fn add_delta_movement(&mut self, momentum: &Vec3) {
@@ -362,28 +372,25 @@ impl Entity {
     }
 
     pub fn is_in_lava(&self) -> bool {
-        !self.first_tick && self.in_lava
+        !self.first_tick && self.fluid_interaction.is_in_fluid(FluidTags::LAVA)
     }
 
     pub fn is_in_liquid(&self) -> bool {
         self.is_in_water() || self.is_in_lava()
     }
 
-    pub fn is_eye_in_fluid_water(&self) -> bool {
-        self.eye_in_water
+    /// `isEyeInFluid(TagKey)`: as of the last `updateFluidInteraction`.
+    pub fn is_eye_in_fluid(&self, fluid: FluidTagKey) -> bool {
+        self.fluid_interaction.is_eye_in_fluid(fluid)
     }
 
-    pub fn is_under_water(&self) -> bool {
-        self.was_eye_in_water && self.is_in_water()
+    /// `getFluidHeight(TagKey)`: how far above its feet the tag's fluid goes.
+    pub fn get_fluid_height(&self, fluid: FluidTagKey) -> f64 {
+        self.fluid_interaction.get_fluid_height(fluid)
     }
 
-    pub fn is_in_shallow_water(&self) -> bool {
-        self.is_in_water() && !self.is_under_water()
-    }
-
-    /// `getFluidHeight(TagKey)`: no fluid is ported, so it's none.
-    pub fn get_fluid_height(&self) -> f64 {
-        0.0
+    pub fn set_swimming(&mut self, swimming: bool) {
+        self.set_shared_flag(Entity::FLAG_SWIMMING, swimming);
     }
 
     pub fn get_fluid_jump_threshold(&self) -> f64 {
@@ -534,6 +541,26 @@ pub trait EntityClass {
         true
     }
 
+    /// `instanceof Player`.
+    fn is_player(&self) -> bool {
+        false
+    }
+
+    /// `isUnderWater()`: its eyes were in water at the start of the tick, and it's in water.
+    fn is_under_water(&self) -> bool {
+        self.entity().was_eye_in_water && self.entity().is_in_water()
+    }
+
+    fn is_in_shallow_water(&self) -> bool {
+        self.entity().is_in_water() && !self.is_under_water()
+    }
+
+    /// `getFluidInteractionBox()`: its box, a hair smaller. A vehicle would change its passengers',
+    /// which riding would bring.
+    fn get_fluid_interaction_box(&self) -> Option<AABB> {
+        Some(self.entity().get_bounding_box().deflate(0.001))
+    }
+
     fn max_up_step(&self) -> f32 {
         0.0
     }
@@ -611,6 +638,13 @@ pub trait EntityClass {
     {
         update_fluid_interaction(self, level)
     }
+
+    fn update_swimming(&mut self, level: &dyn Level)
+    where
+        Self: Sized,
+    {
+        update_swimming(self, level);
+    }
 }
 
 /// `setPose`: a new pose resizes the entity (`onSyncedDataUpdated` of `DATA_POSE`).
@@ -630,6 +664,35 @@ pub fn refresh_dimensions(this: &mut (impl EntityClass + ?Sized)) {
     entity.dimensions = new_dim;
     entity.eye_height = new_dim.eye_height();
     entity.reapply_position();
+}
+
+/// `calculateViewVector(float, float)`: the unit vector it looks along, in floats.
+pub fn calculate_view_vector(x_rot: f32, y_rot: f32) -> Vec3 {
+    let real_x_rot = x_rot * (std::f64::consts::PI / 180.0) as f32;
+    let real_y_rot = -y_rot * (std::f64::consts::PI / 180.0) as f32;
+    let y_cos = Mth::cos(f64::from(real_y_rot));
+    let y_sin = Mth::sin(f64::from(real_y_rot));
+    let x_cos = Mth::cos(f64::from(real_x_rot));
+    let x_sin = Mth::sin(f64::from(real_x_rot));
+    Vec3::new(
+        f64::from(y_sin * x_cos),
+        f64::from(-x_sin),
+        f64::from(y_cos * x_cos),
+    )
+}
+
+/// `isFree(double, double, double)`: whether its box moved that far has no collisions and no
+/// fluid.
+pub fn is_free(
+    this: &(impl EntityClass + Sized),
+    level: &dyn Level,
+    xa: f64,
+    ya: f64,
+    za: f64,
+) -> bool {
+    let r#box = this.entity().get_bounding_box().move_xyz(xa, ya, za);
+    level::collisions(level).no_collision(Some(this), &r#box)
+        && !level::contains_any_liquid(level, &r#box)
 }
 
 /// `setOnGround(boolean)`.
@@ -726,10 +789,28 @@ pub fn r#move(
     let movement = collide(this, level, &delta);
     let movement_length = movement.length_sqr();
     if movement_length > 1.0E-7 || delta.length_sqr() - movement_length < 1.0E-7 {
-        assert!(
-            !(this.entity().fall_distance != 0.0 && movement_length >= 1.0),
-            "moving a block or more while falling clips the level, which isn't ported"
-        );
+        if this.entity().fall_distance != 0.0 && movement_length >= 1.0 {
+            // What a fast fall passes through that ends it: water, ladders, cobwebs.
+            let check_distance = Math::min_f64(movement.length(), 8.0);
+            let check_to = this
+                .entity()
+                .position()
+                .add(&movement.normalize().scale(check_distance));
+            let hit_result = block_getter::clip(
+                level::collisions(level),
+                &ClipContext::new(
+                    this.entity().position(),
+                    check_to,
+                    clip_context::Block::FALLDAMAGE_RESETTING,
+                    clip_context::Fluid::WATER,
+                    this.collision_context(),
+                    this.is_player(),
+                ),
+            );
+            if hit_result.get_type() != Type::MISS {
+                this.entity_mut().reset_fall_distance();
+            }
+        }
 
         let new_position = this.entity().position().add(&movement);
         this.entity_mut().set_pos_vec3(&new_position);
@@ -1114,67 +1195,65 @@ pub fn base_tick(this: &mut (impl EntityClass + Sized), level: &dyn Level) {
     entity.in_block_state = None;
     entity.was_in_powder_snow = entity.is_in_powder_snow;
     entity.is_in_powder_snow = false;
-    entity.was_eye_in_water = entity.is_eye_in_fluid_water();
+    entity.was_eye_in_water = entity.is_eye_in_fluid(FluidTags::WATER);
     this.update_fluid_interaction(level);
-    update_swimming(this);
+    this.update_swimming(level);
     if this.entity().is_in_lava() {
         this.entity_mut().fall_distance *= 0.5;
     }
     this.entity_mut().first_tick = false;
 }
 
-/// `Entity.updateFluidInteraction()`, with `EntityFluidInteraction.update`: the fluids the
-/// entity's box (less 0.001) is in. Their heights and flows aren't ported, so it panics where a
-/// chunk section there holds a fluid, and is in none otherwise.
-pub fn update_fluid_interaction(this: &mut (impl EntityClass + ?Sized), level: &dyn Level) -> bool {
-    let r#box = this.entity().get_bounding_box().deflate(0.001);
-    let x0 = Mth::floor_f64(r#box.min_x);
-    let y0 = Mth::floor_f64(r#box.min_y);
-    let z0 = Mth::floor_f64(r#box.min_z);
-    let x1 = Mth::ceil_f64(r#box.max_x) - 1;
-    let y1 = Mth::ceil_f64(r#box.max_y) - 1;
-    let z1 = Mth::ceil_f64(r#box.max_z) - 1;
-    let mut has_fluid = false;
-    'chunks: for chunk_z in (z0 - 1) >> 4..=(z1 + 1) >> 4 {
-        for chunk_x in (x0 - 1) >> 4..=(x1 + 1) >> 4 {
-            match level.chunk_has_fluid(chunk_x, chunk_z, y0 >> 4, y1 >> 4) {
-                None => {
-                    has_fluid = false;
-                    break 'chunks;
-                }
-                Some(fluid) => has_fluid |= fluid,
-            }
+/// `Entity.updateFluidInteraction()`: the fluids it's in, which stop its fall in water, and their
+/// currents pushing it when it's pushed by fluids. Whether it's in any.
+pub fn update_fluid_interaction(this: &mut (impl EntityClass + Sized), level: &dyn Level) -> bool {
+    let ignore_current = !this.is_pushed_by_fluid();
+    let mut fluid_interaction = std::mem::replace(
+        &mut this.entity_mut().fluid_interaction,
+        EntityFluidInteraction::new(&[]),
+    );
+    let in_any_fluid = fluid_interaction.update(this, level, ignore_current);
+    let in_water = fluid_interaction.is_in_fluid(FluidTags::WATER);
+    let in_lava = fluid_interaction.is_in_fluid(FluidTags::LAVA);
+    if in_water {
+        this.entity_mut().reset_fall_distance();
+        // A splash when it wasn't in water and it's not the first tick: a sound and particles.
+    }
+
+    this.entity_mut().was_touching_water = in_water;
+    if this.is_pushed_by_fluid() {
+        if in_water {
+            fluid_interaction.apply_current_to(FluidTags::WATER, this, 0.014);
+        }
+
+        assert!(
+            !in_lava || !level.has_fast_lava(),
+            "lava's flow in a dimension with fast lava isn't ported"
+        );
+        if in_lava {
+            fluid_interaction.apply_current_to(FluidTags::LAVA, this, 0.0023333333333333335);
         }
     }
-    assert!(
-        !has_fluid,
-        "an entity near a fluid reads its height and flow, which aren't ported"
-    );
 
-    let entity = this.entity_mut();
-    entity.in_water = false;
-    entity.in_lava = false;
-    entity.eye_in_water = false;
-    entity.was_touching_water = false;
-    false
+    this.entity_mut().fluid_interaction = fluid_interaction;
+    in_any_fluid
 }
 
-/// `Entity.updateSwimming()`: swimming needs water, which isn't ported, so it stops.
-pub fn update_swimming(this: &mut (impl EntityClass + ?Sized)) {
+/// `Entity.updateSwimming()`: a swimmer keeps swimming while it sprints in water; anyone else
+/// starts when it sprints under water, standing in water.
+pub fn update_swimming(this: &mut (impl EntityClass + Sized), level: &dyn Level) {
     if this.is_swimming() {
         let swimming =
             this.is_sprinting() && this.entity().is_in_water() && !this.entity().is_passenger();
-        this.entity_mut()
-            .set_shared_flag(Entity::FLAG_SWIMMING, swimming);
+        this.entity_mut().set_swimming(swimming);
     } else {
-        let would_swim =
-            this.is_sprinting() && this.entity().is_under_water() && !this.entity().is_passenger();
-        assert!(
-            !would_swim,
-            "swimming reads the fluid state, which isn't ported"
-        );
-        this.entity_mut()
-            .set_shared_flag(Entity::FLAG_SWIMMING, false);
+        let swimming = this.is_sprinting()
+            && this.is_under_water()
+            && !this.entity().is_passenger()
+            && level
+                .get_fluid_state(&this.entity().block_position())
+                .is_tag(FluidTags::WATER);
+        this.entity_mut().set_swimming(swimming);
     }
 }
 

@@ -47,6 +47,7 @@ use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
 use crate::org::lwjgl::sdl::sdl_events::{SDLEvents, SdlEvent};
 use crate::org::lwjgl::sdl::sdl_mouse::SDLMouse;
+use crate::net::minecraft::world::level::material::flowing_fluid;
 
 /// The screen shown, of the ones the port has.
 enum Screen {
@@ -94,6 +95,8 @@ impl Minecraft {
     const FRAMERATE_LIMIT: u64 = 120;
 
     pub fn new(user: User, options: Options) -> Rc<Minecraft> {
+        // A new game's fluids keep no shapes yet (`FlowingFluid.shapes`, a JVM's in Java).
+        flowing_fluid::clear_shapes();
         Rc::new(Minecraft {
             options: RefCell::new(options),
             user,

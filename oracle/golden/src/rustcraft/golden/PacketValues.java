@@ -78,6 +78,9 @@ import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.network.protocol.game.ClientboundSetExperiencePacket;
 import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
@@ -94,9 +97,11 @@ import net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPac
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.clock.ClockNetworkState;
 import net.minecraft.world.clock.WorldClock;
+import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
@@ -177,6 +182,7 @@ final class PacketValues {
     static final Values.Generator PLAYER_COMMAND_ACTION = new CoreValues.Constants<>(ServerboundPlayerCommandPacket.Action.class);
 
     private static final Values.Generator INTS = Values.generator(int.class);
+    private static final Values.Generator BYTES = Values.generator(byte.class);
     private static final Values.Generator LONGS = Values.generator(long.class);
     private static final Values.Generator STRINGS = Values.generator(String.class);
     private static final Values.Generator BOOLEANS = Values.generator(boolean.class);
@@ -287,6 +293,8 @@ final class PacketValues {
     static final Values.Generator FEATURE_SETS = Codecs.hashSetOf(IDENTIFIERS, featureSets());
     private static final Values.Generator FLOATS = Values.generator(float.class);
     private static final Values.Generator DOUBLES = Values.generator(double.class);
+    // A damage event's source position: none, or a position like an entity's.
+    private static final Values.Generator OPTIONAL_VEC3S = Codecs.optionalOf(CoreValues.VEC3);
     // Commands around readUtf()'s 32767 characters, and the oracle's setup commands.
     private static final Values.Generator COMMANDS = strings(
         "time set 6000", "tp @s 0.5 -60.0 0.5 0.0 0.0", "", "a".repeat(32767), "a".repeat(32768), "😀".repeat(16383) + "a", "😀".repeat(16384)
@@ -612,9 +620,21 @@ final class PacketValues {
             DOUBLES, DOUBLES, DOUBLES, LONGS, INTS, INTS, INTS
         );
 
+        // The game protocol's packets about an entity: its motion, its hurt animation and its events (every byte). The
+        // events' public constructor takes the entity, so its reader makes it from the fields.
+        packet(
+            ClientboundSetEntityMotionPacket.class, fields -> new ClientboundSetEntityMotionPacket((Integer)fields[0], (Vec3)fields[1]), List.of(),
+            INTS, CoreValues.VEC3
+        );
+        packet(
+            ClientboundHurtAnimationPacket.class, fields -> new ClientboundHurtAnimationPacket((Integer)fields[0], (Float)fields[1]), List.of(),
+            INTS, FLOATS
+        );
+        packet(ClientboundEntityEventPacket.class, PacketValues::entityEventPacket, List.of("entityId", "eventId"), INTS, BYTES);
+
         // The game protocol's packets that read the registries (RegistryValues), and what they hold: the clocks' time, an
-        // entity's attributes, the world's spawn and an entity's data. Made when first used: the attributes' holders need
-        // the registries loaded, and the game bootstrapped, which Golden's constants come before.
+        // entity's attributes, the world's spawn, an entity's data and its damage. Made when first used: the attributes'
+        // holders need the registries loaded, and the game bootstrapped, which Golden's constants come before.
         PAYLOADS.put(ClockNetworkState.class, RegistryValues.CLOCK_STATES);
         PAYLOADS.put(WorldClock.class, RegistryValues.lazy(() -> values(WorldClock.class, fields -> new WorldClock(), List.of())));
         PACKETS.put(
@@ -672,6 +692,18 @@ final class PacketValues {
             RegistryValues.lazy(() -> values(
                 ClientboundSetEntityDataPacket.class,
                 fields -> new ClientboundSetEntityDataPacket((Integer)fields[0], dataValueList(fields[1])), List.of(), INTS, DATA_VALUE_LISTS
+            ))
+        );
+        // An entity's damage: any damage type, the ids of the entities that caused and dealt it (-1 for none), and where
+        // it came from.
+        PACKETS.put(
+            ClientboundDamageEventPacket.class,
+            RegistryValues.lazy(() -> values(
+                ClientboundDamageEventPacket.class,
+                fields -> new ClientboundDamageEventPacket(
+                    (Integer)fields[0], damageTypeHolder(fields[1]), (Integer)fields[2], (Integer)fields[3], vec3(fields[4])
+                ),
+                List.of(), INTS, RegistryValues.holders(Registries.DAMAGE_TYPE), INTS, INTS, OPTIONAL_VEC3S
             ))
         );
     }
@@ -757,6 +789,9 @@ final class PacketValues {
         }
         if (type.getRawType() == Collection.class && element == AttributeModifier.class) {
             return MODIFIER_LISTS;
+        }
+        if (type.getRawType() == Optional.class && element == Vec3.class) {
+            return OPTIONAL_VEC3S;
         }
         return type.getRawType() == Optional.class && element == UUID.class ? OPTIONAL_UUIDS : null;
     }
@@ -960,6 +995,11 @@ final class PacketValues {
     @SuppressWarnings("unchecked")
     private static Optional<UUID> uuid(final Object id) {
         return (Optional<UUID>)id;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Optional<Vec3> vec3(final Object position) {
+        return (Optional<Vec3>)position;
     }
 
     @SuppressWarnings("unchecked")
@@ -1190,6 +1230,11 @@ final class PacketValues {
     }
 
     @SuppressWarnings("unchecked")
+    private static Holder<DamageType> damageTypeHolder(final Object holder) {
+        return (Holder<DamageType>)holder;
+    }
+
+    @SuppressWarnings("unchecked")
     private static Collection<AttributeModifier> modifierList(final Object list) {
         return (Collection<AttributeModifier>)list;
     }
@@ -1238,6 +1283,14 @@ final class PacketValues {
         buffer.writeFloat((Float)fields[4]);
         buffer.writeFloat((Float)fields[5]);
         return ClientboundPlayerAbilitiesPacket.STREAM_CODEC.decode(buffer);
+    }
+
+    // The packet its reader makes of the entity's id and the event.
+    private static ClientboundEntityEventPacket entityEventPacket(final Object[] fields) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeInt((Integer)fields[0]);
+        buffer.writeByte((Byte)fields[1]);
+        return ClientboundEntityEventPacket.STREAM_CODEC.decode(buffer);
     }
 
     // The packet its reader makes of the entity's id, the action and its data.

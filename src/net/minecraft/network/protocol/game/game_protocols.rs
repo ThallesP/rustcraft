@@ -36,8 +36,11 @@ use crate::net::minecraft::network::protocol::game::clientbound_change_difficult
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
@@ -50,6 +53,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
@@ -474,7 +478,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_DAMAGE_EVENT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_DAMAGE_EVENT),
+                ClientboundDamageEventPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_DEBUG_BLOCK_VALUE,
@@ -510,7 +514,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_ENTITY_EVENT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_ENTITY_EVENT),
+                ClientboundEntityEventPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_ENTITY_POSITION_SYNC,
@@ -546,7 +550,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_HURT_ANIMATION,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_HURT_ANIMATION),
+                ClientboundHurtAnimationPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_INITIALIZE_BORDER,
@@ -786,7 +790,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_ENTITY_MOTION,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_ENTITY_MOTION),
+                ClientboundSetEntityMotionPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_EQUIPMENT,

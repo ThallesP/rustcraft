@@ -18,9 +18,16 @@
 //! leaves out the join's per-tick packets. From the marker on, the packets are compared strictly,
 //! each by its name and its payload (`capture.jsonl`'s `name` and `payload`).
 //!
-//! The server's answers after the marker aren't replayed: in the walk, they're its echoes of the
-//! player's own state (`set_entity_data`'s flags and pose, `update_attributes`' sprinting
-//! modifier), which change nothing the client has.
+//! The server's answers after the marker aren't replayed, but at a step's `wait_for`: elsewhere
+//! they're its echoes of the player's own state (`set_entity_data`'s flags and pose,
+//! `update_attributes`' sprinting modifier), which change nothing the client has. Where a step waits
+//! for the server's answer (TESTING.md), the live clients handle what has come by then after the
+//! tick's trace line, before the next tick; the replay takes the capture's clientbound packets in
+//! the order they came, up to the waited-for ones, and applies those that change the player: its
+//! motion
+//! (`set_entity_motion`, `lerpMotion`) and its health and food (`set_health`, `hurtTo`), and the
+//! damage event's hurt timers (`damage_event`). A scenario that waits can only be replayed on a
+//! capture.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -45,12 +52,15 @@ use crate::net::minecraft::network::protocol::common::custom::discarded_payload:
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
 use crate::net::minecraft::network::protocol::configuration::clientbound_registry_data_packet::ClientboundRegistryDataPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::game_protocols::{self, GameProtocols};
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_client_tick_end_packet::ServerboundClientTickEndPacket;
@@ -150,6 +160,20 @@ impl Capture {
                     && !IGNORED.contains(&packet.name.as_str())
             })
             .map(CapturedPacket::line)
+            .collect()
+    }
+
+    /// The clientbound packets of the game protocol from the marker on, on its connection: the
+    /// server's answers during the scenario.
+    pub fn play_from_marker(&self) -> Vec<CapturedPacket> {
+        let marker = self.marker();
+        let connection = self.packets[marker].connection;
+        self.packets[marker..]
+            .iter()
+            .filter(|packet| {
+                !packet.serverbound && packet.state == "play" && packet.connection == connection
+            })
+            .cloned()
             .collect()
     }
 
@@ -316,12 +340,15 @@ impl FlatLevel {
         }
     }
 
-    /// The flat preset with the commands' blocks, in their order. Panics on a command it doesn't
-    /// know or one that isn't strict.
+    /// The flat preset with the commands' blocks, in their order; a `gamerule` places none. Panics
+    /// on a command it doesn't know or one that isn't strict.
     pub fn with_setup(commands: &[String]) -> FlatLevel {
         let mut level = FlatLevel::new();
         for command in commands {
             let words: Vec<&str> = command.split(' ').collect();
+            if words.first() == Some(&"gamerule") {
+                continue;
+            }
             let coordinate = |word: &str| -> i32 {
                 word.parse()
                     .unwrap_or_else(|_| panic!("{command}: {word} isn't a block coordinate"))
@@ -462,6 +489,11 @@ impl Level for FlatLevel {
                 && !state.get_fluid_state().is_empty()
         }))
     }
+
+    /// The overworld's lava, which isn't fast.
+    fn has_fast_lava(&self) -> bool {
+        false
+    }
 }
 
 /// `GameProtocols.Context` for the replay's protocol, which no ported packet asks.
@@ -485,13 +517,21 @@ pub struct Replay {
 }
 
 /// Replays the scenario on the level, as the player with the entity id, writing packets with the
-/// game protocol bound to the registries.
+/// game protocol bound to the registries. `answers` are the server's clientbound packets from the
+/// marker on, which a step's `wait_for` takes from; a scenario that waits panics without them.
 pub fn replay(
     scenario: &Scenario,
     level: &dyn Level,
     registries: Arc<RegistryAccess>,
     player_id: i32,
+    answers: Option<&[CapturedPacket]>,
 ) -> Replay {
+    let registry_buffer = {
+        let registries = Arc::clone(&registries);
+        move |payload: &[i8]| {
+            RegistryFriendlyByteBuf::new(wrapped_buffer(payload.to_vec()), Arc::clone(&registries))
+        }
+    };
     let protocol = GameProtocols::SERVERBOUND_TEMPLATE.bind(
         RegistryFriendlyByteBuf::decorator(registries),
         Box::new(ReplayContext),
@@ -552,12 +592,14 @@ pub fn replay(
         Arc::new(DiscardedPayload::new(OracleGameTest::scenario_start())),
     )))];
     let mut trace = Vec::new();
+    // The next of the server's answers not yet taken.
+    let mut answered = 0;
     for step in &scenario.steps {
         if step.screenshot.is_some() {
             continue;
         }
         OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &step.keys);
-        for _ in 0..step.ticks {
+        for tick_of_step in 0..step.ticks {
             if let Some([y_rot, x_rot]) = step.look {
                 player.set_y_rot(y_rot);
                 player.set_x_rot(x_rot);
@@ -566,9 +608,59 @@ pub fn replay(
             packets.extend(player.sent.drain(..).map(&encode));
             packets.push(encode(Box::new(ServerboundClientTickEndPacket::INSTANCE)));
             trace.push(trace_writer::line(trace.len() as i32, &player));
+            if tick_of_step == step.ticks - 1 && !step.wait_for.is_empty() {
+                let answers = answers.unwrap_or_else(|| {
+                    panic!(
+                        "{}: waiting for {:?} needs the server's answers, from a capture",
+                        scenario.name, step.wait_for
+                    )
+                });
+                let mut waiting: Vec<&String> = step.wait_for.iter().collect();
+                while !waiting.is_empty() {
+                    let answer = answers.get(answered).unwrap_or_else(|| {
+                        panic!("{}: the server never sent {waiting:?}", scenario.name)
+                    });
+                    answered += 1;
+                    waiting.retain(|name| **name != answer.name);
+                    apply_answer(&mut player, answer, &registry_buffer);
+                }
+            }
         }
     }
     Replay { trace, packets }
+}
+
+/// What the client's listener does with one of the server's answers to the player
+/// (`handleSetEntityMotion`, `handleSetHealth`, `handleDamageEvent`), for the packets that change
+/// the player; the others change nothing it has.
+fn apply_answer(
+    player: &mut LocalPlayer,
+    answer: &CapturedPacket,
+    registry_buffer: &impl Fn(&[i8]) -> RegistryFriendlyByteBuf,
+) {
+    match answer.name.as_str() {
+        "minecraft:set_entity_motion" => {
+            let packet = ClientboundSetEntityMotionPacket::STREAM_CODEC
+                .decode(&mut unpooled::wrapped_buffer(answer.payload.to_vec()));
+            if packet.id() == player.get_id() {
+                player.entity_mut().lerp_motion(packet.movement());
+            }
+        }
+        "minecraft:set_health" => {
+            let packet =
+                ClientboundSetHealthPacket::STREAM_CODEC.decode(&mut friendly(&answer.payload));
+            player.hurt_to(packet.get_health());
+            player.food_level = packet.get_food();
+        }
+        "minecraft:damage_event" => {
+            let packet = ClientboundDamageEventPacket::STREAM_CODEC
+                .decode(&mut registry_buffer(&answer.payload));
+            if packet.entity_id() == player.get_id() {
+                player.handle_damage_event();
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The marker's payload: its identifier, as `DiscardedPayload` writes it.
@@ -666,26 +758,33 @@ mod tests {
     ///
     /// The scenario is replayed on the flat preset with its setup's blocks, which needs no capture
     /// and is what CI checks; where a capture is (vanilla's, or the port's own that
-    /// `tools/port_client.py capture` records, which CI makes for the walk), on the level the server
-    /// sent, whose blocks must be the flat level's; and where the port's own run on a server wrote
-    /// its trace, that run's trace and packets are checked too.
+    /// `tools/port_client.py capture` records, which CI makes for the walk and `falls`), on the
+    /// level the server sent, whose blocks must be the flat level's, with the server's answers where
+    /// a step waits for them; and where the port's own run on a server wrote its trace, that run's
+    /// trace and packets are checked too. A scenario that waits for the server is only replayed on a
+    /// capture, which has the answers.
     fn check_scenario(name: &str, trace_md5: &str, packets_md5: &str) {
         let scenario = Scenario::load(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("oracle/scenarios/{name}.json")),
         )
         .unwrap();
+        let waits = scenario.steps.iter().any(|step| !step.wait_for.is_empty());
         // Vanilla's player is the server's first entity.
         let flat = FlatLevel::with_setup(&scenario.setup);
-        let on_flat = replay(
-            &scenario,
-            &flat,
-            Arc::new(RegistryAccess::new(Vec::new())),
-            1,
-        );
-        check(name, &on_flat, trace_md5, packets_md5);
+        if !waits {
+            let on_flat = replay(
+                &scenario,
+                &flat,
+                Arc::new(RegistryAccess::new(Vec::new())),
+                1,
+                None,
+            );
+            check(name, &on_flat, trace_md5, packets_md5);
+        }
 
         if let Some(path) = capture_path(name) {
-            let captured = CapturedLevel::from_capture(&Capture::load(&path).unwrap());
+            let capture = Capture::load(&path).unwrap();
+            let captured = CapturedLevel::from_capture(&capture);
             let chunks = captured.level.get_chunk_source();
             assert!(
                 chunks.get_loaded_chunks_count() >= 81,
@@ -715,8 +814,11 @@ mod tests {
                 &captured.level,
                 Arc::clone(&captured.registries),
                 captured.player_id,
+                Some(&capture.play_from_marker()),
             );
             check(name, &on_captured, trace_md5, packets_md5);
+        } else {
+            assert!(!waits, "{name} waits for the server, so it needs a capture");
         }
 
         let out = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -737,6 +839,35 @@ mod tests {
                 "{name}: the port's live run's packets from the marker on"
             );
         }
+    }
+
+    /// For writing a scenario: `SCENARIO=<name> cargo test --lib replays_a_draft -- --ignored`
+    /// replays `oracle/scenarios/<name>.json` on the flat level and writes the trace and packets
+    /// to `target/oracle/<name>-draft/` (TESTING.md). It checks nothing.
+    #[test]
+    #[ignore]
+    fn replays_a_draft() {
+        let name = std::env::var("SCENARIO").expect("SCENARIO names the draft");
+        let scenario = Scenario::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("oracle/scenarios/{name}.json")),
+        )
+        .unwrap();
+        let flat = FlatLevel::with_setup(&scenario.setup);
+        let draft = replay(
+            &scenario,
+            &flat,
+            Arc::new(RegistryAccess::new(Vec::new())),
+            1,
+            None,
+        );
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/oracle")
+            .join(format!("{name}-draft"));
+        std::fs::create_dir_all(&out).unwrap();
+        let lines =
+            |lines: &[String]| -> String { lines.iter().map(|line| format!("{line}\n")).collect() };
+        std::fs::write(out.join("trace.jsonl"), lines(&draft.trace)).unwrap();
+        std::fs::write(out.join("packets.txt"), lines(&draft.packets)).unwrap();
     }
 
     #[test]
@@ -853,6 +984,60 @@ mod tests {
             "slabs-and-fences",
             "af2df57626f0524ee6916e65a7cf0c22",
             "e79d419709cf590483b41be6d7b3173d",
+        );
+    }
+
+    #[test]
+    fn water() {
+        check_scenario(
+            "water",
+            "cdf67b202b739602e265d78dfdc1f121",
+            "1f7ca123dcd646509c2434714da7cc6e",
+        );
+    }
+
+    #[test]
+    fn water_current() {
+        check_scenario(
+            "water-current",
+            "c73ce8788dd6ade9f3830c4a840360ea",
+            "d5812b7c69a1dd60c71d92d9b745bc08",
+        );
+    }
+
+    #[test]
+    fn climbing() {
+        check_scenario(
+            "climbing",
+            "8f3e1f767010fc7a59166dcbd7aabadb",
+            "f349cd376f7b0beb17b9d9e30062e50e",
+        );
+    }
+
+    #[test]
+    fn scaffolding() {
+        check_scenario(
+            "scaffolding",
+            "86511a2d62d1dbbe19ea60502d28a297",
+            "3357e9129e84cd4aad9a5ea68a51f6fa",
+        );
+    }
+
+    #[test]
+    fn walls_and_panes() {
+        check_scenario(
+            "walls-and-panes",
+            "af77fc79cb0d357eb688e4f566e2f149",
+            "eb104cf96d7efc303b0da1446b9b0549",
+        );
+    }
+
+    #[test]
+    fn falls() {
+        check_scenario(
+            "falls",
+            "6d53fa85232d883cfabfde453f923315",
+            "ecbc25ad01fedec758e75c4c4d01a3f1",
         );
     }
 }

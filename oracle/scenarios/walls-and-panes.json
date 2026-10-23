@@ -1,0 +1,23 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "player": {"pos": [0.5, -60.0, 2.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill -2 -60 6 1 -60 6 minecraft:cobblestone_wall[east=low,north=none,south=none,up=false,waterlogged=false,west=low] strict",
+    "setblock 2 -60 6 minecraft:cobblestone_wall[east=tall,north=none,south=none,up=true,waterlogged=false,west=low] strict",
+    "setblock 3 -60 6 minecraft:mossy_cobblestone_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=tall] strict",
+    "setblock 3 -59 6 minecraft:mossy_cobblestone_wall[east=none,north=none,south=none,up=false,waterlogged=false,west=none] strict",
+    "fill 5 -60 6 8 -60 6 minecraft:glass_pane[east=true,north=false,south=false,waterlogged=false,west=true] strict",
+    "setblock 9 -60 6 minecraft:glass_pane[east=false,north=false,south=false,waterlogged=false,west=false] strict"
+  ],
+  "steps": [
+    {"ticks": 20, "keys": ["forward"]},
+    {"ticks": 12, "keys": ["forward", "jump"]},
+    {"ticks": 20, "keys": ["forward"], "look": [-40.0, 0.0]},
+    {"ticks": 6, "keys": ["back"], "look": [-40.0, 0.0]},
+    {"ticks": 20, "keys": ["forward"], "look": [-90.0, 0.0]},
+    {"ticks": 34, "keys": ["forward"], "look": [-50.0, 0.0]},
+    {"ticks": 12, "keys": ["forward", "sprint", "jump"], "look": [-60.0, 0.0]},
+    {"ticks": 10, "keys": []}
+  ]
+}

@@ -1,23 +1,26 @@
 //! net/minecraft/world/entity/LivingEntity.java
 //!
 //! What a living entity adds to an entity's movement: its attributes, `tick` and `aiStep` (the
-//! small movement cut-off, the input, jumping, travelling), `travel` and `travelInAir` with the
-//! block's friction, `jumpFromGround`, sprinting's speed modifier, and its overrides of `Entity`'s
-//! gravity, air drag, step height, speed factor and size. `LivingEntityClass` holds the methods
-//! its subclasses override (PORTING.md, "Entities").
+//! small movement cut-off, the input, jumping on the ground and in fluids, travelling), `travel`,
+//! `travelInAir` with the block's friction, `travelInFluid` (water and lava, getting out of them at
+//! an edge), climbing (`onClimbable`, `handleOnClimbable`), `jumpFromGround`, sprinting's speed
+//! modifier, and its overrides of `Entity`'s gravity, air drag, step height, speed factor and size.
+//! `LivingEntityClass` holds the methods its subclasses override (PORTING.md, "Entities").
 //!
 //! Not ported yet: health beyond its value, damage and death, effects (`hasEffect` is never true:
-//! no jump boost, slow falling or levitation), equipment and using items, riding (`travelRidden`),
-//! swimming and travelling in fluids (`travelInFluid`, which needs fluid states, panics), gliding
-//! (`travelFallFlying`, which panics), pushing other entities, the body's and head's rotation and
-//! the walk animation, which only rendering reads, and `applyEffectsFromBlocks` (see `Entity`).
+//! no jump boost, slow falling, levitation or dolphin's grace), equipment and using items, riding
+//! (`travelRidden`, `floatInLiquidWhileRidden`), gliding (`travelFallFlying`, which panics),
+//! pushing other entities, the swim amount, the body's and head's rotation and the walk animation,
+//! which only rendering reads, and `applyEffectsFromBlocks` (see `Entity`).
 
 // Java's negated comparisons are kept as they are: they differ from the plain ones for NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 use crate::java::lang::math::Math;
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::tags::fluid_tags::{FluidTagKey, FluidTags};
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::ai::attributes::attribute::Attribute;
 use crate::net::minecraft::world::entity::ai::attributes::attribute_map::AttributeMap;
@@ -29,8 +32,14 @@ use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
 use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::pose::Pose;
-use crate::net::minecraft::world::level::block::trap_door_block;
+use crate::net::minecraft::world::level::block::blocks::Blocks;
+use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
+use crate::net::minecraft::world::level::block::ladder_block::LadderBlock;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block::trap_door_block::{self, TrapDoorBlock};
 use crate::net::minecraft::world::level::level::Level;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 
 /// What a living entity has besides an entity's.
@@ -47,6 +56,10 @@ pub struct LivingEntity {
     health: f32,
     dead: bool,
     pub discard_friction: bool,
+    last_climbable_pos: Option<BlockPos>,
+    pub hurt_time: i32,
+    pub hurt_duration: i32,
+    pub damage_cooldown_time: i32,
 }
 
 impl std::ops::Deref for LivingEntity {
@@ -98,6 +111,10 @@ impl LivingEntity {
             health,
             dead: false,
             discard_friction: false,
+            last_climbable_pos: None,
+            hurt_time: 0,
+            hurt_duration: 0,
+            damage_cooldown_time: 0,
         }
     }
 
@@ -132,6 +149,20 @@ impl LivingEntity {
 
     pub fn no_jump_delay(&self) -> i32 {
         self.no_jump_delay
+    }
+
+    /// `handleDamageEvent(DamageSource)`, as the server tells of damage: the hurt animation's
+    /// timers and the cooldown. Java also plays the hurt sound (from the entity's random source)
+    /// and remembers the source, which nothing ported reads.
+    pub fn handle_damage_event(&mut self) {
+        self.damage_cooldown_time = 20;
+        self.hurt_duration = 10;
+        self.hurt_time = self.hurt_duration;
+    }
+
+    /// `getLastClimbablePos()`: where it last climbed, until it lands.
+    pub fn get_last_climbable_pos(&self) -> Option<BlockPos> {
+        self.last_climbable_pos
     }
 }
 
@@ -172,6 +203,35 @@ pub trait LivingEntityClass: EntityClass {
         let living = self.living_entity_mut();
         living.xxa *= 0.98;
         living.zza *= 0.98;
+    }
+
+    /// `getWaterSlowDown()`: how much of its movement it keeps in water each tick.
+    fn get_water_slow_down(&self) -> f32 {
+        0.8
+    }
+
+    /// `canStandOnFluid(FluidState)`: striders can, on lava; no ported entity can.
+    fn can_stand_on_fluid(&self, _fluid: FluidState) -> bool {
+        false
+    }
+
+    /// `isSuppressingSlidingDownLadder()`: sneaking.
+    fn is_suppressing_sliding_down_ladder(&self) -> bool {
+        self.is_shift_key_down()
+    }
+
+    /// `goDownInWater()`.
+    fn go_down_in_water(&mut self) {
+        let delta = self.entity().get_delta_movement();
+        self.entity_mut()
+            .set_delta_movement(delta.add_xyz(0.0, f64::from(-0.04_f32), 0.0));
+    }
+
+    /// `jumpInLiquid(TagKey)`.
+    fn jump_in_liquid(&mut self, _fluid: FluidTagKey) {
+        let delta = self.entity().get_delta_movement();
+        self.entity_mut()
+            .set_delta_movement(delta.add_xyz(0.0, f64::from(0.04_f32), 0.0));
     }
 
     fn on_climbable(&mut self, level: &dyn Level) -> bool
@@ -272,37 +332,65 @@ pub fn check_fall_damage(
     level: &dyn Level,
     ya: f64,
     on_ground: bool,
-    on_state: crate::net::minecraft::world::level::block::state::block_state::BlockState,
-    pos: crate::net::minecraft::core::block_pos::BlockPos,
+    on_state: BlockState,
+    pos: BlockPos,
 ) {
     if !this.entity().is_in_water() {
         this.update_fluid_interaction(level);
     }
     entity::check_fall_damage(this, level, ya, on_ground, on_state, pos);
+    if on_ground {
+        this.living_entity_mut().last_climbable_pos = None;
+    }
 }
 
-/// `LivingEntity.onClimbable`: in a climbable block. A trapdoor used as a ladder isn't ported.
+/// `LivingEntity.onClimbable`: in a climbable block, or an open trapdoor over a ladder facing the
+/// same way; where it climbs is kept.
 pub fn on_climbable(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level) -> bool {
     if this.is_spectator() {
         return false;
     }
+    let ladder_check_pos = this.entity().block_position();
     let state = this.entity_mut().get_in_block_state(level);
     if this.entity().is_fall_flying() && state.is_tag(BlockTags::CAN_GLIDE_THROUGH) {
         false
-    } else if state.is_tag(BlockTags::CLIMBABLE) {
+    } else if state.is_tag(BlockTags::CLIMBABLE)
+        || state.get_block().is_instance_of(&trap_door_block::CLASS)
+            && trapdoor_usable_as_ladder(level, &ladder_check_pos, state)
+    {
+        this.living_entity_mut().last_climbable_pos = Some(ladder_check_pos);
         true
     } else {
-        assert!(
-            !state.get_block().is_instance_of(&trap_door_block::CLASS),
-            "a trapdoor as a ladder isn't ported"
-        );
         false
     }
 }
 
-/// `LivingEntity.baseTick()`'s part that reaches movement: `Entity`'s.
+/// `trapdoorUsableAsLadder`: an open trapdoor over a ladder that faces the same way.
+fn trapdoor_usable_as_ladder(level: &dyn Level, pos: &BlockPos, state: BlockState) -> bool {
+    if !state.get_value(TrapDoorBlock::OPEN) {
+        return false;
+    }
+
+    let below_state = level.get_block_state(&pos.below());
+    below_state.is(Blocks::LADDER)
+        && below_state.get_value(LadderBlock::FACING)
+            == state.get_value(HorizontalDirectionalBlock::FACING)
+}
+
+/// `LivingEntity.baseTick()` on the client: `Entity`'s, then the hurt animation and the damage
+/// cooldown count down. The rest is the server's (drowning, the border's damage) or not ported
+/// (dying, which no scenario reaches).
 pub fn base_tick(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level) {
     entity::base_tick(this, level);
+    let living = this.living_entity_mut();
+    if living.hurt_time > 0 {
+        living.hurt_time -= 1;
+    }
+
+    // `!(this instanceof ServerPlayer)`: on the client, always.
+    if living.damage_cooldown_time > 0 {
+        living.damage_cooldown_time -= 1;
+    }
 }
 
 /// `LivingEntity.tick()`: the base tick, then `aiStep`, then the attributes that changed.
@@ -377,22 +465,32 @@ pub fn ai_step(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level) {
     }
 
     if this.living_entity().jumping && this.is_affected_by_fluids() {
-        let fluid_height = this.entity().get_fluid_height();
+        let fluid_height = if this.entity().is_in_lava() {
+            this.entity().get_fluid_height(FluidTags::LAVA)
+        } else {
+            this.entity().get_fluid_height(FluidTags::WATER)
+        };
+
         let in_water_and_has_fluid_height = this.entity().is_in_water() && fluid_height > 0.0;
         let fluid_jump_threshold = this.entity().get_fluid_jump_threshold();
         if !in_water_and_has_fluid_height
             || this.entity().on_ground() && !(fluid_height > fluid_jump_threshold)
         {
-            assert!(!this.entity().is_in_lava(), "jumping in lava isn't ported");
-            if (this.entity().on_ground()
-                || in_water_and_has_fluid_height && fluid_height <= fluid_jump_threshold)
-                && this.living_entity().no_jump_delay == 0
+            if !this.entity().is_in_lava()
+                || this.entity().on_ground() && is_in_shallow_fluid(this, FluidTags::LAVA)
             {
-                jump_from_ground(this, level);
-                this.living_entity_mut().no_jump_delay = 10;
+                if (this.entity().on_ground()
+                    || in_water_and_has_fluid_height && fluid_height <= fluid_jump_threshold)
+                    && this.living_entity().no_jump_delay == 0
+                {
+                    jump_from_ground(this, level);
+                    this.living_entity_mut().no_jump_delay = 10;
+                }
+            } else {
+                this.jump_in_liquid(FluidTags::LAVA);
             }
         } else {
-            panic!("jumping in water isn't ported");
+            this.jump_in_liquid(FluidTags::WATER);
         }
     } else {
         this.living_entity_mut().no_jump_delay = 0;
@@ -443,14 +541,175 @@ pub fn jump_from_ground(this: &mut (impl LivingEntityClass + Sized), level: &dyn
     }
 }
 
-/// `LivingEntity.travel(Vec3)`: in the air, fluids and gliding not being ported.
+/// `LivingEntity.travel(Vec3)`: in a fluid, or in the air. Gliding isn't ported.
 pub fn travel(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level, input: &Vec3) {
-    assert!(
-        !(this.entity().is_in_liquid() && this.is_affected_by_fluids()),
-        "travelling in fluids isn't ported"
+    let fluid_state = level.get_fluid_state(&this.entity().block_position());
+    if should_travel_in_fluid(this, fluid_state) {
+        travel_in_fluid(this, level, input);
+    } else {
+        assert!(!this.entity().is_fall_flying(), "gliding isn't ported");
+        travel_in_air(this, level, input);
+    }
+}
+
+/// `shouldTravelInFluid`: in water or lava, moved by fluids, and not standing on this one.
+fn should_travel_in_fluid(
+    this: &(impl LivingEntityClass + Sized),
+    fluid_state: FluidState,
+) -> bool {
+    this.entity().is_in_liquid()
+        && this.is_affected_by_fluids()
+        && !this.can_stand_on_fluid(fluid_state)
+}
+
+/// `travelInFluid`: in water if it's in water, else in lava. Riding isn't ported, so nothing
+/// floats with a rider (`floatInLiquidWhileRidden`).
+fn travel_in_fluid(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level, input: &Vec3) {
+    let is_falling = this.entity().get_delta_movement().y <= 0.0;
+    let old_y = this.entity().get_y();
+    let base_gravity = this.get_effective_gravity();
+    if this.entity().is_in_water() {
+        travel_in_water(this, level, input, base_gravity, is_falling, old_y);
+    } else {
+        travel_in_lava(this, level, input, base_gravity, is_falling, old_y);
+    }
+}
+
+/// `travelInWater`: slowed by the water, less while sprinting and as water movement efficiency
+/// grows (half of it off the ground), sinking slowly, and climbing where it pushes into a ladder.
+fn travel_in_water(
+    this: &mut (impl LivingEntityClass + Sized),
+    level: &dyn Level,
+    input: &Vec3,
+    base_gravity: f64,
+    is_falling: bool,
+    old_y: f64,
+) {
+    let mut slow_down = if this.is_sprinting() {
+        0.9
+    } else {
+        this.get_water_slow_down()
+    };
+    let mut speed = 0.02_f32;
+    let mut water_walker =
+        this.living_entity()
+            .get_attribute_value(Attributes::WATER_MOVEMENT_EFFICIENCY) as f32;
+    if !this.entity().on_ground() {
+        water_walker *= 0.5;
+    }
+
+    if water_walker > 0.0 {
+        slow_down += (0.54600006 - slow_down) * water_walker;
+        speed += (this.get_speed() - speed) * water_walker;
+    }
+
+    // Dolphin's grace (an effect, not ported) would make the slow-down 0.96.
+    entity::move_relative(this, speed, input);
+    let delta = this.entity().get_delta_movement();
+    this.r#move(level, MoverType::SELF, delta);
+    let mut movement = this.entity().get_delta_movement();
+    if this.entity().horizontal_collision && this.on_climbable(level) {
+        movement = Vec3::new(movement.x, 0.2, movement.z);
+    }
+
+    movement = movement.multiply_xyz(
+        f64::from(slow_down),
+        f64::from(0.8_f32),
+        f64::from(slow_down),
     );
-    assert!(!this.entity().is_fall_flying(), "gliding isn't ported");
-    travel_in_air(this, level, input);
+    let movement = get_fluid_falling_adjusted_movement(this, base_gravity, is_falling, &movement);
+    this.entity_mut().set_delta_movement(movement);
+    jump_out_of_fluid(this, level, old_y);
+}
+
+/// `isInShallowFluid`: the fluid no deeper than the height it can jump out of.
+pub fn is_in_shallow_fluid(
+    this: &(impl LivingEntityClass + ?Sized),
+    fluid_tag: FluidTagKey,
+) -> bool {
+    this.entity().get_fluid_height(fluid_tag) <= this.entity().get_fluid_jump_threshold()
+}
+
+/// `travelInLava`: half its movement kept, with a quarter of gravity on top.
+fn travel_in_lava(
+    this: &mut (impl LivingEntityClass + Sized),
+    level: &dyn Level,
+    input: &Vec3,
+    base_gravity: f64,
+    is_falling: bool,
+    old_y: f64,
+) {
+    entity::move_relative(this, 0.02, input);
+    let delta = this.entity().get_delta_movement();
+    this.r#move(level, MoverType::SELF, delta);
+    if is_in_shallow_fluid(this, FluidTags::LAVA) {
+        let delta = this
+            .entity()
+            .get_delta_movement()
+            .multiply_xyz(0.5, f64::from(0.8_f32), 0.5);
+        this.entity_mut().set_delta_movement(delta);
+        let movement = get_fluid_falling_adjusted_movement(
+            this,
+            base_gravity,
+            is_falling,
+            &this.entity().get_delta_movement(),
+        );
+        this.entity_mut().set_delta_movement(movement);
+    } else {
+        let delta = this.entity().get_delta_movement().scale(0.5);
+        this.entity_mut().set_delta_movement(delta);
+    }
+
+    if base_gravity != 0.0 {
+        let delta = this
+            .entity()
+            .get_delta_movement()
+            .add_xyz(0.0, -base_gravity / 4.0, 0.0);
+        this.entity_mut().set_delta_movement(delta);
+    }
+
+    jump_out_of_fluid(this, level, old_y);
+}
+
+/// `jumpOutOfFluid`: pushing into an edge it would be clear over, it's lifted out.
+fn jump_out_of_fluid(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level, old_y: f64) {
+    let movement = this.entity().get_delta_movement();
+    if this.entity().horizontal_collision
+        && entity::is_free(
+            this,
+            level,
+            movement.x,
+            movement.y + f64::from(0.6_f32) - this.entity().get_y() + old_y,
+            movement.z,
+        )
+    {
+        this.entity_mut()
+            .set_delta_movement_xyz(movement.x, f64::from(0.3_f32), movement.z);
+    }
+}
+
+/// `getFluidFallingAdjustedMovement`: unless it sprints, a sixteenth of gravity down, and a slow
+/// sink where that would leave it nearly still.
+pub fn get_fluid_falling_adjusted_movement(
+    this: &(impl LivingEntityClass + ?Sized),
+    base_gravity: f64,
+    is_falling: bool,
+    movement: &Vec3,
+) -> Vec3 {
+    if base_gravity != 0.0 && !this.is_sprinting() {
+        let yd = if is_falling
+            && (movement.y - 0.005).abs() >= 0.003
+            && (movement.y - base_gravity / 16.0).abs() < 0.003
+        {
+            -0.003
+        } else {
+            movement.y - base_gravity / 16.0
+        };
+
+        Vec3::new(movement.x, yd, movement.z)
+    } else {
+        *movement
+    }
 }
 
 /// Moves with the block's friction on the ground (none in the air), then gravity, then the air's
@@ -514,14 +773,33 @@ pub fn get_friction_influenced_speed(
     }
 }
 
+/// `handleOnClimbable`: on a ladder, no fall, at most 0.15 a tick sideways and down, and a player
+/// sneaking off scaffolding doesn't slide down.
 fn handle_on_climbable(
     this: &mut (impl LivingEntityClass + Sized),
     level: &dyn Level,
     delta: Vec3,
 ) -> Vec3 {
+    let mut delta = delta;
     if this.on_climbable(level) {
-        panic!("climbing isn't ported");
+        this.entity_mut().reset_fall_distance();
+        let xd = Mth::clamp_f64(delta.x, f64::from(-0.15_f32), f64::from(0.15_f32));
+        let zd = Mth::clamp_f64(delta.z, f64::from(-0.15_f32), f64::from(0.15_f32));
+        let mut yd = Math::max_f64(delta.y, f64::from(-0.15_f32));
+        if yd < 0.0
+            && !this
+                .entity_mut()
+                .get_in_block_state(level)
+                .is(Blocks::SCAFFOLDING)
+            && this.is_suppressing_sliding_down_ladder()
+            && this.is_player()
+        {
+            yd = 0.0;
+        }
+
+        delta = Vec3::new(xd, yd, zd);
     }
+
     delta
 }
 

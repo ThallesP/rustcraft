@@ -1,7 +1,8 @@
 //! net/minecraft/world/level/block/SoulSandBlock.java
 //!
-//! Its collision shape, two sixteenths short of a block, which sinks what stands on it. Not
-//! ported yet: the rest of its behaviour (its support, visual and shade, and pathfinding).
+//! Its collision shape, two sixteenths short of a block, which sinks what stands on it, and its
+//! support shape, the whole block. Not ported yet: the rest of its behaviour (visual and shade,
+//! and pathfinding).
 
 use std::sync::LazyLock;
 
@@ -13,6 +14,7 @@ use crate::net::minecraft::world::level::block::state::block_behaviour::Properti
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 0.0, 14.0));
@@ -21,6 +23,7 @@ pub struct SoulSandBlock;
 
 pub static CLASS: BlockClass = BlockClass {
     get_collision_shape: Some(SoulSandBlock::get_collision_shape),
+    get_block_support_shape: Some(SoulSandBlock::get_block_support_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.SoulSandBlock",
         &block::CLASS,
@@ -50,5 +53,14 @@ impl SoulSandBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+
+    fn get_block_support_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> VoxelShape {
+        Shapes::block()
     }
 }

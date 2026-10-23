@@ -43,6 +43,7 @@ import net.minecraft.server.packs.resources.MultiPackResourceManager;
 import net.minecraft.tags.TagLoader;
 import net.minecraft.world.clock.ClockNetworkState;
 import net.minecraft.world.clock.WorldClock;
+import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.Attribute;
@@ -81,6 +82,7 @@ final class RegistryValues {
     // The registry a Holder<T> argument's elements come from, by T.
     private static final Map<Class<?>, ResourceKey<? extends Registry<?>>> HOLDER_REGISTRIES = Map.ofEntries(
         Map.entry(Attribute.class, Registries.ATTRIBUTE),
+        Map.entry(DamageType.class, Registries.DAMAGE_TYPE),
         Map.entry(WorldClock.class, Registries.WORLD_CLOCK),
         Map.entry(CatVariant.class, Registries.CAT_VARIANT),
         Map.entry(CatSoundVariant.class, Registries.CAT_SOUND_VARIANT),

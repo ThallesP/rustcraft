@@ -4,7 +4,9 @@
   "compatibilityLevel": "JAVA_25",
   "client": [
     "ChanneledNetworkAddonMixin",
-    "ClientBrandRetrieverMixin"
+    "ClientBrandRetrieverMixin",
+    "MinecraftTickMixin",
+    "PacketProcessorMixin"
   ],
   "injectors": {
     "defaultRequire": 1

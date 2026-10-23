@@ -1,11 +1,12 @@
 //! net/minecraft/world/level/block/LeavesBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties, its default state and which of its
-//! states tick. Not ported yet: its behaviour, and its constructor's
+//! What decides its blocks' states (its properties, its default state and which of its states
+//! tick) and its support shape. Not ported yet: the rest of its behaviour, and its constructor's
 //! `ambientLeavesBlockSoundPlayer`.
 //!
 //! Of its behaviour, `getLightDampening` is ported, for the light engine.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -16,8 +17,11 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 pub struct LeavesBlock;
 
@@ -29,6 +33,7 @@ pub static CLASS: BlockClass = BlockClass {
     get_light_dampening: Some(LeavesBlock::get_light_dampening),
     get_fluid_state: Some(LeavesBlock::get_fluid_state),
     is_randomly_ticking: Some(LeavesBlock::is_randomly_ticking),
+    get_block_support_shape: Some(LeavesBlock::get_block_support_shape),
     ..BlockClass::new("net.minecraft.world.level.block.LeavesBlock", &block::CLASS)
 };
 
@@ -84,6 +89,16 @@ impl LeavesBlock {
 }
 
 impl LeavesBlock {
+    /// `getBlockSupportShape`: none, so nothing is sturdy on leaves.
+    fn get_block_support_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> VoxelShape {
+        Shapes::empty()
+    }
+
     /// `getFluidState`: still water when it's waterlogged.
     fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
         if state.get_value(BlockStateProperties::WATERLOGGED) {

@@ -21,9 +21,16 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.CrossCollisionBlock;
+import net.minecraft.world.level.block.LadderBlock;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.MudBlock;
+import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.SoulSandBlock;
 import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.VineBlock;
+import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
@@ -683,11 +690,13 @@ final class ShapeSuites {
     /**
      * The shapes of the blocks whose classes' shapes are ported, for every state, as a state reports them with no level
      * around it (`EmptyBlockGetter`, `BlockPos.ZERO`), which is what the state's cache holds: `getShape` and
-     * `getCollisionShape`. A state is its id.
+     * `getCollisionShape`, and `isFaceSturdy` toward each direction, which also covers the blocks of `Block` itself and
+     * leaves (whose support shape is their own). A state is its id.
      */
     static final class BlockStateShapeSuite implements Suite {
         private static final List<Class<? extends Block>> CLASSES = List.of(
-            SoulSandBlock.class, SlabBlock.class, StairBlock.class, CrossCollisionBlock.class
+            SoulSandBlock.class, SlabBlock.class, StairBlock.class, CrossCollisionBlock.class, LiquidBlock.class,
+            LadderBlock.class, VineBlock.class, ScaffoldingBlock.class, WallBlock.class, MudBlock.class
         );
 
         @Override
@@ -710,6 +719,25 @@ final class ShapeSuites {
                     writer, "getCollisionShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)" + SHAPE_TYPE, args,
                     () -> shape(state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
                 );
+            }
+            for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
+                Block block = state.getBlock();
+                boolean ported = block.getClass() == Block.class || block instanceof LeavesBlock
+                    || CLASSES.stream().anyMatch(type -> type.isInstance(block));
+                if (!ported) {
+                    continue;
+                }
+                for (Direction direction : Direction.values()) {
+                    JsonArray args = BlockSuites.array(
+                        new JsonPrimitive(Block.BLOCK_STATE_REGISTRY.getId(state)), new JsonPrimitive(direction.name())
+                    );
+                    BlockSuites.call(
+                        writer,
+                        "isFaceSturdy(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)Z",
+                        args,
+                        () -> new JsonPrimitive(state.isFaceSturdy(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, direction))
+                    );
+                }
             }
         }
     }

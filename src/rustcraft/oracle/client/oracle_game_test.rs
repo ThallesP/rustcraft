@@ -7,18 +7,23 @@
 //!
 //! Java's test drives the game from its own thread, between ticks; the port's is called after
 //! each tick (`TestDriver`), so what Java does before a tick (holding the keys, the look) is done
-//! after the one before it. A screenshot step renders a frame at a partial tick of 1 and reads it
-//! back like `OracleScreenshot.take`, into `<out>/<scenario>/screenshots/<name>.png`, when the
-//! client has a renderer (the runner makes one for a scenario with screenshots). The port has no
-//! screens, so waiting for the level's loading screen to close is waiting for the level to be
-//! ready, which closes it in vanilla too; "chunks rendered" is every chunk in the render distance
-//! being in the level and, with a renderer, every visible section compiled
-//! (`levelRenderer.hasRenderedAllSections()`).
+//! after the one before it, and the trace line is written as the tick ends, like Java's
+//! (`TickTrace`). A step's `wait_for` is waited on like Java waits: after the step's last tick and
+//! its line, the network runs without the game ticking until the packets have come, then the client
+//! handles what's queued, before the next tick. A screenshot step renders a frame at a partial tick
+//! of 1 and reads it back like `OracleScreenshot.take`, into
+//! `<out>/<scenario>/screenshots/<name>.png`, when the client has a renderer (the runner makes one
+//! for a scenario with screenshots). The port has no screens, so waiting for the level's loading
+//! screen to close is waiting for the level to be ready, which closes it in vanilla too; "chunks
+//! rendered" is every chunk in the render distance being in the level and, with a renderer, every
+//! visible section compiled (`levelRenderer.hasRenderedAllSections()`).
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::net::minecraft::client::minecraft::{Minecraft, TestDriver};
 use crate::net::minecraft::client::options::Options;
@@ -29,6 +34,7 @@ use crate::net::minecraft::network::protocol::common::custom::discarded_payload:
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
+use crate::net::minecraft::server::network::event_loop_group_holder::EventLoopGroupHolder;
 use crate::rustcraft::oracle::client::scenario::{self, Scenario};
 use crate::rustcraft::oracle::client::trace_writer::{self, TraceWriter};
 
@@ -60,11 +66,15 @@ pub struct OracleGameTest {
     replayed_ticks: i32,
     trace: Option<TraceWriter>,
     outcome: Rc<Cell<Option<Outcome>>>,
+    /// The counts of the packets the current step waits for, as they were when it began.
+    waiting_since: HashMap<String, i32>,
 }
 
 impl OracleGameTest {
     pub const SETTLE_TICKS: i32 = 20;
     pub const LOAD_TIMEOUT_TICKS: i32 = 60 * 20;
+    /// How long a step waits for its packets, like Java's `WAIT_FOR_TIMEOUT`.
+    const WAIT_FOR_TIMEOUT: Duration = Duration::from_secs(30);
 
     pub fn scenario_start() -> Identifier {
         Identifier::from_namespace_and_path("rustcraft", "scenario_start")
@@ -99,6 +109,7 @@ impl OracleGameTest {
                 replayed_ticks: 0,
                 trace: None,
                 outcome: Rc::clone(&outcome),
+                waiting_since: HashMap::new(),
             },
             outcome,
         )
@@ -259,12 +270,12 @@ impl OracleGameTest {
         self.scenario.steps.iter().map(|step| step.ticks).sum()
     }
 
-    /// The step the scenario's tick is in.
-    fn step_of(&self, tick: i32) -> &scenario::Step {
+    /// The step the scenario's tick is in, with the step's first tick.
+    fn step_of(&self, tick: i32) -> (&scenario::Step, i32) {
         let mut first = 0;
         for step in &self.scenario.steps {
             if tick < first + step.ticks {
-                return step;
+                return (step, first);
             }
             first += step.ticks;
         }
@@ -272,9 +283,22 @@ impl OracleGameTest {
     }
 
     /// What `replay` does before the scenario's tick: holds its step's keys (`holdOnly`) and sets
-    /// its look (`TestInput.lookAt`).
-    fn before_tick(&self, minecraft: &Minecraft, tick: i32) {
-        let step = self.step_of(tick);
+    /// its look (`TestInput.lookAt`), and as a step begins, counts the packets it waits for.
+    fn before_tick(&mut self, minecraft: &Minecraft, tick: i32) {
+        let (step, first) = self.step_of(tick);
+        if tick == first {
+            self.waiting_since = step
+                .wait_for
+                .iter()
+                .map(|packet| {
+                    (
+                        packet.clone(),
+                        minecraft.packet_processor().arrivals(packet),
+                    )
+                })
+                .collect();
+        }
+        let (step, _) = self.step_of(tick);
         OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &step.keys);
         if let Some([y_rot, x_rot]) = step.look
             && let Some(player) = minecraft.player.borrow_mut().as_mut()
@@ -294,6 +318,31 @@ impl OracleGameTest {
         options.key_jump.set_down(held("jump"));
         options.key_shift.set_down(held("sneak"));
         options.key_sprint.set_down(held("sprint"));
+    }
+
+    /// After the last tick of a step that waits for packets and its trace line: runs the network,
+    /// the game not ticking, until each has come since the step began, then handles what the game
+    /// thread has queued. Whether they came in time.
+    fn wait_for_packets(&self, minecraft: &Minecraft, tick: i32) -> bool {
+        let (step, first) = self.step_of(tick);
+        if step.wait_for.is_empty() || tick != first + step.ticks - 1 {
+            return true;
+        }
+
+        let deadline = Instant::now() + OracleGameTest::WAIT_FOR_TIMEOUT;
+        let arrived = || {
+            self.waiting_since
+                .iter()
+                .all(|(packet, before)| minecraft.packet_processor().arrivals(packet) > *before)
+        };
+        while !arrived() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            EventLoopGroupHolder::remote().run_until(Instant::now() + Duration::from_millis(5));
+        }
+        minecraft.packet_processor().process_queued_packets();
+        true
     }
 
     /// The player's trace line after the scenario's tick.
@@ -415,6 +464,12 @@ impl TestDriver for OracleGameTest {
                 let tick = self.replayed_ticks;
                 if let Err(error) = self.write_trace(minecraft, tick) {
                     self.fail(minecraft, format!("writing the trace: {error}"));
+                    return;
+                }
+                if !self.wait_for_packets(minecraft, tick) {
+                    let (step, _) = self.step_of(tick);
+                    let reason = format!("timed out waiting for {:?}", step.wait_for);
+                    self.fail(minecraft, reason);
                     return;
                 }
                 self.replayed_ticks += 1;

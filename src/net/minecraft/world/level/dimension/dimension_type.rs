@@ -1,9 +1,9 @@
 //! net/minecraft/world/level/dimension/DimensionType.java
 //!
 //! Not ported yet: everything but `STREAM_CODEC` and the built-in types' heights, whether they
-//! have a sky, and how their blocks' faces are lit. A dimension type's values (its ambient light,
-//! effects, the values of one a server sends) come with the registries' elements; the client
-//! reads the vanilla pack's for the types the server names as known
+//! have a sky, how their blocks' faces are lit, and whether their lava is fast. A dimension type's
+//! values (its ambient light, effects, the values of one a server sends) come with the registries'
+//! elements; the client reads the vanilla pack's for the types the server names as known
 //! (`data/minecraft/dimension_type/*.json`), whose values these have.
 
 use std::sync::LazyLock;
@@ -63,6 +63,18 @@ impl DimensionType {
             other => panic!("the dimension type {other} isn't one of the vanilla pack's"),
         }
     }
+
+    /// A built-in dimension type's `gameplay/fast_lava` attribute (`EnvironmentAttributes.FAST_LAVA`
+    /// as a dimension value), from the vanilla pack: only the nether's lava is fast. Panics for any
+    /// other type, like `height_of`.
+    pub fn fast_lava_of(dimension_type: &Holder) -> bool {
+        let Holder::Reference(key) = dimension_type;
+        match key.identifier().to_string().as_str() {
+            "minecraft:overworld" | "minecraft:overworld_caves" | "minecraft:the_end" => false,
+            "minecraft:the_nether" => true,
+            other => panic!("the dimension type {other} isn't one of the vanilla pack's"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -79,7 +91,7 @@ mod tests {
     use crate::net::minecraft::resources::resource_key::ResourceKey;
     use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
 
-    /// The heights are the vanilla pack's own data, every built-in type of it.
+    /// The heights and fast lava are the vanilla pack's own data, every built-in type of it.
     #[test]
     fn heights_match_the_vanilla_pack() {
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -99,7 +111,14 @@ mod tests {
                 Registries::DIMENSION_TYPE,
                 Identifier::with_default_namespace(name),
             );
-            let height = DimensionType::height_of(&Holder::Reference(key));
+            let height = DimensionType::height_of(&Holder::Reference(key.clone()));
+            assert_eq!(
+                DimensionType::fast_lava_of(&Holder::Reference(key)),
+                data["attributes"]["minecraft:gameplay/fast_lava"]
+                    .as_bool()
+                    .unwrap_or(false),
+                "{name}"
+            );
             assert_eq!(
                 height.get_min_y() as i64,
                 data["min_y"].as_i64().expect("min_y"),

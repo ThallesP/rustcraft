@@ -7,6 +7,7 @@ pub mod border;
 pub mod cardinal_lighting;
 pub mod chunk;
 pub mod chunk_pos;
+pub mod clip_context;
 pub mod collision_getter;
 pub mod color_map_color_util;
 pub mod color_resolver;

@@ -1,9 +1,10 @@
 //! net/minecraft/world/entity/player/Player.java
 //!
 //! What a player adds to a living entity's movement: its abilities (flying), `tick`'s pose and
-//! the world's edge, `aiStep`'s speed, `travel`, the flying speed, sneaking back from an edge
-//! (`maybeBackOffFromEdge`), and its attributes (`createAttributes`). `PlayerClass` holds the
-//! methods its subclasses override.
+//! the world's edge, `aiStep`'s speed, `travel` (swimming toward where it looks), the flying
+//! speed, sneaking back from an edge (`maybeBackOffFromEdge`), whether it's under water and
+//! swimming, and its attributes (`createAttributes`). `PlayerClass` holds the methods its
+//! subclasses override.
 //!
 //! Not ported yet: the inventory and containers, food beyond its level, experience, sleeping,
 //! attacking, item cooldowns, the shoulder entities, picking items up, and fall damage. A
@@ -13,6 +14,8 @@
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 use crate::java::lang::math::Math;
+use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::tags::fluid_tags::FluidTags;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::ai::attributes::attribute::Attribute;
 use crate::net::minecraft::world::entity::ai::attributes::attribute_map::AttributeMap;
@@ -132,7 +135,7 @@ pub trait PlayerClass: LivingEntityClass {
     }
 
     fn update_is_underwater(&mut self) -> bool {
-        let was_underwater = self.entity().is_eye_in_fluid_water();
+        let was_underwater = self.entity().is_eye_in_fluid(FluidTags::WATER);
         self.player_mut().was_underwater = was_underwater;
         was_underwater
     }
@@ -276,9 +279,46 @@ pub fn ai_step(this: &mut (impl PlayerClass + Sized), level: &dyn Level) {
     this.living_entity_mut().set_speed(speed);
 }
 
-/// `Player.travel(Vec3)`: flying keeps 60% of the vertical movement. Swimming isn't ported.
+/// `Player.updateSwimming()`: never while flying.
+pub fn update_swimming(this: &mut (impl PlayerClass + Sized), level: &dyn Level) {
+    if this.player().abilities.flying {
+        this.entity_mut().set_swimming(false);
+    } else {
+        entity::update_swimming(this, level);
+    }
+}
+
+/// `Player.travel(Vec3)`: a swimmer rises or sinks toward where it looks (unless it looks up out
+/// of the water without jumping), and flying keeps 60% of the vertical movement.
 pub fn travel(this: &mut (impl PlayerClass + Sized), level: &dyn Level, input: &Vec3) {
-    assert!(!this.is_swimming(), "swimming isn't ported");
+    if this.entity().is_passenger() {
+        living_entity::travel(this, level, input);
+        return;
+    }
+
+    if this.is_swimming() {
+        let look_angle_y =
+            entity::calculate_view_vector(this.entity().get_x_rot(), this.entity().get_y_rot()).y;
+        let multiplier = if look_angle_y < -0.2 { 0.085 } else { 0.06 };
+        if look_angle_y <= 0.0
+            || this.living_entity().jumping
+            || !level
+                .get_fluid_state(&BlockPos::containing_xyz(
+                    this.entity().get_x(),
+                    this.entity().get_y() + 1.0 - 0.1,
+                    this.entity().get_z(),
+                ))
+                .is_empty()
+        {
+            let movement = this.entity().get_delta_movement();
+            this.entity_mut().set_delta_movement(movement.add_xyz(
+                0.0,
+                (look_angle_y - movement.y) * multiplier,
+                0.0,
+            ));
+        }
+    }
+
     if this.player().abilities.flying {
         let original_movement_y = this.entity().get_delta_movement().y;
         living_entity::travel(this, level, input);

@@ -1,12 +1,16 @@
 //! net/minecraft/world/level/block/LiquidBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties, its default state, its fluid,
-//! which states tick and their fluid states. Not ported yet: the rest. `stateCache`, the fluid
-//! states Java's constructor makes for each level, are made when they're asked for, which is the
-//! same: `FluidState`s are values.
+//! What decides its blocks' states (its properties, its default state, its fluid, which states
+//! tick and their fluid states) and its shapes: none to see, and none to collide with but for a
+//! context that always collides with fluids. A source only holds up a living entity that stands on
+//! fluids (`canStandOnFluid`, `getLiquidCollisionShape`), which no ported entity does: striders
+//! aren't ported, so the source's stable shape isn't either. Not ported yet: the rest.
+//! `stateCache`, the fluid states Java's constructor makes for each level, are made when they're
+//! asked for, which is the same: `FluidState`s are values.
 //!
 //! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -16,8 +20,12 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 pub struct LiquidBlock {
     pub fluid: Fluids,
@@ -27,6 +35,8 @@ pub static CLASS: BlockClass = BlockClass {
     propagates_skylight_down: Some(LiquidBlock::propagates_skylight_down),
     is_randomly_ticking: Some(LiquidBlock::is_randomly_ticking),
     get_fluid_state: Some(LiquidBlock::get_fluid_state),
+    get_shape: Some(LiquidBlock::get_shape),
+    get_collision_shape: Some(LiquidBlock::get_collision_shape),
     ..BlockClass::new("net.minecraft.world.level.block.LiquidBlock", &block::CLASS)
 };
 
@@ -80,6 +90,33 @@ impl LiquidBlock {
             0 => fluid.get_source(false),
             8 => fluid.get_flowing(8, true),
             level => fluid.get_flowing(8 - level, false),
+        }
+    }
+
+    fn get_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        Shapes::empty()
+    }
+
+    /// `getCollisionShape`: the whole block for a context that always collides with fluids, and
+    /// otherwise nothing, since only a living entity that stands on fluids collides with a source
+    /// (`ifMobIsColliding`), and none of the ported ones does.
+    fn get_collision_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        if context.always_collide_with_fluid() {
+            Shapes::block()
+        } else {
+            Shapes::empty()
         }
     }
 }
