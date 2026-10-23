@@ -16,6 +16,7 @@ pub mod protocol;
 pub mod protocol_info;
 pub mod registry_friendly_byte_buf;
 pub mod serverbound_packet_listener;
+pub mod syncher;
 pub mod tickable_packet_listener;
 pub mod utf8_string;
 pub mod var_int;

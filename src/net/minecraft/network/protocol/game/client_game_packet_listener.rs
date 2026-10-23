@@ -22,13 +22,17 @@ use crate::net::minecraft::network::protocol::game::clientbound_player_position_
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
 use crate::net::minecraft::network::protocol::ping::client_pong_packet_listener::ClientPongPacketListener;
 
 /// The client's listener in the game protocol.
@@ -79,6 +83,14 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
     fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket);
 
     fn handle_chunks_biomes(&mut self, packet: &ClientboundChunksBiomesPacket);
+
+    fn handle_set_time(&mut self, packet: &ClientboundSetTimePacket);
+
+    fn handle_update_attributes(&mut self, packet: &ClientboundUpdateAttributesPacket);
+
+    fn handle_set_spawn(&mut self, packet: &ClientboundSetDefaultSpawnPositionPacket);
+
+    fn handle_set_entity_data(&mut self, packet: &ClientboundSetEntityDataPacket);
 }
 
 #[cfg(test)]
@@ -199,5 +211,21 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
         let r#type =
             crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
         self.record("handleChunksBiomes", r#type);
+    }
+
+    fn handle_set_time(&mut self, packet: &ClientboundSetTimePacket) {
+        self.record("handleSetTime", packet);
+    }
+
+    fn handle_update_attributes(&mut self, packet: &ClientboundUpdateAttributesPacket) {
+        self.record("handleUpdateAttributes", packet);
+    }
+
+    fn handle_set_spawn(&mut self, packet: &ClientboundSetDefaultSpawnPositionPacket) {
+        self.record("handleSetSpawn", packet);
+    }
+
+    fn handle_set_entity_data(&mut self, packet: &ClientboundSetEntityDataPacket) {
+        self.record("handleSetEntityData", packet);
     }
 }

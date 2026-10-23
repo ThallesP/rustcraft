@@ -53,7 +53,7 @@ final class NetworkValues {
         if (type == FriendlyByteBuf.class) {
             return FRIENDLY_BUFFER;
         }
-        return null;
+        return RegistryValues.generator(type);
     }
 
     static boolean canEncode(final Class<?> type) {
@@ -316,6 +316,9 @@ final class NetworkValues {
     /** A buffer of the generator's kind (a ByteBuf, or a FriendlyByteBuf around one), holding the bytes. */
     static Object bufferLike(final Values.Generator generator, final int slack, final byte[] bytes) {
         ByteBuf buffer = buffer(slack, 0, bytes);
+        if (generator == RegistryValues.REGISTRY_FRIENDLY_BUFFER) {
+            return RegistryValues.wrap(buffer);
+        }
         return generator == FRIENDLY_BUFFER ? new FriendlyByteBuf(buffer) : buffer;
     }
 

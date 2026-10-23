@@ -47,13 +47,17 @@ use crate::net::minecraft::network::protocol::game::clientbound_player_position_
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
 use crate::net::minecraft::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_accept_teleportation_packet::ServerboundAcceptTeleportationPacket;
@@ -763,7 +767,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_DEFAULT_SPAWN_POSITION,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_DEFAULT_SPAWN_POSITION),
+                ClientboundSetDefaultSpawnPositionPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_DISPLAY_OBJECTIVE,
@@ -771,7 +775,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_ENTITY_DATA,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_ENTITY_DATA),
+                ClientboundSetEntityDataPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_ENTITY_LINK,
@@ -827,7 +831,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_TIME,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_TIME),
+                ClientboundSetTimePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_TITLE_TEXT,
@@ -903,7 +907,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_UPDATE_ATTRIBUTES,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_UPDATE_ATTRIBUTES),
+                ClientboundUpdateAttributesPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_UPDATE_MOB_EFFECT,

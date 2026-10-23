@@ -1,6 +1,7 @@
 //! net/minecraft/network/protocol/common/ClientboundCustomPayloadPacket.java
 //!
-//! Not ported yet: `GAMEPLAY_STREAM_CODEC`, play's, which reads a `RegistryFriendlyByteBuf`.
+//! Not ported yet: `GAMEPLAY_STREAM_CODEC`, play's, which knows the game protocol's debug payloads
+//! too (`CustomPacketPayload`'s `GAMEPLAY_TYPES`).
 
 use std::fmt;
 use std::sync::{Arc, LazyLock};
@@ -113,10 +114,15 @@ mod tests {
     fn matches_vanilla() {
         let golden =
             Golden::load("net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket");
-        golden.pending(
-            "GAMEPLAY_STREAM_CODEC",
-            "play's codec reads a RegistryFriendlyByteBuf, which isn't ported",
-        );
+        for name in [
+            "GAMEPLAY_STREAM_CODEC.decode",
+            "GAMEPLAY_STREAM_CODEC.encode",
+        ] {
+            golden.pending(
+                name,
+                "play's codec knows the debug payloads, which aren't ported",
+            );
+        }
         golden.check_codec("CONFIG_STREAM_CODEC", || {
             ClientboundCustomPayloadPacket::CONFIG_STREAM_CODEC
         });

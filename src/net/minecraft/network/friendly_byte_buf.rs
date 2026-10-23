@@ -5,8 +5,7 @@
 //!   `readLenientJsonWithCodec`, `writeJsonWithCodec`), which wait for DataFixerUpper;
 //! - `readEither` and `writeEither`, which wait for DataFixerUpper's `Either`;
 //! - `readEnumSet` and `writeEnumSet`, whose `Class` argument the golden harness can't generate
-//!   yet;
-//! - `readGlobalPos` and `writeGlobalPos`, which wait for `GlobalPos`.
+//!   yet.
 //!
 //! The methods overriding `ByteBuf`'s forward to the buffer it wraps, which it derefs to. Java
 //! throws Netty's `DecoderException` and `EncoderException`, and `NegativeArraySizeException` for
@@ -26,6 +25,8 @@ use crate::java::lang::r#enum::Enum;
 use crate::java::util::bit_set::BitSet;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::global_pos::GlobalPos;
+use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::nbt::compound_tag::CompoundTag;
 use crate::net::minecraft::nbt::end_tag::EndTag;
 use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
@@ -546,6 +547,18 @@ impl FriendlyByteBuf {
         self
     }
 
+    /// A block in a dimension: the dimension's key, then the block.
+    pub fn read_global_pos(&mut self) -> GlobalPos {
+        let dimension = self.read_resource_key(Registries::DIMENSION);
+        let pos = self.read_block_pos();
+        GlobalPos::of(dimension, pos)
+    }
+
+    pub fn write_global_pos(&mut self, global_pos: &GlobalPos) {
+        self.write_resource_key(&global_pos.dimension());
+        self.write_block_pos(&global_pos.pos());
+    }
+
     /// The key of an element of the registry, by its identifier.
     pub fn read_resource_key(&mut self, registry: &ResourceKey) -> ResourceKey {
         let id = self.read_identifier();
@@ -633,6 +646,7 @@ mod tests {
     use crate::java::util::uuid::UUID;
     use crate::net::minecraft::core::block_pos::BlockPos;
     use crate::net::minecraft::core::direction::Direction;
+    use crate::net::minecraft::core::global_pos::GlobalPos;
     use crate::net::minecraft::core::position::Position;
     use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
     use crate::net::minecraft::nbt::tag::Tag;
@@ -739,12 +753,14 @@ mod tests {
                 FriendlyByteBuf::write_chunk_pos_to(output, pos)
             },
         );
-        for name in [
+        golden.check_method(
             "readGlobalPos()Lnet/minecraft/core/GlobalPos;",
+            |this: &mut FriendlyByteBuf| this.read_global_pos(),
+        );
+        golden.check_method(
             "writeGlobalPos(Lnet/minecraft/core/GlobalPos;)V",
-        ] {
-            golden.pending(name, "waits for GlobalPos");
-        }
+            |this: &mut FriendlyByteBuf, global_pos: GlobalPos| this.write_global_pos(&global_pos),
+        );
         golden.check_method(
             "readResourceKey(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/resources/ResourceKey;",
             |this: &mut FriendlyByteBuf, registry: ResourceKey| this.read_resource_key(&registry),

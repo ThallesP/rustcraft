@@ -77,3 +77,26 @@ impl From<RegistryFriendlyByteBuf> for ByteBuf {
         buffer.source.into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::RegistryFriendlyByteBuf;
+    use crate::golden::{Decode, Encode};
+    use crate::io::netty::buffer::byte_buf::ByteBuf;
+    use crate::net::minecraft::core::registry_access;
+
+    // The buffer it wraps, like a FriendlyByteBuf, with the harness's registries (TESTING.md).
+    impl Decode for RegistryFriendlyByteBuf {
+        fn decode(value: &Value) -> Self {
+            RegistryFriendlyByteBuf::new(ByteBuf::decode(value), registry_access::tests::golden())
+        }
+    }
+
+    impl Encode for RegistryFriendlyByteBuf {
+        fn encode(&self) -> Value {
+            self.source.encode()
+        }
+    }
+}

@@ -160,12 +160,14 @@ final class HashMapSuite implements Suite {
      */
     static JsonArray encode(final HashMap<?, ?> map) {
         JsonArray entries = new JsonArray();
-        map.forEach((key, value) -> {
+        // Holders hash by identity, so a map of them iterates in another order every run: its entries sorted by key.
+        Iterable<? extends Map.Entry<?, ?>> ordered = RegistryValues.keyedByHolders(map) ? RegistryValues.sortedByHolder(map) : map.entrySet();
+        for (Map.Entry<?, ?> mapping : ordered) {
             JsonArray entry = new JsonArray();
-            entry.add(Values.encode(key, key.getClass()));
-            entry.add(Values.encode(value, value.getClass()));
+            entry.add(Values.encode(mapping.getKey(), mapping.getKey().getClass()));
+            entry.add(Values.encode(mapping.getValue(), mapping.getValue().getClass()));
             entries.add(entry);
-        });
+        }
         JsonArray array = new JsonArray();
         array.add(capacity(map));
         array.add(entries);

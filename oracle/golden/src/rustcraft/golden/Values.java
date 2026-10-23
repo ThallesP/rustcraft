@@ -374,6 +374,9 @@ final class Values {
         if (generator == null) {
             generator = NbtValues.generator(type);
         }
+        if (generator == null) {
+            generator = RegistryValues.generator(type);
+        }
         return generator != null ? generator : CoreValues.generator(type);
     }
 
@@ -390,6 +393,9 @@ final class Values {
             }
             if (generator == null) {
                 generator = NbtValues.generator(parameterized);
+            }
+            if (generator == null) {
+                generator = RegistryValues.generator(parameterized);
             }
             return generator != null ? generator : generator((Class<?>)parameterized.getRawType());
         }
@@ -408,7 +414,7 @@ final class Values {
         }
         if (
             JomlValues.canEncode(type) || MathValues.canEncode(type) || NetworkValues.canEncode(type) || PacketValues.canEncode(type)
-                || ProfileValues.canEncode(type) || NbtValues.canEncode(type) || CoreValues.canEncode(type)
+                || ProfileValues.canEncode(type) || NbtValues.canEncode(type) || CoreValues.canEncode(type) || RegistryValues.canEncode(type)
         ) {
             return true;
         }
@@ -487,6 +493,10 @@ final class Values {
         // Before collections, since a ListTag is a List and a CollectionTag an Iterable.
         if (NbtValues.canEncode(type)) {
             return NbtValues.encode(value);
+        }
+        // Before records, since a DataValue's serializer is encoded as its id.
+        if (RegistryValues.canEncode(type)) {
+            return RegistryValues.encode(value);
         }
         // A HashSet or HashMap is its table's length and what it holds in its order (HashMapSuite.encode), since its table
         // decides the order an encoder writes it in. Other maps have no encoding yet.

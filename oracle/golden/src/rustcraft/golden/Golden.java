@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -112,6 +113,19 @@ import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacke
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
 import net.minecraft.world.Difficulty;
+import net.minecraft.core.GlobalPos;
+import net.minecraft.core.Rotations;
+import net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.world.clock.ClockNetworkState;
+import net.minecraft.world.clock.WorldClock;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
 import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
@@ -251,6 +265,24 @@ public final class Golden {
     private static final String ARRAY_IN_RECORD = "goes by an array component's identity hash, which changes from run to run";
     // A ResourceKey doesn't override hashCode, since keys are interned, so a record holding one hashes its identity hash.
     private static final String KEY_IN_RECORD = "hashes a ResourceKey's identity hash, which changes from run to run";
+    // Holder.Reference doesn't override hashCode either.
+    private static final String HOLDER_IN_RECORD = "hashes a Holder's identity hash, which changes from run to run";
+    // An entity data serializer is a lambda, whose hashCode and toString are its identity's.
+    private static final String SERIALIZER_IN_RECORD = "hashes and prints a serializer's identity, which changes from run to run";
+    private static final String DATA_VALUE_READ =
+        "read(Lnet/minecraft/network/RegistryFriendlyByteBuf;I)Lnet/minecraft/network/syncher/SynchedEntityData$DataValue;";
+    // The walk's set_time packets: the first, with both clocks (the end's, then the overworld's at 6000 and stopped), and
+    // one with none.
+    private static final List<byte[]> SET_TIMES = List.of(
+        HexFormat.of().parseHex("0000000000000031020101000000000000000000f02e0000000000000000"), HexFormat.of().parseHex("000000000000003b00")
+    );
+    // The walk's update_attributes packets: the player's movement speed, block and entity interaction ranges, and its
+    // movement speed with the sprinting modifier.
+    private static final List<byte[]> UPDATE_ATTRIBUTES = List.of(
+        HexFormat.of().parseHex("01031a3fb99999a000000000084012000000000000000d400800000000000000"),
+        HexFormat.of().parseHex("01011a3fb99999a000000001136d696e6563726166743a737072696e74696e673fd333334000000002"),
+        HexFormat.of().parseHex("01011a3fb99999a000000000")
+    );
     private static final String SPARSE = "sparse(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/function/IntFunction;";
 
     private static final List<Suite> SUITES = List.of(
@@ -1184,6 +1216,34 @@ public final class Golden {
                 each(List.of("peaceful", "easy", "normal", "hard", "NORMAL", "Normal", "", "normal ", "custom"))
             ),
         InstanceSuite.every(ClientboundChangeDifficultyPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        // The game protocol's packets that read the registries, and what they hold: the registries a RegistryFriendlyByteBuf
+        // carries (RegistryValues), the clocks' time, an entity's attributes, the world's spawn and an entity's data.
+        new RegistryValues.RegistriesSuite(),
+        new StaticSuite(Attributes.class),
+        InstanceSuite.every(WorldClock.class),
+        InstanceSuite.every(ClockNetworkState.class),
+        new RegistryValues.ClockManagerSuite(),
+        InstanceSuite.every(ClientboundSetTimePacket.class)
+            .exclude("hashCode()I", HOLDER_IN_RECORD)
+            .extraInputs("STREAM_CODEC.decode", registryBuffers(SET_TIMES)),
+        InstanceSuite.every(AttributeModifier.Operation.class),
+        InstanceSuite.every(AttributeModifier.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        InstanceSuite.every(ClientboundUpdateAttributesPacket.AttributeSnapshot.class).exclude("hashCode()I", HOLDER_IN_RECORD),
+        InstanceSuite.every(ClientboundUpdateAttributesPacket.class).extraInputs("STREAM_CODEC.decode", registryBuffers(UPDATE_ATTRIBUTES)),
+        InstanceSuite.every(GlobalPos.class).exclude("hashCode()I", KEY_IN_RECORD),
+        InstanceSuite.every(LevelData.RespawnData.class).exclude("hashCode()I", KEY_IN_RECORD),
+        InstanceSuite.every(ClientboundSetDefaultSpawnPositionPacket.class).exclude("hashCode()I", KEY_IN_RECORD),
+        InstanceSuite.every(Rotations.class),
+        InstanceSuite.every(Pose.class),
+        InstanceSuite.every(SynchedEntityData.DataValue.class)
+            .exclude("hashCode()I", SERIALIZER_IN_RECORD)
+            .exclude("toString()Ljava/lang/String;", SERIALIZER_IN_RECORD)
+            .where(DATA_VALUE_READ, args -> !RegistryValues.reachesUnported(args[0], false)),
+        InstanceSuite.every(ClientboundSetEntityDataPacket.class)
+            .exclude("hashCode()I", SERIALIZER_IN_RECORD)
+            .exclude("toString()Ljava/lang/String;", SERIALIZER_IN_RECORD)
+            .where("STREAM_CODEC.decode", args -> !RegistryValues.reachesUnported(args[0], true))
+            .extraInputs("STREAM_CODEC.decode", registryBuffers(RegistryValues.dataValueBuffers())),
         // The registries the server sends, by their keys, and their elements.
         InstanceSuite.every(ResourceKey.class),
         new StaticSuite(Registries.class),
@@ -1243,6 +1303,11 @@ public final class Golden {
                 out.printf("%s: %d lines%n", file.getFileName(), writer.lines());
             }
         }
+    }
+
+    // Buffers holding the bytes, each with the registries, for a codec reading a RegistryFriendlyByteBuf to decode.
+    private static List<Object[]> registryBuffers(final List<byte[]> payloads) {
+        return payloads.stream().map(bytes -> new Object[]{RegistryValues.buffer(bytes)}).toList();
     }
 
     // One input per entry of Mth's 65536-entry sine table, offset by `shift` entries (cos reads the table a quarter turn ahead).

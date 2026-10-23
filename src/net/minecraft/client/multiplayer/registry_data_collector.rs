@@ -5,6 +5,7 @@
 //! `ClientboundUpdateTagsPacket`. What it collects is each registry's elements' identifiers in
 //! the order they came, which are their network ids (`Registry`).
 
+use crate::net::minecraft::core::registries::built_in_registries::BuiltInRegistries;
 use crate::net::minecraft::core::registry::Registry;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::registry_synchronization::PackedRegistryEntry;
@@ -27,10 +28,10 @@ impl RegistryDataCollector {
             .append(registry, entries);
     }
 
-    /// The registries the game protocol reads with. Java's also has the client's static
-    /// registries, which come with their classes.
+    /// The registries the game protocol reads with: the client's static ones the port has
+    /// (`ClientRegistryLayer.STATIC`, `BuiltInRegistries`), then the ones the server sent.
     pub fn collect_game_registries(&self) -> RegistryAccess {
-        let registries = self
+        let received = self
             .contents_collector
             .iter()
             .flat_map(|collector| &collector.elements)
@@ -40,8 +41,9 @@ impl RegistryDataCollector {
                     .map(|entry| ResourceKey::create(registry, entry.id().clone()))
                     .collect();
                 Registry::new(registry.clone(), keys)
-            })
-            .collect();
+            });
+        let mut registries = BuiltInRegistries::registries();
+        registries.extend(received);
         RegistryAccess::new(registries)
     }
 }

@@ -6,7 +6,10 @@
 //! `LEVEL_CHUNKS_LOAD_START` does anything yet) and the return to configuration, with the common
 //! ones. The chunk cache's center, the player's abilities, health, experience and held slot, the
 //! difficulty, the world border and the tick rate are read too, and their handlers leave what they
-//! set (the chunk storage's, the player's, the level's) for the tracks that port it. Every other
+//! set (the chunk storage's, the player's, the level's) for the tracks that port it. The time sets
+//! the level's game time and the clocks (`clockManager`, which the sky's timelines read), the
+//! spawn the level's, and the player's attributes and synced data are kept on the player for the
+//! player track (`LocalPlayer`); other entities' aren't ported, like the entities. Every other
 //! packet is `Unported`, and answers nothing. Also not ported: chat signing, the command tree
 //! (`sendCommand` sends every command unsigned, which is what a command without signed arguments
 //! is), recipes, advancements, the scoreboard, telemetry and the debug subscriptions.
@@ -19,6 +22,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use crate::com::mojang::authlib::game_profile::GameProfile;
+use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::chunk_batch_size_calculator::ChunkBatchSizeCalculator;
 use crate::net::minecraft::client::multiplayer::client_common_packet_listener_impl::{
@@ -30,6 +34,7 @@ use crate::net::minecraft::client::multiplayer::common_listener_cookie::CommonLi
 use crate::net::minecraft::client::multiplayer::level_load_tracker::LevelLoadTracker;
 use crate::net::minecraft::client::multiplayer::multi_player_game_mode::MultiPlayerGameMode;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
+use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::network::connection::Connection;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
@@ -54,13 +59,17 @@ use crate::net::minecraft::network::protocol::game::clientbound_player_position_
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_default_spawn_position_packet::ClientboundSetDefaultSpawnPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_accept_teleportation_packet::ServerboundAcceptTeleportationPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_chat_command_packet::ServerboundChatCommandPacket;
@@ -71,10 +80,14 @@ use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_utils::PacketUtils;
 use crate::net::minecraft::network::protocol::ping::client_pong_packet_listener::ClientPongPacketListener;
 use crate::net::minecraft::network::protocol::ping::clientbound_pong_response_packet::ClientboundPongResponsePacket;
+use crate::net::minecraft::network::syncher::entity_data_serializer::EntityDataValue;
 use crate::net::minecraft::network::tickable_packet_listener::TickablePacketListener;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
+use crate::net::minecraft::world::entity::entity::{self, EntityClass};
+use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::entity::position_move_rotation::PositionMoveRotation;
 use crate::net::minecraft::world::entity::relative::Relative;
 use crate::net::minecraft::world::phys::vec3::Vec3;
@@ -96,6 +109,7 @@ pub struct ClientPacketListener {
     closed: bool,
     client_loaded: bool,
     chunks_in_finished_batches: i32,
+    clock_manager: ClientClockManager,
 }
 
 impl ClientPacketListener {
@@ -122,6 +136,7 @@ impl ClientPacketListener {
                 closed: false,
                 client_loaded: false,
                 chunks_in_finished_batches: 0,
+                clock_manager: ClientClockManager::new(),
             })
         })
     }
@@ -140,6 +155,16 @@ impl ClientPacketListener {
 
     pub fn levels(&self) -> &[ResourceKey] {
         &self.levels
+    }
+
+    /// The clocks the server sets (`handleSetTime`): what the sky's timelines read the time of day
+    /// from (`ClientLevel.clockManager()`, Java's `Timeline` and `AttributeTrackSampler`).
+    pub fn clock_manager(&self) -> &ClientClockManager {
+        &self.clock_manager
+    }
+
+    pub fn clock_manager_mut(&mut self) -> &mut ClientClockManager {
+        &mut self.clock_manager
     }
 
     pub fn enabled_features(&self) -> &[Identifier] {
@@ -791,5 +816,128 @@ impl ClientGamePacketListener for ClientPacketListener {
         }
         // Java sets the level's `TickRateManager`'s frozen ticks to run, which isn't ported yet.
         let _ = packet;
+    }
+
+    fn handle_set_time(&mut self, packet: &ClientboundSetTimePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        let game_time = packet.game_time();
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level.set_time_from_server(game_time);
+        }
+        // Java also tells the telemetry the time, which isn't ported.
+        self.clock_manager
+            .handle_updates(game_time, &packet.clock_updates());
+        // Java also invalidates the level's environment attributes' tick cache, which come with
+        // the renderer's sky (`EnvironmentAttributeSystem`).
+    }
+
+    fn handle_update_attributes(&mut self, packet: &ClientboundUpdateAttributesPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // The player is the only entity ported; Java looks the entity up in the level, and does
+        // nothing for one it doesn't have.
+        let mut player = minecraft.player.borrow_mut();
+        let Some(player) = player
+            .as_mut()
+            .filter(|player| player.get_id() == packet.get_entity_id())
+        else {
+            return;
+        };
+        let attributes = &mut player.living_entity_mut().attributes;
+        for attribute in packet.get_values() {
+            // An attribute the port hasn't got is one the player's map hasn't got either.
+            let Some(instance) = Attributes::by_holder(&attribute.attribute())
+                .and_then(|holder| attributes.get_instance_mut(holder))
+            else {
+                let Holder::Reference(key) = attribute.attribute();
+                eprintln!(
+                    "Entity {} does not have attribute {}",
+                    packet.get_entity_id(),
+                    key.identifier()
+                );
+                continue;
+            };
+            instance.set_base_value(attribute.base());
+            instance.remove_modifiers();
+
+            for modifier in attribute.modifiers() {
+                instance.add_transient_modifier(modifier);
+            }
+        }
+    }
+
+    fn handle_set_spawn(&mut self, packet: &ClientboundSetDefaultSpawnPositionPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level.set_respawn_data(packet.respawn_data());
+        }
+    }
+
+    fn handle_set_entity_data(&mut self, packet: &ClientboundSetEntityDataPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Like the attributes, only the player's. `SynchedEntityData` isn't ported, so
+        // `assignValues` sets what the player has of its items: the shared flags (0, sprinting and
+        // crouching among them) and the pose (6), which resizes it (`onSyncedDataUpdated`). Its
+        // health (9) goes through `set_health` packets only, since `setHealth` clamps where the
+        // item's assignment doesn't; the other items aren't ported. A value whose type isn't
+        // ported ends the packet's values (ClientboundSetEntityDataPacket).
+        let mut player = minecraft.player.borrow_mut();
+        let Some(player) = player
+            .as_mut()
+            .filter(|player| player.get_id() == packet.id())
+        else {
+            return;
+        };
+        // `Entity.DATA_SHARED_FLAGS_ID`'s and `DATA_POSE`'s ids, the first items `defineId` gives.
+        const DATA_SHARED_FLAGS_ID: i32 = 0;
+        const DATA_POSE: i32 = 6;
+        for item in packet.packed_items() {
+            match (item.id(), item.value()) {
+                (DATA_SHARED_FLAGS_ID, EntityDataValue::Byte(flags)) => {
+                    for flag in 0..8 {
+                        player
+                            .entity_mut()
+                            .set_shared_flag(flag, flags & (1 << flag) != 0);
+                    }
+                }
+                (DATA_POSE, EntityDataValue::Pose(pose)) => entity::set_pose(player, *pose),
+                _ => {}
+            }
+        }
     }
 }

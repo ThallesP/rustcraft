@@ -1,6 +1,7 @@
 //! net/minecraft/core/GlobalPos.java
 //!
-//! Not ported yet: `MAP_CODEC` and `CODEC`, which wait for DataFixerUpper's codecs.
+//! Not ported yet: `MAP_CODEC` and `CODEC`, which wait for DataFixerUpper's codecs. The record's
+//! `hashCode` hashes its key's identity hash, which changes from run to run.
 
 use std::fmt;
 use std::sync::LazyLock;
@@ -61,5 +62,59 @@ impl GlobalPos {
 impl fmt::Display for GlobalPos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}", self.dimension, self.pos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GlobalPos;
+    use crate::golden::{Golden, encode_fields};
+    use crate::net::minecraft::core::block_pos::BlockPos;
+    use crate::net::minecraft::resources::resource_key::ResourceKey;
+
+    encode_fields!(GlobalPos {
+        dimension: ResourceKey,
+        pos: BlockPos,
+    });
+
+    type This = GlobalPos;
+
+    #[test]
+    fn matches_vanilla() {
+        let golden = Golden::load("net.minecraft.core.GlobalPos");
+        for name in ["CODEC", "MAP_CODEC"] {
+            golden.pending(name, "waits for DataFixerUpper's codecs");
+        }
+        golden.pending("hashCode()I", "hashes the key's identity hash");
+        golden.check_codec("STREAM_CODEC", || GlobalPos::STREAM_CODEC);
+        golden.check(
+            "<init>(Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/core/BlockPos;)V",
+            GlobalPos::new,
+        );
+        golden.check(
+            "of(Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/core/GlobalPos;",
+            GlobalPos::of,
+        );
+        golden.check_method(
+            "dimension()Lnet/minecraft/resources/ResourceKey;",
+            |this: &mut This| this.dimension(),
+        );
+        golden.check_method("pos()Lnet/minecraft/core/BlockPos;", |this: &mut This| {
+            this.pos()
+        });
+        golden.check_method(
+            "isCloseEnough(Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/core/BlockPos;I)Z",
+            |this: &mut This, dimension: ResourceKey, pos: BlockPos, max_distance: i32| {
+                this.is_close_enough(&dimension, &pos, max_distance)
+            },
+        );
+        golden.check_method(
+            "equals(Ljava/lang/Object;)Z",
+            |this: &mut This, other: This| *this == other,
+        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut This| {
+            this.to_string()
+        });
+        golden.finish();
     }
 }

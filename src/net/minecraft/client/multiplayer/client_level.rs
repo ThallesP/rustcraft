@@ -9,6 +9,11 @@
 //! (`blockStatePredictionHandler`, which the player's own block changes make), the tint caches,
 //! neighbour updates and the renderer's dirty sections (`setBlocksDirty`, `sendBlockUpdated`).
 //!
+//! The game time and the spawn are what the server last sent. The level's tick (`tickTime`, which
+//! adds a game tick and ticks the listener's clocks) isn't ported, and `setRespawnData` keeps the
+//! spawn as it came, where Java moves one outside the world border to the heightmap's top at the
+//! border's center (`getWorldBorderAdjustedRespawnData`), which waits for the heightmaps.
+//!
 //! The level's height is its dimension type's, which the vanilla pack's data gives for the
 //! built-in types (`DimensionType::height_of`); a server sending a type of its own isn't read
 //! yet.
@@ -33,6 +38,7 @@ use crate::net::minecraft::world::level::dimension::dimension_type::DimensionTyp
 use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::level::level_height_accessor::{Height, LevelHeightAccessor};
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::storage::level_data::RespawnData;
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
@@ -50,6 +56,8 @@ pub struct ClientLevel {
     hardcore: bool,
     is_flat: bool,
     world_border: WorldBorder,
+    game_time: i64,
+    respawn_data: RespawnData,
 }
 
 impl ClientLevel {
@@ -83,6 +91,8 @@ impl ClientLevel {
             hardcore,
             is_flat,
             world_border: WorldBorder::new(),
+            game_time: 0,
+            respawn_data: RespawnData::clone(RespawnData::DEFAULT),
         }
     }
 
@@ -122,6 +132,23 @@ impl ClientLevel {
 
     pub fn is_debug(&self) -> bool {
         self.is_debug
+    }
+
+    /// `getLevelData().getGameTime()`.
+    pub fn get_game_time(&self) -> i64 {
+        self.game_time
+    }
+
+    pub fn set_time_from_server(&mut self, game_time: i64) {
+        self.game_time = game_time;
+    }
+
+    pub fn get_respawn_data(&self) -> &RespawnData {
+        &self.respawn_data
+    }
+
+    pub fn set_respawn_data(&mut self, respawn_data: RespawnData) {
+        self.respawn_data = respawn_data;
     }
 
     pub fn set_server_simulation_distance(&mut self, server_simulation_distance: i32) {

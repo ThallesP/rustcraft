@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 import com.mojang.authlib.GameProfile;
 import io.netty.buffer.Unpooled;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -13,6 +14,8 @@ import java.lang.reflect.Proxy;
 import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -80,6 +83,21 @@ import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacke
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
 import net.minecraft.world.Difficulty;
+import net.minecraft.core.GlobalPos;
+import net.minecraft.core.Holder;
+import net.minecraft.core.Rotations;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.world.clock.ClockNetworkState;
+import net.minecraft.world.clock.WorldClock;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
 import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
@@ -289,6 +307,36 @@ final class PacketValues {
     private static final Values.Generator KNOWN_PACK_LISTS;
     // A ClientboundRegistryDataPacket's entries.
     private static final Values.Generator REGISTRY_ENTRY_LISTS;
+    // An entity's attribute modifiers: the sprinting modifier (an amount of 0.3 as a float), the scenario's marker and any
+    // identifiers, and the attributes an update_attributes packet sets.
+    static final Values.Generator ATTRIBUTE_OPERATION = new CoreValues.Constants<>(AttributeModifier.Operation.class);
+    private static final Values.Generator MODIFIERS = RegistryValues.lazy(() -> values(
+        AttributeModifier.class, fields -> new AttributeModifier((Identifier)fields[0], (Double)fields[1], (AttributeModifier.Operation)fields[2]),
+        List.of(),
+        new Values.Simple(
+            Stream.concat(Stream.of(Identifier.withDefaultNamespace("sprinting")), IDENTIFIERS.edges().stream()).toList(), IDENTIFIERS::random,
+            IDENTIFIERS::encode
+        ),
+        new Values.Simple(Stream.concat(Stream.of((Object)(double)0.3F), DOUBLES.edges().stream()).toList(), DOUBLES::random, DOUBLES::encode),
+        ATTRIBUTE_OPERATION
+    ));
+    // Up to 6 modifiers, and 128, whose count takes two bytes.
+    private static final Values.Generator MODIFIER_LISTS = shortListsOf(MODIFIERS, 128);
+    private static final Values.Generator ATTRIBUTE_SNAPSHOTS = RegistryValues.lazy(() -> values(
+        ClientboundUpdateAttributesPacket.AttributeSnapshot.class,
+        fields -> new ClientboundUpdateAttributesPacket.AttributeSnapshot(attributeHolder(fields[0]), (Double)fields[1], modifierList(fields[2])),
+        List.of(), RegistryValues.holders(Registries.ATTRIBUTE), DOUBLES, MODIFIER_LISTS
+    ));
+    // Up to 6 attributes, and 128 and 129 around the most the packet's codec takes.
+    private static final Values.Generator ATTRIBUTE_SNAPSHOT_LISTS = shortListsOf(ATTRIBUTE_SNAPSHOTS, 128, 129);
+    // The world's spawn.
+    private static final Values.Generator RESPAWN_DATA = RegistryValues.lazy(() -> values(
+        LevelData.RespawnData.class, fields -> new LevelData.RespawnData((GlobalPos)fields[0], (Float)fields[1], (Float)fields[2]), List.of(),
+        RegistryValues.GLOBAL_POS, FLOATS, FLOATS
+    ));
+    // A ClientboundSetEntityDataPacket's values. The data values' edges are over 512, past what a list's encoding holds
+    // (Values.STREAM_LIMIT), so instead of all of them in one list, they come in lists of 64.
+    private static final Values.Generator DATA_VALUE_LISTS = chunkedListsOf(RegistryValues.DATA_VALUES, 64);
 
     static {
         // The only payloads vanilla reads: what it doesn't know, kept as the query's identifier and nothing else.
@@ -540,6 +588,52 @@ final class PacketValues {
             List.of("newCenterX", "newCenterZ", "oldSize", "newSize", "lerpTime", "newAbsoluteMaxSize", "warningBlocks", "warningTime"), DOUBLES,
             DOUBLES, DOUBLES, DOUBLES, LONGS, INTS, INTS, INTS
         );
+
+        // The game protocol's packets that read the registries (RegistryValues), and what they hold: the clocks' time, an
+        // entity's attributes, the world's spawn and an entity's data. Made when first used: the attributes' holders need
+        // the registries loaded, and the game bootstrapped, which Golden's constants come before.
+        PAYLOADS.put(ClockNetworkState.class, RegistryValues.CLOCK_STATES);
+        PAYLOADS.put(WorldClock.class, RegistryValues.lazy(() -> values(WorldClock.class, fields -> new WorldClock(), List.of())));
+        PACKETS.put(
+            ClientboundSetTimePacket.class,
+            RegistryValues.lazy(() -> values(
+                ClientboundSetTimePacket.class, fields -> new ClientboundSetTimePacket((Long)fields[0], clockUpdates(fields[1])), List.of(), LONGS,
+                RegistryValues.CLOCK_UPDATES
+            ))
+        );
+        PAYLOADS.put(AttributeModifier.Operation.class, ATTRIBUTE_OPERATION);
+        PAYLOADS.put(AttributeModifier.class, MODIFIERS);
+        PAYLOADS.put(ClientboundUpdateAttributesPacket.AttributeSnapshot.class, ATTRIBUTE_SNAPSHOTS);
+        FIELDS.put(
+            ClientboundUpdateAttributesPacket.class,
+            List.of(field(ClientboundUpdateAttributesPacket.class, "entityId"), field(ClientboundUpdateAttributesPacket.class, "attributes"))
+        );
+        PACKETS.put(
+            ClientboundUpdateAttributesPacket.class,
+            RegistryValues.lazy(() -> values(
+                ClientboundUpdateAttributesPacket.class, PacketValues::attributesPacket, List.of("entityId", "attributes"), INTS,
+                ATTRIBUTE_SNAPSHOT_LISTS
+            ))
+        );
+        PAYLOADS.put(GlobalPos.class, RegistryValues.GLOBAL_POS);
+        PAYLOADS.put(LevelData.RespawnData.class, RESPAWN_DATA);
+        PACKETS.put(
+            ClientboundSetDefaultSpawnPositionPacket.class,
+            RegistryValues.lazy(() -> values(
+                ClientboundSetDefaultSpawnPositionPacket.class,
+                fields -> new ClientboundSetDefaultSpawnPositionPacket((LevelData.RespawnData)fields[0]), List.of(), RESPAWN_DATA
+            ))
+        );
+        PAYLOADS.put(Rotations.class, RegistryValues.ROTATIONS);
+        PAYLOADS.put(Pose.class, RegistryValues.POSE);
+        PAYLOADS.put(SynchedEntityData.DataValue.class, RegistryValues.DATA_VALUES);
+        PACKETS.put(
+            ClientboundSetEntityDataPacket.class,
+            RegistryValues.lazy(() -> values(
+                ClientboundSetEntityDataPacket.class,
+                fields -> new ClientboundSetEntityDataPacket((Integer)fields[0], dataValueList(fields[1])), List.of(), INTS, DATA_VALUE_LISTS
+            ))
+        );
     }
 
     private PacketValues() {
@@ -611,6 +705,15 @@ final class PacketValues {
             if (element == RegistrySynchronization.PackedRegistryEntry.class) {
                 return REGISTRY_ENTRY_LISTS;
             }
+            if (element == ClientboundUpdateAttributesPacket.AttributeSnapshot.class) {
+                return ATTRIBUTE_SNAPSHOT_LISTS;
+            }
+            if (element instanceof ParameterizedType value && value.getRawType() == SynchedEntityData.DataValue.class) {
+                return DATA_VALUE_LISTS;
+            }
+        }
+        if (type.getRawType() == Collection.class && element == AttributeModifier.class) {
+            return MODIFIER_LISTS;
         }
         return type.getRawType() == Optional.class && element == UUID.class ? OPTIONAL_UUIDS : null;
     }
@@ -953,6 +1056,110 @@ final class PacketValues {
         @Override
         public Object instantiate(final Object spec) {
             return PAYLOADS.get(spec.getClass()).instantiate(spec);
+        }
+    }
+
+    /**
+     * Lists like Codecs.listOf's, but of up to 6 elements, since they nest (a packet's attributes and each one's
+     * modifiers), and lists of each size given, of the first edge. Edges add the empty list, each element edge alone,
+     * and all of them.
+     */
+    private static Values.Generator shortListsOf(final Values.Generator element, final int... sizes) {
+        Values.Generator lists = Codecs.listOf(element);
+        return new Values.Generator() {
+            @Override
+            public List<Object> edges() {
+                List<Object> edges = new ArrayList<>(lists.edges());
+                for (int size : sizes) {
+                    edges.add(new ArrayList<>(Collections.nCopies(size, element.edges().get(0))));
+                }
+                return edges;
+            }
+
+            @Override
+            public Object random(final Random random) {
+                List<Object> list = new ArrayList<>();
+                for (int i = random.nextInt(7); i > 0; i--) {
+                    list.add(element.random(random));
+                }
+                return list;
+            }
+
+            @Override
+            public JsonElement encode(final Object spec) {
+                return lists.encode(spec);
+            }
+
+            @Override
+            public Object instantiate(final Object spec) {
+                return lists.instantiate(spec);
+            }
+        };
+    }
+
+    /** Lists like Codecs.listOf's, whose edges hold the element edges in lists of at most {@code chunk} rather than one. */
+    private static Values.Generator chunkedListsOf(final Values.Generator element, final int chunk) {
+        Values.Generator lists = Codecs.listOf(element);
+        return new Values.Generator() {
+            @Override
+            public List<Object> edges() {
+                List<Object> elements = element.edges();
+                List<Object> edges = new ArrayList<>();
+                edges.add(List.of());
+                elements.forEach(edge -> edges.add(List.of(edge)));
+                for (int start = 0; start < elements.size(); start += chunk) {
+                    edges.add(elements.subList(start, Math.min(start + chunk, elements.size())));
+                }
+                return edges;
+            }
+
+            @Override
+            public Object random(final Random random) {
+                return lists.random(random);
+            }
+
+            @Override
+            public JsonElement encode(final Object spec) {
+                return lists.encode(spec);
+            }
+
+            @Override
+            public Object instantiate(final Object spec) {
+                return lists.instantiate(spec);
+            }
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Holder<WorldClock>, ClockNetworkState> clockUpdates(final Object map) {
+        return (Map<Holder<WorldClock>, ClockNetworkState>)map;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Holder<Attribute> attributeHolder(final Object holder) {
+        return (Holder<Attribute>)holder;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Collection<AttributeModifier> modifierList(final Object list) {
+        return (Collection<AttributeModifier>)list;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<SynchedEntityData.DataValue<?>> dataValueList(final Object list) {
+        return (List<SynchedEntityData.DataValue<?>>)list;
+    }
+
+    // The packet its codec makes of the entity and its attributes, through the private constructor it calls, since the
+    // public one reads an entity's AttributeInstances.
+    @SuppressWarnings("unchecked")
+    private static ClientboundUpdateAttributesPacket attributesPacket(final Object[] fields) {
+        try {
+            Constructor<ClientboundUpdateAttributesPacket> constructor = ClientboundUpdateAttributesPacket.class.getDeclaredConstructor(int.class, List.class);
+            constructor.setAccessible(true);
+            return constructor.newInstance((Integer)fields[0], (List<ClientboundUpdateAttributesPacket.AttributeSnapshot>)fields[1]);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
         }
     }
 
