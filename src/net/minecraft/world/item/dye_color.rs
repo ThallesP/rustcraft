@@ -1,7 +1,8 @@
 //! net/minecraft/world/item/DyeColor.java
 //!
-//! Only each colour's id, name and map colours, which coloured blocks are made with. Not ported
-//! yet: the other colours (`getTextureDiffuseColor`, `getFireworkColor`, `getTextColor`), `byId`, `byName`, `byFireworkColor`, `getMixedColor` and the codecs.
+//! Only each colour's id, name and map colours, which coloured blocks are made with, and `CODEC`
+//! (by name). Not ported yet: the other colours (`getTextureDiffuseColor`, `getFireworkColor`,
+//! `getTextColor`), `byId`, `byName`, `byFireworkColor`, `getMixedColor` and the stream codec.
 
 use std::fmt;
 
@@ -173,6 +174,23 @@ impl DyeColor {
 
     pub fn get_terracotta_color(&self) -> MapColor {
         self.data().terracotta_color
+    }
+}
+
+static CODEC: crate::com::mojang::serialization::codec::StaticCodec<DyeColor> =
+    std::sync::LazyLock::new(|| {
+        crate::net::minecraft::util::string_representable::from_values(&DyeColor::VALUES)
+    });
+
+impl DyeColor {
+    /// `StringRepresentable.fromEnum(DyeColor::values)`.
+    pub const CODEC: &'static crate::com::mojang::serialization::codec::StaticCodec<DyeColor> =
+        &CODEC;
+}
+
+impl crate::net::minecraft::util::string_representable::StringRepresentable for DyeColor {
+    fn get_serialized_name(&self) -> &'static str {
+        self.get_name()
     }
 }
 

@@ -57,6 +57,7 @@ use crate::net::minecraft::network::packet_processor::{GameThreadListener, lock}
 use crate::net::minecraft::network::protocol::configuration::configuration_protocols::ConfigurationProtocols;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_block_entity_data_packet::ClientboundBlockEntityDataPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
@@ -116,6 +117,7 @@ use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::stats::recipe_book_settings::RecipeBookSettings;
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::util::problem_reporter::ScopedCollector;
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
 use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
 use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
@@ -127,6 +129,7 @@ use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAcces
 use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
 use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
+use crate::net::minecraft::world::level::storage::tag_value_input::TagValueInput;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::rustcraft::bench;
 
@@ -1017,6 +1020,32 @@ impl ClientGamePacketListener for ClientPacketListener {
         }
     }
 
+    /// The block entity there of the packet's type (made if its block makes one), loaded from
+    /// the tag with the client's registries.
+    fn handle_block_entity_data(&mut self, packet: &ClientboundBlockEntityDataPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        let pos = packet.get_pos();
+        if let Some(level) = minecraft.level.borrow_mut().as_mut()
+            && let Some(block_entity) = level.get_block_entity_typed(&pos, packet.get_type())
+        {
+            let reporter = ScopedCollector::new(block_entity.get_name_for_reporting());
+            block_entity.load_with_components(&TagValueInput::create(
+                &reporter,
+                &self.registry_access,
+                packet.get_tag(),
+            ));
+        }
+    }
+
     /// Each change, in order. A state the registry doesn't have is null in Java, where setting
     /// it throws; it's skipped here.
     fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket) {
@@ -1763,6 +1792,10 @@ impl ClientGamePacketListener for NettyHalf {
     }
 
     fn handle_block_update(&mut self, packet: &ClientboundBlockUpdatePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_block_entity_data(&mut self, packet: &ClientboundBlockEntityDataPacket) {
         self.common.on_game_thread(&self.this, packet);
     }
 

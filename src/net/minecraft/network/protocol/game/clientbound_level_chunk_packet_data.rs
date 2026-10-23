@@ -45,7 +45,7 @@ static STREAM_CODEC: StaticStreamCodec<RegistryFriendlyByteBuf, ClientboundLevel
 
 // `ByteBufCodecs.registry(Registries.BLOCK_ENTITY_TYPE)`: a type by its id in the built-in
 // registry, in a VarInt.
-static BLOCK_ENTITY_TYPE_STREAM_CODEC: StaticStreamCodec<ByteBuf, BlockEntityType> =
+pub(crate) static BLOCK_ENTITY_TYPE_STREAM_CODEC: StaticStreamCodec<ByteBuf, BlockEntityType> =
     LazyLock::new(|| {
         Box::new(ByteBufCodecs::id_mapper(
             BlockEntityType::by_id_or_throw,

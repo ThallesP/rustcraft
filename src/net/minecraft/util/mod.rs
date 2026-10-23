@@ -18,6 +18,7 @@ pub mod linear_congruential_generator;
 pub mod mth;
 pub mod parsing;
 pub mod png_info;
+pub mod problem_reporter;
 pub mod random;
 pub mod random_source;
 pub mod simple_bit_storage;

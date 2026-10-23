@@ -1,9 +1,14 @@
 //! net/minecraft/world/level/block/entity/BlockEntityTypes.java
 //!
 //! The types, in the order `BlockEntityTypes` registers them in `BuiltInRegistries.BLOCK_ENTITY_TYPE`,
-//! which numbers them. Not ported yet: each type's block entity class (`FurnaceBlockEntity::new`)
-//! and valid blocks, and `OP_ONLY_CUSTOM_DATA`, which come with block entities.
+//! which numbers them, each with its valid blocks and its class (`register`'s factory, which
+//! `BlockEntityType::create` makes the block entity of). Not ported yet: `OP_ONLY_CUSTOM_DATA`,
+//! which comes with the server's checks of what players send.
 
+use std::sync::LazyLock;
+
+use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
 
 pub struct BlockEntityTypes;
@@ -112,6 +117,238 @@ pub(crate) const KEYS: [&str; 49] = [
     "minecraft:copper_golem_statue",
     "minecraft:potent_sulfur",
 ];
+
+/// `register`'s valid blocks of each type, by id, in `BlockEntityTypes`' order.
+fn valid_blocks() -> Vec<Vec<Block>> {
+    vec![
+        vec![Blocks::FURNACE],
+        Blocks::COPPER_CHEST
+            .as_list()
+            .into_iter()
+            .copied()
+            .chain(std::iter::once(Blocks::CHEST))
+            .collect(),
+        vec![Blocks::TRAPPED_CHEST],
+        vec![Blocks::ENDER_CHEST],
+        vec![Blocks::JUKEBOX],
+        vec![Blocks::DISPENSER],
+        vec![Blocks::DROPPER],
+        vec![
+            Blocks::OAK_SIGN,
+            Blocks::SPRUCE_SIGN,
+            Blocks::BIRCH_SIGN,
+            Blocks::ACACIA_SIGN,
+            Blocks::CHERRY_SIGN,
+            Blocks::JUNGLE_SIGN,
+            Blocks::DARK_OAK_SIGN,
+            Blocks::PALE_OAK_SIGN,
+            Blocks::OAK_WALL_SIGN,
+            Blocks::SPRUCE_WALL_SIGN,
+            Blocks::BIRCH_WALL_SIGN,
+            Blocks::ACACIA_WALL_SIGN,
+            Blocks::CHERRY_WALL_SIGN,
+            Blocks::JUNGLE_WALL_SIGN,
+            Blocks::DARK_OAK_WALL_SIGN,
+            Blocks::PALE_OAK_WALL_SIGN,
+            Blocks::CRIMSON_SIGN,
+            Blocks::CRIMSON_WALL_SIGN,
+            Blocks::WARPED_SIGN,
+            Blocks::WARPED_WALL_SIGN,
+            Blocks::MANGROVE_SIGN,
+            Blocks::MANGROVE_WALL_SIGN,
+            Blocks::BAMBOO_SIGN,
+            Blocks::BAMBOO_WALL_SIGN,
+            Blocks::POPLAR_SIGN,
+            Blocks::POPLAR_WALL_SIGN,
+        ],
+        vec![
+            Blocks::OAK_HANGING_SIGN,
+            Blocks::SPRUCE_HANGING_SIGN,
+            Blocks::BIRCH_HANGING_SIGN,
+            Blocks::ACACIA_HANGING_SIGN,
+            Blocks::CHERRY_HANGING_SIGN,
+            Blocks::JUNGLE_HANGING_SIGN,
+            Blocks::DARK_OAK_HANGING_SIGN,
+            Blocks::PALE_OAK_HANGING_SIGN,
+            Blocks::CRIMSON_HANGING_SIGN,
+            Blocks::WARPED_HANGING_SIGN,
+            Blocks::MANGROVE_HANGING_SIGN,
+            Blocks::BAMBOO_HANGING_SIGN,
+            Blocks::OAK_WALL_HANGING_SIGN,
+            Blocks::SPRUCE_WALL_HANGING_SIGN,
+            Blocks::BIRCH_WALL_HANGING_SIGN,
+            Blocks::ACACIA_WALL_HANGING_SIGN,
+            Blocks::CHERRY_WALL_HANGING_SIGN,
+            Blocks::JUNGLE_WALL_HANGING_SIGN,
+            Blocks::DARK_OAK_WALL_HANGING_SIGN,
+            Blocks::PALE_OAK_WALL_HANGING_SIGN,
+            Blocks::CRIMSON_WALL_HANGING_SIGN,
+            Blocks::WARPED_WALL_HANGING_SIGN,
+            Blocks::MANGROVE_WALL_HANGING_SIGN,
+            Blocks::BAMBOO_WALL_HANGING_SIGN,
+            Blocks::POPLAR_HANGING_SIGN,
+            Blocks::POPLAR_WALL_HANGING_SIGN,
+        ],
+        vec![Blocks::SPAWNER],
+        vec![Blocks::CREAKING_HEART],
+        vec![Blocks::MOVING_PISTON],
+        vec![Blocks::BREWING_STAND],
+        vec![Blocks::ENCHANTING_TABLE],
+        vec![Blocks::END_PORTAL],
+        vec![Blocks::BEACON],
+        vec![
+            Blocks::SKELETON_SKULL,
+            Blocks::SKELETON_WALL_SKULL,
+            Blocks::CREEPER_HEAD,
+            Blocks::CREEPER_WALL_HEAD,
+            Blocks::DRAGON_HEAD,
+            Blocks::DRAGON_WALL_HEAD,
+            Blocks::ZOMBIE_HEAD,
+            Blocks::ZOMBIE_WALL_HEAD,
+            Blocks::WITHER_SKELETON_SKULL,
+            Blocks::WITHER_SKELETON_WALL_SKULL,
+            Blocks::PLAYER_HEAD,
+            Blocks::PLAYER_WALL_HEAD,
+            Blocks::PIGLIN_HEAD,
+            Blocks::PIGLIN_WALL_HEAD,
+        ],
+        vec![Blocks::DAYLIGHT_DETECTOR],
+        vec![Blocks::HOPPER],
+        vec![Blocks::COMPARATOR],
+        Blocks::BANNER
+            .as_list()
+            .iter()
+            .copied()
+            .chain(Blocks::WALL_BANNER.as_list().iter().copied())
+            .collect(),
+        vec![Blocks::STRUCTURE_BLOCK],
+        vec![Blocks::END_GATEWAY],
+        vec![
+            Blocks::COMMAND_BLOCK,
+            Blocks::CHAIN_COMMAND_BLOCK,
+            Blocks::REPEATING_COMMAND_BLOCK,
+        ],
+        Blocks::DYED_SHULKER_BOX
+            .as_list()
+            .iter()
+            .copied()
+            .chain(std::iter::once(Blocks::SHULKER_BOX))
+            .collect(),
+        vec![Blocks::CONDUIT],
+        vec![Blocks::BARREL],
+        vec![Blocks::SMOKER],
+        vec![Blocks::BLAST_FURNACE],
+        vec![Blocks::LECTERN],
+        vec![Blocks::BELL],
+        vec![Blocks::JIGSAW],
+        vec![Blocks::CAMPFIRE, Blocks::SOUL_CAMPFIRE],
+        vec![Blocks::BEE_NEST, Blocks::BEEHIVE],
+        vec![Blocks::SCULK_SENSOR],
+        vec![Blocks::CALIBRATED_SCULK_SENSOR],
+        vec![Blocks::SCULK_CATALYST],
+        vec![Blocks::SCULK_SHRIEKER],
+        vec![Blocks::CHISELED_BOOKSHELF],
+        vec![
+            Blocks::ACACIA_SHELF,
+            Blocks::BAMBOO_SHELF,
+            Blocks::BIRCH_SHELF,
+            Blocks::CHERRY_SHELF,
+            Blocks::CRIMSON_SHELF,
+            Blocks::DARK_OAK_SHELF,
+            Blocks::JUNGLE_SHELF,
+            Blocks::MANGROVE_SHELF,
+            Blocks::OAK_SHELF,
+            Blocks::PALE_OAK_SHELF,
+            Blocks::SPRUCE_SHELF,
+            Blocks::WARPED_SHELF,
+            Blocks::POPLAR_SHELF,
+        ],
+        vec![Blocks::SUSPICIOUS_SAND, Blocks::SUSPICIOUS_GRAVEL],
+        vec![Blocks::DECORATED_POT],
+        vec![Blocks::CRAFTER],
+        vec![Blocks::TRIAL_SPAWNER],
+        vec![Blocks::VAULT],
+        vec![Blocks::TEST_BLOCK],
+        vec![Blocks::TEST_INSTANCE_BLOCK],
+        Blocks::COPPER_GOLEM_STATUE
+            .as_list()
+            .into_iter()
+            .copied()
+            .collect(),
+        vec![Blocks::POTENT_SULFUR],
+    ]
+}
+
+/// Each type's class, `BlockEntitySupplier`'s, by id: what `getNameForReporting` names.
+pub(crate) const CLASS_NAMES: [&str; 49] = [
+    "net.minecraft.world.level.block.entity.FurnaceBlockEntity",
+    "net.minecraft.world.level.block.entity.ChestBlockEntity",
+    "net.minecraft.world.level.block.entity.TrappedChestBlockEntity",
+    "net.minecraft.world.level.block.entity.EnderChestBlockEntity",
+    "net.minecraft.world.level.block.entity.JukeboxBlockEntity",
+    "net.minecraft.world.level.block.entity.DispenserBlockEntity",
+    "net.minecraft.world.level.block.entity.DropperBlockEntity",
+    "net.minecraft.world.level.block.entity.SignBlockEntity",
+    "net.minecraft.world.level.block.entity.HangingSignBlockEntity",
+    "net.minecraft.world.level.block.entity.SpawnerBlockEntity",
+    "net.minecraft.world.level.block.entity.CreakingHeartBlockEntity",
+    "net.minecraft.world.level.block.piston.PistonMovingBlockEntity",
+    "net.minecraft.world.level.block.entity.BrewingStandBlockEntity",
+    "net.minecraft.world.level.block.entity.EnchantingTableBlockEntity",
+    "net.minecraft.world.level.block.entity.TheEndPortalBlockEntity",
+    "net.minecraft.world.level.block.entity.BeaconBlockEntity",
+    "net.minecraft.world.level.block.entity.SkullBlockEntity",
+    "net.minecraft.world.level.block.entity.DaylightDetectorBlockEntity",
+    "net.minecraft.world.level.block.entity.HopperBlockEntity",
+    "net.minecraft.world.level.block.entity.ComparatorBlockEntity",
+    "net.minecraft.world.level.block.entity.BannerBlockEntity",
+    "net.minecraft.world.level.block.entity.StructureBlockEntity",
+    "net.minecraft.world.level.block.entity.TheEndGatewayBlockEntity",
+    "net.minecraft.world.level.block.entity.CommandBlockEntity",
+    "net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity",
+    "net.minecraft.world.level.block.entity.ConduitBlockEntity",
+    "net.minecraft.world.level.block.entity.BarrelBlockEntity",
+    "net.minecraft.world.level.block.entity.SmokerBlockEntity",
+    "net.minecraft.world.level.block.entity.BlastFurnaceBlockEntity",
+    "net.minecraft.world.level.block.entity.LecternBlockEntity",
+    "net.minecraft.world.level.block.entity.BellBlockEntity",
+    "net.minecraft.world.level.block.entity.JigsawBlockEntity",
+    "net.minecraft.world.level.block.entity.CampfireBlockEntity",
+    "net.minecraft.world.level.block.entity.BeehiveBlockEntity",
+    "net.minecraft.world.level.block.entity.SculkSensorBlockEntity",
+    "net.minecraft.world.level.block.entity.CalibratedSculkSensorBlockEntity",
+    "net.minecraft.world.level.block.entity.SculkCatalystBlockEntity",
+    "net.minecraft.world.level.block.entity.SculkShriekerBlockEntity",
+    "net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity",
+    "net.minecraft.world.level.block.entity.ShelfBlockEntity",
+    "net.minecraft.world.level.block.entity.BrushableBlockEntity",
+    "net.minecraft.world.level.block.entity.DecoratedPotBlockEntity",
+    "net.minecraft.world.level.block.entity.CrafterBlockEntity",
+    "net.minecraft.world.level.block.entity.trialspawner.TrialSpawnerBlockEntity",
+    "net.minecraft.world.level.block.entity.vault.VaultBlockEntity",
+    "net.minecraft.world.level.block.entity.TestBlockEntity",
+    "net.minecraft.world.level.block.entity.TestInstanceBlockEntity",
+    "net.minecraft.world.level.block.entity.CopperGolemStatueBlockEntity",
+    "net.minecraft.world.level.block.entity.PotentSulfurBlockEntity",
+];
+
+/// Each type's valid blocks, made on first use (they need the block registry).
+pub(crate) static VALID_BLOCKS: LazyLock<Vec<Vec<Block>>> = LazyLock::new(valid_blocks);
+
+/// Each block's type, the one whose valid blocks have it, by block id: what its `newBlockEntity`
+/// makes but for the moving piston, which makes none (the piston's block event makes it).
+pub(crate) static BY_BLOCK: LazyLock<Vec<Option<BlockEntityType>>> = LazyLock::new(|| {
+    let mut by_block =
+        vec![None; crate::net::minecraft::world::level::block::blocks::registry().size()];
+    for (id, blocks) in VALID_BLOCKS.iter().enumerate() {
+        for block in blocks {
+            by_block[block.0 as usize] = Some(BlockEntityType(id as u16));
+        }
+    }
+    // MovingPistonBlock.newBlockEntity is null.
+    by_block[Blocks::MOVING_PISTON.0 as usize] = None;
+    by_block
+});
 
 #[cfg(test)]
 mod tests {

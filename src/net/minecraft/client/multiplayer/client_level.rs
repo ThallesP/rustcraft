@@ -11,8 +11,9 @@
 //! ported, so it stays where the server put it. The local player isn't in the storage here:
 //! `Minecraft` holds it and ticks it first, as it is in Java's tick list, added at the login. An
 //! entity ticks from when it's added, where Java waits for its chunk to tick (the chunk is loaded
-//! first in all the server sends). Not ported: entity sections and their visibility, other
-//! entities' collisions with the player, block entities, the block state predictions (`blockStatePredictionHandler`, which
+//! first in all the server sends). Its block entities are its chunks' (`getBlockEntity`). Not
+//! ported: entity sections and their visibility, other entities' collisions with the player,
+//! block entities' ticking, the block state predictions (`blockStatePredictionHandler`, which
 //! the player's own block changes make) and neighbour updates. What the renderer is told of the
 //! level's changes (`setBlocksDirty`, `sendBlockUpdated`, `setSectionDirtyWithNeighbors`,
 //! `setSectionRangeDirty`) goes to the `LevelExtractor` the level shares with its chunk cache and
@@ -61,6 +62,8 @@ use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
 use crate::net::minecraft::world::level::biome::biome_resolver::BiomeResolver;
 use crate::net::minecraft::world::level::biome::biomes::Biomes;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
+use crate::net::minecraft::world::level::block::entity::block_entity::BlockEntity;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGetter;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
@@ -150,6 +153,7 @@ impl ClientLevel {
                 factory,
                 server_chunk_radius,
                 Rc::clone(&level_extractor),
+                std::sync::Arc::new(registry_access.clone()),
             ),
             server_chunk_radius,
             server_simulation_distance,
@@ -419,6 +423,41 @@ impl ClientLevel {
 
     pub fn get_chunk_source_mut(&mut self) -> &mut ClientChunkCache {
         &mut self.chunk_source
+    }
+
+    /// `Level.getBlockEntity(pos)`: the chunk's block entity there, made if the block makes one
+    /// (`IMMEDIATE`); none out of bounds or where the level has no chunk.
+    pub fn get_block_entity(&mut self, pos: &BlockPos) -> Option<&mut BlockEntity> {
+        if !self.is_in_valid_bounds(pos) {
+            return None;
+        }
+        self.chunk_source
+            .get_chunk_mut(
+                SectionPos::block_to_section_coord(pos.get_x()),
+                SectionPos::block_to_section_coord(pos.get_z()),
+            )?
+            .get_block_entity_immediate(pos)
+    }
+
+    /// `BlockGetter.getBlockEntity(pos, type)`: the block entity there, if it's of the type.
+    pub fn get_block_entity_typed(
+        &mut self,
+        pos: &BlockPos,
+        r#type: BlockEntityType,
+    ) -> Option<&mut BlockEntity> {
+        self.get_block_entity(pos)
+            .filter(|block_entity| block_entity.get_type() == r#type)
+    }
+
+    /// The block entity there if the chunk has one, without making it (`CHECK`), which what
+    /// only reads the level (the shapes, the renderer) asks.
+    pub fn get_existing_block_entity(&self, pos: &BlockPos) -> Option<&BlockEntity> {
+        self.chunk_source
+            .get_chunk(
+                SectionPos::block_to_section_coord(pos.get_x()),
+                SectionPos::block_to_section_coord(pos.get_z()),
+            )?
+            .get_block_entity(pos)
     }
 
     /// `Level.isInValidBounds`: in the build height, and in a chunk that's valid.

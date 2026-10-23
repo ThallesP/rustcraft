@@ -821,6 +821,25 @@ impl BlockState {
         Block::data(self.get_block()).class().is_entity_block()
     }
 
+    /// `shouldChangedStateKeepBlockEntity(oldState)`: whether a block becoming this one keeps the
+    /// block entity of the old one. `Block`'s is false; a copper chest keeps a copper chest's, a
+    /// copper golem statue a statue's (each one's override, as its class's tag).
+    pub fn should_changed_state_keep_block_entity(&self, old_state: BlockState) -> bool {
+        let block = self.get_block();
+        if block
+            .is_instance_of(&crate::net::minecraft::world::level::block::copper_chest_block::CLASS)
+        {
+            old_state.is_tag(crate::net::minecraft::tags::block_tags::BlockTags::COPPER_CHESTS)
+        } else if block.is_instance_of(
+            &crate::net::minecraft::world::level::block::copper_golem_statue_block::CLASS,
+        ) {
+            old_state
+                .is_tag(crate::net::minecraft::tags::block_tags::BlockTags::COPPER_GOLEM_STATUES)
+        } else {
+            false
+        }
+    }
+
     /// `isRedstoneConductor(BlockGetter, BlockPos)` of a predicate that answers from the state
     /// alone, as the `BlockState` suite asks it. Panics on another.
     pub fn is_redstone_conductor(&self) -> bool {

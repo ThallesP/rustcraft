@@ -7,12 +7,16 @@
 //! `get_chunk` answers `None`, and the level answers void air) and the sets of sections and chunks added and removed since the renderer last looked
 //! (`addedEmptySections` and the rest, `flipUpdateTrackingSets`), which come with the renderer's
 //! section compiler. A chunk dropped or replaced unloads in Java's level (`ClientLevel.unload`),
-//! which turns its light off; its block entities and entities aren't ported.
+//! which turns its light off; its entities aren't ported. The level's registries, which a chunk
+//! loads its block entities with (Java's `level.registryAccess()`), are the cache's.
+
+use std::sync::Arc;
 
 use std::rc::Rc;
 
 use crate::java::lang::math::Math;
 use crate::net::minecraft::client::renderer::extract::level_extractor::LevelExtractor;
+use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_packet_data::ClientboundLevelChunkPacketData;
@@ -32,6 +36,7 @@ pub struct ClientChunkCache {
     storage: Storage,
     level_height: Height,
     container_factory: PalettedContainerFactory,
+    registries: Arc<RegistryAccess>,
 }
 
 impl ClientChunkCache {
@@ -43,6 +48,7 @@ impl ClientChunkCache {
         container_factory: PalettedContainerFactory,
         server_chunk_radius: i32,
         level_extractor: Rc<LevelExtractor>,
+        registries: Arc<RegistryAccess>,
     ) -> ClientChunkCache {
         ClientChunkCache {
             light_engine: LevelLightEngine::new(level_height, true, has_sky_light),
@@ -52,6 +58,7 @@ impl ClientChunkCache {
             ),
             level_height,
             container_factory,
+            registries,
         }
     }
 
@@ -143,14 +150,14 @@ impl ClientChunkCache {
             let chunk = self.storage.chunks[index]
                 .as_mut()
                 .expect("a valid chunk is there");
-            chunk.replace_with_packet_data(chunk_x, chunk_z, chunk_data);
+            chunk.replace_with_packet_data(chunk_x, chunk_z, chunk_data, &self.registries);
         } else {
             let mut chunk = LevelChunk::new(
                 self.level_height,
                 &self.container_factory,
                 ChunkPos::new(chunk_x, chunk_z),
             );
-            chunk.replace_with_packet_data(chunk_x, chunk_z, chunk_data);
+            chunk.replace_with_packet_data(chunk_x, chunk_z, chunk_data, &self.registries);
             if let Some(removed_chunk) = self.storage.replace(index, Some(chunk)) {
                 self.unload(removed_chunk);
             }

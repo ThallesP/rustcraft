@@ -828,6 +828,13 @@ impl BlockPos {
 }
 
 /// Java's `toString`, with `BlockPos` as the class's name.
+/// `Vec3i.hashCode`, for the Java maps of positions (a chunk's block entities).
+impl crate::java::lang::object::HashCode for BlockPos {
+    fn hash_code(&self) -> i32 {
+        Vec3i::hash_code(self)
+    }
+}
+
 impl fmt::Display for BlockPos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.vec3i.fmt_with_class_name(f, "BlockPos")

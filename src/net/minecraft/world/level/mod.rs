@@ -1,3 +1,4 @@
+pub mod base_spawner;
 pub mod biome;
 pub mod block;
 pub mod block_and_light_getter;
@@ -25,4 +26,5 @@ pub mod light_layer;
 pub mod lighting;
 pub mod material;
 pub mod moon_phase;
+pub mod spawn_data;
 pub mod storage;

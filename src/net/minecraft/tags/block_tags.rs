@@ -39,6 +39,11 @@ impl BlockTags {
     pub const WITHER_SKELETON_IMMUNE_TO: TagKey = TagKey("wither_skeleton_immune_to");
     pub const DEFAULT_IMMUNE_TO: TagKey = TagKey("default_immune_to");
     pub const BARS: TagKey = TagKey("bars");
+    pub const COPPER_CHESTS: TagKey = TagKey("copper_chests");
+    pub const COPPER_GOLEM_STATUES: TagKey = TagKey("copper_golem_statues");
+    pub const BLOCKS_MOTION_IN_HEIGHTMAP: TagKey = TagKey("blocks_motion_in_heightmap");
+    pub const BLOCKS_MOTION_IN_HEIGHTMAP_NO_LEAVES: TagKey =
+        TagKey("blocks_motion_in_heightmap_no_leaves");
 }
 
 /// Each tag's blocks by registered name, resolved as they're first asked for.

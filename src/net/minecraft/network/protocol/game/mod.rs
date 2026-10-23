@@ -1,5 +1,6 @@
 pub mod client_game_packet_listener;
 pub mod clientbound_add_entity_packet;
+pub mod clientbound_block_entity_data_packet;
 pub mod clientbound_block_update_packet;
 pub mod clientbound_bundle_delimiter_packet;
 pub mod clientbound_bundle_packet;
