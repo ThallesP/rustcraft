@@ -1,10 +1,13 @@
 //! net/minecraft/util/ARGB.java
 //!
 //! Only what Mth, `ByteBufCodecs.RGB_COLOR`, clear colors (`vector4fFromARGB32`), vertex and
-//! texture colors (`toABGR`) and mipmaps (the sRGB tables, `meanLinear`) need so far.
+//! texture colors (`toABGR`), mipmaps (the sRGB tables, `meanLinear`) and the environment
+//! attributes' colors (the `Vector3fc` and `Vector4fc` overloads, `colorFromFloat`) need so far.
+//! The vector overloads that hand back one of their arguments in Java hand back a copy.
 
 use crate::java::lang::math::Math;
 use crate::net::minecraft::util::mth::Mth;
+use crate::org::joml::vector3f::Vector3f;
 use crate::org::joml::vector4f::Vector4f;
 use std::sync::LazyLock;
 
@@ -219,6 +222,176 @@ impl ARGB {
         ARGB::to_abgr(color)
     }
 
+    /// `colorFromFloat`: each channel from 0 to 1.
+    pub fn color_from_float(alpha: f32, red: f32, green: f32, blue: f32) -> i32 {
+        ARGB::color(
+            ARGB::as8_bit_channel(alpha),
+            ARGB::as8_bit_channel(red),
+            ARGB::as8_bit_channel(green),
+            ARGB::as8_bit_channel(blue),
+        )
+    }
+
+    pub fn vector3f_from_rgb24(color: i32) -> Vector3f {
+        Vector3f::from_xyz(
+            ARGB::red_float(color),
+            ARGB::green_float(color),
+            ARGB::blue_float(color),
+        )
+    }
+
+    /// `multiply(Vector3fc, Vector3fc)`: white on either side leaves the other as it is.
+    pub fn multiply_vector3f(lhs: &Vector3f, rhs: &Vector3f) -> Vector3f {
+        if lhs.x == 1.0 && lhs.y == 1.0 && lhs.z == 1.0 {
+            *rhs
+        } else if rhs.x == 1.0 && rhs.y == 1.0 && rhs.z == 1.0 {
+            *lhs
+        } else {
+            Vector3f::from_xyz(lhs.x * rhs.x, lhs.y * rhs.y, lhs.z * rhs.z)
+        }
+    }
+
+    pub fn multiply_vector4f(lhs: &Vector4f, rhs: &Vector4f) -> Vector4f {
+        if lhs.x == 1.0 && lhs.y == 1.0 && lhs.z == 1.0 && lhs.w == 1.0 {
+            *rhs
+        } else if rhs.x == 1.0 && rhs.y == 1.0 && rhs.z == 1.0 && rhs.w == 1.0 {
+            *lhs
+        } else {
+            let mut dest = Vector4f::new();
+            lhs.mul_into(rhs, &mut dest);
+            dest
+        }
+    }
+
+    pub fn add_rgb_vector3f(lhs: &Vector3f, rhs: &Vector3f) -> Vector3f {
+        Vector3f::from_xyz(
+            Math::min_f32(lhs.x + rhs.x, 1.0),
+            Math::min_f32(lhs.y + rhs.y, 1.0),
+            Math::min_f32(lhs.z + rhs.z, 1.0),
+        )
+    }
+
+    pub fn add_rgb_vector4f(lhs: &Vector4f, rhs: &Vector3f) -> Vector4f {
+        Vector4f::from_xyzw(
+            Math::min_f32(lhs.x + rhs.x, 1.0),
+            Math::min_f32(lhs.y + rhs.y, 1.0),
+            Math::min_f32(lhs.z + rhs.z, 1.0),
+            lhs.w,
+        )
+    }
+
+    pub fn subtract_rgb_vector3f(lhs: &Vector3f, rhs: &Vector3f) -> Vector3f {
+        Vector3f::from_xyz(
+            Math::max_f32(lhs.x - rhs.x, 0.0),
+            Math::max_f32(lhs.y - rhs.y, 0.0),
+            Math::max_f32(lhs.z - rhs.z, 0.0),
+        )
+    }
+
+    pub fn subtract_rgb_vector4f(lhs: &Vector4f, rhs: &Vector3f) -> Vector4f {
+        Vector4f::from_xyzw(
+            Math::max_f32(lhs.x - rhs.x, 0.0),
+            Math::max_f32(lhs.y - rhs.y, 0.0),
+            Math::max_f32(lhs.z - rhs.z, 0.0),
+            lhs.w,
+        )
+    }
+
+    pub fn scale_rgb_vector3f(color: &Vector3f, scale: f32) -> Vector3f {
+        ARGB::scale_rgb3_vector3f(color, scale, scale, scale)
+    }
+
+    pub fn scale_rgb_vector4f(color: &Vector4f, scale: f32) -> Vector4f {
+        ARGB::scale_rgb3_vector4f(color, scale, scale, scale)
+    }
+
+    /// Each channel scaled and clamped to 0..1 (`Math.clamp(float, float, float)`).
+    pub fn scale_rgb3_vector3f(
+        color: &Vector3f,
+        scale_r: f32,
+        scale_g: f32,
+        scale_b: f32,
+    ) -> Vector3f {
+        Vector3f::from_xyz(
+            Math::clamp_f32(color.x * scale_r, 0.0, 1.0),
+            Math::clamp_f32(color.y * scale_g, 0.0, 1.0),
+            Math::clamp_f32(color.z * scale_b, 0.0, 1.0),
+        )
+    }
+
+    pub fn scale_rgb3_vector4f(
+        color: &Vector4f,
+        scale_r: f32,
+        scale_g: f32,
+        scale_b: f32,
+    ) -> Vector4f {
+        Vector4f::from_xyzw(
+            Math::clamp_f32(color.x * scale_r, 0.0, 1.0),
+            Math::clamp_f32(color.y * scale_g, 0.0, 1.0),
+            Math::clamp_f32(color.z * scale_b, 0.0, 1.0),
+            color.w,
+        )
+    }
+
+    pub fn greyscale_vector3f(color: &Vector3f) -> Vector3f {
+        let greyscale = color.x * 0.3 + color.y * 0.59 + color.z * 0.11;
+        Vector3f::from_xyz(greyscale, greyscale, greyscale)
+    }
+
+    pub fn greyscale_vector4f(color: &Vector4f) -> Vector4f {
+        let greyscale = color.x * 0.3 + color.y * 0.59 + color.z * 0.11;
+        Vector4f::from_xyzw(greyscale, greyscale, greyscale, color.w)
+    }
+
+    /// `alphaBlend(Vector3fc, Vector4fc)`: the source's RGB over the destination by its alpha.
+    pub fn alpha_blend_vector3f(destination: &Vector3f, source: &Vector4f) -> Vector3f {
+        let source_alpha = source.w;
+        if source_alpha == 0.0 {
+            return *destination;
+        }
+
+        let mut source_rgb = Vector3f::from_xyz(source.x, source.y, source.z);
+        let other = source_rgb;
+        destination.lerp_into(&other, source_alpha, &mut source_rgb);
+        source_rgb
+    }
+
+    pub fn alpha_blend_vector4f(destination: &Vector4f, source: &Vector4f) -> Vector4f {
+        let destination_alpha = destination.w;
+        let source_alpha = source.w;
+        if source_alpha == 1.0 {
+            return *source;
+        }
+
+        if source_alpha == 0.0 {
+            return *destination;
+        }
+
+        let alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
+        let channel = |destination: f32, source: f32| {
+            (source * source_alpha + destination * (alpha - source_alpha)) / alpha
+        };
+        Vector4f::from_xyzw(
+            channel(destination.x, source.x),
+            channel(destination.y, source.y),
+            channel(destination.z, source.z),
+            alpha,
+        )
+    }
+
+    /// `srgbLerp(float, Vector3fc, Vector3fc)`: JOML's `lerp`, despite the name.
+    pub fn srgb_lerp_vector3f(alpha: f32, p0: &Vector3f, p1: &Vector3f) -> Vector3f {
+        let mut dest = Vector3f::new();
+        p0.lerp_into(p1, alpha, &mut dest);
+        dest
+    }
+
+    pub fn srgb_lerp_vector4f(alpha: f32, p0: &Vector4f, p1: &Vector4f) -> Vector4f {
+        let mut dest = Vector4f::new();
+        p0.lerp_into(p1, alpha, &mut dest);
+        dest
+    }
+
     fn from8_bit_channel(value: i32) -> f32 {
         value as f32 / 255.0
     }
@@ -228,6 +401,7 @@ impl ARGB {
 mod tests {
     use super::ARGB;
     use crate::golden::Golden;
+    use crate::org::joml::vector3f::Vector3f;
     use crate::org::joml::vector4f::Vector4f;
 
     #[test]
@@ -263,6 +437,79 @@ mod tests {
         golden.check_mut(
             "setVector4fFromARGB32(Lorg/joml/Vector4f;I)Lorg/joml/Vector4f;",
             |dest: &mut Vector4f, color: &mut i32| ARGB::set_vector4f_from_argb32(dest, *color),
+        );
+        golden.check("colorFromFloat(FFFF)I", ARGB::color_from_float);
+        golden.check(
+            "vector3fFromRGB24(I)Lorg/joml/Vector3f;",
+            ARGB::vector3f_from_rgb24,
+        );
+        golden.check(
+            "multiply(Lorg/joml/Vector3fc;Lorg/joml/Vector3fc;)Lorg/joml/Vector3fc;",
+            |lhs: Vector3f, rhs: Vector3f| ARGB::multiply_vector3f(&lhs, &rhs),
+        );
+        golden.check(
+            "multiply(Lorg/joml/Vector4fc;Lorg/joml/Vector4fc;)Lorg/joml/Vector4fc;",
+            |lhs: Vector4f, rhs: Vector4f| ARGB::multiply_vector4f(&lhs, &rhs),
+        );
+        golden.check(
+            "addRgb(Lorg/joml/Vector3fc;Lorg/joml/Vector3fc;)Lorg/joml/Vector3fc;",
+            |lhs: Vector3f, rhs: Vector3f| ARGB::add_rgb_vector3f(&lhs, &rhs),
+        );
+        golden.check(
+            "addRgb(Lorg/joml/Vector4fc;Lorg/joml/Vector3fc;)Lorg/joml/Vector4fc;",
+            |lhs: Vector4f, rhs: Vector3f| ARGB::add_rgb_vector4f(&lhs, &rhs),
+        );
+        golden.check(
+            "subtractRgb(Lorg/joml/Vector3fc;Lorg/joml/Vector3fc;)Lorg/joml/Vector3fc;",
+            |lhs: Vector3f, rhs: Vector3f| ARGB::subtract_rgb_vector3f(&lhs, &rhs),
+        );
+        golden.check(
+            "subtractRgb(Lorg/joml/Vector4fc;Lorg/joml/Vector3fc;)Lorg/joml/Vector4fc;",
+            |lhs: Vector4f, rhs: Vector3f| ARGB::subtract_rgb_vector4f(&lhs, &rhs),
+        );
+        golden.check(
+            "scaleRGB(Lorg/joml/Vector3fc;F)Lorg/joml/Vector3fc;",
+            |color: Vector3f, scale: f32| ARGB::scale_rgb_vector3f(&color, scale),
+        );
+        golden.check(
+            "scaleRGB(Lorg/joml/Vector4fc;F)Lorg/joml/Vector4fc;",
+            |color: Vector4f, scale: f32| ARGB::scale_rgb_vector4f(&color, scale),
+        );
+        golden.check(
+            "scaleRGB(Lorg/joml/Vector3fc;FFF)Lorg/joml/Vector3fc;",
+            |color: Vector3f, r: f32, g: f32, b: f32| ARGB::scale_rgb3_vector3f(&color, r, g, b),
+        );
+        golden.check(
+            "scaleRGB(Lorg/joml/Vector4fc;FFF)Lorg/joml/Vector4fc;",
+            |color: Vector4f, r: f32, g: f32, b: f32| ARGB::scale_rgb3_vector4f(&color, r, g, b),
+        );
+        golden.check(
+            "greyscale(Lorg/joml/Vector3fc;)Lorg/joml/Vector3fc;",
+            |color: Vector3f| ARGB::greyscale_vector3f(&color),
+        );
+        golden.check(
+            "greyscale(Lorg/joml/Vector4fc;)Lorg/joml/Vector4fc;",
+            |color: Vector4f| ARGB::greyscale_vector4f(&color),
+        );
+        golden.check(
+            "alphaBlend(Lorg/joml/Vector3fc;Lorg/joml/Vector4fc;)Lorg/joml/Vector3fc;",
+            |destination: Vector3f, source: Vector4f| {
+                ARGB::alpha_blend_vector3f(&destination, &source)
+            },
+        );
+        golden.check(
+            "alphaBlend(Lorg/joml/Vector4fc;Lorg/joml/Vector4fc;)Lorg/joml/Vector4fc;",
+            |destination: Vector4f, source: Vector4f| {
+                ARGB::alpha_blend_vector4f(&destination, &source)
+            },
+        );
+        golden.check(
+            "srgbLerp(FLorg/joml/Vector3fc;Lorg/joml/Vector3fc;)Lorg/joml/Vector3fc;",
+            |alpha: f32, p0: Vector3f, p1: Vector3f| ARGB::srgb_lerp_vector3f(alpha, &p0, &p1),
+        );
+        golden.check(
+            "srgbLerp(FLorg/joml/Vector4fc;Lorg/joml/Vector4fc;)Lorg/joml/Vector4fc;",
+            |alpha: f32, p0: Vector4f, p1: Vector4f| ARGB::srgb_lerp_vector4f(alpha, &p0, &p1),
         );
         golden.pending_rest("not ported yet");
         golden.finish();
