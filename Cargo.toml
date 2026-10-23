@@ -20,5 +20,11 @@ serde_json = "1"
 
 # The port itself stays unoptimized with overflow checks, so an int overflow that Java would
 # wrap panics in the golden tests instead of passing silently. Dependencies are optimized.
+# Debug info is line tables only, enough for backtraces: full debug info made each track's
+# target directory 5 to 10 GB on a shared disk.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 3
+debug = false
