@@ -132,6 +132,44 @@ impl ARGB {
         ((alpha & 0xFF) << 24) | ((red & 0xFF) << 16) | ((green & 0xFF) << 8) | (blue & 0xFF)
     }
 
+    /// Both colors' channels multiplied; white (-1) leaves the other as it is.
+    pub fn multiply(lhs: i32, rhs: i32) -> i32 {
+        if lhs == -1 {
+            rhs
+        } else if rhs == -1 {
+            lhs
+        } else {
+            ARGB::color(
+                ARGB::alpha(lhs) * ARGB::alpha(rhs) / 255,
+                ARGB::red(lhs) * ARGB::red(rhs) / 255,
+                ARGB::green(lhs) * ARGB::green(rhs) / 255,
+                ARGB::blue(lhs) * ARGB::blue(rhs) / 255,
+            )
+        }
+    }
+
+    pub fn scale_rgb(color: i32, scale: f32) -> i32 {
+        ARGB::scale_rgb3(color, scale, scale, scale)
+    }
+
+    /// Each channel scaled, cut (Java's `(int)`) and clamped to a byte (`Math.clamp(long, int,
+    /// int)`).
+    pub fn scale_rgb3(color: i32, scale_r: f32, scale_g: f32, scale_b: f32) -> i32 {
+        let channel = |value: i32, scale: f32| ((value as f32 * scale) as i32).clamp(0, 255);
+        ARGB::color(
+            ARGB::alpha(color),
+            channel(ARGB::red(color), scale_r),
+            channel(ARGB::green(color), scale_g),
+            channel(ARGB::blue(color), scale_b),
+        )
+    }
+
+    /// An opaque gray of the brightness.
+    pub fn gray(brightness: f32) -> i32 {
+        let channel = ARGB::as8_bit_channel(brightness);
+        ARGB::color_rgb(channel, channel, channel)
+    }
+
     /// `color(int, int, int)`: opaque.
     pub fn color_rgb(red: i32, green: i32, blue: i32) -> i32 {
         ARGB::color(255, red, green, blue)
@@ -209,6 +247,10 @@ mod tests {
         golden.check("as8BitChannel(F)I", ARGB::as8_bit_channel);
         golden.check("color(FI)I", ARGB::color_alpha_f32);
         golden.check("color(II)I", ARGB::color_alpha);
+        golden.check("multiply(II)I", ARGB::multiply);
+        golden.check("scaleRGB(IF)I", ARGB::scale_rgb);
+        golden.check("scaleRGB(IFFF)I", ARGB::scale_rgb3);
+        golden.check("gray(F)I", ARGB::gray);
         golden.check("fromABGR(I)I", ARGB::from_abgr);
         golden.check("alphaFloat(I)F", ARGB::alpha_float);
         golden.check("redFloat(I)F", ARGB::red_float);

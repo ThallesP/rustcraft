@@ -99,7 +99,9 @@ final class ModelSuites {
             // Before the bake, which asks isIdentity about the rotations' inverse face matrices.
             new RotationSuite(),
             new NumberSuite(),
-            new BakerySuite()
+            new BakerySuite(),
+            new StaticSuite(net.minecraft.util.LightCoordsUtil.class),
+            new MeshSuite()
         );
     }
 
@@ -237,6 +239,25 @@ final class ModelSuites {
 
         @Override
         public void write(final GoldenWriter writer) throws IOException {
+            ModelBakery.BakingResult result = bake();
+            writer.result("missingModels.block", new JsonArray(), model(result.missingModels().block(), null), null);
+            for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
+                JsonArray args = RenderSuites.array(new JsonPrimitive(Block.getId(state)));
+                JsonElement encoded = model(result.getBlockStateModel(state), state);
+                writer.result("bake", args, new JsonPrimitive(md5(GSON.toJson(encoded))), null);
+                if (state == state.getBlock().defaultBlockState()) {
+                    writer.result("bake[full]", args, encoded, null);
+                }
+            }
+        }
+
+        private static ModelBakery.BakingResult baked;
+
+        /** The bake, made once for this suite and the meshes'. */
+        static synchronized ModelBakery.BakingResult bake() throws IOException {
+            if (baked != null) {
+                return baked;
+            }
             ResourceManager resources = TextureSuites.vanillaResources();
             SpriteLoader.Preparations blocks = stitch(resources, TextureAtlas.LOCATION_BLOCKS, "blocks", MAX_MIPMAP_LEVELS);
             SpriteLoader.Preparations items = stitch(resources, TextureAtlas.LOCATION_ITEMS, "items", 0);
@@ -257,17 +278,8 @@ final class ModelSuites {
             ModelBakery bakery = new ModelBakery(
                 EntityModelSet.EMPTY, id -> null, null, blockStates.models(), Map.of(), resolved, discovery.missingModel()
             );
-            ModelBakery.BakingResult result = bakery.bakeModels(new MaterialBaker(blocks, items), Runnable::run).join();
-
-            writer.result("missingModels.block", new JsonArray(), model(result.missingModels().block(), null), null);
-            for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
-                JsonArray args = RenderSuites.array(new JsonPrimitive(Block.getId(state)));
-                JsonElement encoded = model(result.getBlockStateModel(state), state);
-                writer.result("bake", args, new JsonPrimitive(md5(GSON.toJson(encoded))), null);
-                if (state == state.getBlock().defaultBlockState()) {
-                    writer.result("bake[full]", args, encoded, null);
-                }
-            }
+            baked = bakery.bakeModels(new MaterialBaker(blocks, items), Runnable::run).join();
+            return baked;
         }
 
         // SpriteLoader.stitch's layout (TextureSuites' AtlasSuite), into the sprites it makes. Mip levels don't change
@@ -427,6 +439,173 @@ final class ModelSuites {
             } catch (NoSuchAlgorithmException e) {
                 throw new IllegalStateException(e);
             }
+        }
+    }
+
+    /**
+     * Block models meshed by ModelBlockRenderer, flat and with ambient occlusion, a section at a time the way
+     * SectionCompiler.compile meshes one: each non-air block of the section in BlockPos.betweenClosed's order whose
+     * render shape is a model, at its place in the section, with its state's seed, its quads into a BufferBuilder for
+     * their layer. The level is a pattern of blocks whose shapes and rendering the port has (MeshLevel), with light that
+     * varies from block to block and the default cardinal lighting, and BlockColors are empty: the biomes' tints come
+     * later. Each case is a pattern's seed and whether ambient occlusion is on, its result each started layer's {@code
+     * [layer, vertexCount, md5]} of the vertex bytes, in ChunkSectionLayer's order.
+     */
+    private static final class MeshSuite implements Suite {
+        @Override
+        public String name() {
+            return net.minecraft.client.renderer.block.ModelBlockRenderer.class.getName();
+        }
+
+        @Override
+        public void write(final GoldenWriter writer) throws IOException {
+            ModelBakery.BakingResult result = BakerySuite.bake();
+            for (int seed = 0; seed < 12; seed++) {
+                for (boolean ambientOcclusion : new boolean[]{false, true}) {
+                    MeshLevel level = new MeshLevel(seed);
+                    writer.result(
+                        "compileSection",
+                        RenderSuites.array(new JsonPrimitive(seed), new JsonPrimitive(ambientOcclusion)),
+                        compile(level, result, ambientOcclusion),
+                        null
+                    );
+                }
+            }
+        }
+
+        private static JsonArray compile(final MeshLevel level, final ModelBakery.BakingResult models, final boolean ambientOcclusion) {
+            net.minecraft.client.renderer.block.ModelBlockRenderer renderer = new net.minecraft.client.renderer.block.ModelBlockRenderer(
+                ambientOcclusion, true, new net.minecraft.client.color.block.BlockColors()
+            );
+            Map<net.minecraft.client.renderer.chunk.ChunkSectionLayer, com.mojang.blaze3d.vertex.BufferBuilder> started =
+                new java.util.EnumMap<>(net.minecraft.client.renderer.chunk.ChunkSectionLayer.class);
+            Map<net.minecraft.client.renderer.chunk.ChunkSectionLayer, com.mojang.blaze3d.vertex.ByteBufferBuilder> buffers =
+                new java.util.EnumMap<>(net.minecraft.client.renderer.chunk.ChunkSectionLayer.class);
+            net.minecraft.client.renderer.block.BlockQuadOutput output = (x, y, z, quad, instance) -> started.computeIfAbsent(
+                quad.materialInfo().layer(),
+                layer -> new com.mojang.blaze3d.vertex.BufferBuilder(
+                    buffers.computeIfAbsent(layer, l -> new com.mojang.blaze3d.vertex.ByteBufferBuilder(l.bufferSize())),
+                    com.mojang.renderpearl.api.pipeline.PrimitiveTopology.QUADS,
+                    layer.vertexFormat()
+                )
+            ).putBlockBakedQuad(x, y, z, quad, instance);
+            for (net.minecraft.core.BlockPos pos : net.minecraft.core.BlockPos.betweenClosed(
+                new net.minecraft.core.BlockPos(0, 0, 0), new net.minecraft.core.BlockPos(15, 15, 15)
+            )) {
+                BlockState state = level.getBlockState(pos);
+                if (!state.isAir() && state.getRenderShape() == net.minecraft.world.level.block.RenderShape.MODEL) {
+                    renderer.tesselateBlock(
+                        output, pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15, level, pos, state, models.getBlockStateModel(state), state.getSeed(pos)
+                    );
+                }
+            }
+            JsonArray layers = new JsonArray();
+            for (Map.Entry<net.minecraft.client.renderer.chunk.ChunkSectionLayer, com.mojang.blaze3d.vertex.BufferBuilder> entry : started.entrySet()) {
+                try (com.mojang.blaze3d.vertex.MeshData mesh = entry.getValue().build()) {
+                    if (mesh != null) {
+                        java.nio.ByteBuffer vertices = mesh.vertexBuffer();
+                        byte[] bytes = new byte[vertices.remaining()];
+                        vertices.get(bytes);
+                        layers.add(RenderSuites.array(
+                            new JsonPrimitive(entry.getKey().name()), new JsonPrimitive(mesh.drawState().vertexCount()), new JsonPrimitive(md5(bytes))
+                        ));
+                    }
+                }
+            }
+            buffers.values().forEach(com.mojang.blaze3d.vertex.ByteBufferBuilder::close);
+            return layers;
+        }
+
+        private static String md5(final byte[] bytes) {
+            try {
+                return HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(bytes));
+            } catch (NoSuchAlgorithmException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+    }
+
+    /**
+     * A level of blocks in a pattern: each block, at any height, one of BLOCKS' states (air two times in five) picked by
+     * a hash of its position and the seed, a pattern that crosses the section's sides. Sky light is {@code floorMod(3x +
+     * 5y + 7z + seed, 16)} and block light {@code floorMod(7x + 11y + 13z, 16)}; tints are white.
+     */
+    static final class MeshLevel implements net.minecraft.client.renderer.block.BlockAndTintGetter {
+        // Whole blocks of the kinds whose shapes and rendering the port has: opaque, cut out, translucent, glowing,
+        // emissive, rotated by axis or facing, invisible, and with faces inside that aren't culled.
+        static final List<String> BLOCK_NAMES = List.of(
+            "stone", "dirt", "grass_block", "bedrock", "cobblestone", "oak_planks", "oak_log", "glass", "white_stained_glass",
+            "tinted_glass", "ice", "oak_leaves", "glowstone", "magma_block", "crafting_table", "furnace", "bookshelf", "barrier",
+            "quartz_pillar", "snow_block", "slime_block", "beacon", "vault", "mangrove_roots"
+        );
+        static final List<net.minecraft.world.level.block.Block> BLOCKS = BLOCK_NAMES.stream()
+            .map(name -> net.minecraft.core.registries.BuiltInRegistries.BLOCK.getValue(Identifier.withDefaultNamespace(name)))
+            .toList();
+        private final int seed;
+
+        MeshLevel(final int seed) {
+            this.seed = seed;
+        }
+
+        static int hash(final int x, final int y, final int z, final int seed) {
+            int h = x * 73856093 ^ y * 19349663 ^ z * 83492791 ^ seed * 2654435;
+            h ^= h >>> 13;
+            h *= 0x5bd1e995;
+            h ^= h >>> 15;
+            return h & Integer.MAX_VALUE;
+        }
+
+        @Override
+        public BlockState getBlockState(final net.minecraft.core.BlockPos pos) {
+            int h = hash(pos.getX(), pos.getY(), pos.getZ(), this.seed);
+            if (h % 5 < 2) {
+                return net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+            }
+            net.minecraft.world.level.block.Block block = BLOCKS.get(h / 5 % BLOCKS.size());
+            List<BlockState> states = block.getStateDefinition().getPossibleStates();
+            return states.get(h / 5 / BLOCKS.size() % states.size());
+        }
+
+        @Override
+        public net.minecraft.world.level.material.FluidState getFluidState(final net.minecraft.core.BlockPos pos) {
+            return this.getBlockState(pos).getFluidState();
+        }
+
+        @Override
+        public net.minecraft.world.level.block.entity.@org.jspecify.annotations.Nullable BlockEntity getBlockEntity(final net.minecraft.core.BlockPos pos) {
+            return null;
+        }
+
+        @Override
+        public int getHeight() {
+            return 384;
+        }
+
+        @Override
+        public int getMinY() {
+            return -64;
+        }
+
+        @Override
+        public net.minecraft.world.level.lighting.LevelLightEngine getLightEngine() {
+            return net.minecraft.world.level.lighting.LevelLightEngine.EMPTY;
+        }
+
+        @Override
+        public int getBrightness(final net.minecraft.world.level.LightLayer layer, final net.minecraft.core.BlockPos pos) {
+            return layer == net.minecraft.world.level.LightLayer.SKY
+                ? Math.floorMod(3 * pos.getX() + 5 * pos.getY() + 7 * pos.getZ() + this.seed, 16)
+                : Math.floorMod(7 * pos.getX() + 11 * pos.getY() + 13 * pos.getZ(), 16);
+        }
+
+        @Override
+        public net.minecraft.world.level.CardinalLighting cardinalLighting() {
+            return net.minecraft.world.level.CardinalLighting.DEFAULT;
+        }
+
+        @Override
+        public int getBlockTint(final net.minecraft.core.BlockPos pos, final net.minecraft.world.level.ColorResolver color) {
+            return -1;
         }
     }
 }

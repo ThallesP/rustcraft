@@ -19,6 +19,10 @@ use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct LeavesBlock;
 
+/// `cutoutLeaves`, which the options set: whether leaves draw their cutouts or as solid blocks
+/// that hide the leaves next to them.
+static CUTOUT_LEAVES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 pub static CLASS: BlockClass = BlockClass {
     get_fluid_state: Some(LeavesBlock::get_fluid_state),
     is_randomly_ticking: Some(LeavesBlock::is_randomly_ticking),
@@ -29,6 +33,14 @@ impl LeavesBlock {
     pub const DISTANCE: &'static IntegerProperty = BlockStateProperties::DISTANCE;
     pub const PERSISTENT: &'static BooleanProperty = BlockStateProperties::PERSISTENT;
     pub const WATERLOGGED: &'static BooleanProperty = BlockStateProperties::WATERLOGGED;
+
+    pub fn set_cutout_leaves(cutout_leaves: bool) {
+        CUTOUT_LEAVES.store(cutout_leaves, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn cutout_leaves() -> bool {
+        CUTOUT_LEAVES.load(std::sync::atomic::Ordering::Relaxed)
+    }
 
     pub fn new(properties: Properties) -> BlockData {
         LeavesBlock::new_with(

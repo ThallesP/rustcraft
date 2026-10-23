@@ -1,4 +1,5 @@
 pub mod client_brand_retriever;
+pub mod color;
 pub mod delta_tracker;
 pub mod gui;
 pub mod key_mapping;

@@ -3,8 +3,11 @@
 //! Where vertices go, an element at a time. Overloads take what they add: `set_color` takes an
 //! ARGB int, `set_color_rgba` the four channels and `set_color_f32` floats; `add_vertex_full` is
 //! the eleven-argument `addVertex`, and `add_vertex_matrix` the one taking a `Matrix4fc`. The
-//! baked quad and pose overloads come with block models and entities.
+//! pose overloads of `putBakedQuad` come with entities.
 
+use crate::com::mojang::blaze3d::vertex::quad_instance::QuadInstance;
+use crate::net::minecraft::client::model::geom::builders::uv_pair::UVPair;
+use crate::net::minecraft::client::resources::model::geometry::baked_quad::BakedQuad;
 use crate::org::joml::matrix3x2f::Matrix3x2f;
 use crate::org::joml::matrix4f::Matrix4f;
 use crate::org::joml::vector2f::Vector2f;
@@ -50,6 +53,41 @@ pub trait VertexConsumer {
         self.set_overlay(overlay_coords);
         self.set_light(light_coords);
         self.set_normal(nx, ny, nz);
+    }
+
+    /// A block's quad at `(x, y, z)` in the section, each vertex with the instance's colour and
+    /// light (with the quad's own emission), and the quad's facing as its normal.
+    fn put_block_baked_quad(
+        &mut self,
+        x: f32,
+        y: f32,
+        z: f32,
+        quad: &BakedQuad,
+        instance: &QuadInstance,
+    ) {
+        let normal = quad.direction.get_unit_vec3f();
+        let light_emission = quad.material_info.light_emission;
+        for vertex in 0..4 {
+            let pos = quad.position(vertex);
+            let packed_uv = quad.packed_uv(vertex);
+            let vertex_color = instance.get_color(vertex);
+            let light = instance.get_light_coords_with_emission(vertex, light_emission);
+            let u = UVPair::unpack_u(packed_uv);
+            let v = UVPair::unpack_v(packed_uv);
+            self.add_vertex_full(
+                pos.x + x,
+                pos.y + y,
+                pos.z + z,
+                vertex_color,
+                u,
+                v,
+                instance.overlay_coords(),
+                light,
+                normal.x,
+                normal.y,
+                normal.z,
+            );
+        }
     }
 
     fn set_color_f32(&mut self, r: f32, g: f32, b: f32, a: f32) -> &mut dyn VertexConsumer {

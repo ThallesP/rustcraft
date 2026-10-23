@@ -31,7 +31,7 @@ use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use std::sync::Arc;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::core::direction::Axis;
+use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::util::Util;
@@ -947,6 +947,255 @@ impl BlockState {
             }
         }
     }
+}
+
+/// Block classes overriding what the renderer reads of a state in a way not ported yet, by the
+/// method: they panic, like the shapes' guard.
+const RENDER_OVERRIDES: &[(&str, &[&str])] = &[
+    (
+        "skipRendering",
+        &[
+            "net.minecraft.world.level.block.IronBarsBlock",
+            "net.minecraft.world.level.block.LiquidBlock",
+        ],
+    ),
+    (
+        "getOcclusionShape",
+        &[
+            "net.minecraft.world.level.block.LecternBlock",
+            "net.minecraft.world.level.block.FenceBlock",
+            "net.minecraft.world.level.block.SculkShriekerBlock",
+            "net.minecraft.world.level.block.FenceGateBlock",
+        ],
+    ),
+    (
+        "propagatesSkylightDown",
+        &[
+            "net.minecraft.world.level.block.BambooStalkBlock",
+            "net.minecraft.world.level.block.GlowLichenBlock",
+            "net.minecraft.world.level.block.HangingMossBlock",
+            "net.minecraft.world.level.block.CrossCollisionBlock",
+            "net.minecraft.world.level.block.LiquidBlock",
+            "net.minecraft.world.level.block.MossyCarpetBlock",
+            "net.minecraft.world.level.block.PipeBlock",
+            "net.minecraft.world.level.block.ShulkerBoxBlock",
+            "net.minecraft.world.level.block.VegetationBlock",
+            "net.minecraft.world.level.block.VineBlock",
+            "net.minecraft.world.level.block.WallBlock",
+        ],
+    ),
+    (
+        "getShadeBrightness",
+        &["net.minecraft.world.level.block.SnowLayerBlock"],
+    ),
+    (
+        "getRenderShape",
+        &[
+            "net.minecraft.world.level.block.BubbleColumnBlock",
+            "net.minecraft.world.level.block.EndPortalBlock",
+            "net.minecraft.world.level.block.EndGatewayBlock",
+            "net.minecraft.world.level.block.piston.MovingPistonBlock",
+        ],
+    ),
+];
+
+/// What the renderer reads of a state, worked out from its block's class and shapes each time
+/// it's asked, where Java keeps most of it from `initCache`: the same answers, since a state's
+/// shapes never change.
+impl BlockState {
+    /// `getBlock() instanceof LeavesBlock`.
+    pub fn class_is_leaves(&self) -> bool {
+        self.class_is("net.minecraft.world.level.block.LeavesBlock")
+    }
+
+    /// Whether the block's class is `name` or extends it.
+    fn class_is(&self, name: &str) -> bool {
+        let mut class = Some(Block::data(self.get_block()).class());
+        while let Some(current) = class {
+            if current.name == name {
+                return true;
+            }
+            class = current.parent;
+        }
+        false
+    }
+
+    fn check_render_ported(&self, method: &str) {
+        let overriding = RENDER_OVERRIDES
+            .iter()
+            .find(|(name, _)| *name == method)
+            .map_or(&[][..], |(_, classes)| *classes);
+        let mut class = Some(Block::data(self.get_block()).class());
+        while let Some(current) = class {
+            assert!(
+                !overriding.contains(&current.name),
+                "{method} of {} ({}) isn't ported",
+                self.get_block(),
+                current.name
+            );
+            class = current.parent;
+        }
+    }
+
+    /// `getOcclusionShape()`: the block's `getOcclusionShape`, its shape in an empty level, or
+    /// nothing for a block that can't occlude.
+    pub fn get_occlusion_shape(&self) -> VoxelShape {
+        if !self.can_occlude() {
+            return Shapes::empty();
+        }
+        self.check_render_ported("getOcclusionShape");
+        self.get_shape_in(
+            &EmptyBlockGetter,
+            &BlockPos::ZERO,
+            &collision_context::empty(),
+        )
+    }
+
+    /// `isSolidRender()`: whether the occlusion shape is the whole block.
+    pub fn is_solid_render(&self) -> bool {
+        Block::is_shape_full_block(&self.get_occlusion_shape())
+    }
+
+    /// `getFaceOcclusionShape`: nothing and the whole block are the shared constants, which the
+    /// renderer tells apart by reference.
+    pub fn get_face_occlusion_shape(&self, direction: Direction) -> VoxelShape {
+        let occlusion_shape = self.get_occlusion_shape();
+        if occlusion_shape.is_empty() {
+            Shapes::empty()
+        } else if Block::is_shape_full_block(&occlusion_shape) {
+            Shapes::block()
+        } else {
+            occlusion_shape.get_face_shape(direction)
+        }
+    }
+
+    pub fn propagates_skylight_down(&self) -> bool {
+        self.check_render_ported("propagatesSkylightDown");
+        if self.class_is("net.minecraft.world.level.block.TintedGlassBlock") {
+            return false;
+        }
+        if self.class_is("net.minecraft.world.level.block.TransparentBlock") {
+            return true;
+        }
+        if self.class_is("net.minecraft.world.level.block.BarrierBlock")
+            || self.class_is("net.minecraft.world.level.block.LightBlock")
+        {
+            return self.get_fluid_state().is_empty();
+        }
+        !Block::is_shape_full_block(&self.get_shape_in(
+            &EmptyBlockGetter,
+            &BlockPos::ZERO,
+            &collision_context::empty(),
+        )) && self.get_fluid_state().is_empty()
+    }
+
+    pub fn get_light_dampening(&self) -> i32 {
+        if self.class_is("net.minecraft.world.level.block.TintedGlassBlock") {
+            return 15;
+        }
+        if self.class_is("net.minecraft.world.level.block.LeavesBlock") {
+            return 1;
+        }
+        if self.is_solid_render() {
+            15
+        } else if self.propagates_skylight_down() {
+            0
+        } else {
+            1
+        }
+    }
+
+    pub fn is_light_permeable(&self) -> bool {
+        !self.is_solid_render() || self.get_light_dampening() == 0
+    }
+
+    pub fn get_shade_brightness(&self, level: &dyn BlockGetter, pos: &BlockPos) -> f32 {
+        self.check_render_ported("getShadeBrightness");
+        if self.class_is("net.minecraft.world.level.block.TransparentBlock")
+            || self.class_is("net.minecraft.world.level.block.BarrierBlock")
+            || self.class_is("net.minecraft.world.level.block.LightBlock")
+            || self.class_is("net.minecraft.world.level.block.StructureVoidBlock")
+        {
+            return 1.0;
+        }
+        if self.class_is("net.minecraft.world.level.block.MudBlock")
+            || self.class_is("net.minecraft.world.level.block.SoulSandBlock")
+        {
+            return 0.2;
+        }
+        if self.is_collision_shape_full_block(level, pos) {
+            0.2
+        } else {
+            1.0
+        }
+    }
+
+    pub fn get_render_shape(&self) -> RenderShape {
+        self.check_render_ported("getRenderShape");
+        let invisible = [
+            "net.minecraft.world.level.block.AirBlock",
+            "net.minecraft.world.level.block.BarrierBlock",
+            "net.minecraft.world.level.block.LiquidBlock",
+            "net.minecraft.world.level.block.LightBlock",
+            "net.minecraft.world.level.block.StructureVoidBlock",
+        ];
+        if invisible.iter().any(|class| self.class_is(class)) {
+            RenderShape::INVISIBLE
+        } else {
+            RenderShape::MODEL
+        }
+    }
+
+    /// `skipRendering`: whether a face toward this neighbour is left out whatever the shapes say.
+    pub fn skip_rendering(&self, neighbor_state: BlockState, direction: Direction) -> bool {
+        self.check_render_ported("skipRendering");
+        if self.class_is("net.minecraft.world.level.block.HalfTransparentBlock")
+            || self.class_is("net.minecraft.world.level.block.PowderSnowBlock")
+        {
+            return neighbor_state.is(self.get_block());
+        }
+        if self.class_is("net.minecraft.world.level.block.LeavesBlock") {
+            return !crate::net::minecraft::world::level::block::leaves_block::LeavesBlock::cutout_leaves()
+                && neighbor_state.class_is("net.minecraft.world.level.block.LeavesBlock");
+        }
+        if self.class_is("net.minecraft.world.level.block.MangroveRootsBlock") {
+            return neighbor_state
+                .is(crate::net::minecraft::world::level::block::blocks::Blocks::MANGROVE_ROOTS)
+                && direction.get_axis() == Axis::Y;
+        }
+        false
+    }
+
+    /// `getSeed`: the position's, which the beds, doors and double plants take from the half the
+    /// two share.
+    pub fn get_seed(&self, pos: &BlockPos) -> i64 {
+        assert!(
+            !self.class_is("net.minecraft.world.level.block.AbstractBedBlock")
+                && !self.class_is("net.minecraft.world.level.block.DoorBlock")
+                && !self.class_is("net.minecraft.world.level.block.DoublePlantBlock"),
+            "getSeed of {} isn't ported",
+            self.get_block()
+        );
+        crate::net::minecraft::util::mth::Mth::get_seed_vec3i(pos)
+    }
+
+    /// `getOffset`: nothing for a block without an offset function, whose functions aren't
+    /// ported yet.
+    pub fn get_offset(&self, _pos: &BlockPos) -> crate::net::minecraft::world::phys::vec3::Vec3 {
+        assert!(
+            !self.has_offset_function(),
+            "the offset function of {} isn't ported",
+            self.get_block()
+        );
+        crate::net::minecraft::world::phys::vec3::Vec3::ZERO
+    }
+}
+
+/// `RenderShape`: whether a state's model is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RenderShape {
+    INVISIBLE,
+    MODEL,
 }
 
 /// `EmptyBlockGetter.INSTANCE`: air everywhere, which shapes are cached with.

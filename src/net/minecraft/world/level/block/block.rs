@@ -20,6 +20,7 @@ use std::any::Any;
 use std::fmt;
 use std::ops::Deref;
 
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::id_mapper::IdMapper;
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks, REGISTRY};
 use crate::net::minecraft::world::level::block::state::block_behaviour::{
@@ -244,6 +245,34 @@ impl Block {
             current = candidate.parent;
         }
         false
+    }
+
+    /// Whether a state's face toward `direction` shows past its neighbour there. Java caches the
+    /// shapes' answer by the pair of shapes (`OCCLUSION_CACHE`), which only saves the work.
+    pub fn should_render_face(
+        state: BlockState,
+        neighbor_state: BlockState,
+        direction: Direction,
+    ) -> bool {
+        let occluder = neighbor_state.get_face_occlusion_shape(direction.get_opposite());
+        if occluder == Shapes::block() {
+            return false;
+        }
+
+        if state.skip_rendering(neighbor_state, direction) {
+            return false;
+        }
+
+        if occluder == Shapes::empty() {
+            return true;
+        }
+
+        let shape = state.get_face_occlusion_shape(direction);
+        if shape == Shapes::empty() {
+            return true;
+        }
+
+        Shapes::join_is_not_empty(&shape, &occluder, BooleanOp::ONLY_FIRST)
     }
 
     /// Whether the shape is the whole block, voxel for voxel.
