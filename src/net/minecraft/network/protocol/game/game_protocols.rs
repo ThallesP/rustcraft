@@ -31,12 +31,23 @@ use crate::net::minecraft::network::protocol::cookie::serverbound_cookie_respons
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
 use crate::net::minecraft::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_accept_teleportation_packet::ServerboundAcceptTeleportationPacket;
@@ -390,7 +401,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_CHANGE_DIFFICULTY,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_CHANGE_DIFFICULTY),
+                ClientboundChangeDifficultyPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_CHUNK_BATCH_FINISHED,
@@ -526,7 +537,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_INITIALIZE_BORDER,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_INITIALIZE_BORDER),
+                ClientboundInitializeBorderPacket::STREAM_CODEC,
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_KEEP_ALIVE,
@@ -610,7 +621,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_PLAYER_ABILITIES,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_PLAYER_ABILITIES),
+                ClientboundPlayerAbilitiesPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_PLAYER_CHAT,
@@ -734,11 +745,11 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_CHUNK_CACHE_CENTER,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_CHUNK_CACHE_CENTER),
+                ClientboundSetChunkCacheCenterPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_CHUNK_CACHE_RADIUS,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_CHUNK_CACHE_RADIUS),
+                ClientboundSetChunkCacheRadiusPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_CURSOR_ITEM,
@@ -770,15 +781,15 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_EXPERIENCE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_EXPERIENCE),
+                ClientboundSetExperiencePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_HEALTH,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_HEALTH),
+                ClientboundSetHealthPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_HELD_SLOT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_HELD_SLOT),
+                ClientboundSetHeldSlotPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_OBJECTIVE,
@@ -802,7 +813,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_SIMULATION_DISTANCE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_SIMULATION_DISTANCE),
+                ClientboundSetSimulationDistancePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_SUBTITLE_TEXT,
@@ -870,11 +881,11 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_TICKING_STATE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_TICKING_STATE),
+                ClientboundTickingStatePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_TICKING_STEP,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_TICKING_STEP),
+                ClientboundTickingStepPacket::STREAM_CODEC,
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_TRANSFER,

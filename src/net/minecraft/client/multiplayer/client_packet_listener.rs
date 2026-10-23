@@ -2,11 +2,14 @@
 //!
 //! Not ported yet: nearly all of it. The game protocol's packets it handles so far are the ones a
 //! join needs: the login, the teleports, bundles, the chunk batches (the chunks themselves are the
-//! world track's), the game events (only `LEVEL_CHUNKS_LOAD_START` does anything yet) and the
-//! return to configuration, with the common ones. Every other packet is `Unported`, and answers
-//! nothing. Also not ported: chat signing, the command tree (`sendCommand` sends every command
-//! unsigned, which is what a command without signed arguments is), recipes, advancements, the
-//! scoreboard, telemetry and the debug subscriptions.
+//! world track's), the chunk cache's radius, the simulation distance, the game events (only
+//! `LEVEL_CHUNKS_LOAD_START` does anything yet) and the return to configuration, with the common
+//! ones. The chunk cache's center, the player's abilities, health, experience and held slot, the
+//! difficulty, the world border and the tick rate are read too, and their handlers leave what they
+//! set (the chunk storage's, the player's, the level's) for the tracks that port it. Every other
+//! packet is `Unported`, and answers nothing. Also not ported: chat signing, the command tree
+//! (`sendCommand` sends every command unsigned, which is what a command without signed arguments
+//! is), recipes, advancements, the scoreboard, telemetry and the debug subscriptions.
 //!
 //! Java's level is the game's (`minecraft.level`), which the listener makes on login, and the
 //! listener reads it from there. The player's connection, and the game mode's, is this listener.
@@ -35,12 +38,23 @@ use crate::net::minecraft::network::protocol::configuration::client_configuratio
 use crate::net::minecraft::network::protocol::configuration::configuration_protocols::ConfigurationProtocols;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_held_slot_packet::ClientboundSetHeldSlotPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_distance_packet::ClientboundSetSimulationDistancePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_accept_teleportation_packet::ServerboundAcceptTeleportationPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_chat_command_packet::ServerboundChatCommandPacket;
@@ -474,5 +488,181 @@ impl ClientGamePacketListener for ClientPacketListener {
             self.chunk_batch_size_calculator
                 .get_desired_chunks_per_tick(),
         ));
+    }
+
+    fn handle_change_difficulty(&mut self, packet: &ClientboundChangeDifficultyPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java sets the level data's difficulty and whether it's locked, and tells a screen that shows
+        // them; the level data is the world track's, and the screens aren't ported.
+        let _ = packet;
+    }
+
+    fn handle_initialize_border(&mut self, packet: &ClientboundInitializeBorderPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java sets up the level's `WorldBorder`, the world track's, which isn't ported yet.
+        let _ = packet;
+    }
+
+    fn handle_player_abilities(&mut self, packet: &ClientboundPlayerAbilitiesPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java copies them into the player's `Abilities`, which the player track ports with movement.
+        let _ = packet;
+    }
+
+    fn handle_set_chunk_cache_center(&mut self, packet: &ClientboundSetChunkCacheCenterPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java moves the level's chunk storage (`ClientChunkCache.updateViewCenter`), the world
+        // track's, which isn't ported yet.
+        let _ = packet;
+    }
+
+    fn handle_set_chunk_cache_radius(&mut self, packet: &ClientboundSetChunkCacheRadiusPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.server_chunk_radius = packet.get_radius();
+        minecraft
+            .options
+            .borrow_mut()
+            .set_server_render_distance(self.server_chunk_radius);
+        // Java also resizes the level's chunk storage (`ClientChunkCache.updateViewRadius`), the world
+        // track's, which isn't ported yet.
+    }
+
+    fn handle_set_experience(&mut self, packet: &ClientboundSetExperiencePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java sets the player's experience (`setExperienceValues`), which the player track ports.
+        let _ = packet;
+    }
+
+    fn handle_set_health(&mut self, packet: &ClientboundSetHealthPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java sets the player's health (`hurtTo`) and food data, which the player track ports.
+        let _ = packet;
+    }
+
+    fn handle_set_held_slot(&mut self, packet: &ClientboundSetHeldSlotPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java selects the slot in the player's inventory when it's a hotbar slot; the inventory
+        // isn't ported yet.
+        let _ = packet;
+    }
+
+    fn handle_set_simulation_distance(&mut self, packet: &ClientboundSetSimulationDistancePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.server_simulation_distance = packet.simulation_distance();
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level.set_server_simulation_distance(self.server_simulation_distance);
+        }
+    }
+
+    fn handle_ticking_state(&mut self, packet: &ClientboundTickingStatePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java sets the level's `TickRateManager`, whose rate the game's ticks follow; it isn't ported
+        // yet, so the client ticks 20 times a second, the rate every server starts at.
+        let _ = packet;
+    }
+
+    fn handle_ticking_step(&mut self, packet: &ClientboundTickingStepPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java sets the level's `TickRateManager`'s frozen ticks to run, which isn't ported yet.
+        let _ = packet;
     }
 }

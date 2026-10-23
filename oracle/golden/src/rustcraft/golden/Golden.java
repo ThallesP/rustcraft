@@ -99,6 +99,18 @@ import net.minecraft.network.protocol.cookie.CookiePacketTypes;
 import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
 import net.minecraft.network.protocol.handshake.ClientIntent;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
+import net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket;
+import net.minecraft.network.protocol.game.ClientboundInitializeBorderPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
+import net.minecraft.network.protocol.game.ClientboundSetExperiencePacket;
+import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
+import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket;
+import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
+import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
+import net.minecraft.world.Difficulty;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
 import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
@@ -1131,6 +1143,24 @@ public final class Golden {
         InstanceSuite.every(PositionMoveRotation.class),
         // Its set of relatives is an EnumSet, whose hashCode adds its constants' identity hashes.
         InstanceSuite.every(ClientboundPlayerPositionPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        // The game protocol's clientbound packets the server sends while the player joins, and the difficulty.
+        InstanceSuite.every(ClientboundSetChunkCacheCenterPacket.class),
+        InstanceSuite.every(ClientboundSetChunkCacheRadiusPacket.class),
+        InstanceSuite.every(ClientboundSetSimulationDistancePacket.class),
+        InstanceSuite.every(ClientboundSetHealthPacket.class),
+        InstanceSuite.every(ClientboundSetExperiencePacket.class),
+        InstanceSuite.every(ClientboundSetHeldSlotPacket.class),
+        InstanceSuite.every(ClientboundTickingStatePacket.class),
+        InstanceSuite.every(ClientboundTickingStepPacket.class),
+        InstanceSuite.every(ClientboundPlayerAbilitiesPacket.class),
+        InstanceSuite.every(ClientboundInitializeBorderPacket.class),
+        InstanceSuite.every(Difficulty.class)
+            .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/Difficulty;", names(Difficulty.values()))
+            .extraInputs(
+                "byName(Ljava/lang/String;)Lnet/minecraft/world/Difficulty;",
+                each(List.of("peaceful", "easy", "normal", "hard", "NORMAL", "Normal", "", "normal ", "custom"))
+            ),
+        InstanceSuite.every(ClientboundChangeDifficultyPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
         // The registries the server sends, by their keys, and their elements.
         InstanceSuite.every(ResourceKey.class),
         new StaticSuite(Registries.class),

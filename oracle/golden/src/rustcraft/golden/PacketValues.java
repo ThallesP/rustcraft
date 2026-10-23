@@ -68,6 +68,18 @@ import net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket;
 import net.minecraft.network.protocol.cookie.CookiePacketTypes;
 import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
+import net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket;
+import net.minecraft.network.protocol.game.ClientboundInitializeBorderPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
+import net.minecraft.network.protocol.game.ClientboundSetExperiencePacket;
+import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
+import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket;
+import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
+import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
+import net.minecraft.world.Difficulty;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
 import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
@@ -134,6 +146,7 @@ final class PacketValues {
     static final Values.Generator CLIENT_INTENT = new CoreValues.Constants<>(ClientIntent.class);
     static final Values.Generator CHAT_VISIBLITY = new CoreValues.Constants<>(ChatVisiblity.class);
     static final Values.Generator HUMANOID_ARM = new CoreValues.Constants<>(HumanoidArm.class);
+    static final Values.Generator DIFFICULTY = new CoreValues.Constants<>(Difficulty.class);
     static final Values.Generator PARTICLE_STATUS = new CoreValues.Constants<>(ParticleStatus.class);
     static final Values.Generator RESOURCE_PACK_ACTION = new CoreValues.Constants<>(ServerboundResourcePackPacket.Action.class);
     static final Values.Generator RELATIVE = new CoreValues.Constants<>(Relative.class);
@@ -488,6 +501,45 @@ final class PacketValues {
             fields -> new ClientboundPlayerPositionPacket((Integer)fields[0], (PositionMoveRotation)fields[1], relativeSet(fields[2])), List.of(),
             INTS, changes, RELATIVE_SETS
         );
+
+        // The game protocol's clientbound packets the server sends while the player joins, which hold numbers, flags and
+        // the difficulty. The abilities and the world border are read from a buffer, since their public constructors read
+        // a player's Abilities and a WorldBorder.
+        packet(
+            ClientboundSetChunkCacheCenterPacket.class, fields -> new ClientboundSetChunkCacheCenterPacket((Integer)fields[0], (Integer)fields[1]),
+            List.of("x", "z"), INTS, INTS
+        );
+        packet(ClientboundSetChunkCacheRadiusPacket.class, fields -> new ClientboundSetChunkCacheRadiusPacket((Integer)fields[0]), List.of("radius"), INTS);
+        packet(ClientboundSetSimulationDistancePacket.class, fields -> new ClientboundSetSimulationDistancePacket((Integer)fields[0]), List.of(), INTS);
+        packet(
+            ClientboundSetHealthPacket.class, fields -> new ClientboundSetHealthPacket((Float)fields[0], (Integer)fields[1], (Float)fields[2]),
+            List.of("health", "food", "saturation"), FLOATS, INTS, FLOATS
+        );
+        packet(
+            ClientboundSetExperiencePacket.class,
+            fields -> new ClientboundSetExperiencePacket((Float)fields[0], (Integer)fields[1], (Integer)fields[2]),
+            List.of("experienceProgress", "totalExperience", "experienceLevel"), FLOATS, INTS, INTS
+        );
+        packet(ClientboundSetHeldSlotPacket.class, fields -> new ClientboundSetHeldSlotPacket((Integer)fields[0]), List.of(), INTS);
+        packet(
+            ClientboundTickingStatePacket.class, fields -> new ClientboundTickingStatePacket((Float)fields[0], (Boolean)fields[1]), List.of(), FLOATS,
+            BOOLEANS
+        );
+        packet(ClientboundTickingStepPacket.class, fields -> new ClientboundTickingStepPacket((Integer)fields[0]), List.of(), INTS);
+        packet(
+            ClientboundChangeDifficultyPacket.class, fields -> new ClientboundChangeDifficultyPacket((Difficulty)fields[0], (Boolean)fields[1]),
+            List.of(), DIFFICULTY, BOOLEANS
+        );
+        packet(
+            ClientboundPlayerAbilitiesPacket.class, PacketValues::abilitiesPacket,
+            List.of("invulnerable", "isFlying", "canFly", "instabuild", "flyingSpeed", "walkingSpeed"), BOOLEANS, BOOLEANS, BOOLEANS, BOOLEANS,
+            FLOATS, FLOATS
+        );
+        packet(
+            ClientboundInitializeBorderPacket.class, PacketValues::borderPacket,
+            List.of("newCenterX", "newCenterZ", "oldSize", "newSize", "lerpTime", "newAbsoluteMaxSize", "warningBlocks", "warningTime"), DOUBLES,
+            DOUBLES, DOUBLES, DOUBLES, LONGS, INTS, INTS, INTS
+        );
     }
 
     private PacketValues() {
@@ -508,6 +560,9 @@ final class PacketValues {
         }
         if (type == HumanoidArm.class) {
             return HUMANOID_ARM;
+        }
+        if (type == Difficulty.class) {
+            return DIFFICULTY;
         }
         if (type == ParticleStatus.class) {
             return PARTICLE_STATUS;
@@ -902,6 +957,32 @@ final class PacketValues {
     }
 
     // A key packet as a server reads it, since its public constructor encrypts with Crypt.
+    // The packet its reader makes of the flags and speeds: the flags in a byte's low bits.
+    private static ClientboundPlayerAbilitiesPacket abilitiesPacket(final Object[] fields) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        int bitfield = 0;
+        for (int i = 0; i < 4; i++) {
+            bitfield |= (Boolean)fields[i] ? 1 << i : 0;
+        }
+        buffer.writeByte(bitfield);
+        buffer.writeFloat((Float)fields[4]);
+        buffer.writeFloat((Float)fields[5]);
+        return ClientboundPlayerAbilitiesPacket.STREAM_CODEC.decode(buffer);
+    }
+
+    // The packet its reader makes of the border's fields, in their order.
+    private static ClientboundInitializeBorderPacket borderPacket(final Object[] fields) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        for (int i = 0; i < 4; i++) {
+            buffer.writeDouble((Double)fields[i]);
+        }
+        buffer.writeVarLong((Long)fields[4]);
+        for (int i = 5; i < 8; i++) {
+            buffer.writeVarInt((Integer)fields[i]);
+        }
+        return ClientboundInitializeBorderPacket.STREAM_CODEC.decode(buffer);
+    }
+
     private static ServerboundKeyPacket keyPacket(final byte[] keybytes, final byte[] encryptedChallenge) {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeByteArray(keybytes);
