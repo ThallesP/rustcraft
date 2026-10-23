@@ -42,6 +42,8 @@ use crate::org::joml::matrix4f::Matrix4f;
 const VERTEX_BUFFER_CAPACITY: i32 = 786432;
 
 pub struct GuiRenderer {
+    /// `StagedVertexBuffer.stagingBuffer`: the builder every frame's vertices are written into.
+    staging_buffer: ByteBufferBuilder,
     draws: Vec<Draw>,
     first_draw_index_after_blur: usize,
     gui_projection: Projection,
@@ -96,6 +98,7 @@ pub fn element_sort_comparator(
 impl GuiRenderer {
     pub fn new(device: &dyn GpuDevice) -> GuiRenderer {
         GuiRenderer {
+            staging_buffer: ByteBufferBuilder::new(VERTEX_BUFFER_CAPACITY),
             draws: Vec::new(),
             first_draw_index_after_blur: usize::MAX,
             gui_projection: Projection::new(),
@@ -131,19 +134,24 @@ impl GuiRenderer {
         // previousDraw, previousPipeline, previousTextureSetup and previousScissorArea: the last
         // draw this range appended, which an element joins when it shares them.
         let mut previous_draw: Option<usize> = None;
+        let GuiRenderer {
+            staging_buffer,
+            draws,
+            ..
+        } = self;
         render_state.for_each_element(
             |element_state| {
                 let pipeline = element_state.pipeline();
                 let texture_setup = element_state.texture_setup();
                 let scissor_area = element_state.scissor_area();
                 let joins = previous_draw.is_some_and(|index| {
-                    let previous = &self.draws[index];
+                    let previous = &draws[index];
                     Arc::ptr_eq(pipeline, &previous.pipeline)
                         && scissor_area == previous.scissor_area
                         && *texture_setup == previous.texture_setup
                 });
                 if !joins {
-                    self.draws.push(Draw {
+                    draws.push(Draw {
                         pipeline: Arc::clone(pipeline),
                         texture_setup: texture_setup.clone(),
                         scissor_area,
@@ -156,13 +164,13 @@ impl GuiRenderer {
                         index_count: 0,
                         vertex_offset: 0,
                     });
-                    previous_draw = Some(self.draws.len() - 1);
+                    previous_draw = Some(draws.len() - 1);
                 }
-                let draw = &mut self.draws[previous_draw.expect("a draw was appended")];
-                // getVertexBuilder: a builder per run of elements, whose mesh the draw appends.
-                let mut byte_buffer = ByteBufferBuilder::new(VERTEX_BUFFER_CAPACITY);
+                let draw = &mut draws[previous_draw.expect("a draw was appended")];
+                // getVertexBuilder: the elements' vertices in the staging buffer, which the
+                // draw's mesh copies out.
                 let mut builder =
-                    BufferBuilder::new(&mut byte_buffer, draw.primitive_topology, draw.format);
+                    BufferBuilder::new(staging_buffer, draw.primitive_topology, draw.format);
                 element_state.build_vertices(&mut builder);
                 if let Some(mesh) = builder.build() {
                     draw.vertices.extend_from_slice(mesh.vertex_buffer());
