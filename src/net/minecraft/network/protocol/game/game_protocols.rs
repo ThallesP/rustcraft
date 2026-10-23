@@ -30,6 +30,7 @@ use crate::net::minecraft::network::protocol::cookie::cookie_packet_types::Cooki
 use crate::net::minecraft::network::protocol::cookie::serverbound_cookie_response_packet::ServerboundCookieResponsePacket;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
@@ -347,8 +348,9 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
     ProtocolInfoBuilder::clientbound_protocol(ConnectionProtocol::PLAY, |builder| {
         builder
             .with_bundle_packet(
-                GamePacketTypes::CLIENTBOUND_BUNDLE_DELIMITER,
-                ClientboundBundleDelimiterPacket::STREAM_CODEC,
+                GamePacketTypes::CLIENTBOUND_BUNDLE,
+                ClientboundBundlePacket::new,
+                ClientboundBundleDelimiterPacket,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_ADD_ENTITY,

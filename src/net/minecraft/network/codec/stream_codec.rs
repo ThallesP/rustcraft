@@ -320,10 +320,20 @@ pub fn of_member<B, V>(
 /// Java throws `IllegalStateException`.
 pub fn unit<B, V: PartialEq + Clone + Debug>(
     instance: V,
-) -> impl StreamCodec<Buffer = B, Value = V> {
+) -> impl StreamCodec<Buffer = B, Value = V> + Clone {
     struct Unit<B, V> {
         instance: V,
         buffer: PhantomData<fn(&mut B)>,
+    }
+
+    // Derived, it would ask `B` to be `Clone` too.
+    impl<B, V: Clone> Clone for Unit<B, V> {
+        fn clone(&self) -> Unit<B, V> {
+            Unit {
+                instance: self.instance.clone(),
+                buffer: PhantomData,
+            }
+        }
     }
 
     impl<B, V: PartialEq + Clone + Debug> StreamCodec for Unit<B, V> {

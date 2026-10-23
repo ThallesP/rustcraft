@@ -1,5 +1,6 @@
 pub mod client_game_packet_listener;
 pub mod clientbound_bundle_delimiter_packet;
+pub mod clientbound_bundle_packet;
 pub mod clientbound_chunk_batch_finished_packet;
 pub mod clientbound_chunk_batch_start_packet;
 pub mod clientbound_game_event_packet;

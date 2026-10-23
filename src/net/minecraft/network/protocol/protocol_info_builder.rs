@@ -1,10 +1,9 @@
 //! net/minecraft/network/protocol/ProtocolInfoBuilder.java
 //!
 //! Not ported yet: `addPacket` with a `CodecModifier`, which only the game protocol's
-//! `set_creative_mode_slot` and `command_suggestion` use, and both are `Unported` so far; and the
-//! `BundlerInfo` that `withBundlePacket` makes, which comes with the connection's bundle packer.
-//! `withBundlePacket` adds the delimiter's codec like Java's. `HandshakeProtocols` checks the rest
-//! against vanilla, and `GameProtocols` the context protocols' details.
+//! `set_creative_mode_slot` and `command_suggestion` use, and both are `Unported` so far.
+//! `HandshakeProtocols` checks the rest against vanilla, and `GameProtocols` the context
+//! protocols' details.
 //!
 //! The context `C` of a protocol without one is Java's `Unit`, which is `()`. Java's anonymous
 //! `SimpleUnboundProtocol`, `UnboundProtocol` and `ProtocolInfo.Details` are `SimpleUnbound`,
@@ -15,8 +14,9 @@ use std::sync::Arc;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::net::minecraft::network::clientbound_packet_listener::ClientboundPacketListener;
-use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
+use crate::net::minecraft::network::codec::stream_codec::{self, StreamCodec};
 use crate::net::minecraft::network::connection_protocol::ConnectionProtocol;
+use crate::net::minecraft::network::protocol::bundler_info::{self, BundlerInfo};
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_flow::PacketFlow;
 use crate::net::minecraft::network::protocol::packet_type::PacketType;
@@ -34,6 +34,7 @@ pub struct ProtocolInfoBuilder<T: ?Sized, B, C> {
     protocol: ConnectionProtocol,
     flow: PacketFlow,
     codecs: Vec<CodecEntry<T, B, C>>,
+    bundler_info: Option<Arc<dyn BundlerInfo<T>>>,
 }
 
 impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send + Sync + 'static>
@@ -44,6 +45,7 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
             protocol,
             flow,
             codecs: Vec::new(),
+            bundler_info: None,
         }
     }
 
@@ -73,19 +75,28 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
         self
     }
 
-    /// The bundle delimiter's codec, the protocol's first packet (`StreamCodec.unit` of the
-    /// delimiter, which Java makes here).
-    pub fn with_bundle_packet<P, S>(
+    /// The protocol's bundles: packets of `bundler_packet`'s type, which `constructor` makes of
+    /// the packets between two `delimiter_packet`s. The delimiter's codec is the next id's,
+    /// `StreamCodec.unit` of it.
+    pub fn with_bundle_packet<P, D>(
         &mut self,
-        delimiter_type: &'static PacketType,
-        delimited_codec: S,
+        bundler_packet: &'static PacketType,
+        constructor: impl Fn(Vec<Box<dyn Packet<T>>>) -> P + Send + Sync + 'static,
+        delimiter_packet: D,
     ) -> &mut ProtocolInfoBuilder<T, B, C>
     where
         P: Packet<T>,
-        S: StreamCodec<Value = P> + Clone + Send + Sync + 'static,
-        B: AsMut<S::Buffer>,
+        D: Packet<T> + PartialEq + Clone,
     {
-        self.add_packet(delimiter_type, delimited_codec)
+        let delimiter_type = Packet::<T>::r#type(&delimiter_packet);
+        let delimited_codec = stream_codec::unit::<ByteBuf, D>(delimiter_packet);
+        self.add_packet(delimiter_type, delimited_codec);
+        self.bundler_info = Some(Arc::new(bundler_info::create_for_packet(
+            bundler_packet,
+            constructor,
+            delimiter_type,
+        )));
+        self
     }
 
     fn build_packet_codec(
@@ -126,6 +137,7 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
             codecs: self.codecs,
             context,
             details,
+            bundler_info: self.bundler_info,
         })
     }
 }
@@ -141,6 +153,7 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
             flow: self.flow,
             codecs: self.codecs,
             details,
+            bundler_info: self.bundler_info,
         })
     }
 
@@ -241,13 +254,15 @@ impl Details for BuiltDetails {
     }
 }
 
-/// What `buildUnbound(C)` makes, holding the builder's protocol, flow, codecs and context.
+/// What `buildUnbound(C)` makes, holding the builder's protocol, flow, codecs, bundles and
+/// context.
 struct SimpleUnbound<T: ?Sized, B, C> {
     protocol: ConnectionProtocol,
     flow: PacketFlow,
     codecs: Vec<CodecEntry<T, B, C>>,
     context: C,
     details: BuiltDetails,
+    bundler_info: Option<Arc<dyn BundlerInfo<T>>>,
 }
 
 impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send + Sync + 'static>
@@ -263,6 +278,7 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
                 &self.codecs,
                 &self.context,
             )),
+            bundler_info: self.bundler_info.clone(),
         })
     }
 }
@@ -273,12 +289,13 @@ impl<T: ?Sized, B, C> DetailsProvider for SimpleUnbound<T, B, C> {
     }
 }
 
-/// What `buildUnbound()` makes, holding the builder's protocol, flow and codecs.
+/// What `buildUnbound()` makes, holding the builder's protocol, flow, codecs and bundles.
 struct Unbound<T: ?Sized, B, C> {
     protocol: ConnectionProtocol,
     flow: PacketFlow,
     codecs: Vec<CodecEntry<T, B, C>>,
     details: BuiltDetails,
+    bundler_info: Option<Arc<dyn BundlerInfo<T>>>,
 }
 
 impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send + Sync + 'static>
@@ -294,6 +311,7 @@ impl<T: ?Sized + 'static, B: AsMut<ByteBuf> + Into<ByteBuf> + 'static, C: Send +
                 &self.codecs,
                 &context,
             )),
+            bundler_info: self.bundler_info.clone(),
         })
     }
 }
@@ -312,6 +330,7 @@ struct Implementation<L: ?Sized> {
     id: ConnectionProtocol,
     flow: PacketFlow,
     codec: PacketCodec<L>,
+    bundler_info: Option<Arc<dyn BundlerInfo<L>>>,
 }
 
 impl<L: ?Sized + 'static> ProtocolInfo<L> for Implementation<L> {
@@ -325,5 +344,9 @@ impl<L: ?Sized + 'static> ProtocolInfo<L> for Implementation<L> {
 
     fn codec(&self) -> &dyn StreamCodec<Buffer = ByteBuf, Value = Box<dyn Packet<L>>> {
         &*self.codec
+    }
+
+    fn bundler_info(&self) -> Option<Arc<dyn BundlerInfo<L>>> {
+        self.bundler_info.clone()
     }
 }

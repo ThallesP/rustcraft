@@ -3,14 +3,13 @@
 //! Not ported yet: encryption (`setEncryptionKey`, `CipherDecoder` and `CipherEncoder`), which
 //! online-mode servers turn on; the in-memory connections to an integrated server
 //! (`connectToLocalServer`, `fromChannel`, `configureInMemoryPipeline`); the server's
-//! side (`setListenerForServerboundHandshake`, sending a disconnect packet on a fault); the
-//! bundle packer the game protocol's `bundlerInfo` adds after the decoder, so a bundle's packets
-//! are handled one by one as they come; `validateListener`, which only catches a programming
+//! side (`setListenerForServerboundHandshake`, sending a disconnect packet on a fault, and the
+//! bundle unpacker its encoder needs); `validateListener`, which only catches a programming
 //! mistake; and the bandwidth debug monitor.
 //!
 //! Java's connection is the last handler of a Netty pipeline, which Netty runs on an event loop
-//! thread: the frame splitter, decompression, flow control, the packet decoder, and on the way
-//! out the packet encoder, compression and the length prepender. Here the pipeline is the
+//! thread: the frame splitter, decompression, flow control, the packet decoder and the bundle
+//! packer, and on the way out the packet encoder, compression and the length prepender. Here the pipeline is the
 //! connection's own, and so is the event loop, `run_event_loop`, which the game calls between
 //! its ticks (`EventLoopGroupHolder`): it reads what the socket has, splits it into frames, and
 //! decodes and hands each packet to the listener, the way Netty does, until the time it's given.
@@ -40,6 +39,7 @@ use crate::io::netty::buffer::unpooled;
 use crate::net::minecraft::network::compression_decoder::CompressionDecoder;
 use crate::net::minecraft::network::compression_encoder::CompressionEncoder;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
+use crate::net::minecraft::network::packet_bundle_packer::PacketBundlePacker;
 use crate::net::minecraft::network::packet_decoder::PacketDecoder;
 use crate::net::minecraft::network::packet_encoder::PacketEncoder;
 use crate::net::minecraft::network::packet_listener::PacketListener;
@@ -107,30 +107,49 @@ struct Channel {
     prepender: Varint21LengthFieldPrepender,
 }
 
-/// The pipeline's `decoder`: a protocol's `PacketDecoder`, and the listener it was set up for.
+/// The pipeline's `decoder`: a protocol's `PacketDecoder`, the `bundler` after it when the
+/// protocol has bundles, and the listener they were set up for.
 trait Inbound {
-    fn decode(&self, frame: &mut ByteBuf) -> Box<dyn Received>;
+    /// Decodes a frame's packet, and says whether it was terminal and what the handlers after
+    /// the decoder hand on: the packet, or nothing while the bundle packer gathers a bundle, or
+    /// the bundle.
+    fn decode(&self, frame: &mut ByteBuf) -> (bool, Vec<Box<dyn Received>>);
 }
 
 /// A packet the decoder read, on its way to the listener.
 trait Received {
-    fn is_terminal(&self) -> bool;
-
     /// `channelRead0`: hands the packet to the listener, unless it's done with messages.
     fn handle(self: Box<Self>) -> bool;
 }
 
 struct InboundProtocol<T: ?Sized> {
     decoder: PacketDecoder<T>,
+    bundler: Option<RefCell<PacketBundlePacker<T>>>,
     listener: Rc<RefCell<T>>,
 }
 
 impl<T: PacketListener + ?Sized + 'static> Inbound for InboundProtocol<T> {
-    fn decode(&self, frame: &mut ByteBuf) -> Box<dyn Received> {
-        Box::new(ReceivedPacket {
-            packet: self.decoder.decode(frame),
-            listener: Rc::clone(&self.listener),
-        })
+    fn decode(&self, frame: &mut ByteBuf) -> (bool, Vec<Box<dyn Received>>) {
+        let packet = self.decoder.decode(frame);
+        let terminal = packet.is_terminal();
+        let packets = match &self.bundler {
+            Some(bundler) => {
+                let mut out = Vec::new();
+                bundler.borrow_mut().decode(packet, &mut out);
+                out
+            }
+            None => vec![packet],
+        };
+        let received = packets
+            .into_iter()
+            .map(|packet| {
+                Box::new(ReceivedPacket {
+                    packet,
+                    listener: Rc::clone(&self.listener),
+                }) as Box<dyn Received>
+            })
+            .collect();
+        (terminal, received)
     }
 }
 
@@ -140,10 +159,6 @@ struct ReceivedPacket<T: ?Sized> {
 }
 
 impl<T: PacketListener + ?Sized + 'static> Received for ReceivedPacket<T> {
-    fn is_terminal(&self) -> bool {
-        self.packet.is_terminal()
-    }
-
     fn handle(self: Box<Self>) -> bool {
         let packet: &dyn Any = &*self.packet;
         if self.listener.borrow().should_handle_message(packet) {
@@ -309,8 +324,8 @@ impl Connection {
     /// terminal packet takes the decoder out before it's handled, so the packets after it wait
     /// for the next protocol (`ProtocolSwapHandler.handleInboundTerminalPacket`).
     fn channel_read(&self, decoder: Rc<dyn Inbound>, mut frame: ByteBuf) {
-        let packet = decoder.decode(&mut frame);
-        if packet.is_terminal() {
+        let (terminal, packets) = decoder.decode(&mut frame);
+        if terminal {
             let mut current = self.decoder.borrow_mut();
             if current
                 .as_ref()
@@ -322,8 +337,10 @@ impl Connection {
             }
         }
 
-        if self.is_connected() && packet.handle() {
-            self.received_packets.set(self.received_packets.get() + 1);
+        for packet in packets {
+            if self.is_connected() && packet.handle() {
+                self.received_packets.set(self.received_packets.get() + 1);
+            }
         }
     }
 
@@ -340,8 +357,12 @@ impl Connection {
 
         *self.packet_listener.borrow_mut() = Some(Rc::new(Listener(Rc::clone(&packet_listener))));
         *self.disconnect_listener.borrow_mut() = None;
+        let bundler = protocol
+            .bundler_info()
+            .map(|bundler_info| RefCell::new(PacketBundlePacker::new(bundler_info)));
         *self.decoder.borrow_mut() = Some(Rc::new(InboundProtocol {
             decoder: PacketDecoder::new(protocol),
+            bundler,
             listener: packet_listener,
         }));
         self.set_auto_read(true);

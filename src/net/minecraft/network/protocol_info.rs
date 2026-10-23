@@ -1,14 +1,13 @@
 //! net/minecraft/network/ProtocolInfo.java
 //!
-//! Not ported yet: `bundlerInfo()`, which only the game protocol has, and comes with it.
-//!
 //! `Details.PacketVisitor` is a functional interface, so `list_packets` takes a closure.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
 use crate::net::minecraft::network::connection_protocol::ConnectionProtocol;
+use crate::net::minecraft::network::protocol::bundler_info::BundlerInfo;
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_flow::PacketFlow;
 use crate::net::minecraft::network::protocol::packet_type::PacketType;
@@ -25,6 +24,10 @@ pub trait ProtocolInfo<T: ?Sized>: Send + Sync {
 
     /// Reads and writes the protocol's packets, each its id then its own codec's bytes.
     fn codec(&self) -> &dyn StreamCodec<Buffer = ByteBuf, Value = Box<dyn Packet<T>>>;
+
+    /// How the protocol's bundles are told apart, for a protocol that has them (the game
+    /// protocol's clientbound side). Java hands out the shared object; here a clone of its `Arc`.
+    fn bundler_info(&self) -> Option<Arc<dyn BundlerInfo<T>>>;
 }
 
 // Java shares protocols by reference: a connection's decoder holds a static one
@@ -41,6 +44,10 @@ impl<T: ?Sized, P: ProtocolInfo<T> + ?Sized> ProtocolInfo<T> for &P {
 
     fn codec(&self) -> &dyn StreamCodec<Buffer = ByteBuf, Value = Box<dyn Packet<T>>> {
         (**self).codec()
+    }
+
+    fn bundler_info(&self) -> Option<Arc<dyn BundlerInfo<T>>> {
+        (**self).bundler_info()
     }
 }
 

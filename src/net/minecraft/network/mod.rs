@@ -7,6 +7,7 @@ pub mod connection_protocol;
 pub mod disconnection_details;
 pub mod friendly_byte_buf;
 pub mod lp_vec3;
+pub mod packet_bundle_packer;
 pub mod packet_decoder;
 pub mod packet_encoder;
 pub mod packet_listener;

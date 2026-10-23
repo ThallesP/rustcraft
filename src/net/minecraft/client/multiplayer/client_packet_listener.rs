@@ -1,8 +1,8 @@
 //! net/minecraft/client/multiplayer/ClientPacketListener.java
 //!
 //! Not ported yet: nearly all of it. The game protocol's packets it handles so far are the ones a
-//! join needs: the login, the teleports, the chunk batches (the chunks themselves are the world
-//! track's), the game events (only `LEVEL_CHUNKS_LOAD_START` does anything yet) and the
+//! join needs: the login, the teleports, bundles, the chunk batches (the chunks themselves are the
+//! world track's), the game events (only `LEVEL_CHUNKS_LOAD_START` does anything yet) and the
 //! return to configuration, with the common ones. Every other packet is `Unported`, and answers
 //! nothing. Also not ported: chat signing, the command tree (`sendCommand` sends every command
 //! unsigned, which is what a command without signed arguments is), recipes, advancements, the
@@ -34,6 +34,7 @@ use crate::net::minecraft::network::packet_listener::PacketListener;
 use crate::net::minecraft::network::protocol::configuration::client_configuration_packet_listener::ClientConfigurationPacketListener;
 use crate::net::minecraft::network::protocol::configuration::configuration_protocols::ConfigurationProtocols;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
+use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
@@ -435,6 +436,25 @@ impl ClientGamePacketListener for ClientPacketListener {
             .setup_inbound_protocol(Box::new(&***ConfigurationProtocols::CLIENTBOUND), listener);
         connection.send::<dyn ServerGamePacketListener>(ServerboundConfigurationAcknowledgedPacket);
         connection.setup_outbound_protocol(Box::new(&***ConfigurationProtocols::SERVERBOUND));
+    }
+
+    /// Its packets one after the other, on the game thread: the ones Java handles on the Netty
+    /// thread too, since they're the bundle's.
+    fn handle_bundle_packet(&mut self, packet: &ClientboundBundlePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+
+        for sub_packet in packet.sub_packets() {
+            sub_packet.handle(self);
+        }
     }
 
     /// On the Netty thread, like Java's.

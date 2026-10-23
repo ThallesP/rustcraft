@@ -5,7 +5,7 @@
 //! its `protocol()`, which comes with `PacketListener`'s.
 
 use crate::net::minecraft::network::protocol::common::client_common_packet_listener::ClientCommonPacketListener;
-use crate::net::minecraft::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
@@ -28,11 +28,7 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
 
     fn handle_chunk_batch_finished(&mut self, packet: &ClientboundChunkBatchFinishedPacket);
 
-    /// Java's delimiter is never handled: the bundle packer takes it out of the stream. The
-    /// packer isn't ported yet, so the connection hands it on, and it does nothing.
-    fn handle_bundle_delimiter(&mut self, packet: &ClientboundBundleDelimiterPacket) {
-        let _ = packet;
-    }
+    fn handle_bundle_packet(&mut self, packet: &ClientboundBundlePacket);
 }
 
 #[cfg(test)]
@@ -63,5 +59,13 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
 
     fn handle_chunk_batch_finished(&mut self, packet: &ClientboundChunkBatchFinishedPacket) {
         self.record("handleChunkBatchFinished", packet);
+    }
+
+    // It has no golden cases (its sub-packets are any of the protocol's), so the recorder only
+    // records its type.
+    fn handle_bundle_packet(&mut self, packet: &ClientboundBundlePacket) {
+        let r#type =
+            crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
+        self.record("handleBundlePacket", r#type);
     }
 }
