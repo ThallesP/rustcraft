@@ -97,6 +97,13 @@ The network codecs are objects Java builds out of other objects and lambdas, so 
 
 - `mapStream(Function)`, which wraps a connection's `ByteBuf` in the buffer a codec reads (`FriendlyByteBuf::new`) and shares its bytes, takes the buffer for the call and hands it back after (`From<FriendlyByteBuf> for ByteBuf` is Java's `unwrap()`), even when the call panics, so a throwing read leaves the buffer where Java's does.
 
+## DataFixerUpper
+
+DataFixerUpper (the game's codecs library, decompiled by `setup_vanilla.py` into `vanilla/<version>/src/com/mojang/`) is ported like the game's code, under `src/com/mojang/serialization/` and `src/com/mojang/datafixers/`, as far as the game's codecs reach.
+
+- `DataResult` is an enum of its two records, `Success` and `Error`. An error's message is the string, made when the error is, where Java keeps a `Supplier` it calls when asked; they only differ when what the supplier reads changes later, which a ported caller's must not. The applicative machinery (`App`, `K1`, `Applicative`, `DataResult.Instance`) isn't ported: `ap`, `apply2`, `apply2stable` and `apply3` are written out the way its default methods curry the function and apply it to each argument in turn, which makes the errors' messages join in the arguments' reverse order.
+- `Lifecycle` is an enum, compared by value, where Java's are instances compared by reference; only `setLifecycle`'s choice to keep the result it has tells them apart, with the same outcome.
+
 ## Packets and protocols
 
 - `Packet<T>` is a trait for the listener `T` that handles the packet, and a protocol's codec reads and writes `Box<dyn Packet<L>>` for its listener `L`. Java's protocols take packets of the listener's parents too (`Packet<? super L>`, like the cookie packets in login), so a packet implements `Packet<L>` for every `L` of its kind: `impl<L: ClientLoginPacketListener + ?Sized> Packet<L> for ClientboundHelloPacket`. Calling a `Packet` method on a concrete packet then names the listener: `Packet::<dyn ServerHandshakePacketListener>::r#type(packet)`.

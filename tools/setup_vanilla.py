@@ -3,8 +3,8 @@
 
 Downloads the client and server jars plus the client's libraries, decompiles the
 client with Vineflower, adds the sources of the libraries the port translates too
-(JOML, Netty's buffers and Guava, or authlib decompiled, since it publishes no sources),
-extracts its bundled resources and runs the server's data generator.
+(JOML, Netty's buffers and Guava, or authlib and DataFixerUpper decompiled, since they
+publish no sources), extracts its bundled resources and runs the server's data generator.
 Everything lands in vanilla/, which is gitignored: Mojang's code and assets can't
 be redistributed.
 
@@ -39,8 +39,9 @@ VINEFLOWER_URL = f"https://repo1.maven.org/maven2/org/vineflower/vineflower/{VIN
 MAVEN_CENTRAL = "https://repo1.maven.org/maven2/"
 # Libraries the port translates like the game's own classes, from their published sources.
 SOURCE_LIBRARIES = {"org.joml:joml", "io.netty:netty-buffer", "com.google.guava:guava"}
-# Ones it translates that publish no sources, so they're decompiled like the game.
-DECOMPILED_LIBRARIES = {"com.mojang:authlib"}
+# Ones it translates that publish no sources, so they're decompiled like the game: authlib, and DataFixerUpper, whose
+# codecs read and write text components and the vanilla pack's JSON.
+DECOMPILED_LIBRARIES = {"com.mojang:authlib", "com.mojang:datafixerupper"}
 
 
 # Adoptium's API answers 403 to urllib's default User-Agent.

@@ -1241,6 +1241,7 @@ public final class Golden {
         InstanceSuite.every(ClientboundChangeDifficultyPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
         // The game protocol's packets that read the registries, and what they hold: the registries a RegistryFriendlyByteBuf
         // carries (RegistryValues), the clocks' time, an entity's attributes, the world's spawn and an entity's data.
+        new DataResultSuite(),
         new RegistryValues.RegistriesSuite(),
         new StaticSuite(Attributes.class),
         InstanceSuite.every(WorldClock.class),
