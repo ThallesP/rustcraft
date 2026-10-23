@@ -6,10 +6,11 @@
 //! lightmap's and the sky's states), the way Java's `GameRenderState` is. The renderer holds the
 //! device it was made with (Java's `RenderSystem.getDevice()`), the block atlas, the baked block
 //! models and the block colours (Java's `ModelManager`, `AtlasManager` and
-//! `Minecraft.blockColors`, which the resource reload fills, with the colormaps), and the level
-//! renderer (Java's `Minecraft.levelRenderer`).
+//! `Minecraft.blockColors`, which the resource reload fills, with the colormaps), the level
+//! renderer (Java's `Minecraft.levelRenderer`), and the GUI's atlas, the texture manager it's
+//! registered in, the GUI's render state (`GameRenderState.guiRenderState`) and its renderer.
 //!
-//! Not ported yet: the GUI (`GuiRenderer`, the HUD, screens), the hand and the screen effects
+//! Not ported yet: the hand and the screen effects
 //! (`render3dHud`: `renderItemInHand`, `ScreenEffectRenderer`), the view's bobbing and hurt tilt,
 //! the nausea and portal warp, post effects (`end_of_frame` has no chain in the vanilla pack, so
 //! a frame applies none), the panorama, the 3D HUD's depth target, `Lighting`'s directional
@@ -20,6 +21,7 @@ use std::sync::Arc;
 
 use crate::com::mojang::blaze3d::pipeline::main_target::MainTarget;
 use crate::com::mojang::blaze3d::platform::native_image::NativeImage;
+use crate::com::mojang::blaze3d::platform::window::Window;
 use crate::com::mojang::blaze3d::systems::render_system::{AutoStorageIndexBuffer, RenderSystem};
 use crate::com::mojang::blaze3d::systems::sampler_cache::SamplerCache;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
@@ -30,6 +32,8 @@ use crate::com::mojang::renderpearl::api::textures::filter_mode::FilterMode;
 use crate::com::mojang::renderpearl::frontend::shaders::pipeline_builder::PipelineBuilder;
 use crate::net::minecraft::client::camera::{Camera, CameraOptions};
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
+use crate::net::minecraft::client::gui::gui_graphics_extractor::GuiGraphicsExtractor;
+use crate::net::minecraft::client::gui::render::gui_renderer::{GuiRenderer, GuiWindow};
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
@@ -49,12 +53,15 @@ use crate::net::minecraft::client::renderer::projection_matrix_buffer::Projectio
 use crate::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
 use crate::net::minecraft::client::renderer::shader_manager::{Configs, ShaderManager};
 use crate::net::minecraft::client::renderer::sky_renderer::{SkyPipelines, SkyRenderState};
+use crate::net::minecraft::client::renderer::state::gui::gui_render_state::GuiRenderState;
 use crate::net::minecraft::client::renderer::state::level::camera_render_state::CameraRenderState;
 use crate::net::minecraft::client::renderer::state::lightmap_render_state::LightmapRenderState;
+use crate::net::minecraft::client::renderer::texture::sprite_contents::AdditionalMetadataType;
 use crate::net::minecraft::client::renderer::texture::sprite_loader::SpriteLoader;
 use crate::net::minecraft::client::renderer::texture::texture_atlas::{
     AnimationPipelines, TextureAtlas,
 };
+use crate::net::minecraft::client::renderer::texture::texture_manager::TextureManager;
 use crate::net::minecraft::client::resources::dry_foliage_color_reload_listener::DryFoliageColorReloadListener;
 use crate::net::minecraft::client::resources::foliage_color_reload_listener::FoliageColorReloadListener;
 use crate::net::minecraft::client::resources::grass_color_reload_listener::GrassColorReloadListener;
@@ -174,6 +181,11 @@ pub struct GameRenderer {
     environment_attributes: Option<EnvironmentAttributeSystem>,
     /// `FogRenderer.FOG_ENVIRONMENTS`' open air, the one the port's camera is ever in.
     atmospheric_fog: AtmosphericFogEnvironment,
+    /// `AtlasManager`'s GUI atlas (`AtlasIds.GUI`, `Sheets.GUI_SHEET`).
+    gui_atlas: TextureAtlas,
+    texture_manager: TextureManager,
+    gui_render_state: GuiRenderState,
+    gui_renderer: GuiRenderer,
 }
 
 impl GameRenderer {
@@ -208,13 +220,20 @@ impl GameRenderer {
             &Identifier::with_default_namespace("blocks"),
             4,
             0,
+            &[],
         )
         .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
         let items = SpriteLoader::new(
             Identifier::with_default_namespace(TextureAtlas::LOCATION_ITEMS),
             block_atlas.max_supported_texture_size(),
         )
-        .load_and_stitch(&manager, &Identifier::with_default_namespace("items"), 0, 0)
+        .load_and_stitch(
+            &manager,
+            &Identifier::with_default_namespace("items"),
+            0,
+            0,
+            &[],
+        )
         .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
         let baked =
             ModelManager::bake_block_state_models(&manager, &MaterialBaker::new(&blocks, &items));
@@ -228,6 +247,30 @@ impl GameRenderer {
             interpolate: pipelines.get(device, &RenderPipelines::get().ANIMATE_SPRITE_INTERPOLATE),
         };
         block_atlas.upload(device, &sampler_cache, &animation_pipelines, blocks);
+        // The GUI's atlas: no mipmaps, and its sprites' `gui` sections.
+        let mut gui_atlas = TextureAtlas::new(device, GameRenderer::gui_sheet());
+        let gui = SpriteLoader::new(
+            gui_atlas.location().clone(),
+            gui_atlas.max_supported_texture_size(),
+        )
+        .load_and_stitch(
+            &manager,
+            &Identifier::with_default_namespace("gui"),
+            0,
+            0,
+            &[AdditionalMetadataType::Gui],
+        )
+        .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
+        gui_atlas.upload(device, &sampler_cache, &animation_pipelines, gui);
+        let mut texture_manager = TextureManager::new();
+        texture_manager.register(
+            gui_atlas.location().clone(),
+            gui_atlas
+                .get_texture_view()
+                .expect("the atlas is uploaded")
+                .clone(),
+            Rc::clone(gui_atlas.get_sampler().expect("the atlas is uploaded")),
+        );
 
         GameRenderer {
             device,
@@ -251,7 +294,67 @@ impl GameRenderer {
             quad_indices: RenderSystem::sequential_buffer(PrimitiveTopology::QUADS),
             environment_attributes: None,
             atmospheric_fog: AtmosphericFogEnvironment::default(),
+            gui_atlas,
+            texture_manager,
+            gui_render_state: GuiRenderState::new(),
+            gui_renderer: GuiRenderer::new(device),
         }
+    }
+
+    /// `Sheets.GUI_SHEET`, the GUI atlas's texture.
+    pub fn gui_sheet() -> Identifier {
+        Identifier::with_default_namespace("textures/atlas/gui.png")
+    }
+
+    /// The window's GUI scale and size for the `guiScale` option (`Minecraft.resizeGui`): the
+    /// Unicode font isn't forced.
+    pub fn gui_window(&self, gui_scale_option: i32) -> GuiWindow {
+        let (width, height) = (
+            self.main_render_target.width,
+            self.main_render_target.height,
+        );
+        GuiWindow {
+            width,
+            height,
+            gui_scale: Window::calculate_scale(width, height, gui_scale_option, false),
+        }
+    }
+
+    /// `Gui.extractRenderState`'s start: the GUI's render state reset, and a `GuiGraphicsExtractor`
+    /// over it for `extract`, at the mouse's scaled position.
+    pub fn extract_gui(
+        &mut self,
+        gui_scale_option: i32,
+        mouse_x: i32,
+        mouse_y: i32,
+        extract: impl FnOnce(&mut GuiGraphicsExtractor),
+    ) {
+        let window = self.gui_window(gui_scale_option);
+        let (gui_width, gui_height) =
+            Window::gui_scaled_size(window.width, window.height, window.gui_scale);
+        self.gui_render_state.reset();
+        let mut graphics = GuiGraphicsExtractor::new(
+            gui_width,
+            gui_height,
+            &self.gui_atlas,
+            &self.texture_manager,
+            &mut self.gui_render_state,
+            mouse_x,
+            mouse_y,
+        );
+        extract(&mut graphics);
+    }
+
+    /// `render`'s GUI, after the level: `guiRenderer.render()` over the main target.
+    pub fn render_gui(&mut self, gui_scale_option: i32) {
+        let window = self.gui_window(gui_scale_option);
+        self.gui_renderer.render(
+            self.device,
+            &mut self.gui_render_state,
+            &mut self.pipelines,
+            &self.main_render_target,
+            window,
+        );
     }
 
     /// `extractOptions`: what the frame reads of the options, and whether the HUD is hidden.

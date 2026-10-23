@@ -1,8 +1,10 @@
 //! com/mojang/blaze3d/platform/Window.java
 //!
 //! Only making the window so far: resizable, high pixel density, at least 320 by 240, at the
-//! size asked (Java first takes it from the options and its display, at least 320 by 240).
-//! Fullscreen, icons, video modes and events come with the window loop.
+//! size asked (Java first takes it from the options and its display, at least 320 by 240), and
+//! the GUI's scale for a framebuffer's size (`calculateScale`, `setGuiScale`), as functions of the
+//! size, which an offscreen renderer has without a window. Fullscreen, icons, video modes and
+//! events come with the window loop.
 
 use crate::com::mojang::renderpearl::api::device::gpu_backend::GpuBackend;
 use crate::org::lwjgl::sdl::sdl_error::SDLError;
@@ -40,6 +42,41 @@ impl Window {
         );
         SDLVideo::SDL_SetWindowMinimumSize(window_handle, 320, 240);
         window_handle
+    }
+
+    /// `calculateScale`: the largest scale up to `max_scale` (0 for as large as fits) that keeps
+    /// the GUI at least 320 by 240, made even for the Unicode font.
+    pub fn calculate_scale(
+        framebuffer_width: i32,
+        framebuffer_height: i32,
+        max_scale: i32,
+        enforce_unicode: bool,
+    ) -> i32 {
+        let mut scale = 1;
+        while scale != max_scale
+            && scale < framebuffer_width
+            && scale < framebuffer_height
+            && framebuffer_width / (scale + 1) >= 320
+            && framebuffer_height / (scale + 1) >= 240
+        {
+            scale += 1;
+        }
+        if enforce_unicode && scale % 2 != 0 {
+            scale += 1;
+        }
+        scale
+    }
+
+    /// `setGuiScale`'s `guiScaledWidth` and `guiScaledHeight`.
+    pub fn gui_scaled_size(
+        framebuffer_width: i32,
+        framebuffer_height: i32,
+        gui_scale: i32,
+    ) -> (i32, i32) {
+        (
+            (f64::from(framebuffer_width) / f64::from(gui_scale)).ceil() as i32,
+            (f64::from(framebuffer_height) / f64::from(gui_scale)).ceil() as i32,
+        )
     }
 
     pub fn handle(&self) -> SdlWindow {

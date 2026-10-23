@@ -97,6 +97,9 @@ pub struct Entity {
     pose: Pose,
     no_gravity: bool,
     in_block_state: Option<BlockState>,
+    /// `DATA_AIR_SUPPLY_ID`'s value, synced data that's a plain field until entity data is
+    /// ported, like the shared flags.
+    air_supply: i32,
 }
 
 impl Entity {
@@ -150,7 +153,23 @@ impl Entity {
             pose: Pose::STANDING,
             no_gravity: false,
             in_block_state: None,
+            air_supply: Entity::TOTAL_AIR_SUPPLY,
         }
+    }
+
+    /// `TOTAL_AIR_SUPPLY`, what `getMaxAirSupply()` answers.
+    pub const TOTAL_AIR_SUPPLY: i32 = 300;
+
+    pub fn get_max_air_supply(&self) -> i32 {
+        Entity::TOTAL_AIR_SUPPLY
+    }
+
+    pub fn get_air_supply(&self) -> i32 {
+        self.air_supply
+    }
+
+    pub fn set_air_supply(&mut self, supply: i32) {
+        self.air_supply = supply;
     }
 
     pub fn get_id(&self) -> i32 {

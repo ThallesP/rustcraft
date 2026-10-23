@@ -956,10 +956,11 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
-        // Saturation, which only the server's hunger reads, isn't kept.
         if let Some(player) = minecraft.player.borrow_mut().as_mut() {
             player.hurt_to(packet.get_health());
             player.food_level = packet.get_food();
+            // The HUD's food jitters when the saturation runs out.
+            player.saturation_level = packet.get_saturation();
         }
     }
 

@@ -304,6 +304,16 @@ The atlas's GPU half, drawing each sprite into each mip level, is a frame test (
 
 The rest of the frame is checked by its screenshots: the level renderer's sections and draws, the fog, the sky and the lightmap only show in pixels.
 
+### The GUI
+
+`GuiSuites` covers the GUI's pure pieces, the ones that decide what it draws where:
+- `ScreenRectangle`: `intersection`, `intersects`, `encompasses` and `overlaps` of each of 307 rectangles (the walk's HUD's own, the empty one, the int limits, and random ones of the GUI's sizes, tiny, large and negative) with another, a neighbour touching or overlapping it by a pixel, and itself; `containsPoint` around it; `getBorder` each way; and `transformMaxBounds` and `transformAxisAligned` under the GUI's poses (pixel and fractional translations, its scales, quarter turns, combined). A rectangle is `[x, y, width, height]`, a pose `Matrix3x2f`'s six floats' bits.
+- `GuiRenderState`: 400 programs of two frames over one state, the second after `reset()` (which keeps the last element's bounds, so a frame's first element can go up a layer). A frame adds fills, blits and tiled blits (`ColoredRectangleRenderState`, `BlitRenderState`, `TiledBlitRenderState`, with the GUI's pipelines and no texture) of random rectangles under random poses and scissors, between `nextStratum` and `up`, then sorts the layers with `GuiRenderer.ELEMENT_SORT_COMPARATOR` (read by reflection) and lists the elements in `forEachElement`'s order. A frame is `[ops, order, bounds, vertices]`: the ops as the port builds the same elements from them, the order as indexes of the elements, each element's bounds, and its vertices as a `BufferBuilder` of its pipeline's format writes them (hex). The port runs the ops from vanilla's file and has to give the same frames.
+- `GuiSpriteScaling`: every sprite the GUI atlas loads with `SpriteResourceLoader.create(Set.of(GuiMetadataSection.TYPE))`, and its `gui` section's scaling (`["stretch"]`, `["tile", w, h]`, `["nine_slice", w, h, [left, top, right, bottom], stretchInner]`, or null without one).
+- `SpriteLoader`'s `stitch` also lays out the GUI atlas (`minecraft:gui`, without mipmaps, like `AtlasManager`).
+
+How the GUI draws them, `GuiRenderer`'s draws over the main target, shows in screenshots: the walk's HUD (TESTING's screenshots below; PROGRESS.md has the diffs).
+
 ## 2. Scenarios and tick traces
 
 A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:

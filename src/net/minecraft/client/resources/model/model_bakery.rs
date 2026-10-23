@@ -279,6 +279,7 @@ pub(crate) mod tests {
                 SpriteLoader::load_sprites(
                     manager,
                     &Identifier::with_default_namespace(definition),
+                    &[],
                 ),
                 max_mipmap_levels,
                 0,

@@ -14,7 +14,9 @@ use crate::net::minecraft::client::renderer::texture::atlas::sprite_source::{
     Output, SpriteSource,
 };
 use crate::net::minecraft::client::renderer::texture::missing_texture_atlas_sprite::MissingTextureAtlasSprite;
-use crate::net::minecraft::client::renderer::texture::sprite_contents::SpriteContents;
+use crate::net::minecraft::client::renderer::texture::sprite_contents::{
+    AdditionalMetadataType, SpriteContents,
+};
 use crate::net::minecraft::resources::file_to_id_converter::FileToIdConverter;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::packs::resources::resource::Resource;
@@ -33,10 +35,14 @@ pub enum Loader {
 }
 
 impl Loader {
-    pub fn get(&self) -> Option<SpriteContents> {
+    /// `get(SpriteResourceLoader)`, the resource loader made with the atlas's additional metadata
+    /// sections.
+    pub fn get(&self, additional_metadata: &[AdditionalMetadataType]) -> Option<SpriteContents> {
         match self {
             Loader::Missing => Some(MissingTextureAtlasSprite::create()),
-            Loader::Resource(id, resource) => SpriteResourceLoader::load_sprite(id, resource),
+            Loader::Resource(id, resource) => {
+                SpriteResourceLoader::load_sprite(id, resource, additional_metadata)
+            }
             Loader::Paletted(supplier) => supplier.get(),
         }
     }

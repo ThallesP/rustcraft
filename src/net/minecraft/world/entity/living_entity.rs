@@ -61,6 +61,7 @@ pub struct LivingEntity {
     pub hurt_time: i32,
     pub hurt_duration: i32,
     pub damage_cooldown_time: i32,
+    absorption_amount: f32,
 }
 
 impl std::ops::Deref for LivingEntity {
@@ -120,7 +121,16 @@ impl LivingEntity {
             hurt_time: 0,
             hurt_duration: 0,
             damage_cooldown_time: 0,
+            absorption_amount: 0.0,
         }
+    }
+
+    pub fn get_absorption_amount(&self) -> f32 {
+        self.absorption_amount
+    }
+
+    pub fn get_armor_value(&self) -> i32 {
+        Mth::floor_f64(self.get_attribute_value(Attributes::ARMOR))
     }
 
     pub fn get_attribute_value(&self, attribute: &'static Attribute) -> f64 {

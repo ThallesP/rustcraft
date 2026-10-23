@@ -266,6 +266,7 @@ fn draws_the_block_atlas_from_vanillas_sprites() {
             &Identifier::with_default_namespace("blocks"),
             4,
             0,
+            &[],
         )
         .expect("the atlas fits");
 

@@ -43,6 +43,14 @@ impl MultiPlayerGameMode {
         self.previous_local_player_mode.get()
     }
 
+    pub fn can_hurt_player(&self) -> bool {
+        self.local_player_mode.get().is_survival()
+    }
+
+    pub fn has_experience(&self) -> bool {
+        self.local_player_mode.get().is_survival()
+    }
+
     pub fn tick(&self) {
         let connection = self.connection.borrow().get_connection();
         if connection.is_connected() {

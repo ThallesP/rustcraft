@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use crate::net::minecraft::client::renderer::texture::atlas::sprite_source_list::SpriteSourceList;
 use crate::net::minecraft::client::renderer::texture::missing_texture_atlas_sprite::MissingTextureAtlasSprite;
-use crate::net::minecraft::client::renderer::texture::sprite_contents::SpriteContents;
+use crate::net::minecraft::client::renderer::texture::sprite_contents::{
+    AdditionalMetadataType, SpriteContents,
+};
 use crate::net::minecraft::client::renderer::texture::stitcher::{Stitcher, StitcherException};
 use crate::net::minecraft::client::renderer::texture::texture_atlas_sprite::TextureAtlasSprite;
 use crate::net::minecraft::resources::identifier::Identifier;
@@ -147,15 +149,17 @@ impl SpriteLoader {
         Ok(preparations)
     }
 
-    /// `loadAndStitch`: the atlas definition `atlas_info_location`'s sprites, loaded and stitched.
+    /// `loadAndStitch`: the atlas definition `atlas_info_location`'s sprites, loaded with the
+    /// additional metadata sections the atlas asks for, and stitched.
     pub fn load_and_stitch(
         &self,
         manager: &dyn ResourceManager,
         atlas_info_location: &Identifier,
         max_mipmap_levels: i32,
         anisotropy_bit: i32,
+        additional_metadata: &[AdditionalMetadataType],
     ) -> Result<Preparations, StitcherException> {
-        let sprites = SpriteLoader::load_sprites(manager, atlas_info_location);
+        let sprites = SpriteLoader::load_sprites(manager, atlas_info_location, additional_metadata);
         self.stitch(sprites, max_mipmap_levels, anisotropy_bit)
     }
 
@@ -163,11 +167,12 @@ impl SpriteLoader {
     pub fn load_sprites(
         manager: &dyn ResourceManager,
         atlas_info_location: &Identifier,
+        additional_metadata: &[AdditionalMetadataType],
     ) -> Vec<SpriteContents> {
         SpriteSourceList::load(manager, atlas_info_location)
             .list(manager)
             .iter()
-            .filter_map(|loader| loader.get())
+            .filter_map(|loader| loader.get(additional_metadata))
             .collect()
     }
 }
@@ -201,7 +206,7 @@ mod tests {
             MAX_TEXTURE_SIZE,
         );
         golden.check("stitch", |atlas: String, max_mipmap_levels: i32| {
-            let sprites = SpriteLoader::load_sprites(&manager, &Identifier::parse(&atlas));
+            let sprites = SpriteLoader::load_sprites(&manager, &Identifier::parse(&atlas), &[]);
             let preparations = loader
                 .stitch_layout(sprites, max_mipmap_levels, ANISOTROPY_BIT)
                 .expect("the atlas fits");
@@ -227,8 +232,11 @@ mod tests {
             ])
         });
 
-        let sprites =
-            SpriteLoader::load_sprites(&manager, &Identifier::with_default_namespace("blocks"));
+        let sprites = SpriteLoader::load_sprites(
+            &manager,
+            &Identifier::with_default_namespace("blocks"),
+            &[],
+        );
         golden.check("increaseMipLevel", |name: String, mip_level: i32| {
             let name = Identifier::parse(&name);
             let sprite = sprites

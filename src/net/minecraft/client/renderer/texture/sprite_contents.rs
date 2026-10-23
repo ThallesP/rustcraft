@@ -2,8 +2,9 @@
 //!
 //! A sprite's images: its first frame's size, the whole image (every frame of an animation) and
 //! its mip levels, and how it animates. Java's `originalImage` is `byMipLevel[0]`, the same
-//! object, so here it's the first level. The additional metadata sections (the GUI atlas's) come
-//! with that atlas. The animation's GPU half (`AnimationState`'s frame textures and draws) is
+//! object, so here it's the first level. The additional metadata sections an atlas asks for
+//! (Java's `MetadataSectionType.WithValue`s) are `AdditionalMetadata`'s kinds, so far the GUI
+//! atlas's `gui` section. The animation's GPU half (`AnimationState`'s frame textures and draws) is
 //! `TextureAtlas`'s, which owns the device's objects; this holds what it draws from.
 
 use crate::com::mojang::blaze3d::platform::native_image::NativeImage;
@@ -13,6 +14,7 @@ use crate::net::minecraft::client::renderer::texture::mipmap_strategy::MipmapStr
 use crate::net::minecraft::client::renderer::texture::stitcher::Entry;
 use crate::net::minecraft::client::resources::metadata::animation::animation_metadata_section::AnimationMetadataSection;
 use crate::net::minecraft::client::resources::metadata::animation::frame_size::FrameSize;
+use crate::net::minecraft::client::resources::metadata::gui::gui_metadata_section::GuiMetadataSection;
 use crate::net::minecraft::client::resources::metadata::texture::texture_metadata_section::TextureMetadataSection;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::util::argb::ARGB;
@@ -28,6 +30,20 @@ pub struct SpriteContents {
     mipmap_strategy: MipmapStrategy,
     alpha_cutoff_bias: f32,
     transparency: Transparency,
+    additional_metadata: Vec<AdditionalMetadata>,
+}
+
+/// An additional metadata section's type, which an atlas asks its sprites for
+/// (`MetadataSectionType<?>`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdditionalMetadataType {
+    Gui,
+}
+
+/// An additional metadata section's value (`MetadataSectionType.WithValue<?>`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdditionalMetadata {
+    Gui(GuiMetadataSection),
 }
 
 /// `SpriteContents.FrameInfo`.
@@ -91,6 +107,7 @@ impl SpriteContents {
         frame_size: FrameSize,
         image: NativeImage,
         animation_info: Option<AnimationMetadataSection>,
+        additional_metadata: Vec<AdditionalMetadata>,
         texture_info: Option<TextureMetadataSection>,
     ) -> SpriteContents {
         let animated_texture = animation_info.and_then(|animation| {
@@ -112,6 +129,7 @@ impl SpriteContents {
             mipmap_strategy: texture_info.map_or(MipmapStrategy::AUTO, |info| info.mipmap_strategy),
             alpha_cutoff_bias: texture_info.map_or(0.0, |info| info.alpha_cutoff_bias),
             transparency,
+            additional_metadata,
         }
     }
 
@@ -187,6 +205,15 @@ impl SpriteContents {
                 metadata.interpolated_frames,
             ))
         }
+    }
+
+    /// `getAdditionalMetadata(GuiMetadataSection.TYPE)`.
+    pub fn get_gui_metadata(&self) -> Option<GuiMetadataSection> {
+        // The GUI's section is the only kind so far, so the first is it.
+        self.additional_metadata
+            .iter()
+            .map(|AdditionalMetadata::Gui(section)| *section)
+            .next()
     }
 
     pub fn width(&self) -> i32 {

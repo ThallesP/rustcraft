@@ -1,7 +1,7 @@
 //! net/minecraft/world/entity/ai/attributes/Attributes.java
 //!
-//! Only the attributes an entity's movement reads (and the player's health): their defaults and
-//! ranges as `Attributes` registers them. The others come with what reads them.
+//! Only the attributes an entity's movement reads (and the player's health and armor, which the
+//! HUD shows): their defaults and ranges as `Attributes` registers them. The others come with what reads them.
 //!
 //! Java's fields are the attributes' holders, which `BuiltInRegistries.ATTRIBUTE` numbers in the
 //! order they register: the id the server sends an attribute by (`Attribute.STREAM_CODEC`). So
@@ -67,6 +67,7 @@ pub struct Attributes;
 impl Attributes {
     pub const DEFAULT_ATTACK_SPEED: f64 = 4.0;
     pub const AIR_DRAG_MODIFIER: &'static Attribute = &AIR_DRAG_MODIFIER;
+    pub const ARMOR: &'static Attribute = &ARMOR;
     pub const BOUNCINESS: &'static Attribute = &BOUNCINESS;
     pub const FRICTION_MODIFIER: &'static Attribute = &FRICTION_MODIFIER;
     pub const GRAVITY: &'static Attribute = &GRAVITY;
@@ -98,6 +99,7 @@ impl Attributes {
         }
         let attribute = match key.identifier().get_path() {
             "air_drag_modifier" => Attributes::AIR_DRAG_MODIFIER,
+            "armor" => Attributes::ARMOR,
             "bounciness" => Attributes::BOUNCINESS,
             "friction_modifier" => Attributes::FRICTION_MODIFIER,
             "gravity" => Attributes::GRAVITY,
@@ -117,6 +119,7 @@ impl Attributes {
 
 static AIR_DRAG_MODIFIER: Attribute =
     Attribute::ranged("attribute.name.air_drag_modifier", 1.0, 0.0, 2048.0, true);
+static ARMOR: Attribute = Attribute::ranged("attribute.name.armor", 0.0, 0.0, 30.0, true);
 static BOUNCINESS: Attribute = Attribute::ranged("attribute.name.bounciness", 0.0, 0.0, 1.0, true);
 static FRICTION_MODIFIER: Attribute =
     Attribute::ranged("attribute.name.friction_modifier", 1.0, 0.0, 2048.0, true);
@@ -180,6 +183,6 @@ mod tests {
                 ported += 1;
             }
         }
-        assert_eq!(ported, 12);
+        assert_eq!(ported, 13);
     }
 }

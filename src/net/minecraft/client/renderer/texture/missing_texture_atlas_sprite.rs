@@ -39,6 +39,7 @@ impl MissingTextureAtlasSprite {
             },
             contents,
             None,
+            Vec::new(),
             None,
         )
     }

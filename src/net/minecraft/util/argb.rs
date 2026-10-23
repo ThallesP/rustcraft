@@ -174,6 +174,16 @@ impl ARGB {
     }
 
     /// `color(int, int, int)`: opaque.
+    /// `white(float)`: white with the alpha as an 8-bit channel.
+    pub fn white_f32(alpha: f32) -> i32 {
+        ARGB::as8_bit_channel(alpha) << 24 | 0xFFFFFF
+    }
+
+    /// `white(int)`.
+    pub fn white(alpha: i32) -> i32 {
+        alpha << 24 | 0xFFFFFF
+    }
+
     pub fn color_rgb(red: i32, green: i32, blue: i32) -> i32 {
         ARGB::color(255, red, green, blue)
     }
@@ -439,6 +449,8 @@ mod tests {
             |dest: &mut Vector4f, color: &mut i32| ARGB::set_vector4f_from_argb32(dest, *color),
         );
         golden.check("colorFromFloat(FFFF)I", ARGB::color_from_float);
+        golden.check("white(F)I", ARGB::white_f32);
+        golden.check("white(I)I", ARGB::white);
         golden.check(
             "vector3fFromRGB24(I)Lorg/joml/Vector3f;",
             ARGB::vector3f_from_rgb24,

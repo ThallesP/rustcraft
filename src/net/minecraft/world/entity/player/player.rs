@@ -40,6 +40,14 @@ pub struct Player {
     pub was_underwater: bool,
     /// `FoodData`'s food level.
     pub food_level: i32,
+    /// `FoodData`'s saturation level.
+    pub saturation_level: f32,
+    pub experience_level: i32,
+    pub total_experience: i32,
+    pub experience_progress: f32,
+    /// The inventory's selected slot (`getInventory().getSelectedSlot()`): the inventory isn't
+    /// ported yet.
+    pub selected_slot: i32,
 }
 
 impl std::ops::Deref for Player {
@@ -57,12 +65,13 @@ impl std::ops::DerefMut for Player {
 }
 
 impl Player {
-    /// `createAttributes()`: a living entity's attributes that movement reads, with the
-    /// player's speed of 0.1F.
+    /// `createAttributes()`: a living entity's attributes that movement reads, and its armor,
+    /// with the player's speed of 0.1F.
     pub fn create_attributes() -> Vec<(&'static Attribute, f64)> {
         [
             Attributes::MAX_HEALTH,
             Attributes::MOVEMENT_SPEED,
+            Attributes::ARMOR,
             Attributes::STEP_HEIGHT,
             Attributes::SCALE,
             Attributes::GRAVITY,
@@ -97,6 +106,21 @@ impl Player {
             jump_trigger_time: 0,
             was_underwater: false,
             food_level: 20,
+            saturation_level: 5.0,
+            experience_level: 0,
+            total_experience: 0,
+            experience_progress: 0.0,
+            selected_slot: 0,
+        }
+    }
+
+    pub fn get_xp_needed_for_next_level(&self) -> i32 {
+        if self.experience_level >= 30 {
+            112 + (self.experience_level - 30) * 9
+        } else if self.experience_level >= 15 {
+            37 + (self.experience_level - 15) * 5
+        } else {
+            7 + self.experience_level * 2
         }
     }
 

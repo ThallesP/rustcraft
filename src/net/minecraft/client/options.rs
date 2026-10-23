@@ -50,6 +50,10 @@ pub struct Options {
     pub gamma: f64,
     pub glint_strength: f64,
     pub texture_filtering_rgss: bool,
+    /// `guiScale()`: the largest GUI scale, 0 for as large as fits.
+    pub gui_scale: i32,
+    /// `vignette()`, which the HUD doesn't draw yet.
+    pub vignette: bool,
 }
 
 impl Default for Options {
@@ -95,6 +99,8 @@ impl Options {
             gamma: 0.5,
             glint_strength: 0.75,
             texture_filtering_rgss: false,
+            gui_scale: 0,
+            vignette: true,
         }
     }
 

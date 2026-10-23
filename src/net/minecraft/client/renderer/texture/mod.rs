@@ -7,3 +7,4 @@ pub mod sprite_loader;
 pub mod stitcher;
 pub mod texture_atlas;
 pub mod texture_atlas_sprite;
+pub mod texture_manager;

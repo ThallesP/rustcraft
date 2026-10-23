@@ -1,12 +1,15 @@
 //! net/minecraft/client/renderer/texture/atlas/SpriteResourceLoader.java
 //!
-//! `create(Set)`'s loader: a resource's metadata and image made into a sprite, or `None` where
-//! Java logs why and returns null. The additional metadata sections come with the GUI atlas.
+//! `create(Set)`'s loader: a resource's metadata (with the additional sections the atlas asks
+//! for) and image made into a sprite, or `None` where Java logs why and returns null.
 
 use crate::com::mojang::blaze3d::platform::native_image::NativeImage;
-use crate::net::minecraft::client::renderer::texture::sprite_contents::SpriteContents;
+use crate::net::minecraft::client::renderer::texture::sprite_contents::{
+    AdditionalMetadata, AdditionalMetadataType, SpriteContents,
+};
 use crate::net::minecraft::client::resources::metadata::animation::animation_metadata_section::AnimationMetadataSection;
 use crate::net::minecraft::client::resources::metadata::animation::frame_size::FrameSize;
+use crate::net::minecraft::client::resources::metadata::gui::gui_metadata_section::GuiMetadataSection;
 use crate::net::minecraft::client::resources::metadata::texture::texture_metadata_section::TextureMetadataSection;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::packs::resources::resource::Resource;
@@ -18,14 +21,27 @@ impl SpriteResourceLoader {
     pub fn load_sprite(
         sprite_location: &Identifier,
         resource: &Resource,
+        additional_metadata_sections: &[AdditionalMetadataType],
     ) -> Option<SpriteContents> {
         let sections = resource.metadata().and_then(|metadata| {
+            // ResourceMetadata.getTypedSections: each type the resource has, in the set's order.
+            let mut additional_metadata = Vec::new();
+            for section in additional_metadata_sections {
+                match section {
+                    AdditionalMetadataType::Gui => {
+                        if let Some(gui) = metadata.get_section(&GuiMetadataSection::TYPE)? {
+                            additional_metadata.push(AdditionalMetadata::Gui(gui));
+                        }
+                    }
+                }
+            }
             Ok((
                 metadata.get_section(&AnimationMetadataSection::TYPE)?,
                 metadata.get_section(&TextureMetadataSection::TYPE)?,
+                additional_metadata,
             ))
         });
-        let (animation_info, texture_info) = match sections {
+        let (animation_info, texture_info, additional_metadata) = match sections {
             Ok(sections) => sections,
             Err(error) => {
                 eprintln!("Unable to parse metadata from {sprite_location}: {error}");
@@ -73,6 +89,7 @@ impl SpriteResourceLoader {
             frame_size,
             image,
             animation_info,
+            additional_metadata,
             texture_info,
         ))
     }

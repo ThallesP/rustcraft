@@ -22,7 +22,8 @@
 //!                                               renders the scenario's first view of the level a
 //!                                               capture's packets fill, offscreen, without a server:
 //!                                               the player put where the scenario says and left to
-//!                                               land, frames until the sections have compiled
+//!                                               land, frames until the sections have compiled, and
+//!                                               the HUD unless the scenario hides it
 //!
 //! The clear color defaults to `GuiRenderState.clearColorOverride`'s, transparent black; the
 //! loading overlay's is its brand background, `FFEF323D`. `--quadrant` clears the lower left
@@ -259,6 +260,7 @@ fn dump_block_atlas(device: &dyn GpuDevice, dir: &Path) -> Result<(), String> {
                 &Identifier::with_default_namespace("blocks"),
                 4,
                 0,
+                &[],
             )
             .map_err(|error| format!("couldn't stitch {}", error.sprite))?;
     atlas.upload(device, &sampler_cache, &pipelines, preparations);
@@ -447,6 +449,8 @@ fn render_scenario(
 ) -> Result<(), String> {
     use rustcraft::io::netty::buffer::unpooled::wrapped_buffer;
     use rustcraft::net::minecraft::client::client_clock_manager::ClientClockManager;
+    use rustcraft::net::minecraft::client::gui::gui::Gui;
+    use rustcraft::net::minecraft::client::gui::hud::HudContext;
     use rustcraft::net::minecraft::client::options::Options;
     use rustcraft::net::minecraft::client::player::local_player::LocalPlayer;
     use rustcraft::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
@@ -456,6 +460,7 @@ fn render_scenario(
     use rustcraft::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
     use rustcraft::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendlyByteBuf;
     use rustcraft::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
+    use rustcraft::net::minecraft::world::level::game_type::GameType;
     use rustcraft::net::minecraft::world::phys::vec3::Vec3;
     use rustcraft::rustcraft::oracle::client::oracle_game_test::OracleGameTest;
     use rustcraft::rustcraft::oracle::client::replay::{Capture, CapturedLevel};
@@ -487,7 +492,14 @@ fn render_scenario(
         .identifier()
         .clone();
 
-    let options = Options::new();
+    let mut options = Options::new();
+    options.gui_scale = scenario.options.gui_scale;
+    let mut gui = Gui::new();
+    let player_mode = match scenario.world.game_mode.as_str() {
+        "creative" => GameType::CREATIVE,
+        "spectator" => GameType::SPECTATOR,
+        _ => GameType::SURVIVAL,
+    };
     let mut game_renderer =
         GameRenderer::new(device, scenario.options.width, scenario.options.height);
     game_renderer.set_environment_attributes(EnvironmentAttributeSystem::for_client_level(
@@ -508,6 +520,7 @@ fn render_scenario(
     let environment = LevelEnvironment::new(&level, clocks);
     let mut ticks = 0;
     while ticks < OracleGameTest::SETTLE_TICKS * 3 || !player.on_ground() {
+        gui.tick(false);
         game_renderer.tick(true, Some(&player), Some(&environment), &render_options);
         player.common_tick();
         player.tick(&level, &options);
@@ -523,6 +536,18 @@ fn render_scenario(
             level.get_game_time(),
             eye_y,
         );
+        let hud_context = HudContext {
+            is_hidden: scenario.options.hide_gui,
+            player: &player,
+            player_mode,
+            can_hurt_player: player_mode.is_survival(),
+            has_experience: player_mode.is_survival(),
+            is_hardcore: level.is_hardcore(),
+        };
+        game_renderer.extract_gui(options.gui_scale, 0, 0, |graphics| {
+            gui.extract_render_state(graphics, Some(&hud_context));
+        });
+        game_renderer.render_gui(options.gui_scale);
         ticks += 1;
         if ticks > OracleGameTest::LOAD_TIMEOUT_TICKS {
             return Err("the player never landed".to_string());

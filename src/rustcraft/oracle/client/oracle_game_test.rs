@@ -104,6 +104,8 @@ impl OracleGameTest {
             options.chunk_section_fade_in_time = 0.0;
             options.cloud_range = 64;
             options.texture_filtering_rgss = true;
+            options.vignette = false;
+            options.gui_scale = scenario.options.gui_scale;
         }
         minecraft.hud_hidden.set(scenario.options.hide_gui);
         let outcome = Rc::new(Cell::new(Some(Outcome::Running)));

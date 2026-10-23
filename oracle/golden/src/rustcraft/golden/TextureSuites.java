@@ -46,6 +46,7 @@ final class TextureSuites {
     private static final int MAX_MIPMAP_LEVELS = 4;
     private static final int ANISOTROPY_BIT = 0;
     private static final Identifier BLOCKS = Identifier.withDefaultNamespace("blocks");
+    private static final Identifier GUI = Identifier.withDefaultNamespace("gui");
 
     private TextureSuites() {
     }
@@ -159,41 +160,13 @@ final class TextureSuites {
 
         @Override
         public void write(final GoldenWriter writer) throws IOException {
-            ResourceManager resources = vanillaResources();
-            List<SpriteSource.Loader> loaders = SpriteSourceList.load(resources, BLOCKS).list(resources);
-            SpriteResourceLoader resourceLoader = SpriteResourceLoader.create(Set.of());
-            List<SpriteContents> sprites = new ArrayList<>();
-            for (SpriteSource.Loader loader : loaders) {
-                SpriteContents contents = loader.get(resourceLoader);
-                if (contents != null) {
-                    sprites.add(contents);
-                }
+            // The GUI atlas, which AtlasManager stitches without mipmaps, only for its layout.
+            for (SpriteContents sprite : stitch(writer, GUI, 0)) {
+                sprite.close();
             }
 
-            // SpriteLoader.stitch.
-            int minTexelSize = Integer.MAX_VALUE;
-            int lowestOneBit = 1 << MAX_MIPMAP_LEVELS;
-            for (SpriteContents sprite : sprites) {
-                minTexelSize = Math.min(minTexelSize, Math.min(sprite.width(), sprite.height()));
-                int lowestTextureBit = Math.min(Integer.lowestOneBit(sprite.width()), Integer.lowestOneBit(sprite.height()));
-                if (lowestTextureBit < lowestOneBit) {
-                    lowestOneBit = lowestTextureBit;
-                }
-            }
-            int minSize = Math.min(minTexelSize, lowestOneBit);
-            int minPowerOfTwo = net.minecraft.util.Mth.log2(minSize);
-            int mipLevel = minPowerOfTwo < MAX_MIPMAP_LEVELS ? minPowerOfTwo : MAX_MIPMAP_LEVELS;
-            Stitcher<SpriteContents> stitcher = new Stitcher<>(MAX_TEXTURE_SIZE, MAX_TEXTURE_SIZE, mipLevel, ANISOTROPY_BIT);
-            sprites.forEach(stitcher::registerSprite);
-            stitcher.stitch();
-            JsonArray placed = new JsonArray();
-            stitcher.gatherSprites((contents, x, y, padding) -> placed.add(RenderSuites.array(
-                new JsonPrimitive(contents.name().toString()), new JsonPrimitive(x), new JsonPrimitive(y),
-                new JsonPrimitive(contents.width()), new JsonPrimitive(contents.height()), new JsonPrimitive(padding)
-            )));
-            writer.result("stitch", RenderSuites.array(new JsonPrimitive(BLOCKS.toString()), new JsonPrimitive(MAX_MIPMAP_LEVELS)), RenderSuites.array(
-                new JsonPrimitive(stitcher.getWidth()), new JsonPrimitive(stitcher.getHeight()), new JsonPrimitive(mipLevel), placed
-            ), null);
+            List<SpriteContents> sprites = stitch(writer, BLOCKS, MAX_MIPMAP_LEVELS);
+            int mipLevel = stitchedMipLevel(sprites, MAX_MIPMAP_LEVELS);
 
             // Preparations.readyForUpload: every sprite's mip levels.
             for (SpriteContents sprite : sprites) {
@@ -206,6 +179,50 @@ final class TextureSuites {
                     RenderSuites.array(new JsonPrimitive(sprite.isAnimated()), levels), null);
                 sprite.close();
             }
+        }
+
+        /** The atlas's sprites, loaded and stitched, its layout written as a "stitch" case. */
+        private static List<SpriteContents> stitch(final GoldenWriter writer, final Identifier atlas, final int maxMipmapLevels) throws IOException {
+            ResourceManager resources = vanillaResources();
+            List<SpriteSource.Loader> loaders = SpriteSourceList.load(resources, atlas).list(resources);
+            SpriteResourceLoader resourceLoader = SpriteResourceLoader.create(Set.of());
+            List<SpriteContents> sprites = new ArrayList<>();
+            for (SpriteSource.Loader loader : loaders) {
+                SpriteContents contents = loader.get(resourceLoader);
+                if (contents != null) {
+                    sprites.add(contents);
+                }
+            }
+
+            int mipLevel = stitchedMipLevel(sprites, maxMipmapLevels);
+            Stitcher<SpriteContents> stitcher = new Stitcher<>(MAX_TEXTURE_SIZE, MAX_TEXTURE_SIZE, mipLevel, ANISOTROPY_BIT);
+            sprites.forEach(stitcher::registerSprite);
+            stitcher.stitch();
+            JsonArray placed = new JsonArray();
+            stitcher.gatherSprites((contents, x, y, padding) -> placed.add(RenderSuites.array(
+                new JsonPrimitive(contents.name().toString()), new JsonPrimitive(x), new JsonPrimitive(y),
+                new JsonPrimitive(contents.width()), new JsonPrimitive(contents.height()), new JsonPrimitive(padding)
+            )));
+            writer.result("stitch", RenderSuites.array(new JsonPrimitive(atlas.toString()), new JsonPrimitive(maxMipmapLevels)), RenderSuites.array(
+                new JsonPrimitive(stitcher.getWidth()), new JsonPrimitive(stitcher.getHeight()), new JsonPrimitive(mipLevel), placed
+            ), null);
+            return sprites;
+        }
+
+        /** SpriteLoader.stitch's mip level: the smallest sprite's, at most the atlas's maximum. */
+        private static int stitchedMipLevel(final List<SpriteContents> sprites, final int maxMipmapLevels) {
+            int minTexelSize = Integer.MAX_VALUE;
+            int lowestOneBit = 1 << maxMipmapLevels;
+            for (SpriteContents sprite : sprites) {
+                minTexelSize = Math.min(minTexelSize, Math.min(sprite.width(), sprite.height()));
+                int lowestTextureBit = Math.min(Integer.lowestOneBit(sprite.width()), Integer.lowestOneBit(sprite.height()));
+                if (lowestTextureBit < lowestOneBit) {
+                    lowestOneBit = lowestTextureBit;
+                }
+            }
+            int minSize = Math.min(minTexelSize, lowestOneBit);
+            int minPowerOfTwo = net.minecraft.util.Mth.log2(minSize);
+            return minPowerOfTwo < maxMipmapLevels ? minPowerOfTwo : maxMipmapLevels;
         }
 
         private static NativeImage[] byMipLevel(final SpriteContents sprite) {

@@ -24,6 +24,8 @@ use std::time::{Duration, Instant};
 use crate::com::mojang::blaze3d::platform::window::Window;
 use crate::com::mojang::renderpearl::api::device::gpu_surface::GpuSurface;
 use crate::net::minecraft::client::delta_tracker::Timer;
+use crate::net::minecraft::client::gui::gui::Gui;
+use crate::net::minecraft::client::gui::hud::HudContext;
 use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
 use crate::net::minecraft::client::keyboard_handler::{KeyAction, KeyboardHandler};
 use crate::net::minecraft::client::mouse_handler::MouseHandler;
@@ -87,6 +89,7 @@ pub struct Minecraft {
     /// `gui.hud.isHidden()`: F1.
     pub hud_hidden: Cell<bool>,
     mouse_handler: RefCell<MouseHandler>,
+    pub gui: RefCell<Gui>,
 }
 
 impl Minecraft {
@@ -116,6 +119,7 @@ impl Minecraft {
             window: RefCell::new(None),
             hud_hidden: Cell::new(false),
             mouse_handler: RefCell::new(MouseHandler::new()),
+            gui: RefCell::new(Gui::new()),
         })
     }
 
@@ -197,6 +201,7 @@ impl Minecraft {
             }
         }
 
+        self.gui.borrow_mut().tick(self.pause.get());
         self.tick_screen();
 
         if self.level.borrow().is_some() {
@@ -337,7 +342,37 @@ impl Minecraft {
             level.get_game_time(),
             eye_y,
         );
+        self.render_gui(game_renderer, level, player.as_ref());
         true
+    }
+
+    /// The frame's GUI: `Gui.extractRenderState` (the HUD, with the level and its player), then
+    /// `GameRenderer.render`'s `guiRenderer.render()`. The mouse is grabbed in a level, which only
+    /// screens read, so its scaled position is the window's corner until screens come.
+    fn render_gui(
+        &self,
+        game_renderer: &mut GameRenderer,
+        level: &ClientLevel,
+        player: Option<&LocalPlayer>,
+    ) {
+        let gui_scale = self.options.borrow().gui_scale;
+        let game_mode = self.game_mode.borrow().clone();
+        let hud_context = match (player, game_mode.as_ref()) {
+            (Some(player), Some(game_mode)) => Some(HudContext {
+                is_hidden: self.hud_hidden.get(),
+                player,
+                player_mode: game_mode.get_player_mode(),
+                can_hurt_player: game_mode.can_hurt_player(),
+                has_experience: game_mode.has_experience(),
+                is_hardcore: level.is_hardcore(),
+            }),
+            _ => None,
+        };
+        let mut gui = self.gui.borrow_mut();
+        game_renderer.extract_gui(gui_scale, 0, 0, |graphics| {
+            gui.extract_render_state(graphics, hud_context.as_ref());
+        });
+        game_renderer.render_gui(gui_scale);
     }
 
     /// What the level's environment attributes read of it, with the listener's clocks.

@@ -144,6 +144,7 @@ impl PalettedSpriteSupplier {
                     frame_size,
                     image,
                     None,
+                    Vec::new(),
                     None,
                 ))
             }
