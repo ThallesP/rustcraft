@@ -23,9 +23,11 @@ use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes
 use crate::net::minecraft::world::entity::avatar::Avatar;
 use crate::net::minecraft::world::entity::entity;
 use crate::net::minecraft::world::entity::entity_types::EntityTypes;
+use crate::net::minecraft::world::entity::humanoid_arm::HumanoidArm;
 use crate::net::minecraft::world::entity::living_entity::{self, LivingEntity, LivingEntityClass};
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::player::abilities::Abilities;
+use crate::net::minecraft::world::entity::player::player_model_part::PlayerModelPart;
 use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::level::level::{self, Level};
 use crate::net::minecraft::world::phys::aabb::AABB;
@@ -48,6 +50,11 @@ pub struct Player {
     /// The inventory's selected slot (`getInventory().getSelectedSlot()`): the inventory isn't
     /// ported yet.
     pub selected_slot: i32,
+    /// `Avatar.DATA_PLAYER_MAIN_HAND`, as the server last set it.
+    pub main_arm: HumanoidArm,
+    /// `Avatar.DATA_PLAYER_MODE_CUSTOMISATION`: the skin's parts shown, as the server last set
+    /// them (the masks of the `PlayerModelPart`s the client sent).
+    pub model_customisation: i8,
 }
 
 impl std::ops::Deref for Player {
@@ -82,6 +89,7 @@ impl Player {
             Attributes::AIR_DRAG_MODIFIER,
             Attributes::FRICTION_MODIFIER,
             Attributes::SNEAKING_SPEED,
+            Attributes::ATTACK_SPEED,
         ]
         .into_iter()
         .map(|attribute| {
@@ -111,6 +119,8 @@ impl Player {
             total_experience: 0,
             experience_progress: 0.0,
             selected_slot: 0,
+            main_arm: HumanoidArm::RIGHT,
+            model_customisation: 0,
         }
     }
 
@@ -135,6 +145,44 @@ impl Player {
     /// `hasEnoughFoodToDoExhaustiveManoeuvres()`: more than 6 food, or able to fly.
     pub fn has_enough_food_to_do_exhaustive_manoeuvres(&self) -> bool {
         self.food_level > 6 || self.abilities.mayfly
+    }
+
+    /// `Avatar.getMainArm()`.
+    pub fn get_main_arm(&self) -> HumanoidArm {
+        self.main_arm
+    }
+
+    /// `Avatar.isModelPartShown`.
+    pub fn is_model_part_shown(&self, part: PlayerModelPart) -> bool {
+        (i32::from(self.model_customisation) & part.get_mask()) == part.get_mask()
+    }
+
+    /// `getCurrentItemAttackStrengthDelay()`: the ticks an attack takes to charge.
+    pub fn get_current_item_attack_strength_delay(&self) -> f32 {
+        (1.0 / self.get_attribute_value(Attributes::ATTACK_SPEED) * 20.0) as f32
+    }
+
+    pub fn get_attack_strength_scale(&self, a: f32) -> f32 {
+        Mth::clamp_f32(
+            (self.attack_strength_ticker as f32 + a)
+                / self.get_current_item_attack_strength_delay(),
+            0.0,
+            1.0,
+        )
+    }
+
+    /// How far the held item is back up after a swap, 0 to 1.
+    pub fn get_item_swap_scale(&self, a: f32) -> f32 {
+        Mth::clamp_f32(
+            (self.item_swap_ticker as f32 + a) / self.get_current_item_attack_strength_delay(),
+            0.0,
+            1.0,
+        )
+    }
+
+    pub fn reset_attack_strength_ticker(&mut self) {
+        self.attack_strength_ticker = 0;
+        self.item_swap_ticker = 0;
     }
 
     /// `isMobilityRestricted()`: blind, which is an effect, not ported.
@@ -242,6 +290,10 @@ pub fn tick(this: &mut (impl PlayerClass + Sized), level: &dyn Level) {
         this.entity_mut().set_pos(nx, y, nz);
     }
 
+    // The held item never changes (the inventory isn't ported), so the tickers only count.
+    let player = this.player_mut();
+    player.attack_strength_ticker += 1;
+    player.item_swap_ticker += 1;
     update_player_pose(this, level);
 }
 

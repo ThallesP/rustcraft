@@ -147,6 +147,19 @@ impl SortState {
         target.build()
     }
 
+    /// `writeSortedIndexBuffer`: the quads' indices, farthest first, into bytes of the index
+    /// type.
+    pub fn write_sorted_index_buffer(&self, sorting: &VertexSorting) -> Vec<u8> {
+        let start_indices = sorting.sort(&self.centroids);
+        let index_type = self.index_type;
+        let mut output = Vec::with_capacity(start_indices.len() * 6 * index_type.bytes() as usize);
+        SortState::write_indices(&start_indices, |value| match index_type {
+            IndexType::SHORT => output.extend_from_slice(&(value as i16).to_le_bytes()),
+            IndexType::INT => output.extend_from_slice(&value.to_le_bytes()),
+        });
+        output
+    }
+
     fn write_indices(start_indices: &[i32], mut output: impl FnMut(i32)) {
         for &start_index in start_indices {
             output(start_index * 4);

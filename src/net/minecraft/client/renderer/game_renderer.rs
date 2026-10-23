@@ -10,26 +10,36 @@
 //! renderer (Java's `Minecraft.levelRenderer`), and the GUI's atlas, the texture manager it's
 //! registered in, the GUI's render state (`GameRenderState.guiRenderState`) and its renderer.
 //!
-//! Not ported yet: the hand and the screen effects
-//! (`render3dHud`: `renderItemInHand`, `ScreenEffectRenderer`), the view's bobbing and hurt tilt,
-//! the nausea and portal warp, post effects (`end_of_frame` has no chain in the vanilla pack, so
-//! a frame applies none), the panorama, the 3D HUD's depth target, `Lighting`'s directional
-//! lights (which no pipeline the level draws reads yet), and the boss overlay's darkening.
+//! The 3D HUD (`render3dHud`) draws the first-person hands (`renderItemInHand`) after the level,
+//! with the HUD's own projection over a cleared depth, through the feature renderers
+//! (`FeatureRenderDispatcher`, with the hands' own `SubmitNodeStorage`), lit by `Lighting`'s
+//! level entry, which the level's main pass sets up in Java.
+//!
+//! Not ported yet: the screen effects (`ScreenEffectRenderer`), the view's bobbing (the oracle
+//! turns it off), the nausea and portal warp, post effects (`end_of_frame` has no chain in the
+//! vanilla pack, so a frame applies none), the panorama, the 3D HUD's depth target
+//! (`hud3DTarget`, only when post effects need a consistent depth), the debug crosshair, and the
+//! boss overlay's darkening.
 
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::com::mojang::blaze3d::pipeline::main_target::MainTarget;
+use crate::com::mojang::blaze3d::platform::lighting::{Entry, Lighting};
 use crate::com::mojang::blaze3d::platform::native_image::NativeImage;
 use crate::com::mojang::blaze3d::platform::window::Window;
 use crate::com::mojang::blaze3d::systems::render_system::{AutoStorageIndexBuffer, RenderSystem};
 use crate::com::mojang::blaze3d::systems::sampler_cache::SamplerCache;
+use crate::com::mojang::blaze3d::vertex::pose_stack::PoseStack;
+use crate::com::mojang::blaze3d::vertex::vertex_sorting::VertexSorting;
+use crate::com::mojang::math::axis::Axis;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::compiled_render_pipeline::CompiledRenderPipeline;
 use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use crate::com::mojang::renderpearl::api::pipeline::render_pipeline::RenderPipeline;
 use crate::com::mojang::renderpearl::api::textures::filter_mode::FilterMode;
 use crate::com::mojang::renderpearl::frontend::shaders::pipeline_builder::PipelineBuilder;
+use crate::java::lang::math::Math;
 use crate::net::minecraft::client::camera::{Camera, CameraOptions};
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::gui::font::Font;
@@ -46,6 +56,12 @@ use crate::net::minecraft::client::renderer::block::block_state_model_set::Block
 use crate::net::minecraft::client::renderer::block::fluid_state_model_set::FluidStateModelSet;
 use crate::net::minecraft::client::renderer::chunk::chunk_section_layer::ChunkSectionLayer;
 use crate::net::minecraft::client::renderer::chunk::chunk_sections_to_render::TerrainPipelines;
+use crate::net::minecraft::client::renderer::entity::entity_render_dispatcher::EntityRenderDispatcher;
+use crate::net::minecraft::client::renderer::entity::player::avatar_renderer::AvatarEntity;
+use crate::net::minecraft::client::renderer::entity::state::avatar_render_state::AvatarRenderState;
+use crate::net::minecraft::client::renderer::feature::feature_frame_context::FeatureFrameContext;
+use crate::net::minecraft::client::renderer::feature::feature_render_dispatcher::FeatureRenderDispatcher;
+use crate::net::minecraft::client::renderer::first_person_hands_and_items_renderer::FirstPersonHandsAndItemsRenderer;
 use crate::net::minecraft::client::renderer::fog::environment::atmospheric_fog_environment::AtmosphericFogEnvironment;
 use crate::net::minecraft::client::renderer::fog::environment::lava_fog_environment::LavaFogEnvironment;
 use crate::net::minecraft::client::renderer::fog::environment::powdered_snow_fog_environment::PowderedSnowFogEnvironment;
@@ -57,13 +73,18 @@ use crate::net::minecraft::client::renderer::level_renderer::{
     LevelRenderOptions, LevelRenderer, LevelResources,
 };
 use crate::net::minecraft::client::renderer::lightmap::Lightmap;
+use crate::net::minecraft::client::renderer::projection::Projection;
 use crate::net::minecraft::client::renderer::projection_matrix_buffer::ProjectionMatrixBuffer;
 use crate::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
 use crate::net::minecraft::client::renderer::shader_manager::{Configs, ShaderManager};
 use crate::net::minecraft::client::renderer::sky_renderer::{SkyPipelines, SkyRenderState};
+use crate::net::minecraft::client::renderer::staged_vertex_buffer::StagedVertexBuffer;
 use crate::net::minecraft::client::renderer::state::gui::gui_render_state::GuiRenderState;
 use crate::net::minecraft::client::renderer::state::level::camera_render_state::CameraRenderState;
+use crate::net::minecraft::client::renderer::state::level::player_render_state::PlayerRenderState;
 use crate::net::minecraft::client::renderer::state::lightmap_render_state::LightmapRenderState;
+use crate::net::minecraft::client::renderer::submit_node_storage::SubmitNodeStorage;
+use crate::net::minecraft::client::renderer::texture::overlay_texture::OverlayTexture;
 use crate::net::minecraft::client::renderer::texture::sprite_contents::AdditionalMetadataType;
 use crate::net::minecraft::client::renderer::texture::sprite_loader::SpriteLoader;
 use crate::net::minecraft::client::renderer::texture::texture_atlas::{
@@ -81,6 +102,7 @@ use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::packs::pack_resources::PackResources;
 use crate::net::minecraft::server::packs::pack_type::PackType;
 use crate::net::minecraft::server::packs::resources::multi_pack_resource_manager::MultiPackResourceManager;
+use crate::net::minecraft::server::packs::resources::resource_manager::ResourceManager;
 use crate::net::minecraft::server::packs::vanilla_pack_resources::VanillaPackResources;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::{self, RandomSource};
@@ -90,6 +112,8 @@ use crate::net::minecraft::world::attribute::environment_attributes::Environment
 use crate::net::minecraft::world::entity::entity::EntityClass;
 use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::level::cardinal_lighting;
+use crate::net::minecraft::world::level::dimension::dimension_type::DimensionType;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
 use crate::net::minecraft::world::level::material::fog_type::FogType;
 use crate::org::joml::matrix4f::Matrix4f;
@@ -223,6 +247,23 @@ pub struct GameRenderer {
     ui_lightmap: UiLightmap,
     /// `Minecraft.font`, from the resource reload's `FontManager`.
     font: Rc<Font>,
+    lighting: Lighting,
+    /// The level's cardinal lighting the lighting's level entry was last updated for
+    /// (`setLevel`'s `updateLevel`).
+    lighting_level_type: Option<cardinal_lighting::Type>,
+    overlay_texture: OverlayTexture,
+    hud_projection: Projection,
+    hud3d_projection_matrix_buffer: ProjectionMatrixBuffer,
+    /// Java's `LevelRenderer.entityRenderDispatcher`.
+    entity_render_dispatcher: EntityRenderDispatcher,
+    feature_render_dispatcher: FeatureRenderDispatcher,
+    hand_and_screen_submit_node_storage: SubmitNodeStorage,
+    /// `RenderBuffers.stagedVertexBuffer()`.
+    staged_vertex_buffer: StagedVertexBuffer,
+    /// `levelRenderState.playerRenderState`.
+    player_render_state: PlayerRenderState,
+    /// `minecraft.gameMode.getPlayerMode() == SPECTATOR`, as of the frame's extract.
+    player_is_spectator: bool,
 }
 
 impl GameRenderer {
@@ -239,11 +280,14 @@ impl GameRenderer {
             .iter()
             .map(|layer| layer.clone() as Rc<dyn PackResources>)
             .collect();
-        let manager = MultiPackResourceManager::new(PackType::CLIENT_RESOURCES, layers);
+        let manager = Rc::new(MultiPackResourceManager::new(
+            PackType::CLIENT_RESOURCES,
+            layers,
+        ));
         // The resource reload's colormaps, which the biomes' tints read.
-        GrassColorReloadListener::apply(GrassColorReloadListener::prepare(&manager));
-        FoliageColorReloadListener::apply(FoliageColorReloadListener::prepare(&manager));
-        DryFoliageColorReloadListener::apply(DryFoliageColorReloadListener::prepare(&manager));
+        GrassColorReloadListener::apply(GrassColorReloadListener::prepare(&*manager));
+        FoliageColorReloadListener::apply(FoliageColorReloadListener::prepare(&*manager));
+        DryFoliageColorReloadListener::apply(DryFoliageColorReloadListener::prepare(&*manager));
         let mut block_atlas = TextureAtlas::new(
             device,
             Identifier::with_default_namespace(TextureAtlas::LOCATION_BLOCKS),
@@ -253,7 +297,7 @@ impl GameRenderer {
             block_atlas.max_supported_texture_size(),
         )
         .load_and_stitch(
-            &manager,
+            &*manager,
             &Identifier::with_default_namespace("blocks"),
             4,
             0,
@@ -265,7 +309,7 @@ impl GameRenderer {
             block_atlas.max_supported_texture_size(),
         )
         .load_and_stitch(
-            &manager,
+            &*manager,
             &Identifier::with_default_namespace("items"),
             0,
             0,
@@ -273,7 +317,7 @@ impl GameRenderer {
         )
         .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
         let materials = MaterialBaker::new(&blocks, &items);
-        let baked = ModelManager::bake_block_state_models(&manager, &materials);
+        let baked = ModelManager::bake_block_state_models(&*manager, &materials);
         let models = Arc::new(BlockStateModelSet::new(
             baked.block_state_models,
             baked.missing_models.block,
@@ -295,7 +339,7 @@ impl GameRenderer {
             gui_atlas.max_supported_texture_size(),
         )
         .load_and_stitch(
-            &manager,
+            &*manager,
             &Identifier::with_default_namespace("gui"),
             0,
             0,
@@ -305,10 +349,11 @@ impl GameRenderer {
         gui_atlas.upload(device, &sampler_cache, &animation_pipelines, gui);
         // FontManager's reload, with no font options (Unicode and Japanese variants off).
         let font = Rc::new(Font::new(
-            Rc::new(FontManager::load(Some(device), &manager, &[])),
+            Rc::new(FontManager::load(Some(device), &*manager, &[])),
             false,
         ));
-        let mut texture_manager = TextureManager::new();
+        let mut texture_manager =
+            TextureManager::with_resource_manager(Rc::clone(&manager) as Rc<dyn ResourceManager>);
         texture_manager.register(
             gui_atlas.location().clone(),
             gui_atlas
@@ -317,6 +362,7 @@ impl GameRenderer {
                 .clone(),
             Rc::clone(gui_atlas.get_sampler().expect("the atlas is uploaded")),
         );
+        let overlay_texture = OverlayTexture::new(device, &sampler_cache);
 
         GameRenderer {
             device,
@@ -347,6 +393,17 @@ impl GameRenderer {
             gui_renderer: GuiRenderer::new(device),
             ui_lightmap: UiLightmap::new(device),
             font,
+            lighting: Lighting::new(device),
+            lighting_level_type: None,
+            overlay_texture,
+            hud_projection: Projection::new(),
+            hud3d_projection_matrix_buffer: ProjectionMatrixBuffer::new(device, "hud3d"),
+            entity_render_dispatcher: EntityRenderDispatcher::new(),
+            feature_render_dispatcher: FeatureRenderDispatcher::new(),
+            hand_and_screen_submit_node_storage: SubmitNodeStorage::new(),
+            staged_vertex_buffer: StagedVertexBuffer::new(),
+            player_render_state: PlayerRenderState::default(),
+            player_is_spectator: false,
         }
     }
 
@@ -721,13 +778,15 @@ impl GameRenderer {
 
     /// A frame of the level, at `partial_ticks` (`delta_ticks` since the last): `extract`, then
     /// `render`. `lighting` is the level's light and tints, and `environment` what its
-    /// environment attributes read of it; the player's eye is at `eye_y`.
+    /// environment attributes read of it; the player's eye is at `eye_y`, and its hands are drawn
+    /// in front of the level.
     #[allow(clippy::too_many_arguments)]
     pub fn render_level_frame(
         &mut self,
         level: &ClientLevel,
         lighting: &dyn BlockAndTintGetter,
         environment: &dyn LayerLevel,
+        player: Option<&LocalPlayer>,
         options: &RenderOptions,
         partial_ticks: f32,
         delta_ticks: f32,
@@ -777,6 +836,14 @@ impl GameRenderer {
         self.lightmap_render_state.block_factor = self.block_light_flicker + 1.4;
         self.lightmap_render_state.brightness = options.gamma;
         self.lightmap_needs_update = false;
+        self.extract_player_state(level, player, partial_ticks);
+        // setLevel's Lighting.updateLevel, for the level's cardinal lighting.
+        let cardinal_light_type =
+            DimensionType::cardinal_light_type_of(level.dimension_type_registration());
+        if self.lighting_level_type != Some(cardinal_light_type) {
+            self.lighting.update_level(device, cardinal_light_type);
+            self.lighting_level_type = Some(cardinal_light_type);
+        }
 
         // render.
         device
@@ -801,7 +868,7 @@ impl GameRenderer {
         let lightmap_pipeline = self.pipelines.get(device, &RenderPipelines::get().LIGHTMAP);
         self.lightmap
             .render(device, &lightmap_pipeline, &self.lightmap_render_state);
-        self.render_level(level, lighting, &level_options, &environment.sky);
+        self.render_level(level, lighting, &level_options, &environment.sky, options);
         self.fog_renderer_end_frame();
         device.create_command_encoder().clear_depth_texture(
             &**self.main_render_target.get_depth_texture().expect("depth"),
@@ -813,13 +880,15 @@ impl GameRenderer {
         RenderSystem::set_shader_fog(self.fog_renderer.get_buffer(FogMode::NONE));
     }
 
-    /// `renderLevel`: the projection (no bobbing or warp), the fog, and the level renderer.
+    /// `renderLevel`: the projection (no bobbing or warp), the fog, the level renderer, then the
+    /// 3D HUD.
     fn render_level(
         &mut self,
         level: &ClientLevel,
         lighting: &dyn BlockAndTintGetter,
         level_options: &LevelRenderOptions,
         sky_state: &SkyRenderState,
+        options: &RenderOptions,
     ) {
         let device = self.device;
         let mut projection_matrix =
@@ -850,6 +919,9 @@ impl GameRenderer {
             lightmap_sampler: &lightmap_sampler,
             quad_indices: &mut self.quad_indices,
         };
+        // The main pass's lighting (LevelRenderer.addMainPass), which nothing the level draws
+        // reads yet, and the hands do.
+        self.lighting.setup_for(Entry::LEVEL);
         self.level_renderer.render(
             device,
             &self.main_render_target,
@@ -861,13 +933,195 @@ impl GameRenderer {
             level,
             lighting,
         );
-        // render3dHud: the hand and the screen effects aren't ported; the depth is cleared for
-        // them, and the fog is none after.
+        self.render_3d_hud(options);
+    }
+
+    /// `render3dHud`: the HUD's projection over a cleared depth, the hands, and the fog off after.
+    /// The screen effects and the debug crosshair aren't ported.
+    fn render_3d_hud(&mut self, options: &RenderOptions) {
+        let device = self.device;
+        self.hud_projection.setup_perspective(
+            0.05,
+            self.camera_render_state.depth_far,
+            self.camera_render_state.hud_fov,
+            self.main_render_target.width as f32,
+            self.main_render_target.height as f32,
+        );
+        RenderSystem::set_projection_matrix(
+            self.hud3d_projection_matrix_buffer
+                .get_buffer(device, &mut self.hud_projection),
+        );
         device.create_command_encoder().clear_depth_texture(
             &**self.main_render_target.get_depth_texture().expect("depth"),
             0.0,
         );
+        self.render_item_in_hand(options);
         RenderSystem::set_shader_fog(self.fog_renderer.get_buffer(FogMode::NONE));
+    }
+
+    /// `OptionsRenderState.damageTiltStrength`: the option's default (the options screen isn't
+    /// ported).
+    const DAMAGE_TILT_STRENGTH: f64 = 1.0;
+
+    /// `bobHurt`: the view tilted on dying and towards a hit while the camera's entity is hurt.
+    fn bob_hurt(camera_state: &CameraRenderState, pose_stack: &mut PoseStack) {
+        let entity = &camera_state.entity_render_state;
+        if !entity.is_living {
+            return;
+        }
+        let mut hurt = entity.hurt_time;
+        if entity.is_dead_or_dying {
+            let duration = Math::min_f32(entity.death_time, 20.0);
+            pose_stack.rotate_degrees(Axis::ZP, 40.0 - 8000.0 / (duration + 200.0));
+        }
+
+        if hurt < 0.0 {
+            return;
+        }
+
+        hurt /= entity.hurt_duration as f32;
+        hurt = Mth::sin(f64::from(
+            hurt * hurt * hurt * hurt * std::f64::consts::PI as f32,
+        ));
+        let rr = entity.hurt_dir;
+        pose_stack.rotate_degrees(Axis::YP, -rr);
+        let tilt_amount = (f64::from(-hurt) * 14.0 * GameRenderer::DAMAGE_TILT_STRENGTH) as f32;
+        pose_stack.rotate_degrees(Axis::ZP, tilt_amount);
+        pose_stack.rotate_degrees(Axis::YP, rr);
+    }
+
+    /// `renderItemInHand`: in the first person, unless the HUD is hidden or the player is a
+    /// spectator, the hands submitted in the camera's frame and drawn in their own pass over the
+    /// level's color, with the HUD's depth.
+    fn render_item_in_hand(&mut self, options: &RenderOptions) {
+        let player_state = &self.player_render_state;
+        if !player_state.has_player
+            || !self.camera_render_state.is_first_person
+            || self.camera_render_state.entity_render_state.is_sleeping
+            || options.hide_gui
+            || self.player_is_spectator
+        {
+            return;
+        }
+        let device = self.device;
+        let camera_state = &self.camera_render_state;
+        let mut pose_stack = PoseStack::new();
+        pose_stack.push_pose();
+        let mut inverted = Matrix4f::new();
+        camera_state.view_rotation_matrix.invert_into(&mut inverted);
+        pose_stack.mul_pose(&mut inverted);
+        RenderSystem::with_model_view_stack(|stack| {
+            stack.push_matrix();
+            stack.mul(&camera_state.view_rotation_matrix);
+        });
+        GameRenderer::bob_hurt(camera_state, &mut pose_stack);
+        FirstPersonHandsAndItemsRenderer::submit_hands_with_items(
+            camera_state.camera_entity_partial_ticks,
+            &mut pose_stack,
+            &mut self.hand_and_screen_submit_node_storage,
+            player_state,
+            &mut self.entity_render_dispatcher,
+        );
+
+        let mut context = FeatureFrameContext {
+            device,
+            texture_manager: &mut self.texture_manager,
+            sampler_cache: &self.sampler_cache,
+            overlay_texture: self.overlay_texture.get_texture_view(),
+            lightmap_texture: self.lightmap.get_texture_view(),
+            pipelines: &mut self.pipelines,
+            staged_vertex_buffer: &mut self.staged_vertex_buffer,
+            quad_indices: &mut self.quad_indices,
+            // ProjectionType.PERSPECTIVE's.
+            vertex_sorting: VertexSorting::distance_to_origin,
+            use_improved_transparency: false,
+            last_transform: None,
+        };
+        let frame = self
+            .feature_render_dispatcher
+            .prepare_frame(&mut context, &mut self.hand_and_screen_submit_node_storage);
+        {
+            let encoder = device.create_command_encoder();
+            let mut render_pass = encoder.create_render_pass_with(
+                "Item in hand",
+                self.main_render_target
+                    .get_color_texture_view()
+                    .expect("the main target has color"),
+                None,
+                self.main_render_target.get_depth_texture_view(),
+                None,
+            );
+            RenderSystem::bind_default_uniforms(&mut *render_pass);
+            self.feature_render_dispatcher.render_all_features(
+                &mut context,
+                &mut *render_pass,
+                &frame,
+            );
+        }
+        self.feature_render_dispatcher
+            .close_frame(&mut context, frame);
+
+        RenderSystem::with_model_view_stack(|stack| {
+            stack.pop_matrix();
+        });
+        pose_stack.pop_pose();
+    }
+
+    /// `LevelExtractor.extractPlayerState`, as far as the hands read it: the player's avatar (its
+    /// renderer's `extractRenderState`) and its hands. The screen effects' parts aren't ported.
+    fn extract_player_state(
+        &mut self,
+        level: &ClientLevel,
+        player: Option<&LocalPlayer>,
+        partial_ticks: f32,
+    ) {
+        let state = &mut self.player_render_state;
+        state.reset();
+        let Some(player) = player else {
+            return;
+        };
+        state.has_player = true;
+        let entity = player.entity();
+        self.player_is_spectator = player.is_spectator();
+        // Camera.extractRenderState's part about its entity, the player: the hurt and death
+        // that tilt the view. The player's hurt direction and death time aren't ported (0).
+        let partial = self.camera_render_state.camera_entity_partial_ticks;
+        let living = player.living_entity();
+        let camera_entity = &mut self.camera_render_state.entity_render_state;
+        camera_entity.is_living = true;
+        camera_entity.is_player = true;
+        camera_entity.is_sleeping = false;
+        camera_entity.is_dead_or_dying = living.is_dead_or_dying();
+        camera_entity.hurt_dir = 0.0;
+        camera_entity.hurt_time = living.hurt_time as f32 - partial;
+        camera_entity.death_time = partial;
+        camera_entity.hurt_duration = living.hurt_duration;
+        let avatar_entity = AvatarEntity {
+            uuid: entity.get_uuid(),
+            light_probe_position: entity.get_eye_position_partial(partial_ticks),
+            x_rot: entity.get_x_rot_partial(partial_ticks),
+            main_arm: player.get_main_arm(),
+            model_customisation: player.model_customisation,
+            // Entity.FLAG_INVISIBLE and FLAG_ONFIRE: a fire-immune entity's own fire isn't
+            // ported, and a client's fire is the server's flag.
+            is_invisible: entity.get_shared_flag(5),
+            is_on_fire: entity.get_shared_flag(0),
+            level,
+        };
+        let mut avatar_render_state = AvatarRenderState::default();
+        self.entity_render_dispatcher
+            .get_renderer(&avatar_render_state)
+            .extract_render_state(&avatar_entity, &mut avatar_render_state);
+        state.avatar_render_state = Some(avatar_render_state);
+        player.first_person_hands_and_items().extract_render_state(
+            entity.get_x_rot_partial(partial_ticks),
+            entity.get_y_rot_partial(partial_ticks),
+            Mth::lerp_f32(partial_ticks, player.x_bob_o, player.x_bob),
+            Mth::lerp_f32(partial_ticks, player.y_bob_o, player.y_bob),
+            &mut state.first_person_hands_and_items,
+        );
+        state.is_under_water = player.is_under_water();
+        state.eye_position_y = entity.get_eye_position_partial(partial_ticks).y;
     }
 
     /// `Screenshot.takeScreenshot` of the main target.

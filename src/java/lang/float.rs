@@ -18,6 +18,18 @@ impl Float {
         }
     }
 
+    /// `Float.compare`: numerically, with -0.0 below 0.0 and every NaN above everything and
+    /// equal to itself.
+    pub fn compare(f1: f32, f2: f32) -> std::cmp::Ordering {
+        if f1 < f2 {
+            return std::cmp::Ordering::Less;
+        }
+        if f1 > f2 {
+            return std::cmp::Ordering::Greater;
+        }
+        Float::float_to_int_bits(f1).cmp(&Float::float_to_int_bits(f2))
+    }
+
     pub fn hash_code(value: f32) -> i32 {
         Float::float_to_int_bits(value)
     }

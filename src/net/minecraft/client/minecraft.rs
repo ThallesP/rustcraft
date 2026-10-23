@@ -353,6 +353,7 @@ impl Minecraft {
             level,
             level,
             &self.level_environment(level),
+            player.as_ref(),
             &options,
             partial_ticks,
             delta_ticks,

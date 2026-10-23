@@ -3,6 +3,7 @@ pub mod clock;
 pub mod damagesource;
 pub mod difficulty;
 pub mod entity;
+pub mod interaction_hand;
 pub mod inventory;
 pub mod item;
 pub mod level;

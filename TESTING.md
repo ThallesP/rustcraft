@@ -316,6 +316,13 @@ The atlas's GPU half, drawing each sprite into each mip level, is a frame test (
 
 The rest of the frame is checked by its screenshots: the level renderer's sections and draws, the fog, the sky and the lightmap only show in pixels.
 
+### Entity models
+
+`EntityModelSuites` bakes the player's model, wide and slim, from its mesh (`PlayerModel.createMesh`, on a 64 by 64 texture, like `LayerDefinitions` bakes `ModelLayers.PLAYER` and `PLAYER_SLIM`), and renders one of its parts into a recording `VertexConsumer`:
+- `ModelPart`: "render" is `[slim, part, pose, sleeves, color]` → every vertex the eleven-argument `addVertex` gets (position, color, texture coordinates, overlay, light and normal, floats as bits), for 300 cases: the root and each limb, the arms' sleeves shown or hidden, a pose stack translated, rotated (`rotationXYZ`) and scaled (uniformly, and unevenly or mirrored, which renormalizes the normals), and the part turned about Z like the first-person arm. The player's model has no mirrored cubes (its left limbs replace the humanoid's), so a mirrored polygon's reversed vertices aren't reached here; a mutation that stops renormalizing normals fails 150 of the 300.
+
+How the first-person hand draws the arm (`FirstPersonHandsAndItemsRenderer`'s pose, `AvatarRenderer.renderRightHand`, the skin's texture, `entity_translucent` through the feature renderers) shows in the walk's screenshots.
+
 ### The GUI
 
 `GuiSuites` covers the GUI's pure pieces, the ones that decide what it draws where:

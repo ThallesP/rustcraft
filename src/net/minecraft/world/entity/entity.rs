@@ -296,6 +296,35 @@ impl Entity {
 
     /// `turn`: the mouse's turn, in degrees times 0.15, the old rotation turned with it so the
     /// frame between ticks doesn't swing back. A vehicle isn't ported.
+    /// `getXRot(partialTicks)`: the pitch between ticks, the current one at a partial tick of 1.
+    pub fn get_x_rot_partial(&self, partial_ticks: f32) -> f32 {
+        if partial_ticks == 1.0 {
+            self.get_x_rot()
+        } else {
+            Mth::lerp_f32(partial_ticks, self.x_rot_o, self.get_x_rot())
+        }
+    }
+
+    /// `getYRot(partialTicks)`: the yaw between ticks, the current one at a partial tick of 1.
+    pub fn get_y_rot_partial(&self, partial_ticks: f32) -> f32 {
+        if partial_ticks == 1.0 {
+            self.get_y_rot()
+        } else {
+            Mth::rot_lerp_f32(partial_ticks, self.y_rot_o, self.get_y_rot())
+        }
+    }
+
+    /// `getEyePosition(partialTicks)`.
+    pub fn get_eye_position_partial(&self, partial_ticks: f32) -> Vec3 {
+        let old = self.old_position();
+        Vec3::new(
+            Mth::lerp_f64(f64::from(partial_ticks), old.x, self.get_x()),
+            Mth::lerp_f64(f64::from(partial_ticks), old.y, self.get_y())
+                + f64::from(self.get_eye_height()),
+            Mth::lerp_f64(f64::from(partial_ticks), old.z, self.get_z()),
+        )
+    }
+
     pub fn turn(&mut self, xo: f64, yo: f64) {
         let x_delta = yo as f32 * 0.15;
         let y_delta = xo as f32 * 0.15;

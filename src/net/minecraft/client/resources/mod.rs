@@ -1,3 +1,4 @@
+pub mod default_player_skin;
 pub mod dry_foliage_color_reload_listener;
 pub mod foliage_color_reload_listener;
 pub mod grass_color_reload_listener;

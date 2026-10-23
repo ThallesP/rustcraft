@@ -511,6 +511,14 @@ fn render_scenario(
     )?);
     let render_options = OracleGameTest::render_options(&scenario);
     let mut player = LocalPlayer::new(None);
+    // The scenario's player is the offline player `rustcraft`, whose id picks its skin.
+    {
+        use rustcraft::net::minecraft::core::uuid_util::UUIDUtil;
+        use rustcraft::net::minecraft::world::entity::entity::EntityClass;
+        player
+            .entity_mut()
+            .set_uuid(UUIDUtil::create_offline_player_uuid("rustcraft"));
+    }
     player.set_pos(Vec3::new(
         scenario.player.x,
         scenario.player.y,
@@ -518,6 +526,10 @@ fn render_scenario(
     ));
     player.set_y_rot(scenario.player.y_rot);
     player.set_x_rot(scenario.player.x_rot);
+    // The server echoes the main arm and the skin's parts the client sent (`set_entity_data`).
+    let information = options.build_player_information();
+    player.main_arm = information.main_hand();
+    player.model_customisation = information.model_customisation() as i8;
     game_renderer.set_level(true);
     let environment = LevelEnvironment::new(&level, clocks);
     // The texture animations at their first frames, drawn like the scenario start draws them: the
@@ -535,6 +547,7 @@ fn render_scenario(
             &level,
             &level,
             &environment,
+            Some(&player),
             &render_options,
             1.0,
             1.0,

@@ -33,6 +33,7 @@ use std::rc::Rc;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
 use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::player::first_person_hands_and_items::FirstPersonHandsAndItems;
 use crate::net::minecraft::client::player::keyboard_input::KeyboardInput;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, AxisDirection, Direction};
@@ -92,6 +93,13 @@ pub struct LocalPlayer {
     pub experience_display_start_tick: i32,
     /// What the tick reads of the game's options (`minecraft.options`), set by `tick`.
     options: Options,
+    /// The view's rotation, lagging behind the player's (half the way each tick), which the
+    /// first-person hands sway by.
+    pub y_bob: f32,
+    pub x_bob: f32,
+    pub y_bob_o: f32,
+    pub x_bob_o: f32,
+    first_person_hands_and_items: FirstPersonHandsAndItems,
 }
 
 impl Deref for LocalPlayer {
@@ -137,6 +145,11 @@ impl LocalPlayer {
             water_vision_time: 0,
             experience_display_start_tick: i32::MIN,
             options: Options::new(),
+            y_bob: 0.0,
+            x_bob: 0.0,
+            y_bob_o: 0.0,
+            x_bob_o: 0.0,
+            first_person_hands_and_items: FirstPersonHandsAndItems::default(),
         };
         entity::refresh_dimensions(&mut player);
         player
@@ -241,7 +254,13 @@ impl LocalPlayer {
         if self.has_client_loaded() {
             self.options = options.clone();
             player::tick(self, level);
+            // The hands are never busy: riding isn't ported.
+            self.first_person_hands_and_items.tick(&self.player, false);
         }
+    }
+
+    pub fn first_person_hands_and_items(&self) -> &FirstPersonHandsAndItems {
+        &self.first_person_hands_and_items
     }
 
     /// `isMovingSlowly()`: crouching or crawling.
@@ -770,7 +789,8 @@ impl LivingEntityClass for LocalPlayer {
     }
 
     /// `LocalPlayer.applyInput()`: the keyboard's input, modified, as the movement's sideways and
-    /// forward parts, and the jump key.
+    /// forward parts, and the jump key; then the view's lag half the way to the rotation. It's the
+    /// controlled camera's branch: the player is always the camera here.
     fn apply_input(&mut self) {
         let modified_input = self.modify_input(self.input.get_move_vector());
         let jumping = self.input.key_presses.jump;
@@ -778,6 +798,10 @@ impl LivingEntityClass for LocalPlayer {
         living.xxa = modified_input.x;
         living.zza = modified_input.y;
         living.jumping = jumping;
+        self.y_bob_o = self.y_bob;
+        self.x_bob_o = self.x_bob;
+        self.x_bob += (self.entity().get_x_rot() - self.x_bob) * 0.5;
+        self.y_bob += (self.entity().get_y_rot() - self.y_bob) * 0.5;
     }
 
     fn on_climbable(&mut self, level: &dyn Level) -> bool {

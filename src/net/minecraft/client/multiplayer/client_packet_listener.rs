@@ -604,6 +604,8 @@ impl ClientGamePacketListener for ClientPacketListener {
         minecraft.set_level(level);
         if minecraft.player.borrow().is_none() {
             let mut player = LocalPlayer::new(Some(this));
+            // `Player`'s constructor: the local profile's id (`AbstractClientPlayer`).
+            player.entity_mut().set_uuid(self.local_game_profile.id());
             player.set_y_rot(-180.0);
             *minecraft.player.borrow_mut() = Some(player);
         }
@@ -1155,7 +1157,8 @@ impl ClientGamePacketListener for ClientPacketListener {
         }
         // Like the attributes, only the player's. `SynchedEntityData` isn't ported, so
         // `assignValues` sets what the player has of its items: the shared flags (0, sprinting and
-        // crouching among them) and the pose (6), which resizes it (`onSyncedDataUpdated`). Its
+        // crouching among them), the pose (6), which resizes it (`onSyncedDataUpdated`), and its
+        // main arm (15) and skin parts shown (16), which its hands are drawn with. Its
         // health (9) goes through `set_health` packets only, since `setHealth` clamps where the
         // item's assignment doesn't; the other items aren't ported. A value whose type isn't
         // ported ends the packet's values (ClientboundSetEntityDataPacket).
@@ -1166,9 +1169,12 @@ impl ClientGamePacketListener for ClientPacketListener {
         else {
             return;
         };
-        // `Entity.DATA_SHARED_FLAGS_ID`'s and `DATA_POSE`'s ids, the first items `defineId` gives.
+        // `Entity.DATA_SHARED_FLAGS_ID`'s and `DATA_POSE`'s ids, the first items `defineId` gives,
+        // and `Avatar`'s main arm and skin parts, after `Entity`'s 8 and `LivingEntity`'s 7.
         const DATA_SHARED_FLAGS_ID: i32 = 0;
         const DATA_POSE: i32 = 6;
+        const DATA_PLAYER_MAIN_HAND: i32 = 15;
+        const DATA_PLAYER_MODE_CUSTOMISATION: i32 = 16;
         for item in packet.packed_items() {
             match (item.id(), item.value()) {
                 (DATA_SHARED_FLAGS_ID, EntityDataValue::Byte(flags)) => {
@@ -1179,6 +1185,12 @@ impl ClientGamePacketListener for ClientPacketListener {
                     }
                 }
                 (DATA_POSE, EntityDataValue::Pose(pose)) => entity::set_pose(player, *pose),
+                (DATA_PLAYER_MAIN_HAND, EntityDataValue::HumanoidArm(arm)) => {
+                    player.main_arm = *arm;
+                }
+                (DATA_PLAYER_MODE_CUSTOMISATION, EntityDataValue::Byte(parts)) => {
+                    player.model_customisation = *parts;
+                }
                 _ => {}
             }
         }

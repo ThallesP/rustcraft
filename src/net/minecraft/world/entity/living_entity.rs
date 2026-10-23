@@ -62,6 +62,10 @@ pub struct LivingEntity {
     pub hurt_duration: i32,
     pub damage_cooldown_time: i32,
     absorption_amount: f32,
+    /// Ticks since the entity last attacked or changed its held item, which `Player` counts.
+    pub attack_strength_ticker: i32,
+    /// Ticks since the entity last changed its held item, which `Player` counts.
+    pub item_swap_ticker: i32,
 }
 
 impl std::ops::Deref for LivingEntity {
@@ -122,6 +126,8 @@ impl LivingEntity {
             hurt_duration: 0,
             damage_cooldown_time: 0,
             absorption_amount: 0.0,
+            attack_strength_ticker: 0,
+            item_swap_ticker: 0,
         }
     }
 

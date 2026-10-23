@@ -1,11 +1,17 @@
+pub mod abstract_texture;
 pub mod atlas;
 pub mod dynamic_atlas_tree;
+pub mod dynamic_texture;
 pub mod mipmap_generator;
 pub mod mipmap_strategy;
 pub mod missing_texture_atlas_sprite;
+pub mod overlay_texture;
+pub mod reloadable_texture;
+pub mod simple_texture;
 pub mod sprite_contents;
 pub mod sprite_loader;
 pub mod stitcher;
 pub mod texture_atlas;
 pub mod texture_atlas_sprite;
+pub mod texture_contents;
 pub mod texture_manager;
