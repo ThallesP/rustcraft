@@ -39,9 +39,13 @@ use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
 use crate::net::minecraft::client::renderer::block::block_state_model_set::BlockStateModelSet;
+use crate::net::minecraft::client::renderer::block::fluid_state_model_set::FluidStateModelSet;
 use crate::net::minecraft::client::renderer::chunk::chunk_section_layer::ChunkSectionLayer;
 use crate::net::minecraft::client::renderer::chunk::chunk_sections_to_render::TerrainPipelines;
 use crate::net::minecraft::client::renderer::fog::environment::atmospheric_fog_environment::AtmosphericFogEnvironment;
+use crate::net::minecraft::client::renderer::fog::environment::lava_fog_environment::LavaFogEnvironment;
+use crate::net::minecraft::client::renderer::fog::environment::powdered_snow_fog_environment::PowderedSnowFogEnvironment;
+use crate::net::minecraft::client::renderer::fog::environment::water_fog_environment::WaterFogEnvironment;
 use crate::net::minecraft::client::renderer::fog::fog_data::FogData;
 use crate::net::minecraft::client::renderer::fog::fog_renderer::{FogMode, FogRenderer};
 use crate::net::minecraft::client::renderer::global_settings_uniform::GlobalSettingsUniform;
@@ -78,7 +82,11 @@ use crate::net::minecraft::util::random_source::{self, RandomSource};
 use crate::net::minecraft::world::attribute::environment_attribute_layer::LayerLevel;
 use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
 use crate::net::minecraft::world::attribute::environment_attributes::EnvironmentAttributes;
+use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
+use crate::net::minecraft::world::level::material::fog_type::FogType;
 use crate::org::joml::matrix4f::Matrix4f;
 use crate::org::joml::vector4f::Vector4f;
 
@@ -107,6 +115,26 @@ pub struct FrameEnvironment {
     pub fog: FogData,
     pub sky: SkyRenderState,
     pub lightmap: LightmapRenderState,
+}
+
+/// What the fog and the sky read of the camera's entity: Java asks the entity itself in
+/// `FogRenderer` and `SkyRenderer`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CameraEntityState {
+    /// `LocalPlayer.getWaterVision()`, for a camera on the local player.
+    pub water_vision: Option<f32>,
+    pub is_under_water: bool,
+    pub is_spectator: bool,
+}
+
+impl CameraEntityState {
+    pub fn of(player: Option<&LocalPlayer>) -> CameraEntityState {
+        player.map_or_else(CameraEntityState::default, |player| CameraEntityState {
+            water_vision: Some(player.get_water_vision()),
+            is_under_water: player.is_under_water(),
+            is_spectator: player.is_spectator(),
+        })
+    }
 }
 
 /// `ShaderManager`'s compiled pipelines, compiled when first asked for
@@ -173,6 +201,7 @@ pub struct GameRenderer {
     pipelines: Pipelines,
     block_atlas: TextureAtlas,
     models: Arc<BlockStateModelSet>,
+    fluid_models: Arc<FluidStateModelSet>,
     block_colors: Arc<BlockColors>,
     sampler_cache: SamplerCache,
     quad_indices: AutoStorageIndexBuffer,
@@ -235,11 +264,15 @@ impl GameRenderer {
             &[],
         )
         .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
-        let baked =
-            ModelManager::bake_block_state_models(&manager, &MaterialBaker::new(&blocks, &items));
+        let materials = MaterialBaker::new(&blocks, &items);
+        let baked = ModelManager::bake_block_state_models(&manager, &materials);
         let models = Arc::new(BlockStateModelSet::new(
             baked.block_state_models,
             baked.missing_models.block,
+        ));
+        let fluid_models = Arc::new(FluidStateModelSet::new(
+            FluidStateModelSet::bake(&materials),
+            baked.missing_models.fluid,
         ));
         let sampler_cache = SamplerCache::new(device);
         let animation_pipelines = AnimationPipelines {
@@ -289,6 +322,7 @@ impl GameRenderer {
             pipelines,
             block_atlas,
             models,
+            fluid_models,
             block_colors: Arc::new(BlockColors::create_default()),
             sampler_cache,
             quad_indices: RenderSystem::sequential_buffer(PrimitiveTopology::QUADS),
@@ -403,6 +437,33 @@ impl GameRenderer {
         }
     }
 
+    fn animation_pipelines(&mut self) -> AnimationPipelines {
+        AnimationPipelines {
+            blit: self
+                .pipelines
+                .get(self.device, &RenderPipelines::get().ANIMATE_SPRITE_BLIT),
+            interpolate: self.pipelines.get(
+                self.device,
+                &RenderPipelines::get().ANIMATE_SPRITE_INTERPOLATE,
+            ),
+        }
+    }
+
+    /// `TextureManager.tick()`, before a frame's ticks: the block atlas's animations, the only
+    /// ticking texture the port has.
+    pub fn tick_textures(&mut self) {
+        let pipelines = self.animation_pipelines();
+        self.block_atlas
+            .cycle_animation_frames(self.device, &self.sampler_cache, &pipelines);
+    }
+
+    /// The block atlas's animations started over, at a scenario's start (TESTING.md).
+    pub fn restart_texture_animations(&mut self) {
+        let pipelines = self.animation_pipelines();
+        self.block_atlas
+            .restart_animations(self.device, &self.sampler_cache, &pipelines);
+    }
+
     /// Whether the level's environment attributes are yet to be made.
     pub fn needs_environment_attributes(&self) -> bool {
         self.environment_attributes.is_none()
@@ -428,6 +489,8 @@ impl GameRenderer {
         eye_y: f64,
         min_y: i32,
         is_flat: bool,
+        fog_type: FogType,
+        camera_entity: &CameraEntityState,
     ) -> FrameEnvironment {
         // ClientLevelData.getHorizonHeight.
         let horizon_height = if is_flat { f64::from(min_y) } else { 63.0 };
@@ -438,27 +501,68 @@ impl GameRenderer {
         let camera = &mut self.main_camera;
         let mut environment = FrameEnvironment::default();
 
-        // FogRenderer.setupFog: the open air's colour and distances, then the render distance's.
+        // FogRenderer.setupFog: the colour and distances of the environment the camera is in
+        // (FOG_ENVIRONMENTS' first that applies; blindness and darkness need mob effects, which
+        // aren't ported), then the render distance's.
+        let fog_type = if fog_type == FogType::NONE {
+            FogType::ATMOSPHERIC
+        } else {
+            fog_type
+        };
         let fog = &mut environment.fog;
         let render_distance_in_blocks = (options.render_distance * 16) as f32;
-        let color = self.atmospheric_fog.get_base_color(
-            camera,
-            system,
-            level,
-            options.render_distance,
-            partial_ticks,
+        let color = match fog_type {
+            FogType::LAVA => LavaFogEnvironment::get_base_color(),
+            FogType::POWDER_SNOW => PowderedSnowFogEnvironment::get_base_color(),
+            FogType::WATER => {
+                WaterFogEnvironment::get_base_color(camera, system, level, partial_ticks)
+            }
+            _ => self.atmospheric_fog.get_base_color(
+                camera,
+                system,
+                level,
+                options.render_distance,
+                partial_ticks,
+            ),
+        };
+        fog.color = FogRenderer::compute_fog_color(
+            &color,
+            camera.position().y,
+            min_y,
+            is_flat,
+            fog_type,
+            camera_entity.water_vision,
         );
-        fog.color = FogRenderer::compute_fog_color(&color, camera.position().y, min_y, is_flat);
-        self.atmospheric_fog.setup_fog(
-            fog,
-            camera,
-            system,
-            level,
-            render_distance_in_blocks,
-            delta_ticks,
-            partial_ticks,
-            options.cloud_range,
-        );
+        match fog_type {
+            FogType::LAVA => LavaFogEnvironment::setup_fog(
+                fog,
+                render_distance_in_blocks,
+                camera_entity.is_spectator,
+            ),
+            FogType::POWDER_SNOW => PowderedSnowFogEnvironment::setup_fog(
+                fog,
+                render_distance_in_blocks,
+                camera_entity.is_spectator,
+            ),
+            FogType::WATER => WaterFogEnvironment::setup_fog(
+                fog,
+                camera,
+                system,
+                level,
+                partial_ticks,
+                camera_entity.water_vision,
+            ),
+            _ => self.atmospheric_fog.setup_fog(
+                fog,
+                camera,
+                system,
+                level,
+                render_distance_in_blocks,
+                delta_ticks,
+                partial_ticks,
+                options.cloud_range,
+            ),
+        }
         let render_distance_fog_span = Mth::clamp_f32(render_distance_in_blocks / 10.0, 4.0, 64.0);
         fog.render_distance_start = render_distance_in_blocks - render_distance_fog_span;
         fog.render_distance_end = render_distance_in_blocks;
@@ -504,8 +608,8 @@ impl GameRenderer {
             &EnvironmentAttributes::SKY_COLOR,
             partial_ticks,
         );
-        // shouldRenderDarkDisc; the player is never under water (fluids aren't ported).
-        sky.should_render_dark_disc = eye_y - horizon_height < 0.0;
+        // shouldRenderDarkDisc.
+        sky.should_render_dark_disc = eye_y - horizon_height < 0.0 && !camera_entity.is_under_water;
 
         // LightmapRenderStateExtractor.extract, without the end's flashes, the darkness effect or
         // night vision (mob effects aren't ported); the flicker and the gamma are the frame's.
@@ -575,16 +679,17 @@ impl GameRenderer {
         }
     }
 
-    /// `update(DeltaTracker)`: the camera at the player's eye.
+    /// `update(DeltaTracker)`: the camera at the player's eye, in the level.
     pub fn update(
         &mut self,
         player: Option<&LocalPlayer>,
+        level: Option<&dyn BlockGetter>,
         partial_ticks: f32,
         options: &RenderOptions,
     ) {
         let camera_options = self.camera_options(options);
         self.main_camera
-            .update(player, partial_ticks, &camera_options);
+            .update(player, level, partial_ticks, &camera_options);
     }
 
     /// A frame of the level, at `partial_ticks` (`delta_ticks` since the last): `extract`, then
@@ -601,6 +706,7 @@ impl GameRenderer {
         delta_ticks: f32,
         game_time: i64,
         eye_y: f64,
+        camera_entity: &CameraEntityState,
     ) {
         let device = self.device;
         let z_zero_to_one = device.get_device_info().is_z_zero_to_one;
@@ -610,7 +716,8 @@ impl GameRenderer {
             partial_ticks,
             z_zero_to_one,
         );
-        self.camera_render_state.fog_type = self.main_camera.get_fluid_in_camera(level);
+        self.camera_render_state.fog_type =
+            self.main_camera.get_fluid_in_camera(level, options.fov);
         let environment = self.extract_environment(
             environment,
             options,
@@ -619,6 +726,8 @@ impl GameRenderer {
             eye_y,
             level.get_min_y(),
             level.is_flat(),
+            self.camera_render_state.fog_type,
+            camera_entity,
         );
         self.camera_render_state.fog_data = environment.fog.clone();
         let level_options = LevelRenderOptions {
@@ -633,6 +742,7 @@ impl GameRenderer {
             &self.camera_render_state,
             &level_options,
             &self.models,
+            &self.fluid_models,
             &self.block_colors,
         );
         self.lightmap_render_state = environment.lightmap.clone();

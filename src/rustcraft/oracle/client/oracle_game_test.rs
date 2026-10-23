@@ -497,6 +497,11 @@ impl TestDriver for OracleGameTest {
                             return;
                         }
                     }
+                    // The texture animations from their first frames, like the oracle client's
+                    // `restartTextureAnimations`: how many ticks the join took varies.
+                    if let Some(game_renderer) = minecraft.game_renderer.borrow_mut().as_mut() {
+                        game_renderer.restart_texture_animations();
+                    }
                     // Marks scenario tick 0 in packet captures: the join before it depends on the
                     // server's real-time ticking, everything after must match.
                     let connection = minecraft

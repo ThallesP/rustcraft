@@ -1,6 +1,8 @@
 package rustcraft.oracle.client;
 
 import java.io.UncheckedIOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,6 +31,9 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.ServerStatusPinger;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
+import net.minecraft.client.renderer.texture.SpriteContents;
+import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
@@ -100,6 +105,7 @@ public final class OracleGameTest implements FabricClientGameTest {
             singleplayer.getConnection().waitForClientboundPackets();
             singleplayer.getConnection().waitForChunksRender();
             settle(context);
+            context.runOnClient(OracleGameTest::restartTextureAnimations);
             replay(context, scenario, outDir);
         }
     }
@@ -166,6 +172,7 @@ public final class OracleGameTest implements FabricClientGameTest {
         context.waitFor(client -> isAtScenarioPosition(client, scenario.player()), LOAD_TIMEOUT_TICKS);
         context.waitFor(OracleGameTest::areChunksRendered, LOAD_TIMEOUT_TICKS);
         settle(context);
+        context.runOnClient(OracleGameTest::restartTextureAnimations);
         // Marks scenario tick 0 in packet captures: the join before it depends on the server's real-time ticking,
         // everything after must match. Sent from the client thread before the first replayed tick, so it goes out first.
         context.runOnClient(client -> client.getConnection().send(new ServerboundCustomPayloadPacket(new DiscardedPayload(SCENARIO_START))));
@@ -288,6 +295,42 @@ public final class OracleGameTest implements FabricClientGameTest {
             client.gui.hud.getChat().clearMessages(false);
             client.gui.toastManager().clear();
         });
+    }
+
+    /**
+     * Starts every atlas's animations over, each at its first frame and drawn, as the scenario starts. They advance a tick
+     * at a time from the client's start (TextureManager.tick), and how many ticks the join took varies from run to run,
+     * so a screenshot of an animated texture (water, lava, fire) would otherwise show another frame each run. The port
+     * does the same at the same point (TESTING.md).
+     */
+    private static void restartTextureAnimations(Minecraft client) {
+        try {
+            Field byPath = TextureManager.class.getDeclaredField("byPath");
+            byPath.setAccessible(true);
+            Field states = TextureAtlas.class.getDeclaredField("animatedTexturesStates");
+            states.setAccessible(true);
+            Method upload = TextureAtlas.class.getDeclaredMethod("uploadAnimationFrames");
+            upload.setAccessible(true);
+            Class<?> stateClass = SpriteContents.AnimationState.class;
+            Field frame = stateClass.getDeclaredField("frame");
+            Field subFrame = stateClass.getDeclaredField("subFrame");
+            Field isDirty = stateClass.getDeclaredField("isDirty");
+            for (Field field : List.of(frame, subFrame, isDirty)) {
+                field.setAccessible(true);
+            }
+            for (Object texture : ((Map<?, ?>)byPath.get(client.getTextureManager())).values()) {
+                if (texture instanceof TextureAtlas atlas) {
+                    for (Object state : (List<?>)states.get(atlas)) {
+                        frame.setInt(state, 0);
+                        subFrame.setInt(state, 0);
+                        isDirty.setBoolean(state, true);
+                    }
+                    upload.invoke(atlas);
+                }
+            }
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     private static void applyOptions(ClientGameTestContext context, Scenario.Options scenarioOptions) {

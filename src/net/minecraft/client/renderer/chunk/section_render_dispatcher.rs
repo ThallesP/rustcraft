@@ -2,9 +2,10 @@
 //!
 //! Compiles sections and puts their meshes in the GPU buffers the terrain draws from. The port
 //! compiles synchronously, on the render thread, which only changes when a mesh is ready: the
-//! oracle waits for every section to be compiled before it takes a screenshot. Not ported yet:
-//! the background executor and its queue (`SectionTaskDynamicQueue`, `SectionBufferBuilderPool`),
-//! translucency re-sorting (`ResortTransparencyTask`), and Java's buffers behind the uber buffers:
+//! oracle waits for every section to be compiled before it takes a screenshot. Translucent quads
+//! are sorted again (`ResortTransparencyTask`) synchronously too. Not ported yet: the background
+//! executor and its queue (`SectionTaskDynamicQueue`, `SectionBufferBuilderPool`), and Java's
+//! buffers behind the uber buffers:
 //! `UberGpuBuffer`'s `TlsfAllocator` heaps and the `StagingBuffer` they're copied through. Here
 //! each layer's sections lie one after another in one vertex buffer and one index buffer, rebuilt
 //! when a section's mesh comes or goes: the draws read the same vertices and indices from other
@@ -254,6 +255,51 @@ impl SectionRenderDispatcher {
         self.waiting_for_upload
             .push((section.index, section_node, compiled_section_mesh));
         false
+    }
+
+    /// `RenderSection.resortTransparency` and its `ResortTransparencyTask`, run now: the section's
+    /// translucent quads sorted again from where the camera is, into the layer's buffers at the
+    /// next upload, unless the camera is on the same side of the section as when they were last
+    /// sorted and in none of its slabs.
+    pub fn resort_transparency(&mut self, section: &RenderSection) {
+        let SectionMesh::Compiled(mesh) = section.get_section_mesh() else {
+            return;
+        };
+        let Some(state) = mesh.get_transparency_state() else {
+            return;
+        };
+        if mesh.is_empty(ChunkSectionLayer::TRANSLUCENT) {
+            return;
+        }
+        let camera_pos = self.camera_position;
+        let section_node = section.section_node;
+        let vertex_sorting =
+            RenderSection::create_vertex_sorting(&SectionPos::of_long(section_node), &camera_pos);
+        let translucency_point_of_view = TranslucencyPointOfView::of(&camera_pos, section_node);
+        if !mesh.is_different_point_of_view(&translucency_point_of_view)
+            && !translucency_point_of_view.is_axis_aligned()
+        {
+            return;
+        }
+
+        let Some(index_buffer) = state.build_sorted_index_buffer(
+            self.fixed_buffers.buffer(ChunkSectionLayer::TRANSLUCENT),
+            &vertex_sorting,
+        ) else {
+            return;
+        };
+        // `addSectionBuffersToUberBuffer` with only the indices: the mesh's allocation takes them,
+        // or, if its first upload is still to come, the bytes waiting for it.
+        let buffers = &mut self.chunk_uber_buffers[ChunkSectionLayer::TRANSLUCENT as usize];
+        if let Some(allocation) = buffers
+            .allocations
+            .iter_mut()
+            .find(|allocation| Rc::ptr_eq(&allocation.mesh, mesh))
+        {
+            allocation.indices = Some(index_buffer);
+            buffers.dirty = true;
+        }
+        mesh.set_translucency_point_of_view(translucency_point_of_view);
     }
 
     /// `RenderSection.reset`'s release of its mesh's buffers.

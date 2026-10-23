@@ -308,6 +308,11 @@ impl ClientLevel {
         }
     }
 
+    /// Whether light updates are queued, which `update` runs some of a frame.
+    pub fn has_light_updates(&self) -> bool {
+        !self.light_update_queue.is_empty()
+    }
+
     /// How many light updates are queued.
     #[cfg(test)]
     pub(crate) fn light_updates_queued(&self) -> usize {

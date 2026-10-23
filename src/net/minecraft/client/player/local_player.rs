@@ -45,6 +45,7 @@ use crate::net::minecraft::network::protocol::game::serverbound_player_command_p
 };
 use crate::net::minecraft::network::protocol::game::serverbound_player_input_packet::ServerboundPlayerInputPacket;
 use crate::net::minecraft::network::protocol::packet::Packet;
+use crate::net::minecraft::tags::fluid_tags::FluidTags;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
 use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
@@ -84,6 +85,9 @@ pub struct LocalPlayer {
     auto_jump_time: i32,
     flash_on_set_health: bool,
     last_hurt: f32,
+    /// How long the eyes have been in water, up to 600 ticks, which the fog and the lightmap
+    /// read (`getWaterVision`).
+    water_vision_time: i32,
     /// What the tick reads of the game's options (`minecraft.options`), set by `tick`.
     options: Options,
 }
@@ -128,6 +132,7 @@ impl LocalPlayer {
             auto_jump_time: 0,
             flash_on_set_health: false,
             last_hurt: 0.0,
+            water_vision_time: 0,
             options: Options::new(),
         };
         entity::refresh_dimensions(&mut player);
@@ -427,8 +432,35 @@ impl LocalPlayer {
             self.go_down_in_water();
         }
 
+        if self.is_eye_in_fluid(FluidTags::WATER) {
+            let speed = if self.is_spectator() { 10 } else { 1 };
+            self.water_vision_time = Mth::clamp_i32(self.water_vision_time + speed, 0, 600);
+        } else if self.water_vision_time > 0 {
+            self.water_vision_time = Mth::clamp_i32(self.water_vision_time - 10, 0, 600);
+        }
+
         // AbstractClientPlayer.aiStep's bob, which only rendering reads, then Player's.
         player::ai_step(self, level);
+    }
+
+    /// `getWaterVision`: how well the eyes see in water, from 0 to 1 over the first 600 ticks
+    /// there, nothing out of it.
+    pub fn get_water_vision(&self) -> f32 {
+        if !self.is_eye_in_fluid(FluidTags::WATER) {
+            return 0.0;
+        }
+
+        if self.water_vision_time as f32 >= 600.0 {
+            return 1.0;
+        }
+
+        let a = Mth::clamp_f32(self.water_vision_time as f32 / 100.0, 0.0, 1.0);
+        let b = if (self.water_vision_time as f32) < 100.0 {
+            0.0
+        } else {
+            Mth::clamp_f32((self.water_vision_time as f32 - 100.0) / 500.0, 0.0, 1.0)
+        };
+        a * 0.6 + b * 0.39999998
     }
 
     /// `LocalPlayer.move`: `Entity`'s, then auto-jump.

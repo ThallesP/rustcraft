@@ -1120,6 +1120,11 @@ impl BlockState {
         self.class_is("net.minecraft.world.level.block.LeavesBlock")
     }
 
+    /// `getBlock() instanceof HalfTransparentBlock`: glass, ice, slime, honey and the like.
+    pub fn class_is_half_transparent(&self) -> bool {
+        self.class_is("net.minecraft.world.level.block.HalfTransparentBlock")
+    }
+
     /// Whether the block's class is `name` or extends it.
     pub(crate) fn class_is(&self, name: &str) -> bool {
         let mut class = Some(self.class());

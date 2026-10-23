@@ -454,7 +454,9 @@ fn render_scenario(
     use rustcraft::net::minecraft::client::options::Options;
     use rustcraft::net::minecraft::client::player::local_player::LocalPlayer;
     use rustcraft::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
-    use rustcraft::net::minecraft::client::renderer::game_renderer::GameRenderer;
+    use rustcraft::net::minecraft::client::renderer::game_renderer::{
+        CameraEntityState, GameRenderer,
+    };
     use rustcraft::net::minecraft::core::registries::registries::Registries;
     use rustcraft::net::minecraft::network::codec::stream_codec::StreamCodec;
     use rustcraft::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
@@ -468,7 +470,7 @@ fn render_scenario(
 
     let scenario = Scenario::load(scenario)?;
     let capture = Capture::load(capture).ok_or(format!("can't read {}", capture.display()))?;
-    let captured = CapturedLevel::from_capture(&capture);
+    let captured = CapturedLevel::from_capture_with_light(&capture);
     let level = captured.level;
     let mut clocks = ClientClockManager::new();
     for packet in &capture.packets {
@@ -518,13 +520,16 @@ fn render_scenario(
     player.set_x_rot(scenario.player.x_rot);
     game_renderer.set_level(true);
     let environment = LevelEnvironment::new(&level, clocks);
+    // The texture animations at their first frames, drawn like the scenario start draws them: the
+    // frames rendered here don't tick them, like those before the marker don't count.
+    game_renderer.restart_texture_animations();
     let mut ticks = 0;
     while ticks < OracleGameTest::SETTLE_TICKS * 3 || !player.on_ground() {
         gui.tick(false);
         game_renderer.tick(true, Some(&player), Some(&environment), &render_options);
         player.common_tick();
         player.tick(&level, &options);
-        game_renderer.update(Some(&player), 1.0, &render_options);
+        game_renderer.update(Some(&player), Some(&level), 1.0, &render_options);
         let eye_y = player.get_y() + f64::from(player.get_eye_height());
         game_renderer.render_level_frame(
             &level,
@@ -535,6 +540,7 @@ fn render_scenario(
             1.0,
             level.get_game_time(),
             eye_y,
+            &CameraEntityState::of(Some(&player)),
         );
         let hud_context = HudContext {
             is_hidden: scenario.options.hide_gui,

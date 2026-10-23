@@ -2,18 +2,19 @@
 //!
 //! The level's frame: the main target cleared to the fog's colour, the sky, then the terrain,
 //! solid and cut out, then translucent, drawn from the visible sections' meshes; after drawing,
-//! the dirty visible sections compile and upload, and the occlusion graph moves on. The parts of
-//! `LevelExtractor` that pick the visible sections and the ones to compile are here too
-//! (`extract_sections`), since the port's level renderer owns its sections. Java's frame graph
+//! the dirty visible sections compile, the translucent ones the camera moved around are sorted
+//! again, they upload, and the occlusion graph moves on. The parts of `LevelExtractor` that pick
+//! the visible sections and the ones to compile are here too (`extract_sections`), since the
+//! port's level renderer owns its sections. Java's frame graph
 //! (`FrameGraphBuilder`) only orders the clear, sky and main passes and makes the targets of the
 //! improved transparency and the entity outlines, so the passes run in its order here.
 //!
 //! Not ported yet: entities, block entities and their features (`FeatureRenderDispatcher`), the
 //! block outline and breaking, transient blocks, particles, gizmos, clouds, weather and the world
 //! border, the improved transparency (OIT) and the entity outline's post chain, `DrawSeparate`
-//! (terrain without multi-draw), wireframe, translucency re-sorting (`scheduleTranslucentResort`),
-//! the chunk fade (`chunkSectionFadeInTime`, which the oracle sets to 0), and the multi-draw's
-//! ring buffers (`DynamicGpuData`), whose blocks each frame makes buffers of its own for.
+//! (terrain without multi-draw), wireframe, the chunk fade (`chunkSectionFadeInTime`, which the
+//! oracle sets to 0), and the multi-draw's ring buffers (`DynamicGpuData`), whose blocks each
+//! frame makes buffers of its own for.
 //! The sections' light and tints come through `lighting`, the level itself (`RenderRegionCache`).
 
 use std::collections::HashSet;
@@ -35,13 +36,17 @@ use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
 use crate::net::minecraft::client::renderer::block::block_state_model_set::BlockStateModelSet;
+use crate::net::minecraft::client::renderer::block::fluid_state_model_set::FluidStateModelSet;
 use crate::net::minecraft::client::renderer::chunk::chunk_section_layer::ChunkSectionLayer;
 use crate::net::minecraft::client::renderer::chunk::chunk_sections_to_render::{
     ChunkSectionsToRender, GpuMultiDrawIndexedIndirect, TerrainPipelines,
 };
 use crate::net::minecraft::client::renderer::chunk::render_region_cache::RenderRegionCache;
 use crate::net::minecraft::client::renderer::chunk::section_compiler::SectionCompiler;
-use crate::net::minecraft::client::renderer::chunk::section_render_dispatcher::SectionRenderDispatcher;
+use crate::net::minecraft::client::renderer::chunk::section_render_dispatcher::{
+    RenderSection, SectionRenderDispatcher,
+};
+use crate::net::minecraft::client::renderer::chunk::translucency_point_of_view::TranslucencyPointOfView;
 use crate::net::minecraft::client::renderer::dynamic_gpu_data::{DynamicGpuData, TerrainTransform};
 use crate::net::minecraft::client::renderer::fog::fog_renderer::{FogMode, FogRenderer};
 use crate::net::minecraft::client::renderer::section_occlusion_graph::SectionOcclusionGraph;
@@ -51,10 +56,12 @@ use crate::net::minecraft::client::renderer::sky_renderer::{
 use crate::net::minecraft::client::renderer::state::level::camera_render_state::CameraRenderState;
 use crate::net::minecraft::client::renderer::view_area::ViewArea;
 use crate::net::minecraft::client::section_update_tracker::SectionUpdateTracker;
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::level::block::leaves_block::LeavesBlock;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
+use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::joml::matrix4f::Matrix4f;
 use crate::org::joml::vector4f::Vector4f;
 
@@ -112,6 +119,8 @@ pub struct LevelRenderer {
     prev_cam_rot_x: f64,
     prev_cam_rot_y: f64,
     last_view_distance: i32,
+    last_translucent_sort_block_pos: Option<BlockPos>,
+    translucency_resort_iteration_index: usize,
 }
 
 impl Default for LevelRenderer {
@@ -139,6 +148,8 @@ impl LevelRenderer {
             prev_cam_rot_x: f64::MIN,
             prev_cam_rot_y: f64::MIN,
             last_view_distance: -1,
+            last_translucent_sort_block_pos: None,
+            translucency_resort_iteration_index: 0,
         }
     }
 
@@ -150,6 +161,7 @@ impl LevelRenderer {
         options: &LevelRenderOptions,
         camera_section_pos: SectionPos,
         models: &Arc<BlockStateModelSet>,
+        fluid_models: &Arc<FluidStateModelSet>,
         block_colors: &Arc<BlockColors>,
     ) {
         self.last_view_distance = options.render_distance;
@@ -161,6 +173,7 @@ impl LevelRenderer {
             options.ambient_occlusion,
             options.cutout_leaves,
             Arc::clone(models),
+            Arc::clone(fluid_models),
             Arc::clone(block_colors),
         );
         match &mut self.section_render_dispatcher {
@@ -207,11 +220,19 @@ impl LevelRenderer {
         camera_state: &CameraRenderState,
         options: &LevelRenderOptions,
         models: &Arc<BlockStateModelSet>,
+        fluid_models: &Arc<FluidStateModelSet>,
         block_colors: &Arc<BlockColors>,
     ) {
         let camera_section_pos = SectionPos::of_block_pos(&camera_state.block_pos);
         if options.render_distance != self.last_view_distance || self.view_area.is_none() {
-            self.all_changed(level, options, camera_section_pos, models, block_colors);
+            self.all_changed(
+                level,
+                options,
+                camera_section_pos,
+                models,
+                fluid_models,
+                block_colors,
+            );
         }
 
         if let Some(tracker) = &mut self.section_update_tracker {
@@ -326,6 +347,7 @@ impl LevelRenderer {
             stack.pop_matrix();
         });
         self.compile_sections(level, lighting);
+        self.schedule_translucent_section_resort(&camera_state.pos);
         self.upload_terrain_buffers(device);
         if let Some(view_area) = &self.view_area {
             let (loaded_chunks, empty_sections) =
@@ -654,6 +676,75 @@ impl LevelRenderer {
                 self.section_occlusion_graph
                     .schedule_propagation_from(section);
             }
+        }
+    }
+
+    /// `scheduleTranslucentSectionResort`, after the compiles: the nearby visible sections, and the
+    /// next few of the others in turn, sorted again when the camera moved to another block (for
+    /// the nearby ones, or one the camera is in a slab of) or to another side of them.
+    fn schedule_translucent_section_resort(&mut self, camera_pos: &Vec3) {
+        let (Some(dispatcher), Some(view_area)) =
+            (&mut self.section_render_dispatcher, &self.view_area)
+        else {
+            return;
+        };
+        if self.visible_sections.is_empty() {
+            return;
+        }
+
+        let camera_block_pos = BlockPos::containing_xyz(camera_pos.x, camera_pos.y, camera_pos.z);
+        let block_pos_changed = Some(camera_block_pos) != self.last_translucent_sort_block_pos;
+        let mut point_of_view = TranslucencyPointOfView::default();
+        for &section in &self.nearby_visible_sections {
+            LevelRenderer::schedule_resort(
+                dispatcher,
+                view_area.section(section),
+                &mut point_of_view,
+                camera_pos,
+                block_pos_changed,
+                true,
+            );
+        }
+
+        self.translucency_resort_iteration_index %= self.visible_sections.len();
+        let mut resorts_left = (self.visible_sections.len() / 8).max(15);
+        while resorts_left > 0 {
+            resorts_left -= 1;
+            let index = self.translucency_resort_iteration_index % self.visible_sections.len();
+            self.translucency_resort_iteration_index += 1;
+            LevelRenderer::schedule_resort(
+                dispatcher,
+                view_area.section(self.visible_sections[index]),
+                &mut point_of_view,
+                camera_pos,
+                block_pos_changed,
+                false,
+            );
+        }
+
+        self.last_translucent_sort_block_pos = Some(camera_block_pos);
+    }
+
+    /// `scheduleResort`. A resort runs at once, so none is ever still scheduled; improved
+    /// transparency isn't ported, so it's always off.
+    fn schedule_resort(
+        dispatcher: &mut SectionRenderDispatcher,
+        section: &RenderSection,
+        point_of_view: &mut TranslucencyPointOfView,
+        camera_pos: &Vec3,
+        block_pos_changed: bool,
+        is_nearby: bool,
+    ) {
+        point_of_view.set(camera_pos, section.section_node());
+        let point_of_view_changed = section
+            .get_section_mesh()
+            .is_different_point_of_view(point_of_view);
+        let resort_because_block_pos_changed =
+            block_pos_changed && (point_of_view.is_axis_aligned() || is_nearby);
+        if (resort_because_block_pos_changed || point_of_view_changed)
+            && section.has_translucent_geometry()
+        {
+            dispatcher.resort_transparency(section);
         }
     }
 

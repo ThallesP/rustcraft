@@ -35,7 +35,7 @@ use crate::net::minecraft::client::multiplayer::multi_player_game_mode::MultiPla
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
-use crate::net::minecraft::client::renderer::game_renderer::GameRenderer;
+use crate::net::minecraft::client::renderer::game_renderer::{CameraEntityState, GameRenderer};
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
@@ -47,6 +47,7 @@ use crate::net::minecraft::server::network::event_loop_group_holder::EventLoopGr
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::flowing_fluid;
 use crate::org::lwjgl::sdl::sdl_events::{SDLEvents, SdlEvent};
 use crate::org::lwjgl::sdl::sdl_mouse::SDLMouse;
@@ -165,15 +166,26 @@ impl Minecraft {
     }
 
     fn run_tick(self: &Rc<Minecraft>, advance_game_time: bool) {
-        let ticks_to_do = if advance_game_time {
+        let mut ticks_to_do = if advance_game_time {
             self.delta_tracker
                 .borrow_mut()
                 .advance_game_time(Util::get_millis())
         } else {
             0
         };
+        // The oracle client runs under Fabric's client game tests, which do at most one tick a
+        // frame (its `MinecraftMixin.captureTicksPerFrame`); the port's scenario runs do the same.
+        if self.test_driver.borrow().is_some() {
+            ticks_to_do = ticks_to_do.min(1);
+        }
         if advance_game_time {
             self.packet_processor.process_queued_packets();
+            // `isLevelRunningNormally()`: the level's tick rate isn't ported, so it always runs.
+            if ticks_to_do > 0
+                && let Some(game_renderer) = self.game_renderer.borrow_mut().as_mut()
+            {
+                game_renderer.tick_textures();
+            }
             for _ in 0..ticks_to_do.min(10) {
                 self.tick();
             }
@@ -323,7 +335,12 @@ impl Minecraft {
         };
         let options = GameRenderer::extract_options(&self.options.borrow(), self.hud_hidden.get());
         self.ensure_environment_attributes(game_renderer, level);
-        game_renderer.update(player.as_ref(), partial_ticks, &options);
+        game_renderer.update(
+            player.as_ref(),
+            Some(level as &dyn BlockGetter),
+            partial_ticks,
+            &options,
+        );
         let delta_ticks = self.delta_tracker.borrow().get_game_time_delta_ticks();
         let eye_y = player.as_ref().map_or(0.0, |player| {
             Mth::lerp_f64(
@@ -341,6 +358,7 @@ impl Minecraft {
             delta_ticks,
             level.get_game_time(),
             eye_y,
+            &CameraEntityState::of(player.as_ref()),
         );
         self.render_gui(game_renderer, level, player.as_ref());
         true

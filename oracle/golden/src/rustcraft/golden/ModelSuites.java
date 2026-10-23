@@ -253,6 +253,7 @@ final class ModelSuites {
         }
 
         private static ModelBakery.BakingResult baked;
+        private static MaterialBaker materials;
 
         /** The bake, made once for this suite and the meshes'. */
         static synchronized ModelBakery.BakingResult bake() throws IOException {
@@ -279,8 +280,15 @@ final class ModelSuites {
             ModelBakery bakery = new ModelBakery(
                 EntityModelSet.EMPTY, id -> null, null, blockStates.models(), Map.of(), resolved, discovery.missingModel()
             );
-            baked = bakery.bakeModels(new MaterialBaker(blocks, items), Runnable::run).join();
+            materials = new MaterialBaker(blocks, items);
+            baked = bakery.bakeModels(materials, Runnable::run).join();
             return baked;
+        }
+
+        /** The bake's materials, which the fluids' models are baked from too (ModelManager.loadModels). */
+        static synchronized MaterialBaker materials() throws IOException {
+            bake();
+            return materials;
         }
 
         // SpriteLoader.stitch's layout (TextureSuites' AtlasSuite), into the sprites it makes. Mip levels don't change
@@ -535,7 +543,10 @@ final class ModelSuites {
      * (air for its waterlogged states: fluids come with FluidRenderer), translucent ones among them, with the camera in
      * different places, which decides the order of the translucent
      * layer's sorted indices. Light is MeshLevel's (seed 0 for the walk), BlockColors are empty, and no block entities or
-     * fluids are in the sections. A region is made without its constructor, which asks a ClientLevel for its lighting,
+     * fluids are in the sections. "fluids" compiles the middle of 27 sections of FluidLevel's blocks, water and lava at
+     * every level among blocks and waterlogged ones, with the fluids' models baked like ModelManager bakes them,
+     * BlockColors.createDefault() and tints that vary from block to block (GoldenRegion.tinted), the cameras the
+     * pattern's, and the vanilla data pack's block tags bound like a client has them from a vanilla server. A region is made without its constructor, which asks a ClientLevel for its lighting,
      * and answers the level's questions itself. A result is {@code [layers, visibility]}: each rendered layer's {@code
      * [layer, vertexCount, indexCount, md5 of the vertices, md5 of the sorted indices or null]} in ChunkSectionLayer's
      * order, and VisGraph's VisibilitySet as a long, bit {@code from + 6 * to} for each pair of faces it connects.
@@ -627,6 +638,76 @@ final class ModelSuites {
                     }
                 }
             }
+            net.minecraft.client.renderer.block.FluidStateModelSet fluidModels = new net.minecraft.client.renderer.block.FluidStateModelSet(
+                net.minecraft.client.renderer.block.FluidStateModelSet.bake(BakerySuite.materials()), result.missingModels().fluid()
+            );
+            net.minecraft.client.color.block.BlockColors blockColors = net.minecraft.client.color.block.BlockColors.createDefault();
+            // A client has the server's block tags, a vanilla server's data pack's, which getFlow reads
+            // (blocks_fluid_flow); the generator's registries have none bound, so they're bound for these cases only.
+            bindBlockTags(vanillaBlockTags());
+            try {
+                writeFluids(writer, models, fluidModels, blockColors);
+            } finally {
+                bindBlockTags(Map.of());
+            }
+        }
+
+        private static Map<net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block>, List<net.minecraft.core.Holder<net.minecraft.world.level.block.Block>>> vanillaBlockTags() {
+            net.minecraft.server.packs.resources.ResourceManager resources = new net.minecraft.server.packs.resources.MultiPackResourceManager(
+                net.minecraft.server.packs.PackType.SERVER_DATA,
+                net.minecraft.server.packs.repository.ServerPacksSource.createVanillaPackSource().asResourcesSupplier().openResources(null, null).toList()
+            );
+            @SuppressWarnings("unchecked")
+            net.minecraft.tags.TagLoader.ElementLookup<net.minecraft.core.Holder<net.minecraft.world.level.block.Block>> lookup =
+                (net.minecraft.tags.TagLoader.ElementLookup<net.minecraft.core.Holder<net.minecraft.world.level.block.Block>>)
+                    net.minecraft.tags.TagLoader.ElementLookup.fromFrozenRegistry(net.minecraft.core.registries.BuiltInRegistries.BLOCK);
+            return net.minecraft.tags.TagLoader.loadTagsForRegistry(resources, net.minecraft.core.registries.Registries.BLOCK, lookup);
+        }
+
+        private static void bindBlockTags(
+            final Map<net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block>, List<net.minecraft.core.Holder<net.minecraft.world.level.block.Block>>> tags
+        ) {
+            net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                .prepareTagReload(new net.minecraft.tags.TagLoader.LoadResult<>(net.minecraft.core.registries.Registries.BLOCK, tags))
+                .apply();
+        }
+
+        private static void writeFluids(
+            final GoldenWriter writer,
+            final net.minecraft.client.renderer.block.BlockStateModelSet models,
+            final net.minecraft.client.renderer.block.FluidStateModelSet fluidModels,
+            final net.minecraft.client.color.block.BlockColors blockColors
+        ) throws IOException {
+            for (int seed = 0; seed < 8; seed++) {
+                final int levelSeed = seed;
+                net.minecraft.client.renderer.chunk.RenderSectionRegion region = region(seed, 0, 0, 0, (x, y, z) -> {
+                    net.minecraft.world.level.chunk.PalettedContainer<BlockState> states = LevelChunkSuites.factory().createForBlockStates();
+                    for (int i = 0; i < 4096; i++) {
+                        int bx = i & 15;
+                        int bz = i >> 4 & 15;
+                        int by = i >> 8;
+                        states.getAndSetUnchecked(bx, by, bz, FluidLevel.getBlockState(16 * x + bx, 16 * y + by, 16 * z + bz, levelSeed));
+                    }
+                    return states;
+                });
+                ((GoldenRegion)region).tinted = true;
+                for (double[] camera : PATTERN_CAMERAS) {
+                    for (boolean ambientOcclusion : new boolean[]{false, true}) {
+                        writer.result(
+                            "fluids",
+                            RenderSuites.array(
+                                new JsonPrimitive(seed),
+                                new JsonPrimitive(ambientOcclusion),
+                                new JsonPrimitive(hexDouble(camera[0])),
+                                new JsonPrimitive(hexDouble(camera[1])),
+                                new JsonPrimitive(hexDouble(camera[2]))
+                            ),
+                            compile(models, fluidModels, blockColors, region, net.minecraft.core.SectionPos.of(0, 0, 0), ambientOcclusion, camera),
+                            null
+                        );
+                    }
+                }
+            }
         }
 
         private static String hexDouble(final double value) {
@@ -705,12 +786,28 @@ final class ModelSuites {
             final boolean ambientOcclusion,
             final double[] camera
         ) {
-            net.minecraft.client.renderer.chunk.SectionCompiler compiler = new net.minecraft.client.renderer.chunk.SectionCompiler(
-                ambientOcclusion,
-                true,
+            return compile(
                 models,
                 new net.minecraft.client.renderer.block.FluidStateModelSet(Map.of(), null),
-                new net.minecraft.client.color.block.BlockColors()
+                new net.minecraft.client.color.block.BlockColors(),
+                region,
+                sectionPos,
+                ambientOcclusion,
+                camera
+            );
+        }
+
+        private static JsonArray compile(
+            final net.minecraft.client.renderer.block.BlockStateModelSet models,
+            final net.minecraft.client.renderer.block.FluidStateModelSet fluidModels,
+            final net.minecraft.client.color.block.BlockColors blockColors,
+            final net.minecraft.client.renderer.chunk.RenderSectionRegion region,
+            final net.minecraft.core.SectionPos sectionPos,
+            final boolean ambientOcclusion,
+            final double[] camera
+        ) {
+            net.minecraft.client.renderer.chunk.SectionCompiler compiler = new net.minecraft.client.renderer.chunk.SectionCompiler(
+                ambientOcclusion, true, models, fluidModels, blockColors
             );
             try (net.minecraft.client.renderer.SectionBufferBuilderPack buffers = new net.minecraft.client.renderer.SectionBufferBuilderPack()) {
                 // SectionRenderDispatcher.RenderSection.createVertexSorting.
@@ -751,9 +848,13 @@ final class ModelSuites {
         }
     }
 
-    /** A region that answers the level's questions itself, MeshLevel's light among them. */
+    /**
+     * A region that answers the level's questions itself, MeshLevel's light among them, and tints: white, or with {@code
+     * tinted} a colour from MeshLevel's hash of the block and the seed, whatever the resolver.
+     */
     static final class GoldenRegion extends net.minecraft.client.renderer.chunk.RenderSectionRegion {
         int seed;
+        boolean tinted;
 
         // Never called: regions are made without a constructor (SectionCompilerSuite.region).
         private GoldenRegion() {
@@ -779,7 +880,7 @@ final class ModelSuites {
 
         @Override
         public int getBlockTint(final net.minecraft.core.BlockPos pos, final net.minecraft.world.level.ColorResolver color) {
-            return -1;
+            return this.tinted ? 0xFF000000 | MeshLevel.hash(pos.getX(), pos.getY(), pos.getZ(), this.seed + 1) & 0xFFFFFF : -1;
         }
 
         @Override
@@ -790,6 +891,38 @@ final class ModelSuites {
         @Override
         public int getMinY() {
             return -64;
+        }
+    }
+
+    /**
+     * Fluids among blocks, for FluidRenderer: by MeshLevel's hash of the block and the seed, two blocks in seven air,
+     * three water or lava (one in three lava) at any of LiquidBlock's levels (a source, flowing, or falling), the rest
+     * one of NEIGHBOURS' states, waterlogged ones among them, which hide, overlay or don't hide a fluid's faces.
+     */
+    static final class FluidLevel {
+        static final List<String> NEIGHBOUR_NAMES = List.of(
+            "stone", "grass_block", "glass", "ice", "oak_leaves", "oak_slab", "oak_stairs", "oak_fence", "mangrove_roots",
+            "soul_sand", "glowstone", "white_stained_glass"
+        );
+        static final List<net.minecraft.world.level.block.Block> NEIGHBOURS = NEIGHBOUR_NAMES.stream()
+            .map(name -> net.minecraft.core.registries.BuiltInRegistries.BLOCK.getValue(Identifier.withDefaultNamespace(name)))
+            .toList();
+
+        static BlockState getBlockState(final int x, final int y, final int z, final int seed) {
+            int h = MeshLevel.hash(x, y, z, seed);
+            int kind = h % 7;
+            if (kind < 2) {
+                return net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+            }
+            if (kind < 5) {
+                net.minecraft.world.level.block.Block fluid = h / 7 % 3 == 0
+                    ? net.minecraft.world.level.block.Blocks.LAVA
+                    : net.minecraft.world.level.block.Blocks.WATER;
+                return fluid.defaultBlockState().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, h / 21 % 16);
+            }
+            net.minecraft.world.level.block.Block block = NEIGHBOURS.get(h / 7 % NEIGHBOURS.size());
+            List<BlockState> states = block.getStateDefinition().getPossibleStates();
+            return states.get(h / 7 / NEIGHBOURS.size() % states.size());
         }
     }
 

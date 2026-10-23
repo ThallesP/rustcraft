@@ -17,6 +17,7 @@ use crate::net::minecraft::client::renderer::block::dispatch::block_state_model:
 };
 use crate::net::minecraft::client::renderer::block::dispatch::block_state_model_part::BlockStateModelPart;
 use crate::net::minecraft::client::renderer::block::dispatch::single_variant::SingleVariant;
+use crate::net::minecraft::client::renderer::block::fluid_model::FluidModel;
 use crate::net::minecraft::client::renderer::chunk::chunk_section_layer::ChunkSectionLayer;
 use crate::net::minecraft::client::resources::model::geometry::baked_quad::MaterialInfo;
 use crate::net::minecraft::client::resources::model::model_baker::{Interner, ModelBaker, Shared};
@@ -40,10 +41,11 @@ pub struct BakingResult {
     pub block_state_models: HashMap<BlockState, Arc<dyn BlockStateModel>>,
 }
 
-/// `ModelBakery.MissingModels`, the block's half.
+/// `ModelBakery.MissingModels`, without the item's.
 pub struct MissingModels {
     pub block_part: Arc<dyn BlockStateModelPart>,
     pub block: Arc<dyn BlockStateModel>,
+    pub fluid: Arc<FluidModel>,
 }
 
 /// A material info's record fields, its sprite by address.
@@ -151,13 +153,21 @@ impl MissingModels {
         let missing_model_part: Arc<dyn BlockStateModelPart> = Arc::new(SimpleModelWrapper {
             quads: geometry,
             use_ambient_occlusion: has_ambient_occlusion,
-            particle_material,
+            particle_material: particle_material.clone(),
         });
         let baked_block_model: Arc<dyn BlockStateModel> =
             Arc::new(SingleVariant::new(missing_model_part.clone()));
+        let baked_fluid_model = Arc::new(FluidModel {
+            layer: ChunkSectionLayer::SOLID,
+            still_material: particle_material.clone(),
+            flowing_material: particle_material,
+            overlay_material: None,
+            tint_source: None,
+        });
         MissingModels {
             block_part: missing_model_part,
             block: baked_block_model,
+            fluid: baked_fluid_model,
         }
     }
 }

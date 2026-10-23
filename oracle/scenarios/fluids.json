@@ -1,0 +1,26 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "player": {"pos": [0.5, -60.0, 0.5], "y_rot": 0.0, "x_rot": 25.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4, "hide_gui": true},
+  "setup": [
+    "fill -3 -63 4 3 -61 10 minecraft:water strict",
+    "setblock -1 -61 6 minecraft:glass strict",
+    "setblock 1 -61 7 minecraft:oak_slab[type=bottom,waterlogged=true] strict",
+    "setblock 2 -60 3 minecraft:water[level=8] strict",
+    "setblock 2 -59 3 minecraft:water[level=8] strict",
+    "setblock -5 -60 6 minecraft:water strict",
+    "setblock -5 -60 7 minecraft:water[level=1] strict",
+    "setblock -5 -60 8 minecraft:water[level=3] strict",
+    "setblock -6 -60 6 minecraft:water[level=2] strict",
+    "fill 5 -61 4 7 -61 7 minecraft:lava strict",
+    "setblock 5 -60 9 minecraft:lava strict",
+    "setblock 5 -60 10 minecraft:lava[level=2] strict",
+    "setblock 4 -60 9 minecraft:lava[level=4] strict"
+  ],
+  "steps": [
+    {"screenshot": "shore"},
+    {"ticks": 8, "keys": ["forward"]},
+    {"ticks": 6, "keys": [], "look": [-25.0, 35.0]},
+    {"screenshot": "flows"}
+  ]
+}

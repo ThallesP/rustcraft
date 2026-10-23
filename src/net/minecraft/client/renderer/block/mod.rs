@@ -3,4 +3,7 @@ pub mod block_model_lighter;
 pub mod block_quad_output;
 pub mod block_state_model_set;
 pub mod dispatch;
+pub mod fluid_model;
+pub mod fluid_renderer;
+pub mod fluid_state_model_set;
 pub mod model_block_renderer;

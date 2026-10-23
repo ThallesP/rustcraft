@@ -40,6 +40,7 @@ use crate::io::netty::buffer::unpooled::{self, wrapped_buffer};
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
+use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
 use crate::net::minecraft::client::multiplayer::registry_data_collector::RegistryDataCollector;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
@@ -58,6 +59,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_block_update_pac
 use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
@@ -224,6 +226,25 @@ impl CapturedLevel {
     /// handlers do with the level's packets: `handleLogin` makes the level, and the chunk, view and
     /// block handlers change it, in the order the packets came.
     pub fn from_capture(capture: &Capture) -> CapturedLevel {
+        CapturedLevel::from_capture_lit(capture, false)
+    }
+
+    /// `from_capture` with the light the server sent too, the way the client's listener keeps it
+    /// (each chunk's and each light update's, queued and run), worked out once every packet before
+    /// the marker has been applied: what the renderer reads (`--render-scenario`).
+    pub fn from_capture_with_light(capture: &Capture) -> CapturedLevel {
+        CapturedLevel::from_capture_lit(capture, true)
+    }
+
+    /// Every queued light update, and the light engine's work they make.
+    fn run_light_updates(level: &mut ClientLevel) {
+        while level.has_light_updates() {
+            level.update();
+        }
+        level.update();
+    }
+
+    fn from_capture_lit(capture: &Capture, light: bool) -> CapturedLevel {
         let mut collector = RegistryDataCollector::new();
         for packet in &capture.packets {
             if !packet.serverbound
@@ -265,20 +286,42 @@ impl CapturedLevel {
             let Some(level) = level.as_mut() else {
                 continue;
             };
+            // The light queued before a block changes has been worked out by then: the setup's
+            // blocks come ticks after the chunks, which the client's frames light in between.
+            let changes_blocks = matches!(
+                packet.name.as_str(),
+                "minecraft:block_update" | "minecraft:section_blocks_update"
+            );
+            if light && changes_blocks {
+                CapturedLevel::run_light_updates(level);
+            }
             match packet.name.as_str() {
                 "minecraft:level_chunk_with_light" => {
                     let chunk = ClientboundLevelChunkWithLightPacket::STREAM_CODEC
                         .decode(&mut registry_buffer(&packet.payload));
-                    level.get_chunk_source_mut().replace_with_packet_data(
-                        chunk.x(),
-                        chunk.z(),
-                        chunk.chunk_data(),
-                    );
+                    if light {
+                        ClientPacketListener::handle_level_chunk_with_light_in(level, &chunk);
+                    } else {
+                        level.get_chunk_source_mut().replace_with_packet_data(
+                            chunk.x(),
+                            chunk.z(),
+                            chunk.chunk_data(),
+                        );
+                    }
+                }
+                "minecraft:light_update" if light => {
+                    let update = ClientboundLightUpdatePacket::STREAM_CODEC
+                        .decode(&mut friendly(&packet.payload));
+                    ClientPacketListener::handle_light_update_packet_in(level, &update);
                 }
                 "minecraft:forget_level_chunk" => {
                     let forget = ClientboundForgetLevelChunkPacket::STREAM_CODEC
                         .decode(&mut friendly(&packet.payload));
-                    level.get_chunk_source_mut().drop(forget.pos());
+                    if light {
+                        ClientPacketListener::handle_forget_level_chunk_in(level, &forget);
+                    } else {
+                        level.get_chunk_source_mut().drop(forget.pos());
+                    }
                 }
                 "minecraft:block_update" => {
                     let update = ClientboundBlockUpdatePacket::STREAM_CODEC
@@ -332,8 +375,12 @@ impl CapturedLevel {
                 _ => {}
             }
         }
+        let mut level = level.expect("the capture has the login");
+        if light {
+            CapturedLevel::run_light_updates(&mut level);
+        }
         CapturedLevel {
-            level: level.expect("the capture has the login"),
+            level,
             registries,
             player_id,
         }

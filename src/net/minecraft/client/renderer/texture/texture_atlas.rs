@@ -530,6 +530,25 @@ impl TextureAtlas {
         }
     }
 
+    /// Every animation back at its first frame, drawn: the oracle's scenario start, which both
+    /// clients do (TESTING.md, "Scenarios"). Java has no such method; the oracle client sets the
+    /// same fields and calls `uploadAnimationFrames`.
+    pub fn restart_animations(
+        &mut self,
+        device: &dyn GpuDevice,
+        sampler_cache: &SamplerCache,
+        pipelines: &AnimationPipelines,
+    ) {
+        if self.texture.is_some() {
+            for animation_state in &mut self.animated_textures_states {
+                animation_state.frame = 0;
+                animation_state.sub_frame = 0;
+                animation_state.is_dirty = true;
+            }
+            self.upload_animation_frames(device, sampler_cache, pipelines);
+        }
+    }
+
     fn upload_animation_frames(
         &self,
         device: &dyn GpuDevice,

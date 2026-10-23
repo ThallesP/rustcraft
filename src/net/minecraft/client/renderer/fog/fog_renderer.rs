@@ -15,6 +15,7 @@ use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::java::lang::math::Math;
 use crate::net::minecraft::client::renderer::fog::fog_data::FogData;
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::world::level::material::fog_type::FogType;
 use crate::org::joml::vector3f::Vector3f;
 use crate::org::joml::vector4f::Vector4f;
 
@@ -72,15 +73,18 @@ impl FogRenderer {
         gpu_buffer::slice_range(buffer, 0, i64::from(FogRenderer::FOG_UBO_SIZE))
     }
 
-    /// `computeFogColor` for the open air: the environment's colour, darkened in the void below
+    /// `computeFogColor`: the camera's environment's colour (`color`), darkened in the void below
     /// the level (`voidDarknessOnsetRange`: within a block over a flat level's bottom, 32
-    /// otherwise). The darkness and night vision effects, water vision and the boss overlay's
-    /// darkening aren't ported, so none of them changes it.
+    /// otherwise) but in lava and powder snow, and brightened toward its brightest channel by the
+    /// player's water vision in water. The darkness and night vision effects and the boss
+    /// overlay's darkening aren't ported, so none of them changes it.
     pub fn compute_fog_color(
         color: &Vector3f,
         camera_y: f64,
         min_y: i32,
         is_flat: bool,
+        fog_type: FogType,
+        water_vision: Option<f32>,
     ) -> Vector4f {
         let void_darkness_onset_range: f32 = if is_flat { 1.0 } else { 32.0 };
         let darkness = Mth::clamp_f32(
@@ -90,14 +94,18 @@ impl FogRenderer {
             1.0,
         );
         let (mut fog_red, mut fog_green, mut fog_blue) = (color.x, color.y, color.z);
-        if darkness > 0.0 {
+        if darkness > 0.0 && fog_type != FogType::LAVA && fog_type != FogType::POWDER_SNOW {
             let brightness = Mth::square_f32(1.0 - darkness);
             fog_red *= brightness;
             fog_green *= brightness;
             fog_blue *= brightness;
         }
 
-        let brighten_factor = 0.0;
+        let brighten_factor = if fog_type == FogType::WATER {
+            water_vision.unwrap_or(1.0)
+        } else {
+            0.0
+        };
         if fog_red != 0.0 && fog_green != 0.0 && fog_blue != 0.0 {
             let target_scale = 1.0 / Math::max_f32(fog_red, Math::max_f32(fog_green, fog_blue));
             fog_red = Mth::lerp_f32(brighten_factor, fog_red, fog_red * target_scale);

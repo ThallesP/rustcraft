@@ -539,6 +539,8 @@ final class BlockSuites {
                 writer.result("getDestroySpeed" + GETTER_AND_POS + "F", args, f32(state.getDestroySpeed(level, POS)), null);
                 writer.result("requiresCorrectToolForDrops()Z", args, new JsonPrimitive(state.requiresCorrectToolForDrops()), null);
                 writer.result("canOcclude()Z", args, new JsonPrimitive(state.canOcclude()), null);
+                // initCache's legacySolid, from the collision shape's bounds, which FluidRenderer reads.
+                writer.result("isSolid()Z", args, new JsonPrimitive(state.isSolid()), null);
                 // What initCache keeps for the light engine, in one case: useShapeForLightOcclusion, propagatesSkylightDown,
                 // getLightDampening, isSolidRender, and which occlusion shape it has and each direction's face of it, as
                 // the light engine and the renderer tell them apart (the whole block, nothing, or another, whose voxels

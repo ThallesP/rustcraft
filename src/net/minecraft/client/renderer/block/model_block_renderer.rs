@@ -420,7 +420,7 @@ pub(crate) mod tests {
             }
         }
 
-        fn hash(x: i32, y: i32, z: i32, seed: i32) -> i32 {
+        pub(crate) fn hash(x: i32, y: i32, z: i32, seed: i32) -> i32 {
             let mut h = x.wrapping_mul(73856093)
                 ^ y.wrapping_mul(19349663)
                 ^ z.wrapping_mul(83492791)

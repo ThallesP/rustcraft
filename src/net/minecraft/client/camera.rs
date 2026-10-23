@@ -1,11 +1,10 @@
 //! net/minecraft/client/Camera.java
 //!
 //! The first-person camera at the player's eye: its position and rotation, field of view,
-//! projection and culling frustum, and what it's in (`getFluidInCamera`). Not ported yet: the
-//! third-person cameras (`detached`, `getMaxZoom`, which clips against the level), riding a
-//! minecart, sleeping, the panoramic mode, a captured frustum, waypoints, `getNearPlane`'s fluid
-//! checks past the camera's own block (only water and lava in it, and powder snow, are checked),
-//! and the dying and fluid changes to the field of view. Java's back-references (the level, the
+//! projection and culling frustum, and what it's in (`getFluidInCamera`, which narrows the field
+//! of view in water and lava). Not ported yet: the third-person cameras (`detached`, `getMaxZoom`,
+//! which clips against the level), riding a minecart, sleeping, the panoramic mode, a captured
+//! frustum, waypoints, and the dying player's field of view. Java's back-references (the level, the
 //! entity, `Minecraft`) are what `update` and `tick` are given.
 
 use crate::java::lang::math::Math;
@@ -14,10 +13,12 @@ use crate::net::minecraft::client::renderer::culling::frustum::Frustum;
 use crate::net::minecraft::client::renderer::projection::Projection;
 use crate::net::minecraft::client::renderer::state::level::camera_render_state::CameraRenderState;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::tags::fluid_tags::FluidTags;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::attribute::environment_attribute_layer::LayerLevel;
 use crate::net::minecraft::world::attribute::environment_attribute_probe::EnvironmentAttributeProbe;
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
+use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fog_type::FogType;
 use crate::net::minecraft::world::phys::vec3::Vec3;
@@ -140,6 +141,7 @@ impl Camera {
     pub fn update(
         &mut self,
         player: Option<&LocalPlayer>,
+        level: Option<&dyn BlockGetter>,
         partial_ticks: f32,
         options: &CameraOptions,
     ) {
@@ -149,8 +151,8 @@ impl Camera {
             && self.has_level
         {
             self.align_with_entity(player, partial_ticks);
-            self.fov = self.calculate_fov(partial_ticks, options);
-            self.hud_fov = Camera::BASE_HUD_FOV;
+            self.fov = self.calculate_fov(level, partial_ticks, options);
+            self.hud_fov = self.modify_fov_based_on_fluid(level, Camera::BASE_HUD_FOV, options);
             let mut view_rotation = Matrix4f::new();
             self.get_view_rotation_matrix(&mut view_rotation);
             let projection_for_culling = self.create_projection_matrix_for_culling(options);
@@ -245,8 +247,33 @@ impl Camera {
             .prepare(self.position.x, self.position.y, self.position.z);
     }
 
-    fn calculate_fov(&self, partial_ticks: f32, options: &CameraOptions) -> f32 {
-        options.fov as f32 * Mth::lerp_f32(partial_ticks, self.old_fov_modifier, self.fov_modifier)
+    fn calculate_fov(
+        &self,
+        level: Option<&dyn BlockGetter>,
+        partial_ticks: f32,
+        options: &CameraOptions,
+    ) -> f32 {
+        let fov = options.fov as f32
+            * Mth::lerp_f32(partial_ticks, self.old_fov_modifier, self.fov_modifier);
+        self.modify_fov_based_on_fluid(level, fov, options)
+    }
+
+    /// `modifyFovBasedOnDeathOrFluid`: narrower in water or lava, by the options' effect scale.
+    /// The player's dying isn't ported, so it never narrows for that.
+    fn modify_fov_based_on_fluid(
+        &self,
+        level: Option<&dyn BlockGetter>,
+        mut fov: f32,
+        options: &CameraOptions,
+    ) -> f32 {
+        let state = level.map_or(FogType::NONE, |level| {
+            self.get_fluid_in_camera(level, options.fov)
+        });
+        if state == FogType::LAVA || state == FogType::WATER {
+            fov *= Mth::lerp_f32(options.fov_effect_scale, 1.0, 0.85714287);
+        }
+
+        fov
     }
 
     /// The first-person position: the entity's, interpolated, at its interpolated eye height.
@@ -333,18 +360,64 @@ impl Camera {
         self.initialized
     }
 
-    /// What the camera is in: water or lava at its block, or powder snow. Only the camera's own
-    /// block is looked at (Java also checks the near plane's corners for lava and powder snow).
-    pub fn get_fluid_in_camera(&self, level: &dyn BlockGetter) -> FogType {
+    /// `getNearPlane`: the near plane's middle and half its sides, from the camera, at the
+    /// projection the camera last had.
+    pub fn get_near_plane(&self, fov: f32) -> NearPlane {
+        let aspect_ratio = f64::from(self.projection.width()) / f64::from(self.projection.height());
+        let plane_height = Math::tan(f64::from(fov * (std::f64::consts::PI / 180.0) as f32) / 2.0)
+            * f64::from(self.projection.z_near());
+        let plane_width = plane_height * aspect_ratio;
+        let forwards =
+            Vec3::from_vector3f(&self.forwards).scale(f64::from(self.projection.z_near()));
+        let left = Vec3::from_vector3f(&self.left).scale(plane_width);
+        let up = Vec3::from_vector3f(&self.up).scale(plane_height);
+        NearPlane {
+            forward: forwards,
+            left,
+            up,
+        }
+    }
+
+    /// What the camera is in: water at the camera under its surface, else lava at the near
+    /// plane's middle or a corner under its surface, else powder snow there. `fov` is the
+    /// options', which Java reads from the game.
+    pub fn get_fluid_in_camera(&self, level: &dyn BlockGetter, fov: i32) -> FogType {
         if !self.initialized {
             return FogType::NONE;
         }
 
-        let fluid_state = level.get_fluid_state(&self.block_position);
-        assert!(
-            fluid_state.is_empty(),
-            "the camera in a fluid (FluidState.getHeightForCamera, the fluid fogs) isn't ported"
-        );
+        let fluid_state1 = level.get_fluid_state(&self.block_position);
+        if fluid_state1.is_tag(FluidTags::WATER)
+            && self.position.y
+                < f64::from(self.block_position.get_y())
+                    + f64::from(fluid_state1.get_height_for_camera(level, &self.block_position))
+        {
+            return FogType::WATER;
+        }
+
+        let plane = self.get_near_plane(fov as f32);
+        for point in [
+            plane.forward,
+            plane.get_top_left(),
+            plane.get_top_right(),
+            plane.get_bottom_left(),
+            plane.get_bottom_right(),
+        ] {
+            let offset_pos = self.position.add(&point);
+            let check_pos = BlockPos::containing_xyz(offset_pos.x, offset_pos.y, offset_pos.z);
+            let fluid_state = level.get_fluid_state(&check_pos);
+            if fluid_state.is_tag(FluidTags::LAVA) {
+                if offset_pos.y
+                    <= f64::from(fluid_state.get_height_for_camera(level, &check_pos))
+                        + f64::from(check_pos.get_y())
+                {
+                    return FogType::LAVA;
+                }
+            } else if level.get_block_state(&check_pos).is(Blocks::POWDER_SNOW) {
+                return FogType::POWDER_SNOW;
+            }
+        }
+
         FogType::NONE
     }
 
@@ -369,6 +442,31 @@ impl Camera {
         self.has_level = false;
         self.attribute_probe.reset();
         self.initialized = false;
+    }
+}
+
+/// `Camera.NearPlane`.
+pub struct NearPlane {
+    forward: Vec3,
+    left: Vec3,
+    up: Vec3,
+}
+
+impl NearPlane {
+    pub fn get_top_left(&self) -> Vec3 {
+        self.forward.add(&self.up).add(&self.left)
+    }
+
+    pub fn get_top_right(&self) -> Vec3 {
+        self.forward.add(&self.up).subtract(&self.left)
+    }
+
+    pub fn get_bottom_left(&self) -> Vec3 {
+        self.forward.subtract(&self.up).add(&self.left)
+    }
+
+    pub fn get_bottom_right(&self) -> Vec3 {
+        self.forward.subtract(&self.up).subtract(&self.left)
     }
 }
 

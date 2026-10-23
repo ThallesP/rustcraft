@@ -196,6 +196,7 @@ mod tests {
             state.requires_correct_tool_for_drops()
         });
         golden.check("canOcclude()Z", |state: BlockState| state.can_occlude());
+        golden.check("isSolid()Z", |state: BlockState| state.is_solid());
         check_light(&golden);
         golden.check("emissiveRendering()Z", |state: BlockState| {
             state.emissive_rendering()

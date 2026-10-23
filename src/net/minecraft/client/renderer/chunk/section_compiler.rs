@@ -1,9 +1,8 @@
 //! net/minecraft/client/renderer/chunk/SectionCompiler.java
 //!
-//! A section's blocks meshed into a buffer per layer, the translucent one's quads sorted from the
-//! camera, and which of its faces see each other. Not ported yet: fluids (`FluidRenderer` and
-//! `FluidStateModelSet`), which panic, and block entities, which the client's chunks don't hold
-//! yet, so `Results` has none. `BlockModelLighter`'s cache, which `compile` turns on and clears in
+//! A section's blocks and fluids meshed into a buffer per layer, the translucent one's quads sorted
+//! from the camera, and which of its faces see each other. Not ported yet: block entities, which
+//! the client's chunks don't hold yet, so `Results` has none. `BlockModelLighter`'s cache, which `compile` turns on and clears in
 //! Java, isn't ported (PORTING.md, "Meshing"), and a crash report's details are the panic's.
 
 use std::sync::Arc;
@@ -18,6 +17,8 @@ use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::Primitiv
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::renderer::block::block_quad_output::BlockQuadOutput;
 use crate::net::minecraft::client::renderer::block::block_state_model_set::BlockStateModelSet;
+use crate::net::minecraft::client::renderer::block::fluid_renderer::{self, FluidRenderer};
+use crate::net::minecraft::client::renderer::block::fluid_state_model_set::FluidStateModelSet;
 use crate::net::minecraft::client::renderer::block::model_block_renderer::ModelBlockRenderer;
 use crate::net::minecraft::client::renderer::chunk::chunk_section_layer::ChunkSectionLayer;
 use crate::net::minecraft::client::renderer::chunk::render_section_region::RenderSectionRegion;
@@ -34,6 +35,7 @@ pub struct SectionCompiler {
     ambient_occlusion: bool,
     cutout_leaves: bool,
     block_model_set: Arc<BlockStateModelSet>,
+    fluid_model_set: Arc<FluidStateModelSet>,
     block_colors: Arc<BlockColors>,
 }
 
@@ -51,12 +53,14 @@ impl SectionCompiler {
         ambient_occlusion: bool,
         cutout_leaves: bool,
         block_model_set: Arc<BlockStateModelSet>,
+        fluid_model_set: Arc<FluidStateModelSet>,
         block_colors: Arc<BlockColors>,
     ) -> SectionCompiler {
         SectionCompiler {
             ambient_occlusion,
             cutout_leaves,
             block_model_set,
+            fluid_model_set,
             block_colors,
         }
     }
@@ -78,6 +82,7 @@ impl SectionCompiler {
         let mut vis_graph = VisGraph::new();
         let mut block_renderer =
             ModelBlockRenderer::new(self.ambient_occlusion, true, &self.block_colors);
+        let fluid_renderer = FluidRenderer::new(&self.fluid_model_set);
         let mut started_layers = StartedLayers {
             builders: Vec::new(),
             buffers: builders.buffers_mut().map(Some),
@@ -94,10 +99,15 @@ impl SectionCompiler {
             }
 
             let fluid_state = block_state.get_fluid_state();
-            assert!(
-                fluid_state.is_empty(),
-                "Tesselating block in world: fluids (FluidRenderer) aren't ported, {block_state:?} at {pos:?}"
-            );
+            if !fluid_state.is_empty() {
+                fluid_renderer.tesselate(
+                    region,
+                    &pos,
+                    &mut started_layers,
+                    block_state,
+                    fluid_state,
+                );
+            }
 
             if block_state.get_render_shape() == RenderShape::MODEL {
                 let mut opaque_quad_output;
@@ -176,6 +186,13 @@ impl<'a> StartedLayers<'a> {
     }
 }
 
+/// `fluidOutput`: a fluid's layer's builder.
+impl fluid_renderer::Output for StartedLayers<'_> {
+    fn get_builder(&mut self, layer: ChunkSectionLayer) -> &mut dyn VertexConsumer {
+        self.get_or_begin_layer(layer)
+    }
+}
+
 /// `quadOutput`: each quad into its material's layer.
 impl BlockQuadOutput for StartedLayers<'_> {
     fn put(&mut self, x: f32, y: f32, z: f32, quad: &BakedQuad, instance: &QuadInstance) {
@@ -210,6 +227,7 @@ mod tests {
     use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
     use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
     use crate::net::minecraft::client::renderer::block::block_state_model_set::BlockStateModelSet;
+    use crate::net::minecraft::client::renderer::block::fluid_state_model_set::FluidStateModelSet;
     use crate::net::minecraft::client::renderer::block::model_block_renderer::tests::MeshLevel;
     use crate::net::minecraft::client::renderer::chunk::render_region_cache::RenderRegionCache;
     use crate::net::minecraft::client::renderer::chunk::render_section_region::RenderSectionRegion;
@@ -230,7 +248,11 @@ mod tests {
     use crate::net::minecraft::resources::identifier::Identifier;
     use crate::net::minecraft::resources::resource_key::ResourceKey;
     use crate::net::minecraft::server::packs::resources::multi_pack_resource_manager::tests::vanilla_resources;
+    use crate::net::minecraft::world::level::block::block::Block;
+    use crate::net::minecraft::world::level::block::blocks::{self, Blocks};
+    use crate::net::minecraft::world::level::block::liquid_block::LiquidBlock;
     use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+    use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
     use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGetter;
     use crate::net::minecraft::world::level::block_getter::BlockGetter;
     use crate::net::minecraft::world::level::cardinal_lighting::CardinalLighting;
@@ -242,9 +264,10 @@ mod tests {
     use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 
     /// What `ModelSuites.GoldenRegion` answers for the level: `MeshLevel`'s light, the default
-    /// cardinal lighting.
+    /// cardinal lighting, and white tints, or with `tinted` a colour by `MeshLevel`'s hash.
     struct Lighting {
         seed: i32,
+        tinted: bool,
         // `LevelLightEngine.EMPTY`: its light is `get_brightness`'s own.
         light_engine: LevelLightEngine,
     }
@@ -278,10 +301,71 @@ mod tests {
             CardinalLighting::DEFAULT
         }
 
-        /// What `BlockAndTintGetter.EMPTY` answers: the suite meshes with an empty `BlockColors`,
-        /// so nothing asks.
-        fn get_block_tint(&self, _pos: &BlockPos, _color: &'static ColorResolver) -> i32 {
-            -1
+        fn get_block_tint(&self, pos: &BlockPos, _color: &'static ColorResolver) -> i32 {
+            if self.tinted {
+                -16777216
+                    | MeshLevel::hash(pos.get_x(), pos.get_y(), pos.get_z(), self.seed + 1)
+                        & 0xFFFFFF
+            } else {
+                -1
+            }
+        }
+    }
+
+    /// `ModelSuites.FluidLevel`: water and lava at every level among blocks, by `MeshLevel`'s
+    /// hash.
+    struct FluidLevel {
+        neighbours: Vec<Block>,
+    }
+
+    const NEIGHBOUR_NAMES: [&str; 12] = [
+        "stone",
+        "grass_block",
+        "glass",
+        "ice",
+        "oak_leaves",
+        "oak_slab",
+        "oak_stairs",
+        "oak_fence",
+        "mangrove_roots",
+        "soul_sand",
+        "glowstone",
+        "white_stained_glass",
+    ];
+
+    impl FluidLevel {
+        fn new() -> FluidLevel {
+            let neighbours = NEIGHBOUR_NAMES
+                .iter()
+                .map(|name| {
+                    blocks::registry()
+                        .get_value(&Identifier::with_default_namespace(name))
+                        .expect("a vanilla block")
+                })
+                .collect();
+            FluidLevel { neighbours }
+        }
+
+        fn get_block_state(&self, x: i32, y: i32, z: i32, seed: i32) -> BlockState {
+            let h = MeshLevel::hash(x, y, z, seed);
+            let kind = h % 7;
+            if kind < 2 {
+                return Blocks::AIR.default_block_state();
+            }
+            if kind < 5 {
+                let fluid = if h / 7 % 3 == 0 {
+                    Blocks::LAVA
+                } else {
+                    Blocks::WATER
+                };
+                return fluid
+                    .default_block_state()
+                    .set_value(LiquidBlock::LEVEL, h / 21 % 16);
+            }
+            let block = self.neighbours[(h / 7) as usize % self.neighbours.len()];
+            let states: Vec<BlockState> =
+                block.get_state_definition().get_possible_states().collect();
+            states[(h / 7 / self.neighbours.len() as i32) as usize % states.len()]
         }
     }
 
@@ -345,12 +429,32 @@ mod tests {
             baked.missing_models.block,
         ));
         let block_colors = Arc::new(BlockColors::new());
+        // `new FluidStateModelSet(Map.of(), null)`: these sections have no fluids.
+        let no_fluid_models = Arc::new(FluidStateModelSet::new(
+            Vec::new(),
+            Arc::clone(&baked.missing_models.fluid),
+        ));
         let compilers = [false, true].map(|ambient_occlusion| {
             SectionCompiler::new(
                 ambient_occlusion,
                 true,
                 Arc::clone(&models),
+                Arc::clone(&no_fluid_models),
                 Arc::clone(&block_colors),
+            )
+        });
+        let fluid_models = Arc::new(FluidStateModelSet::new(
+            FluidStateModelSet::bake(&materials),
+            Arc::clone(&baked.missing_models.fluid),
+        ));
+        let default_block_colors = Arc::new(BlockColors::create_default());
+        let fluid_compilers = [false, true].map(|ambient_occlusion| {
+            SectionCompiler::new(
+                ambient_occlusion,
+                true,
+                Arc::clone(&models),
+                Arc::clone(&fluid_models),
+                Arc::clone(&default_block_colors),
             )
         });
 
@@ -389,6 +493,7 @@ mod tests {
         let cache = RefCell::new(RenderRegionCache::new());
         let lighting = Lighting {
             seed: 0,
+            tinted: false,
             light_engine: LevelLightEngine::empty(),
         };
         golden.check("walk", |x: i32, y: i32, z: i32, ambient_occlusion: bool| {
@@ -433,11 +538,52 @@ mod tests {
                 }
                 let lighting = Lighting {
                     seed,
+                    tinted: false,
                     light_engine: LevelLightEngine::empty(),
                 };
                 let region = RenderSectionRegion::new(&lighting, -1, -1, -1, sections);
                 compile(
                     &compilers[usize::from(ambient_occlusion)],
+                    &region,
+                    SectionPos::of(0, 0, 0),
+                    [x, y, z],
+                )
+            },
+        );
+
+        // FluidLevel's blocks in the 27 sections around the origin's, meshed with the fluids'
+        // models, the default block colours and tints by block.
+        let fluid_level = FluidLevel::new();
+        golden.check(
+            "fluids",
+            |seed: i32, ambient_occlusion: bool, x: f64, y: f64, z: f64| {
+                let mut sections = Vec::new();
+                for section_z in -1..=1 {
+                    for section_y in -1..=1 {
+                        for section_x in -1..=1 {
+                            let mut states = factory.create_for_block_states();
+                            for i in 0..4096 {
+                                let (bx, bz, by) = (i & 15, i >> 4 & 15, i >> 8);
+                                let state = fluid_level.get_block_state(
+                                    16 * section_x + bx,
+                                    16 * section_y + by,
+                                    16 * section_z + bz,
+                                    seed,
+                                );
+                                states.get_and_set_unchecked(bx, by, bz, &state);
+                            }
+                            sections.push(Arc::new(SectionCopy::of_states(Some(states))));
+                        }
+                    }
+                }
+                let lighting = Lighting {
+                    seed,
+                    tinted: true,
+                    light_engine: LevelLightEngine::empty(),
+                };
+                let region = RenderSectionRegion::new(&lighting, -1, -1, -1, sections);
+                compile(
+                    &fluid_compilers[usize::from(ambient_occlusion)],
                     &region,
                     SectionPos::of(0, 0, 0),
                     [x, y, z],

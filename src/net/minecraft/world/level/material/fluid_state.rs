@@ -117,6 +117,28 @@ impl FluidState {
         self.fluid.get_shape(*self, level, pos)
     }
 
+    /// `shouldRenderBackwardUpFace`: whether a block around the one above isn't this fluid and
+    /// lets light through, so the top can be seen from below.
+    pub fn should_render_backward_up_face(
+        &self,
+        level: &dyn BlockGetter,
+        above: &BlockPos,
+    ) -> bool {
+        for ox in -1..=1 {
+            for oz in -1..=1 {
+                let offset = above.offset_xyz(ox, 0, oz);
+                let fluid_state = level.get_fluid_state(&offset);
+                if !fluid_state.get_type().is_same(self.get_type())
+                    && !level.get_block_state(&offset).is_solid_render()
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     /// `getFlow(BlockGetter, BlockPos)`: the direction it flows in, a unit vector or zero.
     pub fn get_flow(&self, level: &dyn BlockGetter, pos: &BlockPos) -> Vec3 {
         self.fluid.get_flow(level, pos, *self)
