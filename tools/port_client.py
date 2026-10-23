@@ -9,7 +9,7 @@ capture.jsonl, to compare with vanilla's:
 
     python3 tools/port_client.py capture walk --accept-eula
     cargo run -p oracle-diff -- packets --join vanilla/26.3/oracle/walk/capture.jsonl target/oracle/walk/capture.jsonl
-    cargo run -p oracle-diff -- dir vanilla/26.3/oracle/walk target/oracle/walk
+    cargo run -p oracle-diff -- dir --strict vanilla/26.3/oracle/walk target/oracle/walk
 
 `--ping` pings the scenario's server like the server list does (`rustcraft --ping`) instead of
 joining it, into target/oracle/<scenario>-ping/, to compare with `oracle_client.py capture

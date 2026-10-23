@@ -68,7 +68,7 @@ Every step of the loop updates this table.
 | Physics | Voxel shapes: `Shapes`, `VoxelShape` and its kinds, joins, `collide`, face occlusion, rotation (`OctahedralGroup`) | Done but `toString` and `rotateAttachFace` | goldens (216,073 cases) | same bits |
 | Physics | Blocks' shapes (`getShape`, `getCollisionShape`) | Partial: full blocks, air, soul sand, slabs, stairs, fences, iron bars and panes; the other 137 classes that override them panic until ported | goldens (every state of those blocks, 9,647) | same shapes |
 | Player | Input, movement, collisions: walking, jumping, sprinting, sneaking (and backing off edges), friction, speed factors, step-up, stairs and slabs, falling | Partial: the local player's movement, in the live client and offline; fluids, climbing, gliding, bouncing and falling a block or more a tick panic until ported | traces and packets of 13 scenarios (below), goldens (22,049 cases) | every scenario's trace and packets from its start identical, bit for bit and byte for byte |
-| Player | What a moving player sends: `move_player_*` (and its reminder), `player_input`, `player_command`'s sprinting, `client_tick_end`, in `Minecraft.tick`'s order | Done for walking players (riding isn't ported) | the scenarios' packets from the marker on, offline and live (`oracle-diff dir`) | identical |
+| Player | What a moving player sends: `move_player_*` (and its reminder), `player_input`, `player_command`'s sprinting, `client_tick_end`, in `Minecraft.tick`'s order | Done for walking players (riding isn't ported) | the scenarios' packets from the marker on, offline and live (`oracle-diff dir --strict`'s packets part) | identical |
 | Player | Attributes (`AttributeMap`, `AttributeInstance`, modifiers) | Partial: the 12 attributes movement reads; two modifiers of one operation aren't ordered like Java's yet | goldens (1,500 programs) | same values |
 | Rendering | Window (SDL3) and input | Partial: the window and OpenGL 3.3 core context made like vanilla's (LWJGL's own SDL3 build), frames presented; no input yet | device as vanilla logs it, on llvmpipe | same driver, flags and extensions as the oracle's log |
 | Rendering | renderpearl with its OpenGL backend, shaders through shaderc and SPIRV-Cross | Partial: every pipeline of `RenderPipelines`, compiled through vanilla's own shaderc and SPIRV-Cross builds and linked into GL programs with their uniform blocks and samplers; the GL device, textures, samplers, buffers, vertex arrays, render passes that clear and draw (`FrontendRenderPass`, indexed and not), `BufferBuilder`, std140 uniform blocks, screenshots read back; no push constants, multi-draws or indirect draws yet | goldens (SPIR-V, reflection, bindings, GLSL); frames under Xvfb | SPIR-V and GLSL byte-identical for all 192 pipelines, all 192 link on llvmpipe; GUI fills pixel-exact against their known pixels |
@@ -84,23 +84,23 @@ Every step of the loop updates this table.
 
 ### Physics scenarios
 
-Gate 4's physics, in `oracle/scenarios/`: each builds its course on the flat world with `setup` commands, and its tick trace and serverbound packets from the scenario-start marker on are compared with vanilla's run (TESTING.md, "Offline replays"). **Offline** is the port's player replayed without a server, on the flat level with the course's blocks (CI) and on the level the server sent (where a capture is); **live** is `tools/port_client.py capture <scenario>` on a vanilla server, compared with `oracle-diff dir`.
+Gate 4's physics, in `oracle/scenarios/`: each builds its course on the flat world with `setup` commands, and its tick trace and serverbound packets from the scenario-start marker on are compared with vanilla's run (TESTING.md, "Offline replays"). **Offline** is the port's player replayed without a server, on the flat level with the course's blocks (CI) and on the level the server sent (where a capture is); **live** is `tools/port_client.py capture <scenario>` on a vanilla server, compared with `oracle-diff dir --strict`.
 
 | Scenario | What it covers | Offline | Live |
 | --- | --- | --- | --- |
-| `walk` | walking from a standstill, a jump, sprinting, sneaking sideways, a fixed look | identical | identical (CI checks it) |
+| `walk` | walking from a standstill, a jump, sprinting, sneaking sideways, a fixed look | identical | trace and packets identical (CI checks them); vanilla's screenshots have no counterpart until the render track's, so `oracle-diff dir --strict` fails on them |
 | `surface-concrete` | walking, sprinting, sprint-jumping, sliding to a stop, sneaking, jumping and backing up on concrete | identical | |
 | `surface-packed-ice` | the same on packed ice (friction 0.98) | identical | |
 | `surface-blue-ice` | the same on blue ice (friction 0.989) | identical | |
 | `surface-soul-sand` | the same on soul sand (its 14-sixteenths collision shape and 0.4 speed factor) | identical | |
 | `surface-transitions` | walking and sprint-jumping across packed ice, soul sand, concrete and blue ice in a row | identical | |
 | `block-steps` | walking into a block, jumping up a staircase of whole blocks, dropping two blocks off it | identical | |
-| `stairs` | walking up oak stairs half a block at a time, sprinting up, walking and sneaking back down | identical | identical (`oracle-diff dir` exits 0) |
+| `stairs` | walking up oak stairs half a block at a time, sprinting up, walking and sneaking back down | identical | identical (`oracle-diff dir --strict` exits 0: the scenario takes no screenshots) |
 | `walls-and-corners` | running into a wall (sprint stops), sliding along it at an angle into a corner, pushing into the corner | identical | |
 | `fall` | walking off a ledge onto a slab, off the slab onto soul sand, sprint-jumping on | identical | |
 | `low-ceiling` | jumping into a ceiling two blocks up, standing, walking and sprinting | identical | |
 | `sneak-edge` | sneaking to a ledge and along it without falling, then walking off | identical | |
-| `slabs-and-fences` | stepping up a slab and a double slab, crouching into a gap of one and a half blocks under top slabs (and staying crouched), walking into a fence and failing to jump it | identical | trace and packets from the marker identical; the server grouped the setup's block updates differently, and sent a chunk center after the port had left (`oracle-diff dir` exits 1 on those clientbound packets) |
+| `slabs-and-fences` | stepping up a slab and a double slab, crouching into a gap of one and a half blocks under top slabs (and staying crouched), walking into a fence and failing to jump it | identical | trace and packets from the marker identical; the server grouped the setup's block updates differently, and sent a chunk center after the port had left (`oracle-diff dir --strict` exits 1 on those clientbound packets) |
 
 Not covered yet: water (swimming, `updateInWaterStateAndDoFluidPushing`), ladders and climbing, walls (`WallBlock`'s shapes), slime and honey (bouncing and sliding), and falls of more than two blocks, whose damage the server answers with the player's motion at a tick that depends on timing.
 
