@@ -12,6 +12,9 @@ pub struct Scenario {
     pub world: World,
     pub player: Player,
     pub options: Options,
+    /// Commands that build the scenario's course, without their slash, sent before the player
+    /// is put in place.
+    pub setup: Vec<String>,
     pub steps: Vec<Step>,
 }
 
@@ -82,6 +85,21 @@ impl Scenario {
         let options = field(&root, "options")?;
         let window = field(&options, "window")?;
 
+        let mut setup = Vec::new();
+        for command in root
+            .get("setup")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            setup.push(
+                command
+                    .as_str()
+                    .ok_or("a setup command isn't a string")?
+                    .to_string(),
+            );
+        }
+
         let mut steps = Vec::new();
         for step in field(&root, "steps")?
             .as_array()
@@ -118,6 +136,7 @@ impl Scenario {
                 gui_scale: number(field(&options, "gui_scale")?)? as i32,
                 render_distance: number(field(&options, "render_distance")?)? as i32,
             },
+            setup,
             steps,
         })
     }

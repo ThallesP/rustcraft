@@ -138,6 +138,8 @@ import net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket;
 import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
 import net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.network.protocol.handshake.ClientIntentionPacket;
 import net.minecraft.network.protocol.handshake.HandshakePacketTypes;
@@ -173,6 +175,7 @@ import net.minecraft.util.StringRepresentable;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.player.ChatVisiblity;
+import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.phys.AABB;
@@ -1198,6 +1201,24 @@ public final class Golden {
         InstanceSuite.every(ServerboundMovePlayerPacket.Rot.class).inherited("getX(D)D", "getY(D)D", "getZ(D)D", "getYRot(F)F", "getXRot(F)F", "isOnGround()Z", "horizontalCollision()Z", "hasPosition()Z", "hasRotation()Z", "handle(Lnet/minecraft/network/protocol/game/ServerGamePacketListener;)V"),
         InstanceSuite.every(ServerboundMovePlayerPacket.StatusOnly.class).inherited("getX(D)D", "getY(D)D", "getZ(D)D", "getYRot(F)F", "getXRot(F)F", "isOnGround()Z", "horizontalCollision()Z", "hasPosition()Z", "hasRotation()Z", "handle(Lnet/minecraft/network/protocol/game/ServerGamePacketListener;)V"),
         InstanceSuite.every(PositionMoveRotation.class),
+        // What a moving player sends besides its moves: the keys it holds, and its sprint's start and stop.
+        InstanceSuite.every(Input.class),
+        InstanceSuite.every(ServerboundPlayerInputPacket.class),
+        // Its reader takes any action's ordinal, past the last one too, and any data.
+        InstanceSuite.every(ServerboundPlayerCommandPacket.class)
+            .extraInputs(
+                "STREAM_CODEC.decode",
+                friendly(written(111, Codecs.tupleOf(IDS, IDS, Values.generator(int.class)), (FriendlyByteBuf buffer, List<Integer> fields) -> {
+                    buffer.writeVarInt(fields.get(0));
+                    buffer.writeVarInt(fields.get(1));
+                    buffer.writeVarInt(fields.get(2));
+                }))
+            ),
+        InstanceSuite.every(ServerboundPlayerCommandPacket.Action.class)
+            .extraInputs(
+                "valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/game/ServerboundPlayerCommandPacket$Action;",
+                names(ServerboundPlayerCommandPacket.Action.values())
+            ),
         // Its set of relatives is an EnumSet, whose hashCode adds its constants' identity hashes.
         InstanceSuite.every(ClientboundPlayerPositionPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
         // The game protocol's clientbound packets the server sends while the player joins, and the difficulty.

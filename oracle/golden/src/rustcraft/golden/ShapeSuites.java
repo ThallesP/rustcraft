@@ -3,6 +3,7 @@ package rustcraft.golden;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
+import com.mojang.math.OctahedralGroup;
 import it.unimi.dsi.fastutil.doubles.DoubleList;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -17,7 +18,14 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.CrossCollisionBlock;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.SoulSandBlock;
+import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.BitSetDiscreteVoxelShape;
@@ -57,6 +65,7 @@ final class ShapeSuites {
     private static final String OP_TYPE = "Lnet/minecraft/world/phys/shapes/BooleanOp;";
     private static final String DIRECTION_TYPE = "Lnet/minecraft/core/Direction;";
     private static final String VEC3_TYPE = "Lnet/minecraft/world/phys/Vec3;";
+    private static final String OCTAHEDRAL_GROUP_TYPE = "Lcom/mojang/math/OctahedralGroup;";
     private static final List<String> OP_NAMES = List.of(
         "FALSE", "NOT_OR", "ONLY_SECOND", "NOT_FIRST", "ONLY_FIRST", "NOT_SECOND", "NOT_SAME", "NOT_AND", "AND", "SAME", "SECOND", "CAUSES",
         "FIRST", "CAUSED_BY", "OR", "TRUE"
@@ -93,7 +102,9 @@ final class ShapeSuites {
     }
 
     static List<Suite> suites() {
-        return List.of(new ShapesSuite(), new VoxelShapeSuite(), new DiscreteVoxelShapeSuite(), new EntitySuite(), new LivingEntitySuite());
+        return List.of(
+            new ShapesSuite(), new VoxelShapeSuite(), new DiscreteVoxelShapeSuite(), new EntitySuite(), new LivingEntitySuite(), new BlockStateShapeSuite()
+        );
     }
 
     /** A shape argument: its recipe, and how to make it afresh. */
@@ -623,15 +634,82 @@ final class ShapeSuites {
                 );
             }
 
-            for (String method : List.of(
-                "rotate(Lnet/minecraft/world/phys/shapes/VoxelShape;Lcom/mojang/math/OctahedralGroup;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
-                "rotateHorizontal(Lnet/minecraft/world/phys/shapes/VoxelShape;)Ljava/util/Map;",
-                "rotateAll(Lnet/minecraft/world/phys/shapes/VoxelShape;)Ljava/util/Map;",
-                "rotateAttachFace(Lnet/minecraft/world/phys/shapes/VoxelShape;)Ljava/util/Map;",
-                "rotateHorizontalAxis(Lnet/minecraft/world/phys/shapes/VoxelShape;)Ljava/util/Map;",
-                "rotateAllAxis(Lnet/minecraft/world/phys/shapes/VoxelShape;)Ljava/util/Map;"
-            )) {
-                writer.skipped(method, "no generator for com.mojang.math.OctahedralGroup");
+            // Every rotation of the group, of the base shapes and of a few made of them, about the block's center and about
+            // other points; and the maps of rotated shapes blocks build their shapes from, in their keys' order.
+            Random rotations = new Random(0x524f54L);
+            List<Recipe> rotated = new ArrayList<>(base);
+            for (int i = 0; i < 40; i++) {
+                rotated.add(randomShape(rotations, base, 2));
+            }
+            Vec3[] points = {new Vec3(0.5, 0.5, 0.5), Vec3.ZERO, new Vec3(0.5, 0.25, 0.75), new Vec3(-1.0, 3.0, 0.125)};
+            for (Recipe shape : rotated) {
+                for (OctahedralGroup rotation : OctahedralGroup.values()) {
+                    BlockSuites.call(
+                        writer, "rotate(" + SHAPE_TYPE + OCTAHEDRAL_GROUP_TYPE + ")" + SHAPE_TYPE,
+                        BlockSuites.array(shape.json, new JsonPrimitive(rotation.name())), () -> shape(Shapes.rotate(shape.make.get(), rotation))
+                    );
+                }
+                for (Vec3 point : points) {
+                    OctahedralGroup rotation = OctahedralGroup.values()[rotations.nextInt(OctahedralGroup.values().length)];
+                    BlockSuites.call(
+                        writer, "rotate(" + SHAPE_TYPE + OCTAHEDRAL_GROUP_TYPE + VEC3_TYPE + ")" + SHAPE_TYPE,
+                        BlockSuites.array(shape.json, new JsonPrimitive(rotation.name()), CoreValues.encode(point)),
+                        () -> shape(Shapes.rotate(shape.make.get(), rotation, point))
+                    );
+                }
+                JsonArray args = BlockSuites.array(shape.json);
+                BlockSuites.call(writer, "rotateHorizontal(" + SHAPE_TYPE + ")Ljava/util/Map;", args, () -> shapes(Shapes.rotateHorizontal(shape.make.get())));
+                BlockSuites.call(writer, "rotateAll(" + SHAPE_TYPE + ")Ljava/util/Map;", args, () -> shapes(Shapes.rotateAll(shape.make.get())));
+                BlockSuites.call(writer, "rotateHorizontalAxis(" + SHAPE_TYPE + ")Ljava/util/Map;", args, () -> shapes(Shapes.rotateHorizontalAxis(shape.make.get())));
+                BlockSuites.call(writer, "rotateAllAxis(" + SHAPE_TYPE + ")Ljava/util/Map;", args, () -> shapes(Shapes.rotateAllAxis(shape.make.get())));
+                for (OctahedralGroup initial : List.of(OctahedralGroup.INVERT_Y, OctahedralGroup.BLOCK_ROT_X_90, OctahedralGroup.SWAP_XZ)) {
+                    BlockSuites.call(
+                        writer, "rotateHorizontal(" + SHAPE_TYPE + OCTAHEDRAL_GROUP_TYPE + ")Ljava/util/Map;",
+                        BlockSuites.array(shape.json, new JsonPrimitive(initial.name())), () -> shapes(Shapes.rotateHorizontal(shape.make.get(), initial))
+                    );
+                }
+            }
+            writer.skipped("rotateAttachFace(" + SHAPE_TYPE + ")Ljava/util/Map;", "AttachFace isn't ported: no block needing it is");
+        }
+    }
+
+    // A map of shapes by enum constants, in its iteration order: [[name, shape], …].
+    static JsonArray shapes(final java.util.Map<? extends Enum<?>, VoxelShape> shapes) {
+        JsonArray entries = new JsonArray();
+        shapes.forEach((key, shape) -> entries.add(BlockSuites.array(new JsonPrimitive(key.name()), shape(shape))));
+        return entries;
+    }
+
+    /**
+     * The shapes of the blocks whose classes' shapes are ported, for every state, as a state reports them with no level
+     * around it (`EmptyBlockGetter`, `BlockPos.ZERO`), which is what the state's cache holds: `getShape` and
+     * `getCollisionShape`. A state is its id.
+     */
+    static final class BlockStateShapeSuite implements Suite {
+        private static final List<Class<? extends Block>> CLASSES = List.of(
+            SoulSandBlock.class, SlabBlock.class, StairBlock.class, CrossCollisionBlock.class
+        );
+
+        @Override
+        public String name() {
+            return BlockBehaviour.BlockStateBase.class.getName();
+        }
+
+        @Override
+        public void write(final GoldenWriter writer) throws IOException {
+            for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
+                if (CLASSES.stream().noneMatch(type -> type.isInstance(state.getBlock()))) {
+                    continue;
+                }
+                JsonArray args = BlockSuites.array(new JsonPrimitive(Block.BLOCK_STATE_REGISTRY.getId(state)));
+                BlockSuites.call(
+                    writer, "getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)" + SHAPE_TYPE, args,
+                    () -> shape(state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
+                );
+                BlockSuites.call(
+                    writer, "getCollisionShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)" + SHAPE_TYPE, args,
+                    () -> shape(state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
+                );
             }
         }
     }

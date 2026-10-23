@@ -27,6 +27,7 @@ impl BlockTags {
     pub const WALLS: TagKey = TagKey("walls");
     pub const SUPPRESSES_BOUNCE: TagKey = TagKey("suppresses_bounce");
     pub const CAN_GLIDE_THROUGH: TagKey = TagKey("can_glide_through");
+    pub const CAUSES_SUFFOCATION: TagKey = TagKey("causes_suffocation");
 }
 
 /// Each tag's blocks by registered name, resolved as they're first asked for.

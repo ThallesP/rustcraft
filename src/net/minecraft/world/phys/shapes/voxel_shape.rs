@@ -79,7 +79,7 @@ impl VoxelShape {
         &self.0.shape
     }
 
-    #[cfg(test)]
+    /// Which subclass it is, with its fields: `instanceof`.
     pub(crate) fn kind(&self) -> &Kind {
         &self.0.kind
     }

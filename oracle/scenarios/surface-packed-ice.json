@@ -1,0 +1,18 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "player": {"pos": [0.5, -60.0, 4.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill -2 -61 3 2 -61 70 minecraft:packed_ice strict"
+  ],
+  "steps": [
+    {"ticks": 10, "keys": ["forward"]},
+    {"ticks": 12, "keys": ["forward", "sprint"]},
+    {"ticks": 14, "keys": ["forward", "sprint", "jump"]},
+    {"ticks": 8, "keys": []},
+    {"ticks": 10, "keys": ["forward", "sneak"]},
+    {"ticks": 8, "keys": ["forward", "jump"]},
+    {"ticks": 6, "keys": ["back"]},
+    {"ticks": 8, "keys": []}
+  ]
+}

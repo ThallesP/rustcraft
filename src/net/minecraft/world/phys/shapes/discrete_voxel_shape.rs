@@ -4,12 +4,14 @@
 //! trait whose provided methods are the abstract class's own, and `instanceof` is `as_any`. Its
 //! `fill`, which only a `BitSetDiscreteVoxelShape` gets called with (a `SubShape` would fill its
 //! parent, which nothing does), is that class's own. `IntLineConsumer` and `IntFaceConsumer` are
-//! closures.
-//!
-//! Not ported yet: `rotate`, which needs `OctahedralGroup` (`Shapes.rotate` and the rotated
-//! shapes of blocks that face a way).
+//! closures. `rotate`, which hands back the shape itself for the identity, is a function of the
+//! shared shape (`rotate`).
 
 use std::any::Any;
+use std::sync::Arc;
+
+use crate::com::mojang::math::octahedral_group::OctahedralGroup;
+use crate::org::joml::vector3i::Vector3i;
 
 use crate::net::minecraft::core::axis_cycle::AxisCycle;
 use crate::net::minecraft::core::direction::{Axis, AxisDirection, Direction};
@@ -274,6 +276,51 @@ pub(crate) fn check_sizes(x_size: i32, y_size: i32, z_size: i32) {
         x_size >= 0 && y_size >= 0 && z_size >= 0,
         "Need all positive sizes: x: {x_size}, y: {y_size}, z: {z_size}"
     );
+}
+
+/// `rotate(OctahedralGroup)`: a new shape of the voxels the symmetry takes these to, shifted back
+/// into the grid along each axis it flips; the shape itself for the identity. Java reuses the
+/// vector of the sizes for each voxel's position, which the port does too.
+pub fn rotate(
+    this: &Arc<dyn DiscreteVoxelShape>,
+    rotation: OctahedralGroup,
+) -> Arc<dyn DiscreteVoxelShape> {
+    if rotation == OctahedralGroup::IDENTITY {
+        return Arc::clone(this);
+    }
+
+    let mut v = Vector3i::from_xyz(this.x_size(), this.y_size(), this.z_size());
+    rotation.rotate_vector3i(&mut v);
+    let shift_x = fixup_coordinate(&mut v, 0);
+    let shift_y = fixup_coordinate(&mut v, 1);
+    let shift_z = fixup_coordinate(&mut v, 2);
+    let mut new_shape = BitSetDiscreteVoxelShape::new(v.x, v.y, v.z);
+    for x in 0..this.x_size() {
+        for y in 0..this.y_size() {
+            for z in 0..this.z_size() {
+                if this.is_full(x, y, z) {
+                    let new_pos = *rotation.rotate_vector3i(v.set_xyz(x, y, z));
+                    new_shape.fill(
+                        shift_x + new_pos.x,
+                        shift_y + new_pos.y,
+                        shift_z + new_pos.z,
+                    );
+                }
+            }
+        }
+    }
+    Arc::new(new_shape)
+}
+
+/// A flipped size made positive again, and how far its voxels shift back into the grid.
+fn fixup_coordinate(v: &mut Vector3i, index: i32) -> i32 {
+    let value = v.get(index);
+    if value < 0 {
+        v.set_component(index, value.wrapping_neg());
+        value.wrapping_neg() - 1
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]

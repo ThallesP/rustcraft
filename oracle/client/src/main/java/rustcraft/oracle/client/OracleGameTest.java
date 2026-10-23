@@ -4,6 +4,7 @@ import java.io.UncheckedIOException;
 import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -173,10 +174,11 @@ public final class OracleGameTest implements FabricClientGameTest {
 
     /**
      * Puts the world in the scenario's state, the same way in both modes. Singleplayer worlds are created with most of
-     * this already, but a dedicated server may have ticked (and spawned slimes) before the client joined.
+     * this already, but a dedicated server may have ticked (and spawned slimes) before the client joined. The scenario's
+     * own commands build its course before the player is put in place.
      */
     private static List<String> setupCommands(Scenario scenario, String player) {
-        return List.of(
+        List<String> commands = new ArrayList<>(List.of(
             "gamerule advance_time false",
             "gamerule advance_weather false",
             "gamerule random_tick_speed 0",
@@ -186,9 +188,11 @@ public final class OracleGameTest implements FabricClientGameTest {
             "weather clear",
             "gamemode " + scenario.world().gameMode() + " " + player,
             // Below the world they're discarded: no death animation, no drops, and slimes don't split like /kill makes them.
-            "tp @e[type=!minecraft:player] 0 -1000 0",
-            "tp " + player + " " + position(scenario.player())
-        );
+            "tp @e[type=!minecraft:player] 0 -1000 0"
+        ));
+        commands.addAll(scenario.setup());
+        commands.add("tp " + player + " " + position(scenario.player()));
+        return commands;
     }
 
     private static void replay(ClientGameTestContext context, Scenario scenario, Path outDir) {

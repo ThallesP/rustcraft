@@ -15,7 +15,7 @@ import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
 /** The input both clients replay. The format is documented in TESTING.md. */
-public record Scenario(String name, World world, Player player, Options options, List<Step> steps) {
+public record Scenario(String name, World world, Player player, Options options, List<String> setup, List<Step> steps) {
     public record World(long seed, String preset, long time, String gameMode) {}
 
     public record Player(double x, double y, double z, float yRot, float xRot) {}
@@ -44,6 +44,14 @@ public record Scenario(String name, World world, Player player, Options options,
         JsonObject options = root.getAsJsonObject("options");
         JsonArray window = options.getAsJsonArray("window");
 
+        // Commands that build the scenario's course, without their slash, sent before the player is put in place.
+        List<String> setup = new ArrayList<>();
+        if (root.has("setup")) {
+            for (JsonElement command : root.getAsJsonArray("setup")) {
+                setup.add(command.getAsString());
+            }
+        }
+
         List<Step> steps = new ArrayList<>();
         for (JsonElement element : root.getAsJsonArray("steps")) {
             steps.add(parseStep(element.getAsJsonObject()));
@@ -60,6 +68,7 @@ public record Scenario(String name, World world, Player player, Options options,
                 options.get("gui_scale").getAsInt(),
                 options.get("render_distance").getAsInt()
             ),
+            List.copyOf(setup),
             List.copyOf(steps)
         );
     }

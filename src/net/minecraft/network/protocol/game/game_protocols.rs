@@ -66,6 +66,8 @@ use crate::net::minecraft::network::protocol::game::serverbound_chunk_batch_rece
 use crate::net::minecraft::network::protocol::game::serverbound_client_tick_end_packet::ServerboundClientTickEndPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_configuration_acknowledged_packet::ServerboundConfigurationAcknowledgedPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_move_player_packet;
+use crate::net::minecraft::network::protocol::game::serverbound_player_command_packet::ServerboundPlayerCommandPacket;
+use crate::net::minecraft::network::protocol::game::serverbound_player_input_packet::ServerboundPlayerInputPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_player_loaded_packet::ServerboundPlayerLoadedPacket;
 use crate::net::minecraft::network::protocol::ping::clientbound_pong_response_packet::ClientboundPongResponsePacket;
 use crate::net::minecraft::network::protocol::ping::ping_packet_types::PingPacketTypes;
@@ -253,11 +255,11 @@ static SERVERBOUND_TEMPLATE: StaticUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::SERVERBOUND_PLAYER_COMMAND,
-                Unported::codec(GamePacketTypes::SERVERBOUND_PLAYER_COMMAND),
+                ServerboundPlayerCommandPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::SERVERBOUND_PLAYER_INPUT,
-                Unported::codec(GamePacketTypes::SERVERBOUND_PLAYER_INPUT),
+                ServerboundPlayerInputPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::SERVERBOUND_PLAYER_LOADED,

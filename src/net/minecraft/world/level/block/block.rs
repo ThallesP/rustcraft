@@ -3,10 +3,10 @@
 //! Only what makes a block and its states, and what it keeps from its `Properties`: its state
 //! definition and default state, `BLOCK_STATE_REGISTRY` with `getId` and `stateById`, the
 //! getters of what `BlockBehaviour` copied (`getFriction`, `getExplosionResistance`…),
-//! `toString`, and `box` and `isShapeFullBlock`, the shapes' helpers (the player track's).
-//! Not ported yet: every behaviour method (`playerDestroy`, `fallOn`, `getStateForPlacement`…),
-//! the other shape helpers (`column`, `isShapeFullBlock`, `shouldRenderFace`…), `asItem`,
-//! `getName` and `withPropertiesOf`, which come with what calls them.
+//! `toString`, and the shapes' helpers (`box`, `column`, `boxZ`, `cube`, `isShapeFullBlock`,
+//! `getShapeForEachState`: the player track's). Not ported yet: every behaviour method
+//! (`playerDestroy`, `fallOn`, `getStateForPlacement`…), `shouldRenderFace`, `asItem`, `getName`
+//! and `withPropertiesOf`, which come with what calls them.
 //!
 //! Java's blocks are objects the game compares by reference, so here a `Block` is its id in
 //! `BuiltInRegistries.BLOCK`: a `Copy` handle that derefs to what Java's object holds, a
@@ -20,6 +20,7 @@ use std::any::Any;
 use std::fmt;
 use std::ops::Deref;
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::id_mapper::IdMapper;
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks, REGISTRY};
@@ -30,10 +31,12 @@ use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_definition::{
     Builder, StateDefinition,
 };
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 use crate::net::minecraft::world::level::material::map_color::MapColor;
 use crate::net::minecraft::world::phys::shapes::boolean_op::BooleanOp;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
@@ -43,6 +46,11 @@ pub struct Block(pub(crate) u16);
 
 /// A class's `createBlockStateDefinition`.
 pub type CreateBlockStateDefinition = fn(&mut Builder);
+
+/// A class's `getShape` or `getCollisionShape`: the shape of its block's state at a position of
+/// a level, for what asks.
+pub type ShapeMethod =
+    fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos, &dyn CollisionContext) -> VoxelShape;
 
 /// A block class: Java's `Class<? extends Block>` and the overrides that matter so far.
 pub struct BlockClass {
@@ -55,6 +63,11 @@ pub struct BlockClass {
     pub is_randomly_ticking: Option<fn(&BlockData, BlockState) -> bool>,
     /// `getFluidState(BlockState)`, if it overrides it.
     pub get_fluid_state: Option<fn(&BlockData, BlockState) -> FluidState>,
+    /// `getShape(BlockState, BlockGetter, BlockPos, CollisionContext)`, if it overrides it.
+    pub get_shape: Option<ShapeMethod>,
+    /// `getCollisionShape(BlockState, BlockGetter, BlockPos, CollisionContext)`, if it overrides
+    /// it.
+    pub get_collision_shape: Option<ShapeMethod>,
 }
 
 impl BlockClass {
@@ -66,6 +79,8 @@ impl BlockClass {
             entity_block: false,
             is_randomly_ticking: None,
             get_fluid_state: None,
+            get_shape: None,
+            get_collision_shape: None,
         }
     }
 
@@ -86,6 +101,8 @@ pub static CLASS: BlockClass = BlockClass {
     entity_block: false,
     is_randomly_ticking: None,
     get_fluid_state: None,
+    get_shape: None,
+    get_collision_shape: None,
 };
 
 /// What a Java `Block` object holds: `BlockBehaviour`'s fields, which it derefs to, its state
@@ -233,6 +250,51 @@ impl Block {
             max_y / 16.0,
             max_z / 16.0,
         )
+    }
+
+    /// `column(double, double, double)`: a box `size_xz` sixteenths across, centered.
+    pub fn column(size_xz: f64, min_y: f64, max_y: f64) -> VoxelShape {
+        Block::column_xz(size_xz, size_xz, min_y, max_y)
+    }
+
+    /// `column(double, double, double, double)`.
+    pub fn column_xz(size_x: f64, size_z: f64, min_y: f64, max_y: f64) -> VoxelShape {
+        let half_x = size_x / 2.0;
+        let half_z = size_z / 2.0;
+        Block::r#box(
+            8.0 - half_x,
+            min_y,
+            8.0 - half_z,
+            8.0 + half_x,
+            max_y,
+            8.0 + half_z,
+        )
+    }
+
+    /// `cube(double, double, double)`: a box centered every way.
+    pub fn cube_xyz(size_x: f64, size_y: f64, size_z: f64) -> VoxelShape {
+        let half_y = size_y / 2.0;
+        Block::column_xz(size_x, size_z, 8.0 - half_y, 8.0 + half_y)
+    }
+
+    /// `boxZ(double, double, double, double, double)`: a box centered along x, from `min_z` to
+    /// `max_z`.
+    pub fn box_z(size_x: f64, min_y: f64, max_y: f64, min_z: f64, max_z: f64) -> VoxelShape {
+        let half_x = size_x / 2.0;
+        Block::r#box(8.0 - half_x, min_y, min_z, 8.0 + half_x, max_y, max_z)
+    }
+
+    /// `getShapeForEachState(Function)`: the shape of each of the block's states, worked out once
+    /// and looked up by the state's index (Java's `ImmutableMap`).
+    pub fn get_shape_for_each_state(
+        block: &BlockData,
+        shape_calculator: impl Fn(BlockState) -> VoxelShape,
+    ) -> Vec<VoxelShape> {
+        block
+            .get_state_definition()
+            .get_possible_states()
+            .map(shape_calculator)
+            .collect()
     }
 
     /// `instanceof`: whether the block's class is `class` or extends it.

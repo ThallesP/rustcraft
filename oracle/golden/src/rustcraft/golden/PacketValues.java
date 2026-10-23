@@ -109,6 +109,8 @@ import net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket;
 import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
 import net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.network.protocol.handshake.ClientIntent;
 import net.minecraft.network.protocol.handshake.ClientIntentionPacket;
@@ -138,6 +140,7 @@ import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.ChatVisiblity;
+import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.flag.FeatureFlag;
 import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.flag.FeatureFlags;
@@ -168,6 +171,7 @@ final class PacketValues {
     static final Values.Generator PARTICLE_STATUS = new CoreValues.Constants<>(ParticleStatus.class);
     static final Values.Generator RESOURCE_PACK_ACTION = new CoreValues.Constants<>(ServerboundResourcePackPacket.Action.class);
     static final Values.Generator RELATIVE = new CoreValues.Constants<>(Relative.class);
+    static final Values.Generator PLAYER_COMMAND_ACTION = new CoreValues.Constants<>(ServerboundPlayerCommandPacket.Action.class);
 
     private static final Values.Generator INTS = Values.generator(int.class);
     private static final Values.Generator LONGS = Values.generator(long.class);
@@ -537,6 +541,21 @@ final class PacketValues {
             moveFields, constant(0.0, double.class), constant(0.0, double.class), constant(0.0, double.class), constant(0.0F, float.class), constant(0.0F, float.class), BOOLEANS,
             BOOLEANS, constant(false, boolean.class), constant(false, boolean.class)
         );
+        // The keys a player holds, every combination of the seven, and what the client sends when they change.
+        Values.Generator inputs = values(
+            Input.class, fields -> new Input(
+                (Boolean)fields[0], (Boolean)fields[1], (Boolean)fields[2], (Boolean)fields[3], (Boolean)fields[4], (Boolean)fields[5],
+                (Boolean)fields[6]
+            ),
+            List.of(), BOOLEANS, BOOLEANS, BOOLEANS, BOOLEANS, BOOLEANS, BOOLEANS, BOOLEANS
+        );
+        PAYLOADS.put(Input.class, inputs);
+        packet(ServerboundPlayerInputPacket.class, fields -> new ServerboundPlayerInputPacket((Input)fields[0]), List.of(), inputs);
+        // Its public constructors take the entity, so its reader makes it from the fields.
+        packet(
+            ServerboundPlayerCommandPacket.class, PacketValues::playerCommandPacket, List.of("id", "action", "data"), INTS, PLAYER_COMMAND_ACTION,
+            INTS
+        );
         // A teleport's values: positions and movements like an entity's, and any rotation.
         Values.Generator changes = values(
             PositionMoveRotation.class,
@@ -672,6 +691,9 @@ final class PacketValues {
         }
         if (type == Relative.class) {
             return RELATIVE;
+        }
+        if (type == ServerboundPlayerCommandPacket.Action.class) {
+            return PLAYER_COMMAND_ACTION;
         }
         if (type.isInterface() && PacketListener.class.isAssignableFrom(type)) {
             return new Listener(type);
@@ -1175,6 +1197,15 @@ final class PacketValues {
         buffer.writeFloat((Float)fields[4]);
         buffer.writeFloat((Float)fields[5]);
         return ClientboundPlayerAbilitiesPacket.STREAM_CODEC.decode(buffer);
+    }
+
+    // The packet its reader makes of the entity's id, the action and its data.
+    private static ServerboundPlayerCommandPacket playerCommandPacket(final Object[] fields) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeVarInt((Integer)fields[0]);
+        buffer.writeEnum((ServerboundPlayerCommandPacket.Action)fields[1]);
+        buffer.writeVarInt((Integer)fields[2]);
+        return ServerboundPlayerCommandPacket.STREAM_CODEC.decode(buffer);
     }
 
     // The packet its reader makes of the border's fields, in their order.

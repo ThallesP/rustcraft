@@ -28,7 +28,9 @@ jobs:
       - run: python3 tools/setup_vanilla.py --skip-decompile
       # The chunk goldens decode the chunks a vanilla server sends a client joining the walk scenario's world. CI has no
       # oracle captures, so it records that server with the port's own client (the chunk bytes are the server's either
-      # way), and the golden harness reads its capture instead of vanilla/<version>/oracle/walk/capture.jsonl.
+      # way), and the golden harness reads its capture instead of vanilla/<version>/oracle/walk/capture.jsonl. The
+      # port's run also replays the walk on the server, whose trace and packets the replay tests check against vanilla's
+      # digests.
       - run: python3 tools/port_client.py capture walk --accept-eula
       - run: python3 tools/golden.py
         env:

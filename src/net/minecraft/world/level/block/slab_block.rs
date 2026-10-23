@@ -1,8 +1,11 @@
 //! net/minecraft/world/level/block/SlabBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states (its properties and its default state) and its shapes: a half
+//! block at the bottom or the top, or a whole one. Not ported yet: the rest of its behaviour.
 
+use std::sync::LazyLock;
+
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -14,13 +17,21 @@ use crate::net::minecraft::world::level::block::state::properties::enum_property
 use crate::net::minecraft::world::level::block::state::properties::slab_type::SlabType;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+
+static SHAPE_BOTTOM: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 0.0, 8.0));
+static SHAPE_TOP: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 8.0, 16.0));
 
 pub struct SlabBlock;
 
 pub static CLASS: BlockClass = BlockClass {
     get_fluid_state: Some(SlabBlock::get_fluid_state),
+    get_shape: Some(SlabBlock::get_shape),
     ..BlockClass::new("net.minecraft.world.level.block.SlabBlock", &block::CLASS)
 };
 
@@ -53,6 +64,20 @@ impl SlabBlock {
 }
 
 impl SlabBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        match state.get_value(SlabBlock::TYPE) {
+            SlabType::TOP => SHAPE_TOP.clone(),
+            SlabType::BOTTOM => SHAPE_BOTTOM.clone(),
+            SlabType::DOUBLE => Shapes::block(),
+        }
+    }
+
     /// `getFluidState`: still water when it's waterlogged.
     fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
         if state.get_value(BlockStateProperties::WATERLOGGED) {

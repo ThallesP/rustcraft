@@ -1,0 +1,19 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "player": {"pos": [0.5, -60.0, 4.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill -2 -61 7 2 -61 9 minecraft:packed_ice strict",
+    "fill -2 -61 10 2 -61 12 minecraft:soul_sand strict",
+    "fill -2 -61 13 2 -61 15 minecraft:white_concrete strict",
+    "fill -2 -61 16 2 -61 19 minecraft:blue_ice strict",
+    "fill -2 -61 20 2 -61 22 minecraft:soul_sand strict",
+    "fill -2 -61 23 2 -61 40 minecraft:packed_ice strict"
+  ],
+  "steps": [
+    {"ticks": 30, "keys": ["forward"]},
+    {"ticks": 20, "keys": ["forward", "sprint", "jump"]},
+    {"ticks": 6, "keys": []},
+    {"ticks": 20, "keys": ["back"]}
+  ]
+}

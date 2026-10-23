@@ -3,11 +3,13 @@
 
 The port's counterpart of `oracle_client.py capture`: a fresh `vanilla_server.py`, `packet-proxy`
 in front of it, and the port joining as `rustcraft`, which sends the oracle client's setup
-commands and its scenario-start marker (src/rustcraft/oracle/client/oracle_game_test.rs). Writes
-target/oracle/<scenario>/capture.jsonl, to compare with vanilla's:
+commands and its scenario-start marker, then replays the scenario's ticks
+(src/rustcraft/oracle/client/oracle_game_test.rs). Writes target/oracle/<scenario>/trace.jsonl and
+capture.jsonl, to compare with vanilla's:
 
     python3 tools/port_client.py capture walk --accept-eula
     cargo run -p oracle-diff -- packets --join vanilla/26.3/oracle/walk/capture.jsonl target/oracle/walk/capture.jsonl
+    cargo run -p oracle-diff -- dir vanilla/26.3/oracle/walk target/oracle/walk
 
 `--ping` pings the scenario's server like the server list does (`rustcraft --ping`) instead of
 joining it, into target/oracle/<scenario>-ping/, to compare with `oracle_client.py capture
@@ -51,7 +53,7 @@ def run(scenario, out_dir, server, ping=False):
 
     command = [
         PORT_BINARY, "--quickPlayMultiplayer", server, "--username", "rustcraft", "--headless",
-        "--oracleScenario", scenario,
+        "--oracleScenario", scenario, "--oracleOut", out_dir,
     ]
     if ping:
         command = [PORT_BINARY, "--ping", server]

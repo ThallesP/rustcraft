@@ -34,9 +34,10 @@ use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::item::dye_color::DyeColor;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::world::level::block::block::{Block, BlockClass, ShapeMethod};
 use crate::net::minecraft::world::level::block::blocks::REGISTRY;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::note_block_instrument::NoteBlockInstrument;
@@ -706,7 +707,9 @@ impl BlockState {
 }
 
 /// The block classes that override `getShape` or `getCollisionShape` in Java, whose overrides
-/// aren't ported yet. `AirBlock`'s is.
+/// aren't ported yet. `AirBlock`'s is, and the classes' with a `BlockClass::get_shape` or
+/// `get_collision_shape` (the player track's, for its physics scenarios): `SoulSandBlock`,
+/// `SlabBlock`, `StairBlock` and `CrossCollisionBlock` (fences and panes).
 const SHAPE_OVERRIDES: &[&str] = &[
     "net.minecraft.world.level.block.AbstractCauldronBlock",
     "net.minecraft.world.level.block.AmethystClusterBlock",
@@ -750,7 +753,6 @@ const SHAPE_OVERRIDES: &[&str] = &[
     "net.minecraft.world.level.block.CopperGolemStatueBlock",
     "net.minecraft.world.level.block.CoralPlantBlock",
     "net.minecraft.world.level.block.CropBlock",
-    "net.minecraft.world.level.block.CrossCollisionBlock",
     "net.minecraft.world.level.block.DaylightDetectorBlock",
     "net.minecraft.world.level.block.DecoratedPotBlock",
     "net.minecraft.world.level.block.DiodeBlock",
@@ -815,14 +817,11 @@ const SHAPE_OVERRIDES: &[&str] = &[
     "net.minecraft.world.level.block.ShulkerBoxBlock",
     "net.minecraft.world.level.block.SignBlock",
     "net.minecraft.world.level.block.SkullBlock",
-    "net.minecraft.world.level.block.SlabBlock",
     "net.minecraft.world.level.block.SmallDripleafBlock",
     "net.minecraft.world.level.block.SnifferEggBlock",
     "net.minecraft.world.level.block.SnowLayerBlock",
-    "net.minecraft.world.level.block.SoulSandBlock",
     "net.minecraft.world.level.block.SpeleothemBlock",
     "net.minecraft.world.level.block.SporeBlossomBlock",
-    "net.minecraft.world.level.block.StairBlock",
     "net.minecraft.world.level.block.StemBlock",
     "net.minecraft.world.level.block.StonecutterBlock",
     "net.minecraft.world.level.block.StrawBedBlock",
@@ -851,10 +850,17 @@ const SHAPE_OVERRIDES: &[&str] = &[
 
 /// The shapes, which go by the block's class.
 impl BlockState {
-    /// Panics when the block's class, or a parent, overrides its shapes in a way not ported yet.
-    fn check_shapes_ported(&self) {
+    /// The class's override of a shape method, looked up the chain like Java's dispatch, or none
+    /// for `BlockBehaviour`'s own. Panics at a class whose shapes aren't ported yet.
+    fn shape_override(
+        &self,
+        method: impl Fn(&BlockClass) -> Option<ShapeMethod>,
+    ) -> Option<ShapeMethod> {
         let mut class = Some(Block::data(self.get_block()).class());
         while let Some(current) = class {
+            if let Some(found) = method(current) {
+                return Some(found);
+            }
             assert!(
                 !SHAPE_OVERRIDES.contains(&current.name),
                 "the shapes of {} ({}) aren't ported",
@@ -863,6 +869,7 @@ impl BlockState {
             );
             class = current.parent;
         }
+        None
     }
 
     fn is_air_block(&self) -> bool {
@@ -876,35 +883,43 @@ impl BlockState {
         false
     }
 
-    /// `getShape(BlockGetter, BlockPos, CollisionContext)`: `BlockBehaviour`'s whole block, or
-    /// `AirBlock`'s nothing.
+    /// `getShape(BlockGetter, BlockPos, CollisionContext)`: the class's, `AirBlock`'s nothing, or
+    /// `BlockBehaviour`'s whole block.
     pub fn get_shape_in(
         &self,
-        _level: &dyn BlockGetter,
-        _pos: &BlockPos,
-        _context: &dyn CollisionContext,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        context: &dyn CollisionContext,
     ) -> VoxelShape {
         if self.is_air_block() {
             return Shapes::empty();
         }
-        self.check_shapes_ported();
-        Shapes::block()
+        match self.shape_override(|class| class.get_shape) {
+            Some(get_shape) => get_shape(Block::data(self.get_block()), *self, level, pos, context),
+            None => Shapes::block(),
+        }
     }
 
-    /// `getCollisionShape(BlockGetter, BlockPos, CollisionContext)`: the shape, or nothing for a
-    /// block without collision.
+    /// `getShape(BlockGetter, BlockPos)`, with an empty context.
+    pub fn get_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
+        self.get_shape_in(level, pos, &collision_context::empty())
+    }
+
+    /// `getCollisionShape(BlockGetter, BlockPos, CollisionContext)`: the class's, or
+    /// `BlockBehaviour`'s, the shape (asked with an empty context), or nothing for a block
+    /// without collision.
     pub fn get_collision_shape_in(
         &self,
         level: &dyn BlockGetter,
         pos: &BlockPos,
-        _context: &dyn CollisionContext,
+        context: &dyn CollisionContext,
     ) -> VoxelShape {
-        self.check_shapes_ported();
-        // `state.getShape(level, pos)`, which asks with an empty context.
-        if Block::data(self.get_block()).has_collision() {
-            self.get_shape_in(level, pos, &collision_context::empty())
-        } else {
-            Shapes::empty()
+        match self.shape_override(|class| class.get_collision_shape) {
+            Some(get_collision_shape) => {
+                get_collision_shape(Block::data(self.get_block()), *self, level, pos, context)
+            }
+            None if Block::data(self.get_block()).has_collision() => self.get_shape(level, pos),
+            None => Shapes::empty(),
         }
     }
 
@@ -929,18 +944,14 @@ impl BlockState {
             .any(|axis| shape.min(axis) < 0.0 || shape.max(axis) > 1.0)
     }
 
-    /// `isSuffocating(BlockGetter, BlockPos)`. Properties' default needs the
-    /// `causes_suffocation` tag, which isn't ported, so it panics for a block whose collision
-    /// shape is the full block (one that isn't never suffocates).
+    /// `isSuffocating(BlockGetter, BlockPos)`: Properties' default is a block in the
+    /// `causes_suffocation` tag whose collision shape is the whole block.
     pub fn is_suffocating_at(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
         match self.base().is_suffocating {
             StatePredicate::State(_, test) => test(*self),
             StatePredicate::Default => {
-                self.is_collision_shape_full_block(level, pos)
-                    && panic!(
-                        "whether {} suffocates needs the causes_suffocation tag, which isn't ported",
-                        self.get_block()
-                    )
+                self.is_tag(BlockTags::CAUSES_SUFFOCATION)
+                    && self.is_collision_shape_full_block(level, pos)
             }
             StatePredicate::NotClosedShulker => {
                 panic!("NOT_CLOSED_SHULKER asks the shulker box's block entity, which isn't ported")
@@ -1220,5 +1231,30 @@ impl StatePredicate {
                 panic!("this predicate needs the level or the block's shapes, which aren't ported")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EmptyBlockGetter;
+    use crate::golden::Golden;
+    use crate::net::minecraft::core::block_pos::BlockPos;
+    use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+
+    /// The shapes of every state of the blocks whose classes' shapes are ported, as a state
+    /// reports them with no level around it (`ShapeSuites.BlockStateShapeSuite`).
+    #[test]
+    fn state_shapes_match_vanilla() {
+        let golden =
+            Golden::load("net.minecraft.world.level.block.state.BlockBehaviour$BlockStateBase");
+        golden.check(
+            "getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
+            |state: BlockState| state.get_shape(&EmptyBlockGetter, &BlockPos::ZERO),
+        );
+        golden.check(
+            "getCollisionShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
+            |state: BlockState| state.get_collision_shape(&EmptyBlockGetter, &BlockPos::ZERO),
+        );
+        golden.finish();
     }
 }

@@ -1,0 +1,18 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "player": {"pos": [0.5, -60.0, 4.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill -2 -60 8 2 -60 8 minecraft:stone strict",
+    "fill -2 -60 9 2 -59 9 minecraft:stone strict",
+    "fill -2 -60 10 2 -59 12 minecraft:stone strict"
+  ],
+  "steps": [
+    {"ticks": 18, "keys": ["forward"]},
+    {"ticks": 4, "keys": []},
+    {"ticks": 24, "keys": ["forward", "jump"]},
+    {"ticks": 16, "keys": ["forward"]},
+    {"ticks": 10, "keys": []},
+    {"ticks": 12, "keys": ["back", "jump"]}
+  ]
+}

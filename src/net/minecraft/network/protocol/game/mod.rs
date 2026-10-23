@@ -41,4 +41,6 @@ pub mod serverbound_chunk_batch_received_packet;
 pub mod serverbound_client_tick_end_packet;
 pub mod serverbound_configuration_acknowledged_packet;
 pub mod serverbound_move_player_packet;
+pub mod serverbound_player_command_packet;
+pub mod serverbound_player_input_packet;
 pub mod serverbound_player_loaded_packet;

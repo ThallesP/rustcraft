@@ -7,11 +7,9 @@
 //! blocks: `aiStep`'s crouching, sprinting and `moveTowardsClosestSpace`, the keyboard's input
 //! (`applyInput`, `modifyInput`), and `move`, through `Player`, `LivingEntity` and `Entity`.
 //!
-//! The level the client has (`ClientLevel`) has no blocks yet, which the world track brings, so
-//! the live client doesn't tick the player's movement (`Minecraft::tick` runs `commonTick` only),
-//! and it stands where the server puts it; tests tick it on a level of blocks. `sendChanges`
-//! tells the server where it is; `player_input` and `player_command` (sprinting), which a moving
-//! player sends, aren't ported yet.
+//! `sendChanges` tells the server what it holds (`player_input`), whether it sprints
+//! (`player_command`) and where it is (the four kinds of `move_player`), in Java's order. The
+//! vehicle it rides isn't ported, so a passenger only sends its rotation.
 //!
 //! Not ported yet: auto-jump's look-ahead (`updateAutoJump`, which panics if auto-jump is on: it's
 //! off by default), portals and the spinning effect, the tutorial, flying's toggle (`mayfly` is
@@ -19,7 +17,8 @@
 //! permissions, chat and screens.
 //!
 //! Java's player holds the game (`minecraft`), which is a parameter here, and its connection is
-//! the client listener, shared with the game mode and the game. A test's player has none.
+//! the client listener, shared with the game mode and the game. A test's player has none, and
+//! keeps what it sends instead (`sent`).
 
 // Java's negated comparisons are kept as they are: they differ from the plain ones for NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -34,9 +33,15 @@ use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::keyboard_input::KeyboardInput;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, AxisDirection, Direction};
+use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_move_player_packet::{
     Pos, PosRot, Rot, StatusOnly,
 };
+use crate::net::minecraft::network::protocol::game::serverbound_player_command_packet::{
+    self, ServerboundPlayerCommandPacket,
+};
+use crate::net::minecraft::network::protocol::game::serverbound_player_input_packet::ServerboundPlayerInputPacket;
+use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
 use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
@@ -56,6 +61,9 @@ use crate::net::minecraft::world::phys::vec3::Vec3;
 pub struct LocalPlayer {
     player: Player,
     pub connection: Option<Rc<RefCell<ClientPacketListener>>>,
+    /// What a player without a connection (a test's) has sent, in order, which Java's connection
+    /// would have written to the server.
+    pub sent: Vec<Box<dyn Packet<dyn ServerGamePacketListener>>>,
     x_last: f64,
     y_last: f64,
     z_last: f64,
@@ -97,6 +105,7 @@ impl LocalPlayer {
         let mut player = LocalPlayer {
             player: Player::new(),
             connection,
+            sent: Vec::new(),
             x_last: 0.0,
             y_last: 0.0,
             z_last: 0.0,
@@ -396,9 +405,17 @@ impl LocalPlayer {
             && self.input.get_move_vector().length_squared() > 0.0
     }
 
-    /// Tells the server where the player is, once the level has loaded.
+    /// Tells the server what changed, once the level has loaded: the keys held, then whether it
+    /// sprints and where it is.
     pub fn send_changes(&mut self, minecraft: &Minecraft) {
         if self.has_client_loaded() {
+            if self.last_sent_input != self.input.key_presses {
+                self.send(ServerboundPlayerInputPacket::new(self.input.key_presses));
+                self.last_sent_input = self.input.key_presses;
+            }
+
+            // A vehicle the player moves (`isLocalInstanceAuthoritative`) would be sent too, with
+            // the sprinting, once riding is ported.
             if self.is_passenger() {
                 self.send(Rot::new(
                     self.get_y_rot(),
@@ -412,12 +429,10 @@ impl LocalPlayer {
         }
     }
 
-    fn send(
-        &self,
-        packet: impl crate::net::minecraft::network::protocol::packet::Packet<dyn crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener>,
-    ) {
-        if let Some(connection) = &self.connection {
-            connection.borrow().send(packet);
+    fn send(&mut self, packet: impl Packet<dyn ServerGamePacketListener> + 'static) {
+        match &self.connection {
+            Some(connection) => connection.borrow().send(packet),
+            None => self.sent.push(Box::new(packet)),
         }
     }
 
@@ -479,11 +494,16 @@ impl LocalPlayer {
         }
     }
 
-    /// `player_command` with the sprint's start or end, when it changed: the packet isn't ported
-    /// yet, and the live player never sprints until movement is wired in.
+    /// `player_command` with the sprint's start or end, when it changed.
     fn send_is_sprinting_if_needed(&mut self) {
         let is_sprinting = self.is_sprinting();
         if is_sprinting != self.was_sprinting {
+            let action = if is_sprinting {
+                serverbound_player_command_packet::Action::START_SPRINTING
+            } else {
+                serverbound_player_command_packet::Action::STOP_SPRINTING
+            };
+            self.send(ServerboundPlayerCommandPacket::new(self, action));
             self.was_sprinting = is_sprinting;
         }
     }

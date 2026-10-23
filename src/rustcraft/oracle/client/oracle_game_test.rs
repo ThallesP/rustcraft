@@ -1,27 +1,33 @@
 //! oracle/client/src/main/java/rustcraft/oracle/client/OracleGameTest.java, on a server
 //! (`runMultiplayer`): joins, puts the world in the scenario's state with the same commands,
 //! waits like the oracle client does, sends the scenario-start marker and replays the scenario's
-//! ticks, then disconnects. `tools/port_client.py capture` runs it behind `packet-proxy`.
+//! ticks, holding each step's keys and setting its look before each tick, and writing
+//! `<out>/<scenario>/trace.jsonl` after it, then disconnects. `tools/port_client.py capture` runs
+//! it behind `packet-proxy`.
 //!
-//! Not yet like the oracle client's: after the settling ticks it waits for the player to be on
-//! the ground, which only the player track's movement decides, so it settles for the ticks alone;
-//! and the replay holds no keys and writes no trace or screenshots, which come with movement and
-//! the renderer (gates 2 and 3). The port has no screens, so waiting for the level's loading
-//! screen to close is waiting for the level to be ready, which closes it in vanilla too, and with
-//! no chunk storage yet "chunks rendered" is as many chunks as the render distance spans having
-//! come in the finished chunk batches.
+//! Java's test drives the game from its own thread, between ticks; the port's is called after
+//! each tick (`TestDriver`), so what Java does before a tick (holding the keys, the look) is done
+//! after the one before it. Not yet like the oracle client's: screenshots, which come with the
+//! renderer (gates 2 and 3). The port has no screens, so waiting for the level's loading screen to
+//! close is waiting for the level to be ready, which closes it in vanilla too, and until the
+//! renderer compiles sections "chunks rendered" is every chunk in the render distance being in
+//! the level.
 
 use std::cell::Cell;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::net::minecraft::client::minecraft::{Minecraft, TestDriver};
+use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::protocol::common::custom::discarded_payload::DiscardedPayload;
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
 use crate::rustcraft::oracle::client::scenario::{self, Scenario};
+use crate::rustcraft::oracle::client::trace_writer::{self, TraceWriter};
 
 /// Where the run is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,25 +51,28 @@ pub enum Outcome {
 /// The driver of one scenario's run on a server.
 pub struct OracleGameTest {
     scenario: Scenario,
+    out_dir: PathBuf,
     stage: Stage,
     ticks_in_stage: i32,
     replayed_ticks: i32,
+    trace: Option<TraceWriter>,
     outcome: Rc<Cell<Option<Outcome>>>,
 }
 
 impl OracleGameTest {
-    const SETTLE_TICKS: i32 = 20;
-    const LOAD_TIMEOUT_TICKS: i32 = 60 * 20;
+    pub const SETTLE_TICKS: i32 = 20;
+    pub const LOAD_TIMEOUT_TICKS: i32 = 60 * 20;
 
     pub fn scenario_start() -> Identifier {
         Identifier::from_namespace_and_path("rustcraft", "scenario_start")
     }
 
     /// Sets the options the oracle client sets (`applyOptions`) that the port has, and returns the
-    /// driver and where its outcome goes.
+    /// driver, which writes into `<out_dir>/<scenario>/`, and where its outcome goes.
     pub fn new(
         minecraft: &Minecraft,
         scenario: Scenario,
+        out_dir: &Path,
     ) -> (OracleGameTest, Rc<Cell<Option<Outcome>>>) {
         {
             let mut options = minecraft.options.borrow_mut();
@@ -74,19 +83,22 @@ impl OracleGameTest {
         let outcome = Rc::new(Cell::new(Some(Outcome::Running)));
         (
             OracleGameTest {
+                out_dir: out_dir.join(&scenario.name),
                 scenario,
                 stage: Stage::WaitingForLevel,
                 ticks_in_stage: 0,
                 replayed_ticks: 0,
+                trace: None,
                 outcome: Rc::clone(&outcome),
             },
             outcome,
         )
     }
 
-    /// The commands that put the world in the scenario's state, the same in both modes.
+    /// The commands that put the world in the scenario's state, the same in both modes: the
+    /// scenario's own build its course before the player is put in place.
     pub fn setup_commands(scenario: &Scenario, player: &str) -> Vec<String> {
-        vec![
+        let mut commands = vec![
             "gamerule advance_time false".to_string(),
             "gamerule advance_weather false".to_string(),
             "gamerule random_tick_speed 0".to_string(),
@@ -96,8 +108,13 @@ impl OracleGameTest {
             "weather clear".to_string(),
             format!("gamemode {} {player}", scenario.world.game_mode),
             "tp @e[type=!minecraft:player] 0 -1000 0".to_string(),
-            format!("tp {player} {}", OracleGameTest::position(&scenario.player)),
-        ]
+        ];
+        commands.extend(scenario.setup.iter().cloned());
+        commands.push(format!(
+            "tp {player} {}",
+            OracleGameTest::position(&scenario.player)
+        ));
+        commands
     }
 
     /// `String.format("%s %s %s %s %s", …)` of the doubles and floats, which prints them with
@@ -132,19 +149,86 @@ impl OracleGameTest {
         })
     }
 
-    /// Every chunk within the render distance has come: (2d + 1)² of them, which the client's
-    /// finished chunk batches count until chunk storage comes.
+    /// Every chunk within the render distance around the player is in the level. Java then waits
+    /// for the renderer to have compiled their sections, which comes with the render track.
     fn are_chunks_rendered(&self, minecraft: &Minecraft) -> bool {
+        let level = minecraft.level.borrow();
+        let player = minecraft.player.borrow();
+        let (Some(level), Some(player)) = (level.as_ref(), player.as_ref()) else {
+            return false;
+        };
+
+        let center = player.block_position();
+        let (center_x, center_z) = (
+            SectionPos::block_to_section_coord(center.get_x()),
+            SectionPos::block_to_section_coord(center.get_z()),
+        );
         let distance = minecraft.options.borrow().get_effective_render_distance();
-        let chunks = (2 * distance + 1) * (2 * distance + 1);
-        minecraft.level.borrow().is_some()
-            && minecraft.get_connection().is_some_and(|connection| {
-                connection.borrow().chunks_in_finished_batches() >= chunks
+        (-distance..=distance).all(|dz| {
+            (-distance..=distance).all(|dx| {
+                level
+                    .get_chunk_source()
+                    .get_chunk(center_x + dx, center_z + dz)
+                    .is_some()
             })
+        })
     }
 
     fn scenario_ticks(&self) -> i32 {
         self.scenario.steps.iter().map(|step| step.ticks).sum()
+    }
+
+    /// The step the scenario's tick is in.
+    fn step_of(&self, tick: i32) -> &scenario::Step {
+        let mut first = 0;
+        for step in &self.scenario.steps {
+            if tick < first + step.ticks {
+                return step;
+            }
+            first += step.ticks;
+        }
+        panic!("the scenario has {first} ticks, not {}", tick + 1)
+    }
+
+    /// What `replay` does before the scenario's tick: holds its step's keys (`holdOnly`) and sets
+    /// its look (`TestInput.lookAt`).
+    fn before_tick(&self, minecraft: &Minecraft, tick: i32) {
+        let step = self.step_of(tick);
+        OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &step.keys);
+        if let Some([y_rot, x_rot]) = step.look
+            && let Some(player) = minecraft.player.borrow_mut().as_mut()
+        {
+            player.set_y_rot(y_rot);
+            player.set_x_rot(x_rot);
+        }
+    }
+
+    /// `holdOnly`: the keys named held, the others released.
+    pub fn hold_only(options: &mut Options, keys: &[String]) {
+        let held = |name: &str| keys.iter().any(|key| key == name);
+        options.key_up.set_down(held("forward"));
+        options.key_down.set_down(held("back"));
+        options.key_left.set_down(held("left"));
+        options.key_right.set_down(held("right"));
+        options.key_jump.set_down(held("jump"));
+        options.key_shift.set_down(held("sneak"));
+        options.key_sprint.set_down(held("sprint"));
+    }
+
+    /// The player's trace line after the scenario's tick.
+    fn write_trace(&mut self, minecraft: &Minecraft, tick: i32) -> std::io::Result<()> {
+        let line = trace_writer::line(
+            tick,
+            minecraft
+                .player
+                .borrow()
+                .as_ref()
+                .expect("the player is in a level"),
+        );
+        match self.trace.as_mut() {
+            Some(trace) => trace.write(&line),
+            None => Ok(()),
+        }
     }
 }
 
@@ -202,7 +286,30 @@ impl TestDriver for OracleGameTest {
                 }
             }
             Stage::Settling => {
-                if self.ticks_in_stage >= OracleGameTest::SETTLE_TICKS {
+                // `settle`: the ticks, then until the player is on the ground.
+                let on_ground = minecraft
+                    .player
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|player| player.on_ground());
+                if self.ticks_in_stage
+                    > OracleGameTest::SETTLE_TICKS + OracleGameTest::LOAD_TIMEOUT_TICKS
+                {
+                    self.fail(
+                        minecraft,
+                        "timed out waiting for the player to land".to_string(),
+                    );
+                    return;
+                }
+                if self.ticks_in_stage >= OracleGameTest::SETTLE_TICKS && on_ground {
+                    let path = self.out_dir.join("trace.jsonl");
+                    match TraceWriter::new(&path) {
+                        Ok(trace) => self.trace = Some(trace),
+                        Err(error) => {
+                            self.fail(minecraft, format!("{}: {error}", path.display()));
+                            return;
+                        }
+                    }
                     // Marks scenario tick 0 in packet captures: the join before it depends on the
                     // server's real-time ticking, everything after must match.
                     let connection = minecraft
@@ -214,21 +321,37 @@ impl TestDriver for OracleGameTest {
                             DiscardedPayload::new(OracleGameTest::scenario_start()),
                         )));
                     self.next(Stage::Replaying);
+                    if self.scenario_ticks() > 0 {
+                        self.before_tick(minecraft, 0);
+                    }
                 }
             }
             Stage::Replaying => {
-                self.replayed_ticks += 1;
-                if self.replayed_ticks >= self.scenario_ticks() {
-                    let connection = minecraft
-                        .get_connection()
-                        .expect("the player is in a level");
-                    let connection = connection.borrow().get_connection();
-                    connection.disconnect(DisconnectionDetails::new("Scenario finished"));
-                    // The game stops at the disconnected screen, which is where this run ends.
-                    self.outcome.set(Some(Outcome::Finished));
-                    self.next(Stage::Done);
-                    minecraft.disconnect(&DisconnectionDetails::new("Scenario finished"), false);
+                let tick = self.replayed_ticks;
+                if let Err(error) = self.write_trace(minecraft, tick) {
+                    self.fail(minecraft, format!("writing the trace: {error}"));
+                    return;
                 }
+                self.replayed_ticks += 1;
+                if self.replayed_ticks < self.scenario_ticks() {
+                    self.before_tick(minecraft, self.replayed_ticks);
+                    return;
+                }
+
+                OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &[]);
+                if let Some(Err(error)) = self.trace.take().map(TraceWriter::close) {
+                    self.fail(minecraft, format!("writing the trace: {error}"));
+                    return;
+                }
+                let connection = minecraft
+                    .get_connection()
+                    .expect("the player is in a level");
+                let connection = connection.borrow().get_connection();
+                connection.disconnect(DisconnectionDetails::new("Scenario finished"));
+                // The game stops at the disconnected screen, which is where this run ends.
+                self.outcome.set(Some(Outcome::Finished));
+                self.next(Stage::Done);
+                minecraft.disconnect(&DisconnectionDetails::new("Scenario finished"), false);
             }
             Stage::Done => {}
         }

@@ -1,7 +1,8 @@
 //! net/minecraft/world/level/block/IronBarsBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states (its properties and its default state), and the sizes its
+//! parent's shapes are made with (2, 16, 2, 16 and 16 sixteenths). Not ported yet: the rest of its
+//! behaviour.
 
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
@@ -34,7 +35,9 @@ impl IronBarsBlock {
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        let mut block = CrossCollisionBlock::new_with(properties, class, definition);
+        let mut block = CrossCollisionBlock::new_with(
+            2.0, 16.0, 2.0, 16.0, 16.0, properties, class, definition,
+        );
         block.register_default_state(
             block
                 .get_state_definition()

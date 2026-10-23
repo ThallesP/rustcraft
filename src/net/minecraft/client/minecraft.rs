@@ -4,8 +4,8 @@
 //! integrated server, resources, the GUI and its screens, input, telemetry and the profiler. What's
 //! here is the game loop's timing and what a tick does with a connection to a server: run the
 //! packets queued for the game thread, then up to 10 ticks, each ticking the connection (the game
-//! mode's, or the connect screen's before there's a level), the player, and ending with
-//! `client_tick_end`.
+//! mode's, or the connect screen's before there's a level), the player on its level, what the
+//! player sends, and ending with `client_tick_end`.
 //!
 //! The game is shared by its listeners and its player, like Java's, so its state is in cells, and
 //! its back-references are parameters (`LocalPlayer::send_changes`). The screen is one of the few
@@ -162,11 +162,19 @@ impl Minecraft {
 
         if self.level.borrow().is_some() {
             if !self.pause.get() {
+                // `level.tickEntities()`: the player is the only entity the level has
+                // (`ClientLevel.tickNonPassenger`).
+                {
+                    let level = self.level.borrow();
+                    let mut player = self.player.borrow_mut();
+                    if let (Some(level), Some(player)) = (level.as_ref(), player.as_mut()) {
+                        player.common_tick();
+                        player.tick(level, &self.options.borrow());
+                    }
+                }
+                // `playerSync`.
                 let mut player = self.player.borrow_mut();
                 if let Some(player) = player.as_mut() {
-                    // `level.tickEntities()`: the level has no blocks yet (the world track's),
-                    // so only `commonTick` runs, and the player stands where the server puts it.
-                    player.common_tick();
                     player.send_changes(self);
                 }
             }

@@ -11,7 +11,9 @@
 //! - `--headless`, no window. There is no window yet (the render track brings it), so every run
 //!   is headless for now;
 //! - `--oracleScenario PATH`, which replays a scenario on the server the way the oracle client
-//!   does (`OracleGameTest`), and exits 0 when it finished, like `rustcraft.oracle.scenario`;
+//!   does (`OracleGameTest`), and exits 0 when it finished, like `rustcraft.oracle.scenario`,
+//!   writing its trace into `--oracleOut DIR` (`target/oracle` by default), like
+//!   `rustcraft.oracle.out`;
 //! - `--ping HOST:PORT`, which pings the server the way the server list does
 //!   (`ServerStatusPinger`), prints its status's JSON and the round trip, and exits 0 when the
 //!   pong came, without joining.
@@ -44,7 +46,7 @@ struct OptionSet {
 
 impl OptionSet {
     /// The options that take a value, which is the next argument.
-    const WITH_ARGUMENT: [&'static str; 10] = [
+    const WITH_ARGUMENT: [&'static str; 11] = [
         "username",
         "uuid",
         "accessToken",
@@ -54,6 +56,7 @@ impl OptionSet {
         "xuid",
         "clientId",
         "oracleScenario",
+        "oracleOut",
         "ping",
     ];
 
@@ -170,7 +173,8 @@ impl Main {
                     return 2;
                 }
             };
-            let (driver, driver_outcome) = OracleGameTest::new(&minecraft, scenario);
+            let out_dir = Path::new(option_set.value_of("oracleOut").unwrap_or("target/oracle"));
+            let (driver, driver_outcome) = OracleGameTest::new(&minecraft, scenario, out_dir);
             minecraft.set_test_driver(Box::new(driver));
             outcome = Some(driver_outcome);
             server_data.name = "rustcraft oracle".to_string();
