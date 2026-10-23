@@ -3,9 +3,12 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
 //!
-//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
+//! Of its behaviour, `useShapeForLightOcclusion` and its shape (the platform and its arm, shorter
+//! while it moves) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -18,10 +21,16 @@ use crate::net::minecraft::world::level::block::state::properties::enum_property
 use crate::net::minecraft::world::level::block::state::properties::piston_type::PistonType;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct PistonHeadBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(PistonHeadBlock::get_shape),
     use_shape_for_light_occlusion: Some(PistonHeadBlock::use_shape_for_light_occlusion),
     ..BlockClass::new(
         "net.minecraft.world.level.block.piston.PistonHeadBlock",
@@ -71,5 +80,36 @@ impl PistonHeadBlock {
     /// `useShapeForLightOcclusion`.
     fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
         true
+    }
+}
+
+static SHAPE_PLATFORM: LazyLock<VoxelShape> = LazyLock::new(|| Block::box_z_square(16.0, 0.0, 4.0));
+static SHAPES_SHORT: LazyLock<Vec<(Direction, VoxelShape)>> = LazyLock::new(|| {
+    Shapes::rotate_all(&Shapes::or(
+        &SHAPE_PLATFORM,
+        &Block::box_z_square(4.0, 4.0, 16.0),
+    ))
+});
+static SHAPES: LazyLock<Vec<(Direction, VoxelShape)>> = LazyLock::new(|| {
+    Shapes::rotate_all(&Shapes::or(
+        &SHAPE_PLATFORM,
+        &Block::box_z_square(4.0, 4.0, 20.0),
+    ))
+});
+
+impl PistonHeadBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        let shapes = if state.get_value(PistonHeadBlock::SHORT) {
+            &SHAPES_SHORT
+        } else {
+            &SHAPES
+        };
+        Shapes::get(shapes, state.get_value(DirectionalBlock::FACING)).clone()
     }
 }

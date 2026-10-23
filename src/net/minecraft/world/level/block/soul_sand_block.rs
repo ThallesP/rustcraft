@@ -22,6 +22,8 @@ static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 0.0, 1
 pub struct SoulSandBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_visual_shape: Some(SoulSandBlock::get_visual_shape),
+    get_shade_brightness: Some(SoulSandBlock::get_shade_brightness),
     get_collision_shape: Some(SoulSandBlock::get_collision_shape),
     get_block_support_shape: Some(SoulSandBlock::get_block_support_shape),
     ..BlockClass::new(
@@ -62,5 +64,26 @@ impl SoulSandBlock {
         _pos: &BlockPos,
     ) -> VoxelShape {
         Shapes::block()
+    }
+}
+
+impl SoulSandBlock {
+    fn get_visual_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        Shapes::block()
+    }
+
+    fn get_shade_brightness(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> f32 {
+        0.2
     }
 }

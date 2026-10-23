@@ -3,9 +3,12 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
 //!
-//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
+//! Of its behaviour, `getFluidState`, `useShapeForLightOcclusion` and its shape (half a block) are
+//! ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -18,12 +21,17 @@ use crate::net::minecraft::world::level::block::state::properties::integer_prope
 use crate::net::minecraft::world::level::block::state::properties::sculk_sensor_phase::SculkSensorPhase;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct SculkSensorBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(SculkSensorBlock::get_shape),
     use_shape_for_light_occlusion: Some(SculkSensorBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(SculkSensorBlock::get_fluid_state),
     ..BlockClass::new(
@@ -91,5 +99,19 @@ impl SculkSensorBlock {
     /// `useShapeForLightOcclusion`.
     fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
         true
+    }
+}
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 0.0, 8.0));
+
+impl SculkSensorBlock {
+    fn get_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPE.clone()
     }
 }

@@ -2,8 +2,13 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour, and its constructor's `type`.
+//!
+//! Of its behaviour, `getFluidState` and its shape (three sixteenths at the top or bottom, or
+//! against the side it opens to) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -18,12 +23,18 @@ use crate::net::minecraft::world::level::block::state::properties::enum_property
 use crate::net::minecraft::world::level::block::state::properties::half::Half;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct TrapDoorBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(TrapDoorBlock::get_shape),
     get_fluid_state: Some(TrapDoorBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.TrapDoorBlock",
@@ -83,5 +94,27 @@ impl TrapDoorBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+static SHAPES: LazyLock<Vec<(Direction, VoxelShape)>> =
+    LazyLock::new(|| Shapes::rotate_all(&Block::box_z_square(16.0, 13.0, 16.0)));
+
+impl TrapDoorBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        let direction = if state.get_value(TrapDoorBlock::OPEN) {
+            state.get_value(HorizontalDirectionalBlock::FACING)
+        } else if state.get_value(TrapDoorBlock::HALF) == Half::TOP {
+            Direction::DOWN
+        } else {
+            Direction::UP
+        };
+        Shapes::get(&SHAPES, direction).clone()
     }
 }

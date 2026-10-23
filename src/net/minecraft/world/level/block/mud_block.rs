@@ -22,6 +22,8 @@ static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 0.0, 1
 pub struct MudBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_visual_shape: Some(MudBlock::get_visual_shape),
+    get_shade_brightness: Some(MudBlock::get_shade_brightness),
     get_collision_shape: Some(MudBlock::get_collision_shape),
     get_block_support_shape: Some(MudBlock::get_block_support_shape),
     ..BlockClass::new("net.minecraft.world.level.block.MudBlock", &block::CLASS)
@@ -59,5 +61,26 @@ impl MudBlock {
         _pos: &BlockPos,
     ) -> VoxelShape {
         Shapes::block()
+    }
+}
+
+impl MudBlock {
+    fn get_visual_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        Shapes::block()
+    }
+
+    fn get_shade_brightness(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> f32 {
+        0.2
     }
 }

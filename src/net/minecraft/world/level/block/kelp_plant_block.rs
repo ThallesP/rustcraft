@@ -12,6 +12,7 @@ use crate::net::minecraft::world::level::block::state::block_behaviour::Properti
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 
 pub struct KelpPlantBlock;
 
@@ -33,7 +34,7 @@ impl KelpPlantBlock {
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        GrowingPlantBodyBlock::new_with(properties, class, definition)
+        GrowingPlantBodyBlock::new_with(properties, Shapes::block(), class, definition)
     }
 }
 

@@ -3,23 +3,29 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
 //!
-//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
+//! Of its behaviour, `propagatesSkylightDown`, its render shape (invisible) and its shade
+//! brightness are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_behaviour::RenderShape;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct BarrierBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_render_shape: Some(BarrierBlock::get_render_shape),
+    get_shade_brightness: Some(BarrierBlock::get_shade_brightness),
     propagates_skylight_down: Some(BarrierBlock::propagates_skylight_down),
     get_fluid_state: Some(BarrierBlock::get_fluid_state),
     ..BlockClass::new(
@@ -73,5 +79,20 @@ impl BarrierBlock {
     /// `propagatesSkylightDown`: without a fluid.
     fn propagates_skylight_down(block: &BlockData, state: BlockState) -> bool {
         block.get_fluid_state_of(state).is_empty()
+    }
+}
+
+impl BarrierBlock {
+    fn get_render_shape(_block: &BlockData, _state: BlockState) -> RenderShape {
+        RenderShape::INVISIBLE
+    }
+
+    fn get_shade_brightness(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> f32 {
+        1.0
     }
 }

@@ -9,6 +9,10 @@ use crate::net::minecraft::world::level::block::growing_plant_body_block::{
     self, GrowingPlantBodyBlock,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(8.0, 0.0, 16.0));
 
 pub struct TwistingVinesPlantBlock;
 
@@ -27,6 +31,6 @@ impl TwistingVinesPlantBlock {
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        GrowingPlantBodyBlock::new_with(properties, class, definition)
+        GrowingPlantBodyBlock::new_with(properties, SHAPE.clone(), class, definition)
     }
 }

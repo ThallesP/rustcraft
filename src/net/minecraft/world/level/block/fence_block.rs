@@ -5,6 +5,7 @@
 //! post 2 sixteenths wide, with arms from 6 to 15 sixteenths up), which the light engine and face
 //! culling read. Not ported yet: the rest of its behaviour.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -15,11 +16,14 @@ use crate::net::minecraft::world::level::block::state::block_behaviour::Properti
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 pub struct FenceBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_visual_shape: Some(FenceBlock::get_visual_shape),
     get_occlusion_shape: Some(FenceBlock::get_occlusion_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.FenceBlock",
@@ -81,5 +85,18 @@ impl FenceBlock {
             .as_ref()
             .expect("a fence makes its occlusion shapes")[state.index() as usize]
             .clone()
+    }
+}
+
+impl FenceBlock {
+    /// `getVisualShape`: its shape.
+    fn get_visual_shape(
+        _block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        state.get_shape_in(level, pos, context)
     }
 }

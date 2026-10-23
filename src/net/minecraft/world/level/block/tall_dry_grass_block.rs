@@ -1,19 +1,30 @@
 //! net/minecraft/world/level/block/TallDryGrassBlock.java
 //!
 //! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
+//!
+//! Of its behaviour, its shape is ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::dry_vegetation_block::{self, DryVegetationBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct TallDryGrassBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.TallDryGrassBlock",
-    &dry_vegetation_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(TallDryGrassBlock::get_shape),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.TallDryGrassBlock",
+        &dry_vegetation_block::CLASS,
+    )
+};
 
 impl TallDryGrassBlock {
     pub fn new(properties: Properties) -> BlockData {
@@ -26,5 +37,19 @@ impl TallDryGrassBlock {
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         DryVegetationBlock::new_with(properties, class, definition)
+    }
+}
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(14.0, 0.0, 16.0));
+
+impl TallDryGrassBlock {
+    fn get_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPE.clone()
     }
 }

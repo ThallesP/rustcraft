@@ -2,8 +2,13 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `getFluidState`, its shape and its offset's height (`getMaxVerticalOffset`)
+//! are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -16,12 +21,18 @@ use crate::net::minecraft::world::level::block::state::properties::double_block_
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct SmallDripleafBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(SmallDripleafBlock::get_shape),
+    get_max_vertical_offset: Some(SmallDripleafBlock::get_max_vertical_offset),
     get_fluid_state: Some(SmallDripleafBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.SmallDripleafBlock",
@@ -75,5 +86,23 @@ impl SmallDripleafBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(12.0, 0.0, 13.0));
+
+impl SmallDripleafBlock {
+    fn get_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPE.clone()
+    }
+
+    fn get_max_vertical_offset(_block: &BlockData) -> f32 {
+        0.1
     }
 }

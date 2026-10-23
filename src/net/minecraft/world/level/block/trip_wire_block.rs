@@ -2,23 +2,34 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour, and its constructor's `hook`.
+//!
+//! Of its behaviour, its shape (lower once it's attached) is ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::pipe_block::PipeBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct TripWireBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.TripWireBlock",
-    &block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(TripWireBlock::get_shape),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.TripWireBlock",
+        &block::CLASS,
+    )
+};
 
 impl TripWireBlock {
     pub const POWERED: &'static BooleanProperty = BlockStateProperties::POWERED;
@@ -68,5 +79,24 @@ impl TripWireBlock {
             TripWireBlock::WEST,
             TripWireBlock::SOUTH,
         ]);
+    }
+}
+
+static SHAPE_ATTACHED: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 1.0, 2.5));
+static SHAPE_NOT_ATTACHED: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 0.0, 8.0));
+
+impl TripWireBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        if state.get_value(TripWireBlock::ATTACHED) {
+            SHAPE_ATTACHED.clone()
+        } else {
+            SHAPE_NOT_ATTACHED.clone()
+        }
     }
 }

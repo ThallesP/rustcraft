@@ -25,12 +25,14 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::id_mapper::IdMapper;
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks, REGISTRY};
 use crate::net::minecraft::world::level::block::state::block_behaviour::{
-    self, BlockBehaviour, Properties,
+    BlockBehaviour, EmptyBlockGetter, Properties, RenderShape,
 };
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block::state::properties::property::Property;
 use crate::net::minecraft::world::level::block::state::state_definition::{
     Builder, StateDefinition,
 };
+use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
@@ -47,13 +49,23 @@ pub struct Block(pub(crate) u16);
 /// A class's `createBlockStateDefinition`.
 pub type CreateBlockStateDefinition = fn(&mut Builder);
 
-/// A class's `getShape` or `getCollisionShape`: the shape of its block's state at a position of
-/// a level, for what asks.
+/// A class's `getShape`, `getCollisionShape` or `getVisualShape`: the shape of its block's state at
+/// a position of a level, for what asks.
 pub type ShapeMethod =
     fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos, &dyn CollisionContext) -> VoxelShape;
 
-/// A shape method without a context: `getBlockSupportShape(BlockState, BlockGetter, BlockPos)`.
-pub type SupportShapeMethod = fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos) -> VoxelShape;
+/// A class's `isCollisionShapeFullBlock`.
+pub type PositionPredicate = fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos) -> bool;
+
+/// A class's `getShadeBrightness`.
+pub type ShadeBrightnessMethod = fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos) -> f32;
+
+/// A class's `skipRendering`: of the state, against its neighbour that way.
+pub type SkipRenderingMethod = fn(&BlockData, BlockState, BlockState, Direction) -> bool;
+
+/// A class's `getBlockSupportShape` or `getInteractionShape`, which nothing asks for.
+pub type PositionShapeMethod =
+    fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos) -> VoxelShape;
 
 /// A block class: Java's `Class<? extends Block>` and the overrides that matter so far.
 pub struct BlockClass {
@@ -80,7 +92,25 @@ pub struct BlockClass {
     /// `getOcclusionShape(BlockState)`, if it overrides it.
     pub get_occlusion_shape: Option<fn(&BlockData, BlockState) -> VoxelShape>,
     /// `getBlockSupportShape(BlockState, BlockGetter, BlockPos)`, if it overrides it.
-    pub get_block_support_shape: Option<SupportShapeMethod>,
+    pub get_block_support_shape: Option<PositionShapeMethod>,
+    /// `getInteractionShape(BlockState, BlockGetter, BlockPos)`, if it overrides it.
+    pub get_interaction_shape: Option<PositionShapeMethod>,
+    /// `getVisualShape(BlockState, BlockGetter, BlockPos, CollisionContext)`, if it overrides it.
+    pub get_visual_shape: Option<ShapeMethod>,
+    /// `isCollisionShapeFullBlock(BlockState, BlockGetter, BlockPos)`, if it overrides it.
+    pub is_collision_shape_full_block: Option<PositionPredicate>,
+    /// `getShadeBrightness(BlockState, BlockGetter, BlockPos)`, if it overrides it.
+    pub get_shade_brightness: Option<ShadeBrightnessMethod>,
+    /// `skipRendering(BlockState, BlockState, Direction)`, if it overrides it.
+    pub skip_rendering: Option<SkipRenderingMethod>,
+    /// `getRenderShape(BlockState)`, if it overrides it.
+    pub get_render_shape: Option<fn(&BlockData, BlockState) -> RenderShape>,
+    /// `getMaxHorizontalOffset()`, if it overrides it.
+    pub get_max_horizontal_offset: Option<fn(&BlockData) -> f32>,
+    /// `getMaxVerticalOffset()`, if it overrides it.
+    pub get_max_vertical_offset: Option<fn(&BlockData) -> f32>,
+    /// `getSeed(BlockState, BlockPos)`, if it overrides it.
+    pub get_seed: Option<fn(&BlockData, BlockState, &BlockPos) -> i64>,
 }
 
 impl BlockClass {
@@ -99,6 +129,15 @@ impl BlockClass {
             get_light_dampening: None,
             get_occlusion_shape: None,
             get_block_support_shape: None,
+            get_interaction_shape: None,
+            get_visual_shape: None,
+            is_collision_shape_full_block: None,
+            get_shade_brightness: None,
+            skip_rendering: None,
+            get_render_shape: None,
+            get_max_horizontal_offset: None,
+            get_max_vertical_offset: None,
+            get_seed: None,
         }
     }
 
@@ -107,25 +146,25 @@ impl BlockClass {
         self.entity_block || self.parent.is_some_and(BlockClass::is_entity_block)
     }
 
-    fn find<T>(&'static self, method: impl Fn(&'static BlockClass) -> Option<T>) -> Option<T> {
+    /// The override of a method nearest this class, looked up the chain like Java's dispatch: a
+    /// class's own, else its parent's. None for `BlockBehaviour`'s own.
+    pub fn find<T>(&'static self, method: impl Fn(&'static BlockClass) -> Option<T>) -> Option<T> {
         method(self).or_else(|| self.parent.and_then(|parent| parent.find(method)))
+    }
+
+    /// The parent's override of a method, for an override calling `super`'s.
+    pub fn find_super<T>(
+        &'static self,
+        method: impl Fn(&'static BlockClass) -> Option<T>,
+    ) -> Option<T> {
+        self.parent.and_then(|parent| parent.find(method))
     }
 }
 
 /// `Block` itself.
 pub static CLASS: BlockClass = BlockClass {
-    name: "net.minecraft.world.level.block.Block",
     parent: None,
-    entity_block: false,
-    is_randomly_ticking: None,
-    get_fluid_state: None,
-    get_shape: None,
-    get_collision_shape: None,
-    use_shape_for_light_occlusion: None,
-    propagates_skylight_down: None,
-    get_light_dampening: None,
-    get_occlusion_shape: None,
-    get_block_support_shape: None,
+    ..BlockClass::new("net.minecraft.world.level.block.Block", &CLASS)
 };
 
 /// What a Java `Block` object holds: `BlockBehaviour`'s fields, which it derefs to, its state
@@ -224,37 +263,47 @@ impl BlockData {
     }
 
     /// `BlockBehaviour.propagatesSkylightDown(BlockState)`, which a class may override: whether
-    /// the shape isn't the whole block and the state holds no fluid. None where that needs a
-    /// shape that isn't ported.
-    pub fn propagates_skylight_down_of(
-        &self,
-        state: BlockState,
-        fluid: &FluidState,
-    ) -> Option<bool> {
+    /// the shape isn't the whole block and the state holds no fluid.
+    pub fn propagates_skylight_down_of(&self, state: BlockState) -> bool {
         match self.class.find(|class| class.propagates_skylight_down) {
-            Some(propagates_skylight_down) => Some(propagates_skylight_down(self, state)),
-            // Java asks the shape first, which changes nothing when there's a fluid.
-            None if !fluid.is_empty() => Some(false),
-            None => block_behaviour::shape_in_empty_getter(self, state)
-                .map(|shape| !Block::is_shape_full_block(&shape)),
+            Some(propagates_skylight_down) => propagates_skylight_down(self, state),
+            None => {
+                !Block::is_shape_full_block(&state.get_shape(&EmptyBlockGetter, &BlockPos::ZERO))
+                    && state.get_fluid_state().is_empty()
+            }
         }
     }
 
     /// `BlockBehaviour.getLightDampening(BlockState)`, which a class may override: 15 for a
-    /// solid render, else 0 if skylight goes down through it and 1 if not. None where that needs
-    /// a shape that isn't ported.
+    /// solid render, else 0 if skylight goes down through it and 1 if not. `initCache` asks it
+    /// with the state's `isSolidRender` and `propagatesSkylightDown` worked out just before.
     pub fn get_light_dampening_of(
         &self,
         state: BlockState,
-        solid_render: Option<bool>,
-        propagates_skylight_down: Option<bool>,
-    ) -> Option<i32> {
+        solid_render: bool,
+        propagates_skylight_down: bool,
+    ) -> i32 {
         match self.class.find(|class| class.get_light_dampening) {
-            Some(get_light_dampening) => Some(get_light_dampening(self, state)),
-            None => match solid_render? {
-                true => Some(15),
-                false => propagates_skylight_down.map(|propagates| if propagates { 0 } else { 1 }),
-            },
+            Some(get_light_dampening) => get_light_dampening(self, state),
+            None if solid_render => 15,
+            None if propagates_skylight_down => 0,
+            None => 1,
+        }
+    }
+
+    /// `getMaxHorizontalOffset()`, which a class may override: a quarter of a block.
+    pub fn get_max_horizontal_offset(&self) -> f32 {
+        match self.class.find(|class| class.get_max_horizontal_offset) {
+            Some(get_max_horizontal_offset) => get_max_horizontal_offset(self),
+            None => 0.25,
+        }
+    }
+
+    /// `getMaxVerticalOffset()`, which a class may override: a fifth of a block.
+    pub fn get_max_vertical_offset(&self) -> f32 {
+        match self.class.find(|class| class.get_max_vertical_offset) {
+            Some(get_max_vertical_offset) => get_max_vertical_offset(self),
+            None => 0.2,
         }
     }
 }
@@ -337,6 +386,16 @@ impl Block {
         )
     }
 
+    /// `boxes(int, IntFunction)`: the shapes the factory makes of 0 to `end_inclusive`.
+    pub fn boxes(end_inclusive: i32, factory: impl Fn(i32) -> VoxelShape) -> Vec<VoxelShape> {
+        (0..=end_inclusive).map(factory).collect()
+    }
+
+    /// `cube(double)`: a box centered every way, as big every way.
+    pub fn cube(size: f64) -> VoxelShape {
+        Block::cube_xyz(size, size, size)
+    }
+
     /// `cube(double, double, double)`: a box centered every way.
     pub fn cube_xyz(size_x: f64, size_y: f64, size_z: f64) -> VoxelShape {
         let half_y = size_y / 2.0;
@@ -372,6 +431,34 @@ impl Block {
             .get_state_definition()
             .get_possible_states()
             .map(shape_calculator)
+            .collect()
+    }
+
+    /// `getShapeForEachState(Function, Property...)`: the shape of each state with the ignored
+    /// properties at their first values, worked out once for those and shared by the states that
+    /// only differ from them in the ignored properties.
+    pub fn get_shape_for_each_state_ignoring(
+        block: &BlockData,
+        shape_calculator: impl Fn(BlockState) -> VoxelShape,
+        ignored_properties: &[&'static dyn Property],
+    ) -> Vec<VoxelShape> {
+        let definition = block.get_state_definition();
+        let with_defaults = |state: BlockState| {
+            ignored_properties.iter().fold(state, |state, property| {
+                state.set_comparable(*property, property.possible_value(0))
+            })
+        };
+        let computed: Vec<Option<VoxelShape>> = definition
+            .get_possible_states()
+            .map(|state| (with_defaults(state) == state).then(|| shape_calculator(state)))
+            .collect();
+        definition
+            .get_possible_states()
+            .map(|state| {
+                computed[with_defaults(state).index() as usize]
+                    .clone()
+                    .expect("a state with the ignored properties' first values has its shape")
+            })
             .collect()
     }
 
@@ -518,7 +605,7 @@ mod tests {
     /// ones, or another.
     fn kind(predicate: StatePredicate) -> String {
         match predicate {
-            StatePredicate::Default => "default".to_owned(),
+            StatePredicate::Default | StatePredicate::DefaultSuffocating => "default".to_owned(),
             StatePredicate::NotClosedShulker => "NOT_CLOSED_SHULKER".to_owned(),
             StatePredicate::State(Some(name), _) => name.to_owned(),
             StatePredicate::State(None, _) => "custom".to_owned(),

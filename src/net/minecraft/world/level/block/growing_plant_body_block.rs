@@ -8,6 +8,7 @@ use crate::net::minecraft::world::level::block::block::{
 };
 use crate::net::minecraft::world::level::block::growing_plant_block::{self, GrowingPlantBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 pub struct GrowingPlantBodyBlock;
 
@@ -19,9 +20,10 @@ pub static CLASS: BlockClass = BlockClass::new(
 impl GrowingPlantBodyBlock {
     pub(crate) fn new_with(
         properties: Properties,
+        shape: VoxelShape,
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        GrowingPlantBlock::new_with(properties, class, definition)
+        GrowingPlantBlock::new_with(properties, shape, class, definition)
     }
 }

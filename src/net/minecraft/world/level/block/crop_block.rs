@@ -3,6 +3,8 @@
 //! Only what decides its blocks' states so far: its properties, its default state and which of its
 //! states tick. Not ported yet: its behaviour.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -13,6 +15,10 @@ use crate::net::minecraft::world::level::block::state::properties::integer_prope
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block::vegetation_block::{self, VegetationBlock};
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct CropBlock;
 
@@ -24,6 +30,7 @@ pub struct CropBlockFields {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(CropBlock::get_shape),
     is_randomly_ticking: Some(CropBlock::is_randomly_ticking),
     ..BlockClass::new(
         "net.minecraft.world.level.block.CropBlock",
@@ -74,5 +81,21 @@ impl CropBlock {
     fn is_randomly_ticking(block: &BlockData, state: BlockState) -> bool {
         let fields = block.fields::<CropBlockFields>();
         state.get_value(fields.age_property) < fields.max_age
+    }
+}
+
+static SHAPES: LazyLock<Vec<VoxelShape>> =
+    LazyLock::new(|| Block::boxes(7, |age| Block::column(16.0, 0.0, f64::from(2 + age * 2))));
+
+impl CropBlock {
+    /// `getShape`: taller as it grows.
+    fn get_shape(
+        block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPES[state.get_value(block.fields::<CropBlockFields>().age_property) as usize].clone()
     }
 }

@@ -3,10 +3,13 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
 //!
-//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
+//! Of its behaviour, `useShapeForLightOcclusion` and its shapes (its base and post, with the sloped
+//! top toward where it faces) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -18,10 +21,18 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct LecternBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(LecternBlock::get_shape),
+    get_collision_shape: Some(LecternBlock::get_collision_shape),
+    get_occlusion_shape: Some(LecternBlock::get_occlusion_shape),
     use_shape_for_light_occlusion: Some(LecternBlock::use_shape_for_light_occlusion),
     ..BlockClass::new(
         "net.minecraft.world.level.block.LecternBlock",
@@ -72,5 +83,48 @@ impl LecternBlock {
     /// `useShapeForLightOcclusion`.
     fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
         true
+    }
+}
+
+static SHAPE_COLLISION: LazyLock<VoxelShape> = LazyLock::new(|| {
+    Shapes::or(
+        &Block::column(16.0, 0.0, 2.0),
+        &Block::column(8.0, 2.0, 14.0),
+    )
+});
+static SHAPES: LazyLock<Vec<(Direction, VoxelShape)>> = LazyLock::new(|| {
+    Shapes::rotate_horizontal(&Shapes::or_tail(
+        &Block::box_z(16.0, 10.0, 14.0, 1.0, 5.333333),
+        &[
+            Block::box_z(16.0, 12.0, 16.0, 5.333333, 9.666667),
+            Block::box_z(16.0, 14.0, 18.0, 9.666667, 14.0),
+            SHAPE_COLLISION.clone(),
+        ],
+    ))
+});
+
+impl LecternBlock {
+    fn get_occlusion_shape(_block: &BlockData, _state: BlockState) -> VoxelShape {
+        SHAPE_COLLISION.clone()
+    }
+
+    fn get_collision_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPE_COLLISION.clone()
+    }
+
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        Shapes::get(&SHAPES, state.get_value(HorizontalDirectionalBlock::FACING)).clone()
     }
 }

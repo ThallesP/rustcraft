@@ -4,9 +4,11 @@
 //! tick) and its support shape. Not ported yet: the rest of its behaviour, and its constructor's
 //! `ambientLeavesBlockSoundPlayer`.
 //!
-//! Of its behaviour, `getLightDampening` is ported, for the light engine.
+//! Of its behaviour, `getLightDampening` and `skipRendering` (the faces between leaves, unless
+//! they're drawn cut out) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -30,6 +32,7 @@ pub struct LeavesBlock;
 static CUTOUT_LEAVES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 pub static CLASS: BlockClass = BlockClass {
+    skip_rendering: Some(LeavesBlock::skip_rendering),
     get_light_dampening: Some(LeavesBlock::get_light_dampening),
     get_fluid_state: Some(LeavesBlock::get_fluid_state),
     is_randomly_ticking: Some(LeavesBlock::is_randomly_ticking),
@@ -113,5 +116,16 @@ impl LeavesBlock {
     /// `getLightDampening`.
     fn get_light_dampening(_block: &BlockData, _state: BlockState) -> i32 {
         1
+    }
+}
+
+impl LeavesBlock {
+    fn skip_rendering(
+        _block: &BlockData,
+        _state: BlockState,
+        neighbor_state: BlockState,
+        _direction: Direction,
+    ) -> bool {
+        !LeavesBlock::cutout_leaves() && neighbor_state.class_is_leaves()
     }
 }

@@ -1,20 +1,23 @@
 //! net/minecraft/world/level/block/LiquidBlock.java
 //!
 //! What decides its blocks' states (its properties, its default state, its fluid, which states
-//! tick and their fluid states) and its shapes: none to see, and none to collide with but for a
-//! context that always collides with fluids. A source only holds up a living entity that stands on
-//! fluids (`canStandOnFluid`, `getLiquidCollisionShape`), which no ported entity does: striders
-//! aren't ported, so the source's stable shape isn't either. Not ported yet: the rest.
+//! tick and their fluid states), its shapes (none to see, and none to collide with but for a
+//! context that always collides with fluids, or a living entity above a source that stands on
+//! fluids: `canStandOnFluid`, `getLiquidCollisionShape`, which the context carries; striders
+//! aren't ported), `skipRendering` (against its own fluid) and its render shape (invisible: fluids
+//! are drawn apart). Not ported yet: the rest.
 //! `stateCache`, the fluid states Java's constructor makes for each level, are made when they're
 //! asked for, which is the same: `FluidState`s are values.
 //!
 //! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_behaviour::RenderShape;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
@@ -32,6 +35,8 @@ pub struct LiquidBlock {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    skip_rendering: Some(LiquidBlock::skip_rendering),
+    get_render_shape: Some(LiquidBlock::get_render_shape),
     propagates_skylight_down: Some(LiquidBlock::propagates_skylight_down),
     is_randomly_ticking: Some(LiquidBlock::is_randomly_ticking),
     get_fluid_state: Some(LiquidBlock::get_fluid_state),
@@ -108,16 +113,31 @@ impl LiquidBlock {
     /// (`ifMobIsColliding`), and none of the ported ones does.
     fn get_collision_shape(
         _block: &BlockData,
-        _state: BlockState,
-        _level: &dyn BlockGetter,
-        _pos: &BlockPos,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
         context: &dyn CollisionContext,
     ) -> VoxelShape {
         if context.always_collide_with_fluid() {
-            Shapes::block()
-        } else {
-            Shapes::empty()
+            return Shapes::block();
         }
+        if state.get_value(LiquidBlock::LEVEL) != 0 {
+            return Shapes::empty();
+        }
+        // `ifMobIsColliding`: a living entity's context.
+        context
+            .as_entity_collision_context()
+            .and_then(|context| context.get_entity())
+            .and_then(|entity| entity.living.as_ref())
+            .map(|mob| mob.liquid_collision_shape.clone())
+            .filter(|liquid_stable_shape| {
+                context.is_above(liquid_stable_shape, pos, true)
+                    && context.can_stand_on_fluid(
+                        &level.get_fluid_state(&pos.above()),
+                        &state.get_fluid_state(),
+                    )
+            })
+            .unwrap_or_else(Shapes::empty)
     }
 }
 
@@ -125,5 +145,24 @@ impl LiquidBlock {
     /// `propagatesSkylightDown`.
     fn propagates_skylight_down(_block: &BlockData, _state: BlockState) -> bool {
         false
+    }
+}
+
+impl LiquidBlock {
+    /// `skipRendering`: a face against the same fluid.
+    fn skip_rendering(
+        block: &BlockData,
+        _state: BlockState,
+        neighbor_state: BlockState,
+        _direction: Direction,
+    ) -> bool {
+        neighbor_state
+            .get_fluid_state()
+            .get_type()
+            .is_same(block.fields::<LiquidBlock>().fluid)
+    }
+
+    fn get_render_shape(_block: &BlockData, _state: BlockState) -> RenderShape {
+        RenderShape::INVISIBLE
     }
 }

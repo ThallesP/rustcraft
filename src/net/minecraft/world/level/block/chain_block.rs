@@ -2,8 +2,12 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `getFluidState` and its shape (along its axis) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Axis;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -14,12 +18,18 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct ChainBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(ChainBlock::get_shape),
     get_fluid_state: Some(ChainBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.ChainBlock",
@@ -67,5 +77,20 @@ impl ChainBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+static SHAPES: LazyLock<Vec<(Axis, VoxelShape)>> =
+    LazyLock::new(|| Shapes::rotate_all_axis(&Block::cube_xyz(3.0, 3.0, 16.0)));
+
+impl ChainBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        Shapes::get(&SHAPES, state.get_value(BlockStateProperties::AXIS)).clone()
     }
 }

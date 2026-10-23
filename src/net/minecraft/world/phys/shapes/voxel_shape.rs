@@ -55,6 +55,15 @@ impl PartialEq for VoxelShape {
     }
 }
 
+#[cfg(test)]
+impl VoxelShape {
+    /// The shared object's address, which tells shapes apart like Java's references while the
+    /// shape lives.
+    pub(crate) fn address(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+}
+
 impl std::fmt::Debug for VoxelShape {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_empty() {

@@ -1,15 +1,15 @@
 //! net/minecraft/world/phys/shapes/CollisionContext.java
 //!
-//! Only what collisions ask a context so far: `empty()`, `of(Entity)` (which the entity makes,
-//! `EntityClass::collision_context`), `getCollisionShape`, and `isHoldingItem` for a block's item,
-//! which is never true: no ported entity holds anything (inventories aren't ported).
-//! `canStandOnFluid` and the placement and position contexts come with striders, items and
-//! `MinecartCollisionContext`.
+//! What collisions and blocks' shapes ask a context: `empty()`, `emptyWithFluidCollisions()`,
+//! `of(Entity)` (which the entity makes, `EntityClass::collision_context`), `placementContext` and
+//! `withPosition` without a player, and the questions. `MinecartCollisionContext` and
+//! `positionContext` come with minecarts and with what places blocks.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::phys::shapes::entity_collision_context::EntityCollisionContext;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
@@ -19,7 +19,12 @@ pub trait CollisionContext {
 
     fn is_above(&self, shape: &VoxelShape, pos: &BlockPos, default_value: bool) -> bool;
 
+    /// `isHoldingItem(Item)`: whether what's colliding holds the item, by its id.
+    fn is_holding_item(&self, item: &ResourceKey) -> bool;
+
     fn always_collide_with_fluid(&self) -> bool;
+
+    fn can_stand_on_fluid(&self, fluid_state_above: &FluidState, fluid: &FluidState) -> bool;
 
     fn get_collision_shape(
         &self,
@@ -32,10 +37,9 @@ pub trait CollisionContext {
         false
     }
 
-    /// `isHoldingItem(block.asItem())`: whether the entity holds the block's item in its main
-    /// hand. No ported entity holds anything.
-    fn is_holding_block_item(&self, _block: Block) -> bool {
-        false
+    /// `instanceof EntityCollisionContext`, which blocks asking about the entity check.
+    fn as_entity_collision_context(&self) -> Option<&EntityCollisionContext> {
+        None
     }
 }
 
@@ -47,4 +51,9 @@ pub fn empty() -> EntityCollisionContext {
 /// `CollisionContext.emptyWithFluidCollisions()`.
 pub fn empty_with_fluid_collisions() -> EntityCollisionContext {
     EntityCollisionContext::empty(true)
+}
+
+/// `CollisionContext.placementContext(null)`: a block placed by no player.
+pub fn placement_context_without_player() -> EntityCollisionContext {
+    EntityCollisionContext::new(false, true, -f64::MAX, false)
 }

@@ -8,6 +8,7 @@
 use std::sync::LazyLock;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::references::block_item_ids::BlockItemIds;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -58,6 +59,7 @@ static SHAPE_BELOW_BLOCK: LazyLock<VoxelShape> =
 pub struct ScaffoldingBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_interaction_shape: Some(ScaffoldingBlock::get_interaction_shape),
     get_fluid_state: Some(ScaffoldingBlock::get_fluid_state),
     get_shape: Some(ScaffoldingBlock::get_shape),
     get_collision_shape: Some(ScaffoldingBlock::get_collision_shape),
@@ -115,7 +117,8 @@ impl ScaffoldingBlock {
         _pos: &BlockPos,
         context: &dyn CollisionContext,
     ) -> VoxelShape {
-        if !context.is_holding_block_item(state.get_block()) {
+        // `state.getBlock().asItem()`: scaffolding's item.
+        if !context.is_holding_item(BlockItemIds::SCAFFOLDING.item()) {
             if state.get_value(ScaffoldingBlock::BOTTOM) {
                 SHAPE_UNSTABLE.clone()
             } else {
@@ -156,5 +159,16 @@ impl ScaffoldingBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl ScaffoldingBlock {
+    fn get_interaction_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> VoxelShape {
+        Shapes::block()
     }
 }

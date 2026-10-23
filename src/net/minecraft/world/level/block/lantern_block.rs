@@ -2,7 +2,10 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `getFluidState` and its shape (a sixteenth higher when it hangs) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -12,12 +15,18 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct LanternBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(LanternBlock::get_shape),
     get_fluid_state: Some(LanternBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.LanternBlock",
@@ -65,6 +74,27 @@ impl LanternBlock {
             Fluids::WATER.get_source(false)
         } else {
             Fluids::EMPTY.default_fluid_state()
+        }
+    }
+}
+
+static SHAPE_STANDING: LazyLock<VoxelShape> =
+    LazyLock::new(|| Shapes::or(&Block::column(4.0, 7.0, 9.0), &Block::column(6.0, 0.0, 7.0)));
+static SHAPE_HANGING: LazyLock<VoxelShape> =
+    LazyLock::new(|| SHAPE_STANDING.move_xyz(0.0, 0.0625, 0.0).optimize());
+
+impl LanternBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        if state.get_value(LanternBlock::HANGING) {
+            SHAPE_HANGING.clone()
+        } else {
+            SHAPE_STANDING.clone()
         }
     }
 }

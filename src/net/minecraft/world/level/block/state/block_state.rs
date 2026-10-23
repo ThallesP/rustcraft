@@ -136,18 +136,10 @@ mod tests {
         }
     }
 
-    /// The states' light, `initCache`'s, for every state whose class's shapes the light needs are
-    /// ported: the rest have none yet (`light_properties_ported`), and their count is pinned, so
-    /// a state that stops being known fails too.
+    /// The states' light, `initCache`'s, for every state.
     fn check_light(golden: &Golden) {
-        let mut checked = 0;
-        let mut unported = 0;
         for (args, expected) in golden.cases("light") {
             let state = BlockState::decode(&args[0]);
-            if !state.light_properties_ported() {
-                unported += 1;
-                continue;
-            }
             let faces: Vec<&str> = Direction::VALUES
                 .iter()
                 .map(|&direction| shape_kind(&state.get_face_occlusion_shape(direction)))
@@ -161,18 +153,8 @@ mod tests {
                 faces,
             ]);
             assert_eq!(actual, expected, "the light of {state} ({})", state.id());
-            checked += 1;
         }
-        assert_eq!(
-            (checked, unported),
-            (LIGHT_PORTED_STATES, 35723 - LIGHT_PORTED_STATES),
-            "states whose light is checked, and not yet"
-        );
     }
-
-    /// How many states' light is known: those whose classes' shapes are ported, or whose light
-    /// needs none.
-    const LIGHT_PORTED_STATES: usize = 26224;
 
     #[test]
     fn matches_vanilla() {

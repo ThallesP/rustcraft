@@ -2,7 +2,10 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `getFluidState` and its shape (a sixteenth on each face it's on) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -15,12 +18,20 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_definition::StateDefinition;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
-pub struct MultifaceBlock;
+pub struct MultifaceBlock {
+    /// `shapes`, by state index.
+    shapes: Vec<VoxelShape>,
+}
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(MultifaceBlock::get_shape),
     get_fluid_state: Some(MultifaceBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.MultifaceBlock",
@@ -49,6 +60,8 @@ impl MultifaceBlock {
         block.register_default_state(MultifaceBlock::get_default_multiface_state(
             block.get_state_definition(),
         ));
+        let shapes = MultifaceBlock::make_shapes(&block);
+        block.set_fields(MultifaceBlock { shapes });
         block
     }
 
@@ -101,5 +114,40 @@ impl MultifaceBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl MultifaceBlock {
+    /// `makeShapes`: a sixteenth on each face it's on, or the whole block on none, for each
+    /// state but for its water.
+    fn make_shapes(block: &BlockData) -> Vec<VoxelShape> {
+        let shapes = Shapes::rotate_all(&Block::box_z_square(16.0, 0.0, 1.0));
+        Block::get_shape_for_each_state_ignoring(
+            block,
+            |state| {
+                let mut shape = Shapes::empty();
+                for direction in MultifaceBlock::DIRECTIONS {
+                    if MultifaceBlock::has_face(state, direction) {
+                        shape = Shapes::or(&shape, Shapes::get(&shapes, direction));
+                    }
+                }
+                if shape.is_empty() {
+                    Shapes::block()
+                } else {
+                    shape
+                }
+            },
+            &[MultifaceBlock::WATERLOGGED],
+        )
+    }
+
+    fn get_shape(
+        block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        block.fields::<MultifaceBlock>().shapes[state.index() as usize].clone()
     }
 }

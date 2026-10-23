@@ -3,7 +3,7 @@
 //! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
 
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::growing_plant_head_block::{
     self, GrowingPlantHeadBlock,
@@ -12,6 +12,10 @@ use crate::net::minecraft::world::level::block::state::block_behaviour::Properti
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 0.0, 9.0));
 
 pub struct KelpBlock;
 
@@ -37,7 +41,7 @@ impl KelpBlock {
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        GrowingPlantHeadBlock::new_with(properties, class, definition)
+        GrowingPlantHeadBlock::new_with(properties, SHAPE.clone(), class, definition)
     }
 }
 

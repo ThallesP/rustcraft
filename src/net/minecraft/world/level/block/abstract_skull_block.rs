@@ -1,19 +1,22 @@
 //! net/minecraft/world/level/block/AbstractSkullBlock.java
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour, and its constructor's `type`.
+//! yet: its behaviour. Its constructor's `type` is kept, which its shapes read (`getType`).
 
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::skull_block::Types;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 
-pub struct AbstractSkullBlock;
+pub struct AbstractSkullBlock {
+    skull_type: Types,
+}
 
 pub static CLASS: BlockClass = BlockClass::new(
     "net.minecraft.world.level.block.AbstractSkullBlock",
@@ -24,11 +27,13 @@ impl AbstractSkullBlock {
     pub const POWERED: &'static BooleanProperty = BlockStateProperties::POWERED;
 
     pub(crate) fn new_with(
+        skull_type: Types,
         properties: Properties,
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         let mut block = BaseEntityBlock::new_with(properties, class, definition);
+        block.set_fields(AbstractSkullBlock { skull_type });
         block.register_default_state(
             block
                 .get_state_definition()
@@ -40,5 +45,10 @@ impl AbstractSkullBlock {
 
     pub fn create_block_state_definition(builder: &mut Builder) {
         builder.add(&[AbstractSkullBlock::POWERED]);
+    }
+
+    /// `getType()`: what kind of head it is.
+    pub fn get_type(block: &BlockData) -> Types {
+        block.fields::<AbstractSkullBlock>().skull_type
     }
 }

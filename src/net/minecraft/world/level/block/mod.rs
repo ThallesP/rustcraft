@@ -252,6 +252,7 @@ pub mod structure_block;
 pub mod structure_void_block;
 pub mod sugar_cane_block;
 pub mod sulfur_spike_block;
+pub mod support_type;
 pub mod sweet_berry_bush_block;
 pub mod tall_dry_grass_block;
 pub mod tall_flower_block;

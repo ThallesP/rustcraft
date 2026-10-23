@@ -1,6 +1,6 @@
 //! net/minecraft/world/level/block/state/properties/RailShape.java
 //!
-//! Not ported yet: `getName`, `isSlope`.
+//! Not ported yet: `getName`.
 
 use std::fmt;
 
@@ -39,6 +39,17 @@ impl RailShape {
 
     pub fn values() -> [RailShape; 10] {
         RailShape::VALUES
+    }
+
+    /// `isSlope()`: one of the four ascending ones.
+    pub fn is_slope(&self) -> bool {
+        matches!(
+            self,
+            RailShape::ASCENDING_NORTH
+                | RailShape::ASCENDING_EAST
+                | RailShape::ASCENDING_SOUTH
+                | RailShape::ASCENDING_WEST
+        )
     }
 }
 

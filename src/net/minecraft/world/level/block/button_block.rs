@@ -2,8 +2,13 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour, and its constructor's `type` and `ticksToStayPressed`.
+//!
+//! Of its behaviour, its shape (a button on the face it hangs from, sunk in while it's pressed) is
+//! ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -12,18 +17,30 @@ use crate::net::minecraft::world::level::block::face_attached_horizontal_directi
 };
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::attach_face::AttachFace;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::boolean_op::BooleanOp;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
-pub struct ButtonBlock;
+pub struct ButtonBlock {
+    /// `shapes`, by state index.
+    shapes: Vec<VoxelShape>,
+}
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.ButtonBlock",
-    &face_attached_horizontal_directional_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(ButtonBlock::get_shape),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.ButtonBlock",
+        &face_attached_horizontal_directional_block::CLASS,
+    )
+};
 
 impl ButtonBlock {
     pub const POWERED: &'static BooleanProperty = BlockStateProperties::POWERED;
@@ -54,6 +71,8 @@ impl ButtonBlock {
                     AttachFace::WALL,
                 ),
         );
+        let shapes = ButtonBlock::make_shapes(&block);
+        block.set_fields(ButtonBlock { shapes });
         block
     }
 
@@ -63,5 +82,39 @@ impl ButtonBlock {
             ButtonBlock::POWERED,
             FaceAttachedHorizontalDirectionalBlock::FACE,
         ]);
+    }
+}
+
+impl ButtonBlock {
+    /// `makeShapes`: the button on its face, less the cube it's sunk into (deeper when pressed).
+    fn make_shapes(block: &BlockData) -> Vec<VoxelShape> {
+        let pressed_shaper = Block::cube(14.0);
+        let unpressed_shaper = Block::cube(12.0);
+        let attach_face = Shapes::rotate_attach_face(&Block::box_z_sized(6.0, 4.0, 8.0, 16.0));
+        Block::get_shape_for_each_state(block, |state| {
+            let on_face = Shapes::get(
+                Shapes::get(
+                    &attach_face,
+                    state.get_value(FaceAttachedHorizontalDirectionalBlock::FACE),
+                ),
+                state.get_value(HorizontalDirectionalBlock::FACING),
+            );
+            let shaper = if state.get_value(ButtonBlock::POWERED) {
+                &pressed_shaper
+            } else {
+                &unpressed_shaper
+            };
+            Shapes::join(on_face, shaper, BooleanOp::ONLY_FIRST)
+        })
+    }
+
+    fn get_shape(
+        block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        block.fields::<ButtonBlock>().shapes[state.index() as usize].clone()
     }
 }

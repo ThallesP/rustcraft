@@ -3,10 +3,13 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
 //!
-//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
+//! Of its behaviour, `getFluidState`, `useShapeForLightOcclusion` and its shape (its back with a
+//! top and a bottom shelf, toward where it faces) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -18,12 +21,18 @@ use crate::net::minecraft::world::level::block::state::properties::enum_property
 use crate::net::minecraft::world::level::block::state::properties::side_chain_part::SideChainPart;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct ShelfBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(ShelfBlock::get_shape),
     use_shape_for_light_occlusion: Some(ShelfBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(ShelfBlock::get_fluid_state),
     ..BlockClass::new(
@@ -90,5 +99,27 @@ impl ShelfBlock {
     /// `useShapeForLightOcclusion`.
     fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
         true
+    }
+}
+
+static SHAPES: LazyLock<Vec<(Direction, VoxelShape)>> = LazyLock::new(|| {
+    Shapes::rotate_horizontal(&Shapes::or_tail(
+        &Block::r#box(0.0, 12.0, 11.0, 16.0, 16.0, 13.0),
+        &[
+            Block::r#box(0.0, 0.0, 13.0, 16.0, 16.0, 16.0),
+            Block::r#box(0.0, 0.0, 11.0, 16.0, 4.0, 13.0),
+        ],
+    ))
+});
+
+impl ShelfBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        Shapes::get(&SHAPES, state.get_value(ShelfBlock::FACING)).clone()
     }
 }

@@ -32,7 +32,7 @@ impl ChorusPlantBlock {
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        let mut block = PipeBlock::new_with(properties, class, definition);
+        let mut block = PipeBlock::new_with(10.0, properties, class, definition);
         block.register_default_state(
             block
                 .get_state_definition()

@@ -5,6 +5,7 @@
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::skull_block::Types;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::wall_skull_block::{self, WallSkullBlock};
 
@@ -29,6 +30,6 @@ impl PlayerWallHeadBlock {
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        WallSkullBlock::new_with(properties, class, definition)
+        WallSkullBlock::new_with(Types::PLAYER, properties, class, definition)
     }
 }

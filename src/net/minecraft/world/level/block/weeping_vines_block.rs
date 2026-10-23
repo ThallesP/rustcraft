@@ -3,12 +3,16 @@
 //! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
 
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::growing_plant_head_block::{
     self, GrowingPlantHeadBlock,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(8.0, 9.0, 16.0));
 
 pub struct WeepingVinesBlock;
 
@@ -31,6 +35,6 @@ impl WeepingVinesBlock {
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        GrowingPlantHeadBlock::new_with(properties, class, definition)
+        GrowingPlantHeadBlock::new_with(properties, SHAPE.clone(), class, definition)
     }
 }

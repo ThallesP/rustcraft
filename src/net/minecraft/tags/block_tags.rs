@@ -1,6 +1,6 @@
 //! net/minecraft/tags/BlockTags.java
 //!
-//! Only the tags an entity's movement asks about, and the ones entity types are immune to
+//! Only the tags an entity's movement and blocks' shapes ask about, and the ones entity types are immune to
 //! (`EntityType.Builder.immuneTo`). In Java a block's tags are bound to its registry
 //! holder from what the server sends (`ClientboundUpdateTagsPacket`, in configuration), which
 //! isn't ported yet. A vanilla server sends its data pack's, so until the packet comes,
@@ -38,6 +38,7 @@ impl BlockTags {
     pub const WITHER_IMMUNE_TO: TagKey = TagKey("wither_immune_to");
     pub const WITHER_SKELETON_IMMUNE_TO: TagKey = TagKey("wither_skeleton_immune_to");
     pub const DEFAULT_IMMUNE_TO: TagKey = TagKey("default_immune_to");
+    pub const BARS: TagKey = TagKey("bars");
 }
 
 /// Each tag's blocks by registered name, resolved as they're first asked for.

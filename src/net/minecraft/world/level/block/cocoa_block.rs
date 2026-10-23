@@ -2,8 +2,13 @@
 //!
 //! Only what decides its blocks' states so far: its properties, its default state and which of its
 //! states tick. Not ported yet: its behaviour.
+//!
+//! Of its behaviour, which states tick and its shape (bigger as it grows, hanging from the log it
+//! faces) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -16,10 +21,16 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct CocoaBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(CocoaBlock::get_shape),
     is_randomly_ticking: Some(CocoaBlock::is_randomly_ticking),
     ..BlockClass::new(
         "net.minecraft.world.level.block.CocoaBlock",
@@ -60,5 +71,33 @@ impl CocoaBlock {
 
     fn is_randomly_ticking(_block: &BlockData, state: BlockState) -> bool {
         state.get_value(CocoaBlock::AGE) < 2
+    }
+}
+
+static SHAPES: LazyLock<Vec<Vec<(Direction, VoxelShape)>>> = LazyLock::new(|| {
+    (0..=2)
+        .map(|i| {
+            Shapes::rotate_horizontal(
+                &Block::column(f64::from(4 + i * 2), f64::from(7 - i * 2), 12.0)
+                    .move_xyz(0.0, 0.0, f64::from(i - 5) / 16.0)
+                    .optimize(),
+            )
+        })
+        .collect()
+});
+
+impl CocoaBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        Shapes::get(
+            &SHAPES[state.get_value(CocoaBlock::AGE) as usize],
+            state.get_value(HorizontalDirectionalBlock::FACING),
+        )
+        .clone()
     }
 }

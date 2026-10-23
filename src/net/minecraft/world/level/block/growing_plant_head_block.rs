@@ -14,6 +14,7 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 pub struct GrowingPlantHeadBlock;
 
@@ -30,10 +31,11 @@ impl GrowingPlantHeadBlock {
 
     pub(crate) fn new_with(
         properties: Properties,
+        shape: VoxelShape,
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        let mut block = GrowingPlantBlock::new_with(properties, class, definition);
+        let mut block = GrowingPlantBlock::new_with(properties, shape, class, definition);
         block.register_default_state(
             block
                 .get_state_definition()

@@ -1,7 +1,10 @@
 //! net/minecraft/world/level/block/state/properties/RotationSegment.java
 //!
-//! Only `getMaxSegmentIndex`, the most a standing sign's or banner's `rotation` goes to. Not ported
-//! yet: `convertToSegment` and `convertToDegrees`, which wait for `SegmentedAnglePrecision`.
+//! Only `getMaxSegmentIndex`, the most a standing sign's or banner's `rotation` goes to, and
+//! `convertToSegment(Direction)`, `SEGMENTED_ANGLE16.fromDirection` written out. Not ported yet:
+//! `convertToSegment(float)` and `convertToDegrees`, which wait for `SegmentedAnglePrecision`.
+
+use crate::net::minecraft::core::direction::Direction;
 
 pub struct RotationSegment;
 
@@ -11,5 +14,14 @@ impl RotationSegment {
 
     pub const fn get_max_segment_index() -> i32 {
         RotationSegment::MAX_SEGMENT_INDEX
+    }
+
+    /// `convertToSegment(Direction)`: 0 for up or down, else the direction's quarter turn from
+    /// south in sixteenths of a turn.
+    pub fn convert_to_segment(direction: Direction) -> i32 {
+        if direction.get_axis().is_vertical() {
+            return 0;
+        }
+        direction.get_2d_data_value() << (4 - 2)
     }
 }

@@ -35,7 +35,12 @@ impl CaveVinesBlock {
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
-        let mut block = GrowingPlantHeadBlock::new_with(properties, class, definition);
+        let mut block = GrowingPlantHeadBlock::new_with(
+            properties,
+            (*CaveVines::SHAPE).clone(),
+            class,
+            definition,
+        );
         block.register_default_state(
             block
                 .get_state_definition()

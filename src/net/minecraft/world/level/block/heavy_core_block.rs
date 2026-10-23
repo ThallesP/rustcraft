@@ -2,7 +2,10 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `getFluidState` and its shape are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -12,12 +15,17 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct HeavyCoreBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(HeavyCoreBlock::get_shape),
     get_fluid_state: Some(HeavyCoreBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.HeavyCoreBlock",
@@ -64,5 +72,19 @@ impl HeavyCoreBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(8.0, 0.0, 8.0));
+
+impl HeavyCoreBlock {
+    fn get_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPE.clone()
     }
 }

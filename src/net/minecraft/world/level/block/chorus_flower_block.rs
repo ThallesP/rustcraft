@@ -2,7 +2,10 @@
 //!
 //! Only what decides its blocks' states so far: its properties, its default state and which of its
 //! states tick. Not ported yet: its behaviour, and its constructor's `plant`.
+//!
+//! Of its behaviour, its support shape (a sixteenth in and a sixteenth short) is ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -12,10 +15,14 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct ChorusFlowerBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_block_support_shape: Some(ChorusFlowerBlock::get_block_support_shape),
     is_randomly_ticking: Some(ChorusFlowerBlock::is_randomly_ticking),
     ..BlockClass::new(
         "net.minecraft.world.level.block.ChorusFlowerBlock",
@@ -55,5 +62,18 @@ impl ChorusFlowerBlock {
 
     fn is_randomly_ticking(_block: &BlockData, state: BlockState) -> bool {
         state.get_value(ChorusFlowerBlock::AGE) < 5
+    }
+}
+
+static SHAPE_BLOCK_SUPPORT: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(14.0, 0.0, 15.0));
+
+impl ChorusFlowerBlock {
+    fn get_block_support_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> VoxelShape {
+        SHAPE_BLOCK_SUPPORT.clone()
     }
 }

@@ -2,10 +2,14 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `getFluidState` and its shape (by how many candles) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::abstract_candle_block::{
     self, AbstractCandleBlock,
 };
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -16,12 +20,17 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct CandleBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(CandleBlock::get_shape),
     get_fluid_state: Some(CandleBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.CandleBlock",
@@ -85,5 +94,26 @@ impl CandleBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+static SHAPES: LazyLock<[VoxelShape; 4]> = LazyLock::new(|| {
+    [
+        Block::column(2.0, 0.0, 6.0),
+        Block::r#box(5.0, 0.0, 6.0, 11.0, 6.0, 9.0),
+        Block::r#box(5.0, 0.0, 6.0, 10.0, 6.0, 11.0),
+        Block::r#box(5.0, 0.0, 5.0, 11.0, 6.0, 10.0),
+    ]
+});
+
+impl CandleBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPES[(state.get_value(CandleBlock::CANDLES) - 1) as usize].clone()
     }
 }

@@ -2,8 +2,11 @@
 //!
 //! Only what decides its blocks' states so far: its properties, its default state and `Pose`'s
 //! constants. Not ported yet: the rest, including `Pose`'s `BY_ID`, `CODEC` and `getNextPose`.
+//!
+//! Of its behaviour, `getFluidState` and its shape are ported.
 
 use crate::java::lang::r#enum::Enum;
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::util::string_representable::StringRepresentable;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
@@ -18,13 +21,18 @@ use crate::net::minecraft::world::level::block::state::properties::enum_property
 use crate::net::minecraft::world::level::block::state::properties::property::PropertyEnum;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 use std::fmt;
+use std::sync::LazyLock;
 
 pub struct CopperGolemStatueBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(CopperGolemStatueBlock::get_shape),
     get_fluid_state: Some(CopperGolemStatueBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.CopperGolemStatueBlock",
@@ -126,5 +134,19 @@ impl CopperGolemStatueBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+static SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(10.0, 0.0, 14.0));
+
+impl CopperGolemStatueBlock {
+    fn get_shape(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        SHAPE.clone()
     }
 }

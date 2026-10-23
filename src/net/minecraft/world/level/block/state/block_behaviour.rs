@@ -1,69 +1,69 @@
 //! net/minecraft/world/level/block/state/BlockBehaviour.java
 //!
-//! Only what decides a block's states and what they keep from its `Properties`: `Properties`
-//! itself, the fields `BlockBehaviour` copies from it, and what `BlockStateBase` keeps of each
-//! state and answers without a level (`getLightEmission`, `isAir`, `canOcclude`,
-//! `getPistonPushReaction`, `getDestroySpeed`, `getMapColor`, `emissiveRendering`,
-//! `isRandomlyTicking`, `getPostProcessPos`, the predicates that answer from the state alone…).
+//! What decides a block's states and what they keep from its `Properties`: `Properties` itself,
+//! the fields `BlockBehaviour` copies from it, and what `BlockStateBase` keeps of each state and
+//! answers without a level (`getLightEmission`, `isAir`, `canOcclude`, `getPistonPushReaction`,
+//! `getDestroySpeed`, `getMapColor`, `emissiveRendering`, `isRandomlyTicking`,
+//! `getPostProcessPos`…), with its predicates (`isRedstoneConductor`, `isSuffocating`,
+//! `isViewBlocking`).
 //!
-//! The shapes: `getShape` and `getCollisionShape` with `BlockBehaviour`'s defaults (the block,
-//! empty without collision) and `AirBlock`'s, `isCollisionShapeFullBlock`, `hasLargeCollisionShape`
-//! and `isSuffocating` at a position, worked out when asked rather than cached by `initCache`, which
-//! gives the same shapes for a block without a dynamic shape. A block whose class (or a parent)
-//! overrides `getShape` or `getCollisionShape` in Java panics when asked, until its override is
-//! ported (`SHAPE_OVERRIDES`).
+//! The shapes and what's worked out of them, each a `BlockBehaviour` method a class may override
+//! (`BlockClass`'s fields), dispatched down the class chain like Java's: `getShape`,
+//! `getCollisionShape`, `getVisualShape`, `getBlockSupportShape`, `getInteractionShape`,
+//! `getOcclusionShape`, `isCollisionShapeFullBlock`, `useShapeForLightOcclusion`,
+//! `propagatesSkylightDown`, `getLightDampening`, and what the renderer reads,
+//! `getShadeBrightness`, `getRenderShape`, `skipRendering`, `getSeed` and the offset function
+//! with each class's `getMaxHorizontalOffset` and `getMaxVerticalOffset`. `initCache` keeps what
+//! it does of them (the collision shape's `Cache` with `isFaceSturdy`, `isSolid`, the occlusion
+//! shape and its faces, `isSolidRender`, the light), worked out the first time it's asked for
+//! (`StateShapes`). Every class's overrides are ported.
 //!
-//! `initCache`'s light part, which the light engine reads: `useShapeForLightOcclusion`, the
-//! occlusion shape and its faces, `isSolidRender`, `propagatesSkylightDown` and
-//! `getLightDampening`, with the classes' overrides. They need the state's shape where a class
-//! doesn't answer without one, so a state whose class's shapes aren't ported has none of them yet
-//! (`light_properties_ported`), and asking panics, like the shapes themselves. So does the
-//! occlusion shape of the classes overriding `getOcclusionShape` whose overrides aren't ported
-//! (fence gates, lecterns, sculk shriekers; fences' is).
-//!
-//! Not ported yet: every other behaviour method (`useWithoutItem`, `tick`, `updateShape`…), which
-//! come with the blocks' classes; `Properties.sound` and `SoundType`, `isValidSpawn` (it
-//! takes an `EntityType`) and `requiredFeatures` (`FeatureFlag`), which Blocks' registrations
-//! leave out until they come; `initCache`'s `isSolid` and collision shape cache; the offset
-//! function itself (`getOffset`), which needs each class's `getMaxHorizontalOffset`.
+//! Not ported yet: every other behaviour method (`useWithoutItem`, `tick`, `updateShape`,
+//! `animateTick`…), which come with the blocks' classes; `Properties.sound` and `SoundType`,
+//! `isValidSpawn` (it takes an `EntityType`) and `requiredFeatures` (`FeatureFlag`), which
+//! Blocks' registrations leave out until they come; `getEntityInsideCollisionShape`, which
+//! comes with what's inside a block.
 //!
 //! Java's state predicates are lambdas, so `Properties` holds them as values that say which they
 //! are: Properties' defaults, which read the block's shapes or tags, Blocks' named ones, or a
 //! function of the state alone. A function a level is passed to (`getPostProcessPos`,
 //! `isRedstoneConductor`…) leaves the level out where none of vanilla's read it.
 
+use std::sync::{Arc, OnceLock};
+
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
-use std::sync::Arc;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::item::dye_color::DyeColor;
-use crate::net::minecraft::world::level::block::block::{
-    Block, BlockClass, BlockData, ShapeMethod,
-};
-use crate::net::minecraft::world::level::block::blocks::REGISTRY;
+use crate::net::minecraft::world::level::block::block::{Block, BlockClass, BlockData};
+use crate::net::minecraft::world::level::block::blocks::{self, REGISTRY};
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::note_block_instrument::NoteBlockInstrument;
+use crate::net::minecraft::world::level::block::support_type::SupportType;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::map_color::MapColor;
 use crate::net::minecraft::world::level::material::push_reaction::PushReaction;
+use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::shapes::collision_context::{self, CollisionContext};
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use crate::net::minecraft::world::phys::vec3::Vec3;
 
 /// `BlockBehaviour.StatePredicate`, as `Properties` holds one for `isRedstoneConductor` and
 /// `isSuffocating`.
 #[derive(Clone, Copy)]
 pub enum StatePredicate {
-    /// What `Properties` starts with: `isCollisionShapeFullBlock` for `isRedstoneConductor`, and
-    /// that and the `causes_suffocation` tag for `isSuffocating`. Not ported: they need the
-    /// block's shapes.
+    /// What `Properties` starts with for `isRedstoneConductor`: `isCollisionShapeFullBlock`.
     Default,
-    /// `Blocks.NOT_CLOSED_SHULKER`, which asks the shulker box's block entity. Not ported.
+    /// What `Properties` starts with for `isSuffocating`: that and the `causes_suffocation` tag.
+    DefaultSuffocating,
+    /// `Blocks.NOT_CLOSED_SHULKER`, which asks the shulker box's block entity.
     NotClosedShulker,
     /// One that answers from the state alone, with its name in `Blocks` if it has one
     /// (`NOT_EXTENDED_PISTON`): `Blocks::never`, `Blocks::always`.
@@ -77,7 +77,7 @@ pub enum ViewBlocking {
     /// (`None`), or the one it was copied from with `ofFullCopy`, whose `isSuffocating` it keeps
     /// (`Some`).
     Default(Option<StatePredicate>),
-    /// `Blocks.NEAR_PLANE_INTERSECTS_OUTLINE`, which reads the state's occlusion shape. Not ported.
+    /// `Blocks.NEAR_PLANE_INTERSECTS_OUTLINE`, which reads the state's occlusion shape.
     NearPlaneIntersectsOutline,
     /// One that answers from the state alone.
     State(fn(BlockState) -> bool),
@@ -167,7 +167,7 @@ impl Properties {
             instrument: NoteBlockInstrument::HARP,
             replaceable: false,
             is_redstone_conductor: StatePredicate::Default,
-            is_suffocating: StatePredicate::Default,
+            is_suffocating: StatePredicate::DefaultSuffocating,
             is_view_blocking: ViewBlocking::Default(None),
             post_process: |_, _| None,
             emissive_rendering: |_| false,
@@ -417,7 +417,7 @@ impl Properties {
         self
     }
 
-    /// `offsetType`, which picks the offset function; only whether there is one is ported.
+    /// `offsetType`, which picks the offset function (`BlockState::get_offset`).
     pub fn offset_type(mut self, offset_type: OffsetType) -> Properties {
         self.offset_type = offset_type;
         self
@@ -479,6 +479,10 @@ impl Properties {
 
     pub fn get_is_view_blocking(&self) -> ViewBlocking {
         self.is_view_blocking
+    }
+
+    pub fn get_offset_type(&self) -> OffsetType {
+        self.offset_type
     }
 
     pub fn get_force_solid_on(&self) -> bool {
@@ -564,23 +568,38 @@ pub struct BlockStateBase {
     is_view_blocking: ViewBlocking,
     post_process: fn(BlockState, BlockPos) -> Option<BlockPos>,
     emissive_rendering: bool,
-    has_offset_function: bool,
+    offset_type: OffsetType,
     spawn_terrain_particles: bool,
     instrument: NoteBlockInstrument,
     replaceable: bool,
     fluid_state: FluidState,
     is_randomly_ticking: bool,
-    use_shape_for_light_occlusion: bool,
-    occlusion: Option<Occlusion>,
-    propagates_skylight_down: Option<bool>,
-    light_dampening: Option<i32>,
+    shapes: OnceLock<StateShapes>,
 }
 
-/// What `initCache` keeps of a state's occlusion shape.
-struct Occlusion {
+/// What `initCache` keeps of a state's shapes, and the constructor's `useShapeForLightOcclusion`.
+/// Worked out the first time any of it is asked for, once every block is registered, where Java
+/// works it out right after: the same values, since a state's shapes never change and none of
+/// them reads another state's cache.
+struct StateShapes {
+    use_shape_for_light_occlusion: bool,
+    cache: Option<Cache>,
+    legacy_solid: bool,
     occlusion_shape: VoxelShape,
     occlusion_shapes_by_face: [VoxelShape; 6],
     solid_render: bool,
+    propagates_skylight_down: bool,
+    light_dampening: i32,
+}
+
+/// `BlockStateBase.Cache`: the collision shape with no level around it and what's worked out of
+/// it, for a block without a dynamic shape.
+struct Cache {
+    collision_shape: VoxelShape,
+    large_collision_shape: bool,
+    /// By `direction * 3 + support type`.
+    face_sturdy: [bool; 18],
+    is_collision_shape_full_block: bool,
 }
 
 impl BlockStateBase {
@@ -602,64 +621,127 @@ impl BlockStateBase {
             is_view_blocking: properties.is_view_blocking,
             post_process: properties.post_process,
             emissive_rendering: (properties.emissive_rendering)(state),
-            has_offset_function: properties.offset_type != OffsetType::NONE,
+            offset_type: properties.offset_type,
             spawn_terrain_particles: properties.spawn_terrain_particles,
             instrument: properties.instrument,
             replaceable: properties.replaceable,
             fluid_state: FluidState::EMPTY,
             is_randomly_ticking: false,
-            use_shape_for_light_occlusion: false,
-            occlusion: None,
-            propagates_skylight_down: None,
-            light_dampening: None,
+            shapes: OnceLock::new(),
         }
     }
 
-    /// `initCache`'s part that's ported: the state's fluid, whether it ticks randomly, its
-    /// occlusion shape, and its light, which its block's class may decide. They need the state's
-    /// shape where the class doesn't answer without it, which a class whose shapes aren't ported
-    /// doesn't have yet: that part is left unknown.
+    /// `initCache`'s part that needs no shapes: the state's fluid and whether it ticks randomly.
+    /// The rest waits for the shapes (`StateShapes`).
     pub(crate) fn init_cache(&mut self, block: &BlockData, state: BlockState) {
         self.fluid_state = block.get_fluid_state_of(state);
         self.is_randomly_ticking = block.is_randomly_ticking_state(state);
-        // The constructor's, in Java.
-        self.use_shape_for_light_occlusion = block.use_shape_for_light_occlusion_of(state);
-
-        let occlusion_shape = if self.can_occlude {
-            occlusion_shape_of(block, state)
-        } else {
-            Some(Shapes::empty())
-        };
-        self.occlusion = occlusion_shape.map(|occlusion_shape| {
-            let solid_render = Block::is_shape_full_block(&occlusion_shape);
-            let occlusion_shapes_by_face = if occlusion_shape.is_empty() {
-                std::array::from_fn(|_| Shapes::empty())
-            } else if solid_render {
-                std::array::from_fn(|_| Shapes::block())
-            } else {
-                Direction::VALUES.map(|direction| occlusion_shape.get_face_shape(direction))
-            };
-            Occlusion {
-                occlusion_shape,
-                occlusion_shapes_by_face,
-                solid_render,
-            }
-        });
-        self.propagates_skylight_down = block.propagates_skylight_down_of(state, &self.fluid_state);
-        self.light_dampening = block.get_light_dampening_of(
-            state,
-            self.occlusion
-                .as_ref()
-                .map(|occlusion| occlusion.solid_render),
-            self.propagates_skylight_down,
-        );
     }
+}
+
+impl StateShapes {
+    /// `initCache`'s shapes, in its order.
+    fn new(block: &BlockData, state: BlockState) -> StateShapes {
+        let cache = (!block.has_dynamic_shape()).then(|| Cache::new(state));
+        let legacy_solid = calculate_solid(block, cache.as_ref());
+        let occlusion_shape = if state.can_occlude() {
+            get_occlusion_shape_of(block, state)
+        } else {
+            Shapes::empty()
+        };
+        let solid_render = Block::is_shape_full_block(&occlusion_shape);
+        let occlusion_shapes_by_face = if occlusion_shape.is_empty() {
+            std::array::from_fn(|_| Shapes::empty())
+        } else if solid_render {
+            std::array::from_fn(|_| Shapes::block())
+        } else {
+            Direction::VALUES.map(|direction| occlusion_shape.get_face_shape(direction))
+        };
+        let propagates_skylight_down = block.propagates_skylight_down_of(state);
+        StateShapes {
+            use_shape_for_light_occlusion: block.use_shape_for_light_occlusion_of(state),
+            cache,
+            legacy_solid,
+            occlusion_shape,
+            occlusion_shapes_by_face,
+            solid_render,
+            propagates_skylight_down,
+            light_dampening: block.get_light_dampening_of(
+                state,
+                solid_render,
+                propagates_skylight_down,
+            ),
+        }
+    }
+}
+
+impl Cache {
+    fn new(state: BlockState) -> Cache {
+        let collision_shape = state.get_collision_shape_in(
+            &EmptyBlockGetter,
+            &BlockPos::ZERO,
+            &collision_context::empty(),
+        );
+        assert!(
+            collision_shape.is_empty() || !state.has_offset_function(),
+            "IllegalStateException: {} has a collision shape and an offset type, but is not marked as dynamicShape in its properties.",
+            blocks::registered_name(state.get_block())
+        );
+        let large_collision_shape = Axis::VALUES
+            .into_iter()
+            .any(|axis| collision_shape.min(axis) < 0.0 || collision_shape.max(axis) > 1.0);
+        let mut face_sturdy = [false; 18];
+        for direction in Direction::VALUES {
+            for support_type in SupportType::VALUES {
+                face_sturdy[Cache::face_support_index(direction, support_type)] = support_type
+                    .is_supporting(state, &EmptyBlockGetter, &BlockPos::ZERO, direction);
+            }
+        }
+        // Java asks the state again, which finds no cache yet and asks the block: the same shape.
+        let is_collision_shape_full_block = Block::is_shape_full_block(&collision_shape);
+        Cache {
+            collision_shape,
+            large_collision_shape,
+            face_sturdy,
+            is_collision_shape_full_block,
+        }
+    }
+
+    fn face_support_index(direction: Direction, support_type: SupportType) -> usize {
+        direction as usize * SupportType::VALUES.len() + support_type as usize
+    }
+}
+
+/// `calculateSolid`, the deprecated `isSolid`: forced either way, or a collision shape at least
+/// as big as a 0.9-block cube, or as tall as a block.
+fn calculate_solid(block: &BlockData, cache: Option<&Cache>) -> bool {
+    if block.properties().force_solid_on {
+        return true;
+    }
+    if block.properties().force_solid_off {
+        return false;
+    }
+    let Some(cache) = cache else {
+        return false;
+    };
+    let shape = &cache.collision_shape;
+    if shape.is_empty() {
+        return false;
+    }
+    let bounds = shape.bounds();
+    bounds.get_size() >= 0.7291666666666666 || bounds.get_ysize() >= 1.0
 }
 
 /// `BlockStateBase`'s methods, which read the state's entry in the registry's table.
 impl BlockState {
     fn base(&self) -> &'static BlockStateBase {
         &REGISTRY.states[self.id() as usize]
+    }
+
+    fn shapes(&self) -> &'static StateShapes {
+        self.base()
+            .shapes
+            .get_or_init(|| StateShapes::new(Block::data(self.get_block()), *self))
     }
 
     pub fn get_light_emission(&self) -> i32 {
@@ -702,7 +784,7 @@ impl BlockState {
     }
 
     pub fn has_offset_function(&self) -> bool {
-        self.base().has_offset_function
+        self.base().offset_type != OffsetType::NONE
     }
 
     /// `getPostProcessPos(BlockGetter, BlockPos)`, which none of vanilla's read the level for.
@@ -739,324 +821,179 @@ impl BlockState {
         Block::data(self.get_block()).class().is_entity_block()
     }
 
-    /// `isRedstoneConductor(BlockGetter, BlockPos)`, where the predicate answers from the state
-    /// alone. Panics on one that needs the level or the block's shapes, which aren't ported.
+    /// `isRedstoneConductor(BlockGetter, BlockPos)` of a predicate that answers from the state
+    /// alone, as the `BlockState` suite asks it. Panics on another.
     pub fn is_redstone_conductor(&self) -> bool {
         self.base().is_redstone_conductor.test(*self)
     }
 
-    /// `isSuffocating(BlockGetter, BlockPos)`, like `is_redstone_conductor`.
+    /// `isSuffocating(BlockGetter, BlockPos)` of a predicate that answers from the state alone.
     pub fn is_suffocating(&self) -> bool {
         self.base().is_suffocating.test(*self)
     }
 
+    /// `isViewBlocking(BlockGetter, BlockPos, AABB)` of a predicate that answers from the state
+    /// alone.
+    pub fn is_view_blocking(&self) -> bool {
+        match self.base().is_view_blocking {
+            ViewBlocking::State(test) => test(*self),
+            ViewBlocking::Default(_) | ViewBlocking::NearPlaneIntersectsOutline => {
+                panic!("this isViewBlocking needs the level, which this asks without")
+            }
+        }
+    }
+
+    /// `isRedstoneConductor(BlockGetter, BlockPos)`: Properties' default is whether the
+    /// collision shape is the whole block.
+    pub fn is_redstone_conductor_at(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        self.base().is_redstone_conductor.test_at(*self, level, pos)
+    }
+
+    /// `isSuffocating(BlockGetter, BlockPos)`: Properties' default is a block in the
+    /// `causes_suffocation` tag whose collision shape is the whole block.
+    pub fn is_suffocating_at(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        self.base().is_suffocating.test_at(*self, level, pos)
+    }
+
+    /// `isViewBlocking(BlockGetter, BlockPos, AABB)`: Properties' default is its `isSuffocating`.
+    pub fn is_view_blocking_at(
+        &self,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        near_plane_box: &AABB,
+    ) -> bool {
+        match self.base().is_view_blocking {
+            ViewBlocking::State(test) => test(*self),
+            ViewBlocking::Default(None) => self.is_suffocating_at(level, pos),
+            ViewBlocking::Default(Some(is_suffocating)) => {
+                is_suffocating.test_at(*self, level, pos)
+            }
+            // `Blocks.NEAR_PLANE_INTERSECTS_OUTLINE`.
+            ViewBlocking::NearPlaneIntersectsOutline => self
+                .get_occlusion_shape()
+                .to_aabbs()
+                .iter()
+                .any(|outline_box| outline_box.move_block_pos(pos).intersects(near_plane_box)),
+        }
+    }
+
     pub fn use_shape_for_light_occlusion(&self) -> bool {
-        self.base().use_shape_for_light_occlusion
-    }
-
-    /// Whether the state's occlusion shape and light are known: whether its class's shapes are
-    /// ported, where they need them.
-    pub fn light_properties_ported(&self) -> bool {
-        let base = self.base();
-        base.occlusion.is_some()
-            && base.propagates_skylight_down.is_some()
-            && base.light_dampening.is_some()
-    }
-
-    /// Panics for a state whose class's shapes aren't ported, which the value needs.
-    fn known<T>(&self, value: Option<T>, what: &str) -> T {
-        value.unwrap_or_else(|| {
-            panic!(
-                "the {what} of {} needs its shapes, which aren't ported ({})",
-                self,
-                Block::data(self.get_block()).class().name
-            )
-        })
-    }
-
-    fn occlusion(&self) -> &'static Occlusion {
-        self.known(self.base().occlusion.as_ref(), "occlusion shape")
+        self.shapes().use_shape_for_light_occlusion
     }
 
     pub fn propagates_skylight_down(&self) -> bool {
-        self.known(self.base().propagates_skylight_down, "skylight")
+        self.shapes().propagates_skylight_down
     }
 
     pub fn get_light_dampening(&self) -> i32 {
-        self.known(self.base().light_dampening, "light dampening")
+        self.shapes().light_dampening
     }
 
     /// `getFaceOcclusionShape`: nothing and the whole block are the shared constants, which the
     /// renderer tells apart by reference.
     pub fn get_face_occlusion_shape(&self, direction: Direction) -> VoxelShape {
-        self.occlusion().occlusion_shapes_by_face[direction as usize].clone()
+        self.shapes().occlusion_shapes_by_face[direction as usize].clone()
     }
 
-    /// `getOcclusionShape()`: the block's shape in an empty level, or nothing for a block that
-    /// can't occlude.
+    /// `getOcclusionShape()`: the block's, or nothing for a block that can't occlude.
     pub fn get_occlusion_shape(&self) -> VoxelShape {
-        self.occlusion().occlusion_shape.clone()
+        self.shapes().occlusion_shape.clone()
     }
 
     /// `isSolidRender()`: whether the occlusion shape is the whole block.
     pub fn is_solid_render(&self) -> bool {
-        self.occlusion().solid_render
+        self.shapes().solid_render
     }
 
-    /// `isViewBlocking(BlockGetter, BlockPos, AABB)`, like `is_redstone_conductor`.
-    pub fn is_view_blocking(&self) -> bool {
-        match self.base().is_view_blocking {
-            ViewBlocking::State(test) => test(*self),
-            ViewBlocking::Default(_) | ViewBlocking::NearPlaneIntersectsOutline => {
-                panic!("isViewBlocking needs the block's shapes, which aren't ported")
-            }
-        }
+    /// The deprecated `isSolid()`, `calculateSolid`'s.
+    pub fn is_solid(&self) -> bool {
+        self.shapes().legacy_solid
+    }
+
+    pub fn is_light_permeable(&self) -> bool {
+        !self.is_solid_render() || self.get_light_dampening() == 0
     }
 }
-
-/// `getShape(state, EmptyBlockGetter.INSTANCE, BlockPos.ZERO)`, as `initCache` asks it while the
-/// blocks are still registering: the class's, `AirBlock`'s nothing, or `BlockBehaviour`'s whole
-/// block. None for a class whose shapes aren't ported yet.
-pub(crate) fn shape_in_empty_getter(block: &BlockData, state: BlockState) -> Option<VoxelShape> {
-    let mut class = Some(block.class());
-    while let Some(current) = class {
-        if current.name == "net.minecraft.world.level.block.AirBlock" {
-            return Some(Shapes::empty());
-        }
-        if let Some(get_shape) = current.get_shape {
-            return Some(get_shape(
-                block,
-                state,
-                &EmptyBlockGetter,
-                &BlockPos::ZERO,
-                &collision_context::empty(),
-            ));
-        }
-        if SHAPE_OVERRIDES.contains(&current.name) {
-            return None;
-        }
-        class = current.parent;
-    }
-    Some(Shapes::block())
-}
-
-/// The classes overriding `getOcclusionShape` whose overrides aren't ported yet.
-const OCCLUSION_SHAPE_OVERRIDES: &[&str] = &[
-    "net.minecraft.world.level.block.FenceGateBlock",
-    "net.minecraft.world.level.block.LecternBlock",
-    "net.minecraft.world.level.block.SculkShriekerBlock",
-];
 
 /// `getOcclusionShape(BlockState)`, as `initCache` asks it: the class's, or `BlockBehaviour`'s,
-/// the shape in an empty getter. None for a class whose override or shapes aren't ported yet.
-fn occlusion_shape_of(block: &BlockData, state: BlockState) -> Option<VoxelShape> {
-    let mut class = Some(block.class());
-    while let Some(current) = class {
-        if let Some(get_occlusion_shape) = current.get_occlusion_shape {
-            return Some(get_occlusion_shape(block, state));
-        }
-        if OCCLUSION_SHAPE_OVERRIDES.contains(&current.name) {
-            return None;
-        }
-        class = current.parent;
+/// the shape in an empty level.
+fn get_occlusion_shape_of(block: &BlockData, state: BlockState) -> VoxelShape {
+    match block.class().find(|class| class.get_occlusion_shape) {
+        Some(get_occlusion_shape) => get_occlusion_shape(block, state),
+        None => get_occlusion_shape(block, state),
     }
-    shape_in_empty_getter(block, state)
 }
 
-/// The block classes that override `getShape` or `getCollisionShape` in Java, whose overrides
-/// aren't ported yet. `AirBlock`'s is, and the classes' with a `BlockClass::get_shape` or
-/// `get_collision_shape` (the player track's, for its physics scenarios): `SoulSandBlock`,
-/// `SlabBlock`, `StairBlock` and `CrossCollisionBlock` (fences and panes).
-const SHAPE_OVERRIDES: &[&str] = &[
-    "net.minecraft.world.level.block.AbstractCauldronBlock",
-    "net.minecraft.world.level.block.AmethystClusterBlock",
-    "net.minecraft.world.level.block.AnvilBlock",
-    "net.minecraft.world.level.block.AttachedStemBlock",
-    "net.minecraft.world.level.block.AzaleaBlock",
-    "net.minecraft.world.level.block.BambooSaplingBlock",
-    "net.minecraft.world.level.block.BambooStalkBlock",
-    "net.minecraft.world.level.block.BannerBlock",
-    "net.minecraft.world.level.block.BaseCoralFanBlock",
-    "net.minecraft.world.level.block.BaseCoralPlantBlock",
-    "net.minecraft.world.level.block.BaseCoralPlantTypeBlock",
-    "net.minecraft.world.level.block.BaseCoralWallFanBlock",
-    "net.minecraft.world.level.block.BaseFireBlock",
-    "net.minecraft.world.level.block.BasePressurePlateBlock",
-    "net.minecraft.world.level.block.BaseRailBlock",
-    "net.minecraft.world.level.block.BaseTorchBlock",
-    "net.minecraft.world.level.block.BedBlock",
-    "net.minecraft.world.level.block.BeetrootBlock",
-    "net.minecraft.world.level.block.BellBlock",
-    "net.minecraft.world.level.block.BigDripleafBlock",
-    "net.minecraft.world.level.block.BigDripleafStemBlock",
-    "net.minecraft.world.level.block.BrewingStandBlock",
-    "net.minecraft.world.level.block.BubbleColumnBlock",
-    "net.minecraft.world.level.block.BushBlock",
-    "net.minecraft.world.level.block.ButtonBlock",
-    "net.minecraft.world.level.block.CactusBlock",
-    "net.minecraft.world.level.block.CactusFlowerBlock",
-    "net.minecraft.world.level.block.CakeBlock",
-    "net.minecraft.world.level.block.CampfireBlock",
-    "net.minecraft.world.level.block.CandleBlock",
-    "net.minecraft.world.level.block.CandleCakeBlock",
-    "net.minecraft.world.level.block.CarpetBlock",
-    "net.minecraft.world.level.block.CarrotBlock",
-    "net.minecraft.world.level.block.CeilingHangingSignBlock",
-    "net.minecraft.world.level.block.ChainBlock",
-    "net.minecraft.world.level.block.ChestBlock",
-    "net.minecraft.world.level.block.CocoaBlock",
-    "net.minecraft.world.level.block.ComposterBlock",
-    "net.minecraft.world.level.block.ConduitBlock",
-    "net.minecraft.world.level.block.CopperGolemStatueBlock",
-    "net.minecraft.world.level.block.CoralPlantBlock",
-    "net.minecraft.world.level.block.CropBlock",
-    "net.minecraft.world.level.block.DaylightDetectorBlock",
-    "net.minecraft.world.level.block.DecoratedPotBlock",
-    "net.minecraft.world.level.block.DiodeBlock",
-    "net.minecraft.world.level.block.DoorBlock",
-    "net.minecraft.world.level.block.DragonEggBlock",
-    "net.minecraft.world.level.block.DriedGhastBlock",
-    "net.minecraft.world.level.block.DryVegetationBlock",
-    "net.minecraft.world.level.block.EnchantingTableBlock",
-    "net.minecraft.world.level.block.EndPortalBlock",
-    "net.minecraft.world.level.block.EndPortalFrameBlock",
-    "net.minecraft.world.level.block.EnderChestBlock",
-    "net.minecraft.world.level.block.FarmlandBlock",
-    "net.minecraft.world.level.block.FenceGateBlock",
-    "net.minecraft.world.level.block.FireBlock",
-    "net.minecraft.world.level.block.FlowerBedBlock",
-    "net.minecraft.world.level.block.FlowerBlock",
-    "net.minecraft.world.level.block.FlowerPotBlock",
-    "net.minecraft.world.level.block.FrogspawnBlock",
-    "net.minecraft.world.level.block.GrindstoneBlock",
-    "net.minecraft.world.level.block.GrowingPlantBlock",
-    "net.minecraft.world.level.block.HangingMossBlock",
-    "net.minecraft.world.level.block.HangingRootsBlock",
-    "net.minecraft.world.level.block.HeavyCoreBlock",
-    "net.minecraft.world.level.block.HoneyBlock",
-    "net.minecraft.world.level.block.HopperBlock",
-    "net.minecraft.world.level.block.LanternBlock",
-    "net.minecraft.world.level.block.LeafLitterBlock",
-    "net.minecraft.world.level.block.LecternBlock",
-    "net.minecraft.world.level.block.LeverBlock",
-    "net.minecraft.world.level.block.LightBlock",
-    "net.minecraft.world.level.block.LilyPadBlock",
-    "net.minecraft.world.level.block.MangrovePropaguleBlock",
-    "net.minecraft.world.level.block.MossyCarpetBlock",
-    "net.minecraft.world.level.block.MultifaceBlock",
-    "net.minecraft.world.level.block.MushroomBlock",
-    "net.minecraft.world.level.block.NetherFungusBlock",
-    "net.minecraft.world.level.block.NetherPortalBlock",
-    "net.minecraft.world.level.block.NetherRootsBlock",
-    "net.minecraft.world.level.block.NetherSproutsBlock",
-    "net.minecraft.world.level.block.NetherWartBlock",
-    "net.minecraft.world.level.block.PathBlock",
-    "net.minecraft.world.level.block.PiglinWallSkullBlock",
-    "net.minecraft.world.level.block.PipeBlock",
-    "net.minecraft.world.level.block.PitcherCropBlock",
-    "net.minecraft.world.level.block.PotatoBlock",
-    "net.minecraft.world.level.block.PowderSnowBlock",
-    "net.minecraft.world.level.block.RedstoneWallTorchBlock",
-    "net.minecraft.world.level.block.RedstoneWireBlock",
-    "net.minecraft.world.level.block.RodBlock",
-    "net.minecraft.world.level.block.SaplingBlock",
-    "net.minecraft.world.level.block.SculkSensorBlock",
-    "net.minecraft.world.level.block.SculkShriekerBlock",
-    "net.minecraft.world.level.block.SeaPickleBlock",
-    "net.minecraft.world.level.block.SeagrassBlock",
-    "net.minecraft.world.level.block.ShelfBlock",
-    "net.minecraft.world.level.block.ShelfMushroomBlock",
-    "net.minecraft.world.level.block.ShortDryGrassBlock",
-    "net.minecraft.world.level.block.ShulkerBoxBlock",
-    "net.minecraft.world.level.block.SignBlock",
-    "net.minecraft.world.level.block.SkullBlock",
-    "net.minecraft.world.level.block.SmallDripleafBlock",
-    "net.minecraft.world.level.block.SnifferEggBlock",
-    "net.minecraft.world.level.block.SnowLayerBlock",
-    "net.minecraft.world.level.block.SpeleothemBlock",
-    "net.minecraft.world.level.block.SporeBlossomBlock",
-    "net.minecraft.world.level.block.StemBlock",
-    "net.minecraft.world.level.block.StonecutterBlock",
-    "net.minecraft.world.level.block.StrawBedBlock",
-    "net.minecraft.world.level.block.StructureVoidBlock",
-    "net.minecraft.world.level.block.SugarCaneBlock",
-    "net.minecraft.world.level.block.SweetBerryBushBlock",
-    "net.minecraft.world.level.block.TallDryGrassBlock",
-    "net.minecraft.world.level.block.TallGrassBlock",
-    "net.minecraft.world.level.block.TallSeagrassBlock",
-    "net.minecraft.world.level.block.TorchflowerCropBlock",
-    "net.minecraft.world.level.block.TrapDoorBlock",
-    "net.minecraft.world.level.block.TripWireBlock",
-    "net.minecraft.world.level.block.TripWireHookBlock",
-    "net.minecraft.world.level.block.TurtleEggBlock",
-    "net.minecraft.world.level.block.WallBannerBlock",
-    "net.minecraft.world.level.block.WallHangingSignBlock",
-    "net.minecraft.world.level.block.WallSignBlock",
-    "net.minecraft.world.level.block.WallSkullBlock",
-    "net.minecraft.world.level.block.WallTorchBlock",
-    "net.minecraft.world.level.block.piston.MovingPistonBlock",
-    "net.minecraft.world.level.block.piston.PistonBaseBlock",
-    "net.minecraft.world.level.block.piston.PistonHeadBlock",
-];
+/// `BlockBehaviour.getOcclusionShape`: the shape in an empty level.
+pub fn get_occlusion_shape(_block: &BlockData, state: BlockState) -> VoxelShape {
+    state.get_shape(&EmptyBlockGetter, &BlockPos::ZERO)
+}
 
-/// Block classes overriding `getBlockSupportShape` in a way not ported yet: they panic, like the
-/// shapes' guard.
-const SUPPORT_SHAPE_OVERRIDES: &[&str] = &[
-    "net.minecraft.world.level.block.CeilingHangingSignBlock",
-    "net.minecraft.world.level.block.ChorusFlowerBlock",
-    "net.minecraft.world.level.block.FenceGateBlock",
-    "net.minecraft.world.level.block.ShulkerBoxBlock",
-    "net.minecraft.world.level.block.SnowLayerBlock",
-    "net.minecraft.world.level.block.WallHangingSignBlock",
-];
+/// `BlockBehaviour.getCollisionShape`: the shape, or nothing for a block without collision.
+pub fn get_collision_shape(
+    block: &BlockData,
+    state: BlockState,
+    level: &dyn BlockGetter,
+    pos: &BlockPos,
+    _context: &dyn CollisionContext,
+) -> VoxelShape {
+    if block.has_collision() {
+        state.get_shape(level, pos)
+    } else {
+        Shapes::empty()
+    }
+}
 
-/// The shapes, which go by the block's class.
+/// `BlockBehaviour.getVisualShape`: the collision shape.
+pub fn get_visual_shape(
+    _block: &BlockData,
+    state: BlockState,
+    level: &dyn BlockGetter,
+    pos: &BlockPos,
+    context: &dyn CollisionContext,
+) -> VoxelShape {
+    state.get_collision_shape_in(level, pos, context)
+}
+
+/// `BlockBehaviour.getBlockSupportShape`: the collision shape for no one.
+pub fn get_block_support_shape(
+    _block: &BlockData,
+    state: BlockState,
+    level: &dyn BlockGetter,
+    pos: &BlockPos,
+) -> VoxelShape {
+    state.get_collision_shape_in(level, pos, &collision_context::empty())
+}
+
+/// `BlockBehaviour.getShadeBrightness`: dark under a whole block's collision shape.
+pub fn get_shade_brightness(
+    _block: &BlockData,
+    state: BlockState,
+    level: &dyn BlockGetter,
+    pos: &BlockPos,
+) -> f32 {
+    if state.is_collision_shape_full_block(level, pos) {
+        0.2
+    } else {
+        1.0
+    }
+}
+
+/// The shapes and what's worked out of them, which go by the block's class.
 impl BlockState {
-    /// The class's override of a shape method, looked up the chain like Java's dispatch, or none
-    /// for `BlockBehaviour`'s own. Panics at a class whose shapes aren't ported yet.
-    fn shape_override(
-        &self,
-        method: impl Fn(&BlockClass) -> Option<ShapeMethod>,
-    ) -> Option<ShapeMethod> {
-        let mut class = Some(Block::data(self.get_block()).class());
-        while let Some(current) = class {
-            if let Some(found) = method(current) {
-                return Some(found);
-            }
-            assert!(
-                !SHAPE_OVERRIDES.contains(&current.name),
-                "the shapes of {} ({}) aren't ported",
-                self.get_block(),
-                current.name
-            );
-            class = current.parent;
-        }
-        None
+    fn class(&self) -> &'static BlockClass {
+        Block::data(self.get_block()).class()
     }
 
-    fn is_air_block(&self) -> bool {
-        let mut class = Some(Block::data(self.get_block()).class());
-        while let Some(current) = class {
-            if current.name == "net.minecraft.world.level.block.AirBlock" {
-                return true;
-            }
-            class = current.parent;
-        }
-        false
-    }
-
-    /// `getShape(BlockGetter, BlockPos, CollisionContext)`: the class's, `AirBlock`'s nothing, or
-    /// `BlockBehaviour`'s whole block.
+    /// `getShape(BlockGetter, BlockPos, CollisionContext)`: the class's, or `BlockBehaviour`'s
+    /// whole block.
     pub fn get_shape_in(
         &self,
         level: &dyn BlockGetter,
         pos: &BlockPos,
         context: &dyn CollisionContext,
     ) -> VoxelShape {
-        if self.is_air_block() {
-            return Shapes::empty();
-        }
-        match self.shape_override(|class| class.get_shape) {
+        match self.class().find(|class| class.get_shape) {
             Some(get_shape) => get_shape(Block::data(self.get_block()), *self, level, pos, context),
             None => Shapes::block(),
         }
@@ -1068,144 +1005,115 @@ impl BlockState {
     }
 
     /// `getCollisionShape(BlockGetter, BlockPos, CollisionContext)`: the class's, or
-    /// `BlockBehaviour`'s, the shape (asked with an empty context), or nothing for a block
-    /// without collision.
+    /// `BlockBehaviour`'s.
     pub fn get_collision_shape_in(
         &self,
         level: &dyn BlockGetter,
         pos: &BlockPos,
         context: &dyn CollisionContext,
     ) -> VoxelShape {
-        match self.shape_override(|class| class.get_collision_shape) {
-            Some(get_collision_shape) => {
-                get_collision_shape(Block::data(self.get_block()), *self, level, pos, context)
+        let block = Block::data(self.get_block());
+        match self.class().find(|class| class.get_collision_shape) {
+            Some(get_collision_shape) => get_collision_shape(block, *self, level, pos, context),
+            None => get_collision_shape(block, *self, level, pos, context),
+        }
+    }
+
+    /// `getCollisionShape(BlockGetter, BlockPos)`: the cached one, or with an empty context for a
+    /// block with a dynamic shape.
+    pub fn get_collision_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
+        match &self.shapes().cache {
+            Some(cache) => cache.collision_shape.clone(),
+            None => self.get_collision_shape_in(level, pos, &collision_context::empty()),
+        }
+    }
+
+    /// `getVisualShape(BlockGetter, BlockPos, CollisionContext)`.
+    pub fn get_visual_shape(
+        &self,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        let block = Block::data(self.get_block());
+        match self.class().find(|class| class.get_visual_shape) {
+            Some(get_visual_shape) => get_visual_shape(block, *self, level, pos, context),
+            None => get_visual_shape(block, *self, level, pos, context),
+        }
+    }
+
+    /// `getBlockSupportShape(BlockGetter, BlockPos)`.
+    pub fn get_block_support_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
+        let block = Block::data(self.get_block());
+        match self.class().find(|class| class.get_block_support_shape) {
+            Some(get_block_support_shape) => get_block_support_shape(block, *self, level, pos),
+            None => get_block_support_shape(block, *self, level, pos),
+        }
+    }
+
+    /// `getInteractionShape(BlockGetter, BlockPos)`: `BlockBehaviour`'s is nothing.
+    pub fn get_interaction_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
+        match self.class().find(|class| class.get_interaction_shape) {
+            Some(get_interaction_shape) => {
+                get_interaction_shape(Block::data(self.get_block()), *self, level, pos)
             }
-            None if Block::data(self.get_block()).has_collision() => self.get_shape(level, pos),
             None => Shapes::empty(),
         }
     }
 
-    /// `getCollisionShape(BlockGetter, BlockPos)`, with an empty context.
-    pub fn get_collision_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
-        self.get_collision_shape_in(level, pos, &collision_context::empty())
-    }
-
-    /// `getBlockSupportShape(BlockGetter, BlockPos)`: the class's, or `BlockBehaviour`'s, the
-    /// collision shape with an empty context. Panics at a class whose override isn't ported.
-    pub fn get_block_support_shape(&self, level: &dyn BlockGetter, pos: &BlockPos) -> VoxelShape {
-        let mut class = Some(Block::data(self.get_block()).class());
-        while let Some(current) = class {
-            if let Some(get_block_support_shape) = current.get_block_support_shape {
-                return get_block_support_shape(Block::data(self.get_block()), *self, level, pos);
+    /// `isCollisionShapeFullBlock(BlockGetter, BlockPos)`: the cached answer, or the class's for
+    /// a block with a dynamic shape.
+    pub fn is_collision_shape_full_block(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        if let Some(cache) = &self.shapes().cache {
+            return cache.is_collision_shape_full_block;
+        }
+        match self
+            .class()
+            .find(|class| class.is_collision_shape_full_block)
+        {
+            Some(is_collision_shape_full_block) => {
+                is_collision_shape_full_block(Block::data(self.get_block()), *self, level, pos)
             }
-            assert!(
-                !SUPPORT_SHAPE_OVERRIDES.contains(&current.name),
-                "the support shape of {} ({}) isn't ported",
-                self.get_block(),
-                current.name
-            );
-            class = current.parent;
+            None => Block::is_shape_full_block(&self.get_collision_shape(level, pos)),
         }
-        self.get_collision_shape_in(level, pos, &collision_context::empty())
     }
 
-    /// `getInteractionShape(BlockGetter, BlockPos)`: `BlockBehaviour`'s none, scaffolding's whole
-    /// block. Panics at a class whose override isn't ported (cauldrons, composters, hoppers).
-    pub fn get_interaction_shape(&self, _level: &dyn BlockGetter, _pos: &BlockPos) -> VoxelShape {
-        if self.class_is("net.minecraft.world.level.block.ScaffoldingBlock") {
-            return Shapes::block();
-        }
-        for class in [
-            "net.minecraft.world.level.block.AbstractCauldronBlock",
-            "net.minecraft.world.level.block.ComposterBlock",
-            "net.minecraft.world.level.block.HopperBlock",
-        ] {
-            assert!(
-                !self.class_is(class),
-                "the interaction shape of {} ({class}) isn't ported",
-                self.get_block()
-            );
-        }
-        Shapes::empty()
+    /// Whether the collision shape reaches past the block, which is always taken to be so for a
+    /// block with a dynamic shape (no cache).
+    pub fn has_large_collision_shape(&self) -> bool {
+        self.shapes()
+            .cache
+            .as_ref()
+            .is_none_or(|cache| cache.large_collision_shape)
     }
 
-    /// `isFaceSturdy(BlockGetter, BlockPos, Direction)`: `SupportType.FULL`, whether the support
-    /// shape's face is whole. Java's cache asks it with no level around the state
-    /// (`EmptyBlockGetter`, `BlockPos.ZERO`), unless the block's shape is dynamic.
+    /// `isFaceSturdy(BlockGetter, BlockPos, Direction)`: whether the face fully supports.
     pub fn is_face_sturdy(
         &self,
         level: &dyn BlockGetter,
         pos: &BlockPos,
         direction: Direction,
     ) -> bool {
-        let support_shape = if Block::data(self.get_block()).has_dynamic_shape() {
-            self.get_block_support_shape(level, pos)
-        } else {
-            self.get_block_support_shape(&EmptyBlockGetter, &BlockPos::ZERO)
-        };
-        Block::is_face_full(&support_shape, direction)
+        self.is_face_sturdy_for(level, pos, direction, SupportType::FULL)
     }
 
-    pub fn is_collision_shape_full_block(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
-        Block::is_shape_full_block(&self.get_collision_shape(level, pos))
-    }
-
-    /// Whether the collision shape reaches past the block, which is always taken to be so for a
-    /// block with a dynamic shape (no cache).
-    pub fn has_large_collision_shape(&self) -> bool {
-        if Block::data(self.get_block()).has_dynamic_shape() {
-            return true;
-        }
-        let shape = self.get_collision_shape(&EmptyBlockGetter, &BlockPos::ZERO);
-        Axis::VALUES
-            .into_iter()
-            .any(|axis| shape.min(axis) < 0.0 || shape.max(axis) > 1.0)
-    }
-
-    /// `isSuffocating(BlockGetter, BlockPos)`: Properties' default is a block in the
-    /// `causes_suffocation` tag whose collision shape is the whole block.
-    pub fn is_suffocating_at(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
-        match self.base().is_suffocating {
-            StatePredicate::State(_, test) => test(*self),
-            StatePredicate::Default => {
-                self.is_tag(BlockTags::CAUSES_SUFFOCATION)
-                    && self.is_collision_shape_full_block(level, pos)
-            }
-            StatePredicate::NotClosedShulker => {
-                panic!("NOT_CLOSED_SHULKER asks the shulker box's block entity, which isn't ported")
-            }
+    /// `isFaceSturdy(BlockGetter, BlockPos, Direction, SupportType)`: the cached answer, or the
+    /// support type's for a block with a dynamic shape.
+    pub fn is_face_sturdy_for(
+        &self,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction: Direction,
+        support_type: SupportType,
+    ) -> bool {
+        match &self.shapes().cache {
+            Some(cache) => cache.face_sturdy[Cache::face_support_index(direction, support_type)],
+            None => support_type.is_supporting(*self, level, pos, direction),
         }
     }
 }
 
-/// Block classes overriding what the renderer reads of a state in a way not ported yet, by the
-/// method: they panic, like the shapes' guard.
-const RENDER_OVERRIDES: &[(&str, &[&str])] = &[
-    (
-        "skipRendering",
-        &[
-            "net.minecraft.world.level.block.IronBarsBlock",
-            "net.minecraft.world.level.block.LiquidBlock",
-        ],
-    ),
-    (
-        "getShadeBrightness",
-        &["net.minecraft.world.level.block.SnowLayerBlock"],
-    ),
-    (
-        "getRenderShape",
-        &[
-            "net.minecraft.world.level.block.BubbleColumnBlock",
-            "net.minecraft.world.level.block.EndPortalBlock",
-            "net.minecraft.world.level.block.EndGatewayBlock",
-            "net.minecraft.world.level.block.piston.MovingPistonBlock",
-        ],
-    ),
-];
-
-/// What the renderer reads of a state, worked out from its block's class and shapes each time
-/// it's asked, where Java keeps most of it from `initCache`: the same answers, since a state's
-/// shapes never change.
+/// What the renderer reads of a state, from its block's class.
 impl BlockState {
     /// `getBlock() instanceof LeavesBlock`.
     pub fn class_is_leaves(&self) -> bool {
@@ -1213,8 +1121,8 @@ impl BlockState {
     }
 
     /// Whether the block's class is `name` or extends it.
-    fn class_is(&self, name: &str) -> bool {
-        let mut class = Some(Block::data(self.get_block()).class());
+    pub(crate) fn class_is(&self, name: &str) -> bool {
+        let mut class = Some(self.class());
         while let Some(current) = class {
             if current.name == name {
                 return true;
@@ -1224,106 +1132,78 @@ impl BlockState {
         false
     }
 
-    fn check_render_ported(&self, method: &str) {
-        let overriding = RENDER_OVERRIDES
-            .iter()
-            .find(|(name, _)| *name == method)
-            .map_or(&[][..], |(_, classes)| *classes);
-        let mut class = Some(Block::data(self.get_block()).class());
-        while let Some(current) = class {
-            assert!(
-                !overriding.contains(&current.name),
-                "{method} of {} ({}) isn't ported",
-                self.get_block(),
-                current.name
-            );
-            class = current.parent;
-        }
-    }
-
-    pub fn is_light_permeable(&self) -> bool {
-        !self.is_solid_render() || self.get_light_dampening() == 0
-    }
-
+    /// `getShadeBrightness(BlockGetter, BlockPos)`.
     pub fn get_shade_brightness(&self, level: &dyn BlockGetter, pos: &BlockPos) -> f32 {
-        self.check_render_ported("getShadeBrightness");
-        if self.class_is("net.minecraft.world.level.block.TransparentBlock")
-            || self.class_is("net.minecraft.world.level.block.BarrierBlock")
-            || self.class_is("net.minecraft.world.level.block.LightBlock")
-            || self.class_is("net.minecraft.world.level.block.StructureVoidBlock")
-        {
-            return 1.0;
-        }
-        if self.class_is("net.minecraft.world.level.block.MudBlock")
-            || self.class_is("net.minecraft.world.level.block.SoulSandBlock")
-        {
-            return 0.2;
-        }
-        if self.is_collision_shape_full_block(level, pos) {
-            0.2
-        } else {
-            1.0
+        let block = Block::data(self.get_block());
+        match self.class().find(|class| class.get_shade_brightness) {
+            Some(get_shade_brightness) => get_shade_brightness(block, *self, level, pos),
+            None => get_shade_brightness(block, *self, level, pos),
         }
     }
 
+    /// `getRenderShape()`: `BlockBehaviour`'s is a model.
     pub fn get_render_shape(&self) -> RenderShape {
-        self.check_render_ported("getRenderShape");
-        let invisible = [
-            "net.minecraft.world.level.block.AirBlock",
-            "net.minecraft.world.level.block.BarrierBlock",
-            "net.minecraft.world.level.block.LiquidBlock",
-            "net.minecraft.world.level.block.LightBlock",
-            "net.minecraft.world.level.block.StructureVoidBlock",
-        ];
-        if invisible.iter().any(|class| self.class_is(class)) {
-            RenderShape::INVISIBLE
-        } else {
-            RenderShape::MODEL
+        match self.class().find(|class| class.get_render_shape) {
+            Some(get_render_shape) => get_render_shape(Block::data(self.get_block()), *self),
+            None => RenderShape::MODEL,
         }
     }
 
     /// `skipRendering`: whether a face toward this neighbour is left out whatever the shapes say.
     pub fn skip_rendering(&self, neighbor_state: BlockState, direction: Direction) -> bool {
-        self.check_render_ported("skipRendering");
-        if self.class_is("net.minecraft.world.level.block.HalfTransparentBlock")
-            || self.class_is("net.minecraft.world.level.block.PowderSnowBlock")
-        {
-            return neighbor_state.is(self.get_block());
+        match self.class().find(|class| class.skip_rendering) {
+            Some(skip_rendering) => skip_rendering(
+                Block::data(self.get_block()),
+                *self,
+                neighbor_state,
+                direction,
+            ),
+            None => false,
         }
-        if self.class_is("net.minecraft.world.level.block.LeavesBlock") {
-            return !crate::net::minecraft::world::level::block::leaves_block::LeavesBlock::cutout_leaves()
-                && neighbor_state.class_is("net.minecraft.world.level.block.LeavesBlock");
-        }
-        if self.class_is("net.minecraft.world.level.block.MangroveRootsBlock") {
-            return neighbor_state
-                .is(crate::net::minecraft::world::level::block::blocks::Blocks::MANGROVE_ROOTS)
-                && direction.get_axis() == Axis::Y;
-        }
-        false
     }
 
     /// `getSeed`: the position's, which the beds, doors and double plants take from the half the
     /// two share.
     pub fn get_seed(&self, pos: &BlockPos) -> i64 {
-        assert!(
-            !self.class_is("net.minecraft.world.level.block.AbstractBedBlock")
-                && !self.class_is("net.minecraft.world.level.block.DoorBlock")
-                && !self.class_is("net.minecraft.world.level.block.DoublePlantBlock"),
-            "getSeed of {} isn't ported",
-            self.get_block()
-        );
-        crate::net::minecraft::util::mth::Mth::get_seed_vec3i(pos)
+        match self.class().find(|class| class.get_seed) {
+            Some(get_seed) => get_seed(Block::data(self.get_block()), *self, pos),
+            None => Mth::get_seed_vec3i(pos),
+        }
     }
 
-    /// `getOffset`: nothing for a block without an offset function, whose functions aren't
-    /// ported yet.
-    pub fn get_offset(&self, _pos: &BlockPos) -> crate::net::minecraft::world::phys::vec3::Vec3 {
-        assert!(
-            !self.has_offset_function(),
-            "the offset function of {} isn't ported",
-            self.get_block()
-        );
-        crate::net::minecraft::world::phys::vec3::Vec3::ZERO
+    /// `getOffset`: where the state's model moves in its block, by the offset type its
+    /// `Properties` gave it, or nowhere without one.
+    pub fn get_offset(&self, pos: &BlockPos) -> Vec3 {
+        let block = Block::data(self.get_block());
+        let horizontal = || {
+            #[allow(deprecated)]
+            let seed = Mth::get_seed(pos.get_x(), 0, pos.get_z());
+            let max_horizontal_offset = f64::from(block.get_max_horizontal_offset());
+            let x = Mth::clamp_f64(
+                (f64::from((seed & 15) as f32 / 15.0) - 0.5) * 0.5,
+                -max_horizontal_offset,
+                max_horizontal_offset,
+            );
+            let z = Mth::clamp_f64(
+                (f64::from((seed >> 8 & 15) as f32 / 15.0) - 0.5) * 0.5,
+                -max_horizontal_offset,
+                max_horizontal_offset,
+            );
+            (seed, x, z)
+        };
+        match self.base().offset_type {
+            OffsetType::NONE => Vec3::ZERO,
+            OffsetType::XZ => {
+                let (_, x, z) = horizontal();
+                Vec3::new(x, 0.0, z)
+            }
+            OffsetType::XYZ => {
+                let (seed, x, z) = horizontal();
+                let y = (f64::from((seed >> 4 & 15) as f32 / 15.0) - 1.0)
+                    * f64::from(block.get_max_vertical_offset());
+                Vec3::new(x, y, z)
+            }
+        }
     }
 }
 
@@ -1335,7 +1215,7 @@ pub enum RenderShape {
 }
 
 /// `EmptyBlockGetter.INSTANCE`: air everywhere, which shapes are cached with.
-struct EmptyBlockGetter;
+pub struct EmptyBlockGetter;
 
 impl BlockGetter for EmptyBlockGetter {
     fn get_block_state(&self, _pos: &BlockPos) -> BlockState {
@@ -1352,41 +1232,407 @@ impl StatePredicate {
     pub fn test(&self, state: BlockState) -> bool {
         match self {
             StatePredicate::State(_, test) => test(state),
-            StatePredicate::Default | StatePredicate::NotClosedShulker => {
-                panic!("this predicate needs the level or the block's shapes, which aren't ported")
+            StatePredicate::Default
+            | StatePredicate::DefaultSuffocating
+            | StatePredicate::NotClosedShulker => {
+                panic!("this predicate needs the level, which this asks without")
             }
+        }
+    }
+
+    /// `test(BlockState, BlockGetter, BlockPos)`.
+    pub fn test_at(&self, state: BlockState, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        match self {
+            StatePredicate::State(_, test) => test(state),
+            // `Properties`' default `isRedstoneConductor`, and its `isSuffocating`, which asks
+            // the tag first.
+            StatePredicate::Default => state.is_collision_shape_full_block(level, pos),
+            StatePredicate::DefaultSuffocating => {
+                state.is_tag(BlockTags::CAUSES_SUFFOCATION)
+                    && state.is_collision_shape_full_block(level, pos)
+            }
+            // A shulker box's block entity is closed unless it's opening or closing, which the
+            // client's block entities don't do yet, and a level without one answers true too.
+            StatePredicate::NotClosedShulker => true,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use serde_json::{Value, json};
+
     use super::EmptyBlockGetter;
-    use crate::golden::Golden;
+    use crate::golden::{Decode, Encode, Golden, catch};
     use crate::net::minecraft::core::block_pos::BlockPos;
     use crate::net::minecraft::core::direction::Direction;
+    use crate::net::minecraft::references::block_item_ids::BlockItemIds;
+    use crate::net::minecraft::world::level::block::block::Block;
+    use crate::net::minecraft::world::level::block::blocks::Blocks;
+    use crate::net::minecraft::world::level::block::cross_collision_block::CrossCollisionBlock;
+    use crate::net::minecraft::world::level::block::liquid_block::LiquidBlock;
+    use crate::net::minecraft::world::level::block::slab_block::SlabBlock;
     use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+    use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+    use crate::net::minecraft::world::level::block::support_type::SupportType;
+    use crate::net::minecraft::world::phys::aabb::AABB;
+    use crate::net::minecraft::world::phys::shapes::collision_context::{self, CollisionContext};
+    use crate::net::minecraft::world::phys::shapes::entity_collision_context::EntityCollisionContext;
+    use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
-    /// The shapes of every state of the blocks whose classes' shapes are ported, as a state
-    /// reports them with no level around it, and which of their faces are sturdy
-    /// (`ShapeSuites.BlockStateShapeSuite`).
+    const POS: BlockPos = BlockPos::new(1, 2, 3);
+
+    /// The blocks `BlockStateShapeSuite` asks at besides `BlockPos.ZERO`, in its order.
+    const POSITIONS: [BlockPos; 7] = [
+        BlockPos::ZERO,
+        POS,
+        BlockPos::new(-37, 70, 1290),
+        BlockPos::new(12345, -60, -9876),
+        BlockPos::new(-1, 0, -1),
+        BlockPos::new(29999999, 319, -29999999),
+        BlockPos::new(7, 64, -300),
+    ];
+
+    /// The suite's contexts, in its order: none, none colliding with fluids, and no entity whose
+    /// bottom is a block up, a block up descending, halfway, a block down, a block up colliding
+    /// with fluids, holding scaffolding, holding a light, and placing a block.
+    fn contexts() -> Vec<EntityCollisionContext> {
+        let above = || EntityCollisionContext::new(false, false, 1.0, false);
+        vec![
+            collision_context::empty(),
+            collision_context::empty_with_fluid_collisions(),
+            above(),
+            EntityCollisionContext::new(true, false, 1.0, false),
+            EntityCollisionContext::new(false, false, 0.5, false),
+            EntityCollisionContext::new(false, false, -1.0, false),
+            EntityCollisionContext::new(false, false, 1.0, true),
+            above().with_held_item(Some(BlockItemIds::SCAFFOLDING.item().clone())),
+            above().with_held_item(Some(BlockItemIds::LIGHT.item().clone())),
+            collision_context::placement_context_without_player(),
+        ]
+    }
+
+    /// The neighbours the suite asks `skipRendering` about, after the state and its block's
+    /// default state.
+    fn neighbours() -> Vec<BlockState> {
+        let default = |block: Block| block.default_block_state();
+        let mut bars = default(Blocks::IRON_BARS);
+        for (_, side) in CrossCollisionBlock::PROPERTY_BY_DIRECTION {
+            bars = bars.set_value(side, true);
+        }
+        vec![
+            default(Blocks::AIR),
+            default(Blocks::STONE),
+            default(Blocks::GLASS),
+            default(Blocks::STAINED_GLASS.as_list()[0]),
+            default(Blocks::TINTED_GLASS),
+            default(Blocks::ICE),
+            default(Blocks::OAK_LEAVES),
+            default(Blocks::CHERRY_LEAVES),
+            default(Blocks::MANGROVE_ROOTS),
+            default(Blocks::IRON_BARS),
+            bars,
+            default(Blocks::GLASS_PANE)
+                .set_value(CrossCollisionBlock::NORTH, true)
+                .set_value(CrossCollisionBlock::SOUTH, true),
+            default(Blocks::COPPER_BARS.weathering().as_list()[0])
+                .set_value(CrossCollisionBlock::EAST, true)
+                .set_value(CrossCollisionBlock::WEST, true),
+            default(Blocks::WATER),
+            default(Blocks::WATER).set_value(LiquidBlock::LEVEL, 3),
+            default(Blocks::LAVA),
+            default(Blocks::KELP),
+            default(Blocks::OAK_SLAB).set_value(SlabBlock::WATERLOGGED, true),
+            default(Blocks::POWDER_SNOW),
+            default(Blocks::SLIME_BLOCK),
+            default(Blocks::HONEY_BLOCK),
+            default(Blocks::BARRIER),
+            default(Blocks::COPPER_GRATE.weathering().as_list()[0]),
+            default(Blocks::BUBBLE_COLUMN),
+        ]
+    }
+
+    /// Shapes encoded as the suite encodes them, each object once: the encoder keeps each shape
+    /// it has seen, so its address isn't another's while the test runs.
+    #[derive(Default)]
+    struct Shapes(RefCell<HashMap<usize, (VoxelShape, Value)>>);
+
+    impl Shapes {
+        fn encode(&self, shape: VoxelShape) -> Value {
+            self.0
+                .borrow_mut()
+                .entry(shape.address())
+                .or_insert_with(|| {
+                    let encoded = shape.encode();
+                    (shape, encoded)
+                })
+                .1
+                .clone()
+        }
+    }
+
+    /// Bits as `BigInteger.toString(16)` writes them: lowercase, no leading zeros.
+    fn hex(bits: &[bool]) -> String {
+        let digits: String = bits
+            .chunks(4)
+            .rev()
+            .map(|nibble| {
+                let value = nibble
+                    .iter()
+                    .enumerate()
+                    .fold(0, |value, (bit, &set)| value | (u32::from(set) << bit));
+                char::from_digit(value, 16).expect("a nibble is a hex digit")
+            })
+            .collect();
+        match digits.trim_start_matches('0') {
+            "" => "0".to_owned(),
+            trimmed => trimmed.to_owned(),
+        }
+    }
+
+    // What each element of a state's case is, for the messages.
+    const NAMES: [&str; 22] = [
+        "getShape",
+        "getCollisionShape",
+        "getOcclusionShape",
+        "getFaceOcclusionShape",
+        "getBlockSupportShape",
+        "getInteractionShape",
+        "getVisualShape",
+        "useShapeForLightOcclusion",
+        "propagatesSkylightDown",
+        "getLightDampening",
+        "isSolidRender",
+        "isSolid",
+        "isCollisionShapeFullBlock",
+        "hasLargeCollisionShape",
+        "isFaceSturdy",
+        "getShadeBrightness",
+        "getRenderShape",
+        "getSeed",
+        "skipRendering",
+        "isRedstoneConductor",
+        "isSuffocating",
+        "isViewBlocking",
+    ];
+
+    /// Everything the suite records of a state, with each shape encoded.
+    fn state_case(state: BlockState, neighbours: &[BlockState], shapes: &Shapes) -> Value {
+        let level = &EmptyBlockGetter;
+        let zero = &BlockPos::ZERO;
+        let mut sturdy = 0;
+        for direction in Direction::VALUES {
+            for support_type in SupportType::VALUES {
+                if state.is_face_sturdy_for(level, zero, direction, support_type) {
+                    sturdy |= 1 << (direction as u32 * 3 + support_type as u32);
+                }
+            }
+        }
+        let asked: Vec<BlockState> = [state, state.get_block().default_block_state()]
+            .into_iter()
+            .chain(neighbours.iter().copied())
+            .collect();
+        let skips: Vec<bool> = asked
+            .iter()
+            .flat_map(|&neighbour| {
+                Direction::VALUES.map(|direction| state.skip_rendering(neighbour, direction))
+            })
+            .collect();
+        json!([
+            shapes.encode(state.get_shape(level, zero)),
+            shapes.encode(state.get_collision_shape(level, zero)),
+            shapes.encode(state.get_occlusion_shape()),
+            Direction::VALUES
+                .map(|direction| shapes.encode(state.get_face_occlusion_shape(direction))),
+            shapes.encode(state.get_block_support_shape(level, zero)),
+            shapes.encode(state.get_interaction_shape(level, zero)),
+            shapes.encode(state.get_visual_shape(level, zero, &collision_context::empty())),
+            state.use_shape_for_light_occlusion(),
+            state.propagates_skylight_down(),
+            state.get_light_dampening(),
+            state.is_solid_render(),
+            state.is_solid(),
+            state.is_collision_shape_full_block(level, zero),
+            state.has_large_collision_shape(),
+            sturdy,
+            state.get_shade_brightness(level, zero).encode(),
+            format!("{:?}", state.get_render_shape()),
+            state.get_seed(&POS),
+            hex(&skips),
+            state.is_redstone_conductor_at(level, &POS),
+            state.is_suffocating_at(level, &POS),
+            state.is_view_blocking_at(level, &POS, &AABB::from_block_pos(&POS)),
+        ])
+    }
+
+    /// What vanilla recorded, each shape's index replaced with the shape.
+    fn with_shapes(expected: &Value, shapes: &[Value]) -> Value {
+        let shape =
+            |index: &Value| shapes[index.as_u64().expect("a shape's index") as usize].clone();
+        let elements = expected.as_array().expect("a state's case is an array");
+        let mut full = elements.clone();
+        for i in [0, 1, 2, 4, 5, 6] {
+            full[i] = shape(&elements[i]);
+        }
+        full[3] = Value::Array(
+            elements[3]
+                .as_array()
+                .expect("the faces are an array")
+                .iter()
+                .map(shape)
+                .collect(),
+        );
+        Value::Array(full)
+    }
+
+    /// A state's shapes asked of its block's methods at a block for a context, as the variants
+    /// record them: `[getShape, getCollisionShape, getVisualShape, getInteractionShape,
+    /// getBlockSupportShape]`.
+    fn asked_of_block(
+        state: BlockState,
+        pos: &BlockPos,
+        context: &dyn CollisionContext,
+        shapes: &Shapes,
+    ) -> Value {
+        let level = &EmptyBlockGetter;
+        json!([
+            shapes.encode(state.get_shape_in(level, pos, context)),
+            shapes.encode(state.get_collision_shape_in(level, pos, context)),
+            shapes.encode(state.get_visual_shape(level, pos, context)),
+            shapes.encode(state.get_interaction_shape(level, pos)),
+            shapes.encode(state.get_block_support_shape(level, pos)),
+        ])
+    }
+
+    /// Every state's shapes, light, occlusion, support and what the renderer reads, against
+    /// `ShapeSuites.BlockStateShapeSuite`: as a state reports them with no level around it, then
+    /// asked of its block for every context and block the suite asks at, and its offset.
     #[test]
     fn state_shapes_match_vanilla() {
         let golden =
             Golden::load("net.minecraft.world.level.block.state.BlockBehaviour$BlockStateBase");
-        golden.check(
-            "getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
-            |state: BlockState| state.get_shape(&EmptyBlockGetter, &BlockPos::ZERO),
-        );
-        golden.check(
-            "getCollisionShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
-            |state: BlockState| state.get_collision_shape(&EmptyBlockGetter, &BlockPos::ZERO),
-        );
-        golden.check(
-            "isFaceSturdy(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)Z",
-            |state: BlockState, direction: Direction| {
-                state.is_face_sturdy(&EmptyBlockGetter, &BlockPos::ZERO, direction)
-            },
+        let mut shapes = golden.cases("shape");
+        shapes.sort_by_key(|(args, _)| args[0].as_u64());
+        let shapes: Vec<Value> = shapes.into_iter().map(|(_, shape)| shape).collect();
+        let encoder = Shapes::default();
+        let neighbours = neighbours();
+        let mut failures = Vec::new();
+
+        for (args, expected) in golden.cases("state") {
+            let state = BlockState::decode(&args[0]);
+            let expected = with_shapes(&expected, &shapes);
+            match catch(|| state_case(state, &neighbours, &encoder)) {
+                Ok(actual) => {
+                    for (i, name) in NAMES.iter().enumerate() {
+                        if actual[i] != expected[i] {
+                            failures.push(format!(
+                                "{state} ({}): {name}: expected {}, got {}",
+                                state.id(),
+                                expected[i],
+                                actual[i]
+                            ));
+                        }
+                    }
+                }
+                Err(panic) => failures.push(format!("{state} ({}): panicked: {panic}", state.id())),
+            }
+        }
+
+        let contexts = contexts();
+        for (args, expected) in golden.cases("variants") {
+            let block = Block::decode(&args[0]);
+            let states: Vec<BlockState> =
+                block.get_state_definition().get_possible_states().collect();
+            let [runs, changed] = &**expected.as_array().expect("a block's variants") else {
+                panic!("variants are runs and the changes");
+            };
+            let base: Vec<Value> = runs
+                .as_array()
+                .expect("runs")
+                .iter()
+                .flat_map(|run| {
+                    let count = run[1].as_u64().expect("a run's count") as usize;
+                    std::iter::repeat_n(run[0].clone(), count)
+                })
+                .collect();
+            let shapes_of = |indexes: &Value| -> Value {
+                indexes
+                    .as_array()
+                    .expect("a variant's shapes")
+                    .iter()
+                    .map(|index| shapes[index.as_u64().expect("an index") as usize].clone())
+                    .collect()
+            };
+            let variants = contexts.len() + POSITIONS.len() - 1;
+            for variant in 0..variants {
+                let (context, pos) = if variant < contexts.len() {
+                    (&contexts[variant], &BlockPos::ZERO)
+                } else {
+                    (&contexts[0], &POSITIONS[variant - contexts.len() + 1])
+                };
+                let differences = changed
+                    .as_array()
+                    .expect("the changed variants")
+                    .iter()
+                    .find(|entry| entry[0].as_u64() == Some(variant as u64))
+                    .map(|entry| entry[1].as_array().expect("the changed states").clone())
+                    .unwrap_or_default();
+                for (i, &state) in states.iter().enumerate() {
+                    let expected = differences
+                        .iter()
+                        .find(|entry| entry[0].as_u64() == Some(i as u64))
+                        .map_or(&base[i], |entry| &entry[1]);
+                    match catch(|| asked_of_block(state, pos, context, &encoder)) {
+                        Ok(actual) if actual == shapes_of(expected) => {}
+                        Ok(actual) => failures.push(format!(
+                            "{state} ({}): variant {variant}: expected {}, got {actual}",
+                            state.id(),
+                            shapes_of(expected)
+                        )),
+                        Err(panic) => failures.push(format!(
+                            "{state} ({}): variant {variant}: panicked: {panic}",
+                            state.id()
+                        )),
+                    }
+                }
+            }
+        }
+
+        for (args, expected) in golden.cases("getOffset") {
+            let state = BlockState::decode(&args[0]);
+            let actual = catch(|| {
+                POSITIONS
+                    .iter()
+                    .map(|pos| state.get_offset(pos).encode())
+                    .collect::<Vec<_>>()
+            });
+            match actual {
+                Ok(actual) if Value::Array(actual.clone()) == expected => {}
+                Ok(actual) => failures.push(format!(
+                    "{state} ({}): getOffset: expected {expected}, got {actual:?}",
+                    state.id()
+                )),
+                Err(panic) => failures.push(format!(
+                    "{state} ({}): getOffset panicked: {panic}",
+                    state.id()
+                )),
+            }
+        }
+
+        let blocks_failing: std::collections::BTreeSet<String> = failures
+            .iter()
+            .map(|failure| failure.split(['[', ' ']).next().unwrap_or("").to_owned())
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "{} mismatches in {} blocks ({}):\n{}",
+            failures.len(),
+            blocks_failing.len(),
+            blocks_failing.into_iter().collect::<Vec<_>>().join(", "),
+            failures[..failures.len().min(60)].join("\n")
         );
         golden.finish();
     }

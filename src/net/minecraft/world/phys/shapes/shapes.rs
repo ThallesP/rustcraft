@@ -5,8 +5,8 @@
 //!
 //! The maps of rotated shapes (`rotateHorizontal`, `rotateAll`, the axes' maps) are Java's
 //! `EnumMap`s, which iterate in their keys' order: here a `Vec` of the entries in that order,
-//! which `get` searches. Not ported yet: `rotateAttachFace`, whose `AttachFace` isn't, nor any
-//! block needing it. `DoubleLineConsumer` is a closure.
+//! which `get` searches; `rotateAttachFace`'s `Map.of`, which only `get` reads, is a `Vec` too.
+//! `DoubleLineConsumer` is a closure.
 
 use std::sync::{Arc, LazyLock};
 
@@ -18,6 +18,7 @@ use crate::it::unimi::dsi::fastutil::doubles::double_list::{self, DoubleList};
 use crate::java::lang::math::Math;
 use crate::net::minecraft::core::axis_cycle::AxisCycle;
 use crate::net::minecraft::core::direction::{Axis, AxisDirection, Direction};
+use crate::net::minecraft::world::level::block::state::properties::attach_face::AttachFace;
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::shapes::array_voxel_shape::ArrayVoxelShape;
 use crate::net::minecraft::world::phys::shapes::bit_set_discrete_voxel_shape::BitSetDiscreteVoxelShape;
@@ -562,10 +563,18 @@ impl Shapes {
 
     /// `rotateHorizontalAxis(VoxelShape)`: the shape along z, and turned to x.
     pub fn rotate_horizontal_axis(z_axis: &VoxelShape) -> Vec<(Axis, VoxelShape)> {
+        Shapes::rotate_horizontal_axis_about(z_axis, &Shapes::BLOCK_CENTER)
+    }
+
+    /// `rotateHorizontalAxis(VoxelShape, Vec3)`: turned about the point.
+    pub fn rotate_horizontal_axis_about(
+        z_axis: &VoxelShape,
+        rotation_center: &Vec3,
+    ) -> Vec<(Axis, VoxelShape)> {
         vec![
             (
                 Axis::X,
-                Shapes::rotate(z_axis, OctahedralGroup::BLOCK_ROT_Y_90),
+                Shapes::rotate_about(z_axis, OctahedralGroup::BLOCK_ROT_Y_90, rotation_center),
             ),
             (Axis::Z, z_axis.clone()),
         ]
@@ -573,14 +582,22 @@ impl Shapes {
 
     /// `rotateAllAxis(VoxelShape)`: the shape along z, and turned to x and to y.
     pub fn rotate_all_axis(north: &VoxelShape) -> Vec<(Axis, VoxelShape)> {
+        Shapes::rotate_all_axis_about(north, &Shapes::BLOCK_CENTER)
+    }
+
+    /// `rotateAllAxis(VoxelShape, Vec3)`: turned about the point.
+    pub fn rotate_all_axis_about(
+        north: &VoxelShape,
+        rotation_center: &Vec3,
+    ) -> Vec<(Axis, VoxelShape)> {
         vec![
             (
                 Axis::X,
-                Shapes::rotate(north, OctahedralGroup::BLOCK_ROT_Y_90),
+                Shapes::rotate_about(north, OctahedralGroup::BLOCK_ROT_Y_90, rotation_center),
             ),
             (
                 Axis::Y,
-                Shapes::rotate(north, OctahedralGroup::BLOCK_ROT_X_90),
+                Shapes::rotate_about(north, OctahedralGroup::BLOCK_ROT_X_90, rotation_center),
             ),
             (Axis::Z, north.clone()),
         ]
@@ -596,7 +613,16 @@ impl Shapes {
         north: &VoxelShape,
         initial: OctahedralGroup,
     ) -> Vec<(Direction, VoxelShape)> {
-        let center = Shapes::BLOCK_CENTER;
+        Shapes::rotate_horizontal_from_about(north, initial, &Shapes::BLOCK_CENTER)
+    }
+
+    /// `rotateHorizontal(VoxelShape, OctahedralGroup, Vec3)`: the other three turned about the
+    /// point; north is the initial symmetry about the block's center.
+    pub fn rotate_horizontal_from_about(
+        north: &VoxelShape,
+        initial: OctahedralGroup,
+        rotation_center: &Vec3,
+    ) -> Vec<(Direction, VoxelShape)> {
         vec![
             (Direction::NORTH, Shapes::rotate(north, initial)),
             (
@@ -604,7 +630,7 @@ impl Shapes {
                 Shapes::rotate_about(
                     north,
                     OctahedralGroup::BLOCK_ROT_Y_180.compose(initial),
-                    &center,
+                    rotation_center,
                 ),
             ),
             (
@@ -612,7 +638,7 @@ impl Shapes {
                 Shapes::rotate_about(
                     north,
                     OctahedralGroup::BLOCK_ROT_Y_270.compose(initial),
-                    &center,
+                    rotation_center,
                 ),
             ),
             (
@@ -620,7 +646,7 @@ impl Shapes {
                 Shapes::rotate_about(
                     north,
                     OctahedralGroup::BLOCK_ROT_Y_90.compose(initial),
-                    &center,
+                    rotation_center,
                 ),
             ),
         ]
@@ -628,55 +654,76 @@ impl Shapes {
 
     /// `rotateAll(VoxelShape)`: the shape facing north, turned to face each of the six ways.
     pub fn rotate_all(north: &VoxelShape) -> Vec<(Direction, VoxelShape)> {
-        let center = Shapes::BLOCK_CENTER;
-        let initial = OctahedralGroup::IDENTITY;
+        Shapes::rotate_all_from_about(north, OctahedralGroup::IDENTITY, &Shapes::BLOCK_CENTER)
+    }
+
+    /// `rotateAll(VoxelShape, Vec3)`: turned about the point.
+    pub fn rotate_all_about(
+        north: &VoxelShape,
+        rotation_center: &Vec3,
+    ) -> Vec<(Direction, VoxelShape)> {
+        Shapes::rotate_all_from_about(north, OctahedralGroup::IDENTITY, rotation_center)
+    }
+
+    /// `rotateAll(VoxelShape, OctahedralGroup, Vec3)`: after the initial symmetry, the other five
+    /// turned about the point; north is the initial symmetry about the block's center.
+    pub fn rotate_all_from_about(
+        north: &VoxelShape,
+        initial: OctahedralGroup,
+        rotation_center: &Vec3,
+    ) -> Vec<(Direction, VoxelShape)> {
+        let turned = |rotation: OctahedralGroup| {
+            Shapes::rotate_about(north, rotation.compose(initial), rotation_center)
+        };
+        vec![
+            (Direction::DOWN, turned(OctahedralGroup::BLOCK_ROT_X_90)),
+            (Direction::UP, turned(OctahedralGroup::BLOCK_ROT_X_270)),
+            (Direction::NORTH, Shapes::rotate(north, initial)),
+            (Direction::SOUTH, turned(OctahedralGroup::BLOCK_ROT_Y_180)),
+            (Direction::WEST, turned(OctahedralGroup::BLOCK_ROT_Y_270)),
+            (Direction::EAST, turned(OctahedralGroup::BLOCK_ROT_Y_90)),
+        ]
+    }
+
+    /// `rotateAttachFace(VoxelShape)`: the shape on a wall facing north, turned onto the floor
+    /// and the ceiling, each facing each way around.
+    pub fn rotate_attach_face(
+        north: &VoxelShape,
+    ) -> Vec<(AttachFace, Vec<(Direction, VoxelShape)>)> {
+        Shapes::rotate_attach_face_from(north, OctahedralGroup::IDENTITY)
+    }
+
+    /// `rotateAttachFace(VoxelShape, OctahedralGroup)`: after the initial symmetry.
+    pub fn rotate_attach_face_from(
+        north: &VoxelShape,
+        initial: OctahedralGroup,
+    ) -> Vec<(AttachFace, Vec<(Direction, VoxelShape)>)> {
         vec![
             (
-                Direction::DOWN,
-                Shapes::rotate_about(
-                    north,
-                    OctahedralGroup::BLOCK_ROT_X_90.compose(initial),
-                    &center,
-                ),
+                AttachFace::WALL,
+                Shapes::rotate_horizontal_from(north, initial),
             ),
             (
-                Direction::UP,
-                Shapes::rotate_about(
+                AttachFace::FLOOR,
+                Shapes::rotate_horizontal_from(
                     north,
                     OctahedralGroup::BLOCK_ROT_X_270.compose(initial),
-                    &center,
-                ),
-            ),
-            (Direction::NORTH, Shapes::rotate(north, initial)),
-            (
-                Direction::SOUTH,
-                Shapes::rotate_about(
-                    north,
-                    OctahedralGroup::BLOCK_ROT_Y_180.compose(initial),
-                    &center,
                 ),
             ),
             (
-                Direction::WEST,
-                Shapes::rotate_about(
+                AttachFace::CEILING,
+                Shapes::rotate_horizontal_from(
                     north,
-                    OctahedralGroup::BLOCK_ROT_Y_270.compose(initial),
-                    &center,
-                ),
-            ),
-            (
-                Direction::EAST,
-                Shapes::rotate_about(
-                    north,
-                    OctahedralGroup::BLOCK_ROT_Y_90.compose(initial),
-                    &center,
+                    OctahedralGroup::BLOCK_ROT_Y_180
+                        .compose(OctahedralGroup::BLOCK_ROT_X_90)
+                        .compose(initial),
                 ),
             ),
         ]
     }
 
-    /// The shape a map of rotated shapes has for the key.
-    pub fn get<K: PartialEq>(shapes: &[(K, VoxelShape)], key: K) -> &VoxelShape {
+    /// What a map of rotated shapes has for the key: a shape, or the map of `rotateAttachFace`.
+    pub fn get<K: PartialEq, V>(shapes: &[(K, V)], key: K) -> &V {
         &shapes
             .iter()
             .find(|(entry, _)| *entry == key)
@@ -692,6 +739,7 @@ mod tests {
     use crate::golden::Golden;
     use crate::net::minecraft::core::direction::{Axis, Direction};
     use crate::net::minecraft::world::level::block::block::Block;
+    use crate::net::minecraft::world::level::block::state::properties::attach_face::AttachFace;
     use crate::net::minecraft::world::phys::aabb::AABB;
     use crate::net::minecraft::world::phys::shapes::boolean_op::BooleanOp;
     use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
@@ -836,9 +884,53 @@ mod tests {
             &method("rotateAllAxis", &[SHAPE], "Ljava/util/Map;"),
             |shape: VoxelShape| Shapes::rotate_all_axis(&shape),
         );
-        golden.pending(
-            "rotateAttachFace(Lnet/minecraft/world/phys/shapes/VoxelShape;)Ljava/util/Map;",
-            "AttachFace isn't ported: no block needing it is",
+        let vec3 = "Lnet/minecraft/world/phys/Vec3;";
+        golden.check(
+            &method("rotateHorizontalAxis", &[SHAPE, vec3], "Ljava/util/Map;"),
+            |shape: VoxelShape, point: Vec3| Shapes::rotate_horizontal_axis_about(&shape, &point),
+        );
+        golden.check(
+            &method("rotateAllAxis", &[SHAPE, vec3], "Ljava/util/Map;"),
+            |shape: VoxelShape, point: Vec3| Shapes::rotate_all_axis_about(&shape, &point),
+        );
+        golden.check(
+            &method("rotateAll", &[SHAPE, vec3], "Ljava/util/Map;"),
+            |shape: VoxelShape, point: Vec3| Shapes::rotate_all_about(&shape, &point),
+        );
+        golden.check(
+            &method("rotateHorizontal", &[SHAPE, group, vec3], "Ljava/util/Map;"),
+            |shape: VoxelShape, initial: OctahedralGroup, point: Vec3| {
+                Shapes::rotate_horizontal_from_about(&shape, initial, &point)
+            },
+        );
+        golden.check(
+            &method("rotateAll", &[SHAPE, group, vec3], "Ljava/util/Map;"),
+            |shape: VoxelShape, initial: OctahedralGroup, point: Vec3| {
+                Shapes::rotate_all_from_about(&shape, initial, &point)
+            },
+        );
+        // In `AttachFace`'s order: Java's map is a `Map.of`.
+        let attach_faces = |maps: Vec<(AttachFace, Vec<(Direction, VoxelShape)>)>| {
+            AttachFace::VALUES
+                .map(|face| {
+                    let shapes = &maps
+                        .iter()
+                        .find(|(key, _)| *key == face)
+                        .expect("every face")
+                        .1;
+                    (format!("{face:?}"), shapes.clone())
+                })
+                .to_vec()
+        };
+        golden.check(
+            &method("rotateAttachFace", &[SHAPE], "Ljava/util/Map;"),
+            |shape: VoxelShape| attach_faces(Shapes::rotate_attach_face(&shape)),
+        );
+        golden.check(
+            &method("rotateAttachFace", &[SHAPE, group], "Ljava/util/Map;"),
+            |shape: VoxelShape, initial: OctahedralGroup| {
+                attach_faces(Shapes::rotate_attach_face_from(&shape, initial))
+            },
         );
         golden.finish();
     }

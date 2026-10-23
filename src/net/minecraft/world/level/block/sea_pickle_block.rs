@@ -2,7 +2,11 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `getFluidState` and its shape (by how many pickles) are ported.
 
+use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -14,12 +18,17 @@ use crate::net::minecraft::world::level::block::state::properties::integer_prope
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block::vegetation_block::{self, VegetationBlock};
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct SeaPickleBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_shape: Some(SeaPickleBlock::get_shape),
     get_fluid_state: Some(SeaPickleBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.SeaPickleBlock",
@@ -72,6 +81,28 @@ impl SeaPickleBlock {
             Fluids::WATER.get_source(false)
         } else {
             Fluids::EMPTY.default_fluid_state()
+        }
+    }
+}
+
+static SHAPE_ONE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(4.0, 0.0, 6.0));
+static SHAPE_TWO: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(10.0, 0.0, 6.0));
+static SHAPE_THREE: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(12.0, 0.0, 6.0));
+static SHAPE_FOUR: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(12.0, 0.0, 7.0));
+
+impl SeaPickleBlock {
+    fn get_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _context: &dyn CollisionContext,
+    ) -> VoxelShape {
+        match state.get_value(SeaPickleBlock::PICKLES) {
+            2 => SHAPE_TWO.clone(),
+            3 => SHAPE_THREE.clone(),
+            4 => SHAPE_FOUR.clone(),
+            _ => SHAPE_ONE.clone(),
         }
     }
 }

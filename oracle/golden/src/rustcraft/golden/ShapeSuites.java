@@ -6,39 +6,53 @@ import com.google.gson.JsonPrimitive;
 import com.mojang.math.OctahedralGroup;
 import it.unimi.dsi.fastutil.doubles.DoubleList;
 import java.io.IOException;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.function.Supplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.server.RegistryLayer;
+import net.minecraft.server.packs.PackType;
+import net.minecraft.server.packs.repository.ServerPacksSource;
+import net.minecraft.server.packs.resources.CloseableResourceManager;
+import net.minecraft.server.packs.resources.MultiPackResourceManager;
+import net.minecraft.tags.TagLoader;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.CrossCollisionBlock;
-import net.minecraft.world.level.block.LadderBlock;
-import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.IronBarsBlock;
 import net.minecraft.world.level.block.LiquidBlock;
-import net.minecraft.world.level.block.MudBlock;
-import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.SlabBlock;
-import net.minecraft.world.level.block.SoulSandBlock;
-import net.minecraft.world.level.block.StairBlock;
-import net.minecraft.world.level.block.VineBlock;
-import net.minecraft.world.level.block.WallBlock;
+import net.minecraft.world.level.block.SupportType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.AttachFace;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.BitSetDiscreteVoxelShape;
 import net.minecraft.world.phys.shapes.BooleanOp;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.CubePointRange;
 import net.minecraft.world.phys.shapes.DiscreteVoxelShape;
+import net.minecraft.world.phys.shapes.EntityCollisionContext;
 import net.minecraft.world.phys.shapes.IndexMerger;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.SliceShape;
@@ -375,6 +389,16 @@ final class ShapeSuites {
         }
     }
 
+    static <T> Constructor<T> constructor(final Class<T> owner, final Class<?>... parameters) {
+        try {
+            Constructor<T> constructor = owner.getDeclaredConstructor(parameters);
+            constructor.setAccessible(true);
+            return constructor;
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     static Method method(final Class<?> owner, final String name, final Class<?>... parameters) {
         try {
             Method method = owner.getDeclaredMethod(name, parameters);
@@ -676,7 +700,50 @@ final class ShapeSuites {
                     );
                 }
             }
-            writer.skipped("rotateAttachFace(" + SHAPE_TYPE + ")Ljava/util/Map;", "AttachFace isn't ported: no block needing it is");
+            // The overloads turning about another point, and rotateAttachFace's maps (a Map.of, whose order changes from run
+            // to run, so in AttachFace's order: [[face, [[direction, shape], …]], …]), of the base shapes.
+            for (Recipe shape : base) {
+                JsonArray args = BlockSuites.array(shape.json);
+                for (Vec3 point : points) {
+                    JsonArray pointArgs = BlockSuites.array(shape.json, CoreValues.encode(point));
+                    BlockSuites.call(
+                        writer, "rotateHorizontalAxis(" + SHAPE_TYPE + VEC3_TYPE + ")Ljava/util/Map;", pointArgs,
+                        () -> shapes(Shapes.rotateHorizontalAxis(shape.make.get(), point))
+                    );
+                    BlockSuites.call(
+                        writer, "rotateAllAxis(" + SHAPE_TYPE + VEC3_TYPE + ")Ljava/util/Map;", pointArgs, () -> shapes(Shapes.rotateAllAxis(shape.make.get(), point))
+                    );
+                    BlockSuites.call(
+                        writer, "rotateAll(" + SHAPE_TYPE + VEC3_TYPE + ")Ljava/util/Map;", pointArgs, () -> shapes(Shapes.rotateAll(shape.make.get(), point))
+                    );
+                    for (OctahedralGroup initial : List.of(OctahedralGroup.IDENTITY, OctahedralGroup.INVERT_Y, OctahedralGroup.BLOCK_ROT_X_90)) {
+                        JsonArray initialArgs = BlockSuites.array(shape.json, new JsonPrimitive(initial.name()), CoreValues.encode(point));
+                        BlockSuites.call(
+                            writer, "rotateHorizontal(" + SHAPE_TYPE + OCTAHEDRAL_GROUP_TYPE + VEC3_TYPE + ")Ljava/util/Map;", initialArgs,
+                            () -> shapes(Shapes.rotateHorizontal(shape.make.get(), initial, point))
+                        );
+                        BlockSuites.call(
+                            writer, "rotateAll(" + SHAPE_TYPE + OCTAHEDRAL_GROUP_TYPE + VEC3_TYPE + ")Ljava/util/Map;", initialArgs,
+                            () -> shapes(Shapes.rotateAll(shape.make.get(), initial, point))
+                        );
+                    }
+                }
+                BlockSuites.call(writer, "rotateAttachFace(" + SHAPE_TYPE + ")Ljava/util/Map;", args, () -> attachFaces(Shapes.rotateAttachFace(shape.make.get())));
+                for (OctahedralGroup initial : List.of(OctahedralGroup.INVERT_Y, OctahedralGroup.BLOCK_ROT_X_90, OctahedralGroup.SWAP_XZ)) {
+                    BlockSuites.call(
+                        writer, "rotateAttachFace(" + SHAPE_TYPE + OCTAHEDRAL_GROUP_TYPE + ")Ljava/util/Map;",
+                        BlockSuites.array(shape.json, new JsonPrimitive(initial.name())), () -> attachFaces(Shapes.rotateAttachFace(shape.make.get(), initial))
+                    );
+                }
+            }
+        }
+
+        private static JsonArray attachFaces(final java.util.Map<AttachFace, java.util.Map<Direction, VoxelShape>> maps) {
+            JsonArray entries = new JsonArray();
+            for (AttachFace face : AttachFace.values()) {
+                entries.add(BlockSuites.array(new JsonPrimitive(face.name()), shapes(maps.get(face))));
+            }
+            return entries;
         }
     }
 
@@ -688,56 +755,190 @@ final class ShapeSuites {
     }
 
     /**
-     * The shapes of the blocks whose classes' shapes are ported, for every state, as a state reports them with no level
-     * around it (`EmptyBlockGetter`, `BlockPos.ZERO`), which is what the state's cache holds: `getShape` and
-     * `getCollisionShape`, and `isFaceSturdy` toward each direction, which also covers the blocks of `Block` itself and
-     * leaves (whose support shape is their own). A state is its id.
+     * Every block state's shapes and what the state keeps of them (TESTING.md), one line per state ({@code state},
+     * `args[0]` its id): each shape as the index of a {@code shape} line, which holds the shape as {@link #shape} encodes
+     * it, each distinct one once. As a state reports them with no level around it (`EmptyBlockGetter`, `BlockPos.ZERO`,
+     * the empty context), which is what its cache holds: {@code [getShape, getCollisionShape, getOcclusionShape,
+     * [getFaceOcclusionShape of each direction], getBlockSupportShape, getInteractionShape, getVisualShape,
+     * useShapeForLightOcclusion, propagatesSkylightDown, getLightDampening, isSolidRender, isSolid,
+     * isCollisionShapeFullBlock, hasLargeCollisionShape, isFaceSturdy (a bit for each direction and support type,
+     * direction * 3 + type), getShadeBrightness, getRenderShape, getSeed at (1, 2, 3), skipRendering (a bit for each
+     * neighbour and direction, neighbour * 6 + direction, in hex), isRedstoneConductor, isSuffocating and isViewBlocking
+     * at (1, 2, 3)]}. Then {@code variants}, `args[0]` a block: its states' {@code [getShape, getCollisionShape,
+     * getVisualShape, getInteractionShape, getBlockSupportShape]} asked of the block's methods (no cache) at
+     * `BlockPos.ZERO` with the empty context, as runs, and for each other variant (another context at `BlockPos.ZERO`,
+     * or the empty context at another block) where any state's differ, {@code [variant, [[state index, shapes], …]]};
+     * and {@code getOffset} of each state with an offset function at those blocks.
      */
     static final class BlockStateShapeSuite implements Suite {
-        private static final List<Class<? extends Block>> CLASSES = List.of(
-            SoulSandBlock.class, SlabBlock.class, StairBlock.class, CrossCollisionBlock.class, LiquidBlock.class,
-            LadderBlock.class, VineBlock.class, ScaffoldingBlock.class, WallBlock.class, MudBlock.class
+        private static final BlockPos POS = new BlockPos(1, 2, 3);
+        private static final List<BlockPos> POSITIONS = List.of(
+            BlockPos.ZERO, POS, new BlockPos(-37, 70, 1290), new BlockPos(12345, -60, -9876), new BlockPos(-1, 0, -1),
+            new BlockPos(29999999, 319, -29999999), new BlockPos(7, 64, -300)
         );
-
         @Override
         public String name() {
             return BlockBehaviour.BlockStateBase.class.getName();
         }
 
+        /**
+         * The contexts the variants ask at `BlockPos.ZERO`: none, none colliding with fluids, and no entity whose bottom
+         * is a block up (on the block), a block up descending, halfway, a block down, a block up colliding with fluids,
+         * holding scaffolding, holding a light, and placing a block (`placementContext(null)`).
+         */
+        static List<CollisionContext> contexts() {
+            return List.of(
+                CollisionContext.empty(), CollisionContext.emptyWithFluidCollisions(), new Context(false, 1.0, null, false),
+                new Context(true, 1.0, null, false), new Context(false, 0.5, null, false), new Context(false, -1.0, null, false),
+                new Context(false, 1.0, null, true), new Context(false, 1.0, Items.SCAFFOLDING, false), new Context(false, 1.0, Items.LIGHT, false),
+                CollisionContext.placementContext(null)
+            );
+        }
+
+        /**
+         * An entity's context without the entity, through its protected constructor. Its held item stands for a stack of
+         * it, whose {@code is} is the item's: an item stack can't be made before the data packs bind its components.
+         */
+        private static final class Context extends EntityCollisionContext {
+            private final Item held;
+
+            Context(final boolean descending, final double bottom, final Item held, final boolean alwaysCollideWithFluid) {
+                super(descending, false, bottom, ItemStack.EMPTY, alwaysCollideWithFluid, null);
+                this.held = held;
+            }
+
+            @Override
+            public boolean isHoldingItem(final Item item) {
+                return item == this.held;
+            }
+        }
+
+        /** The neighbours `skipRendering` is asked about, after the state itself and its block's default state. */
+        static List<BlockState> neighbours() {
+            BlockState bars = Blocks.IRON_BARS.defaultBlockState();
+            for (BooleanProperty side : List.of(IronBarsBlock.NORTH, IronBarsBlock.EAST, IronBarsBlock.SOUTH, IronBarsBlock.WEST)) {
+                bars = bars.setValue(side, true);
+            }
+            BlockState pane = Blocks.GLASS_PANE.defaultBlockState().setValue(IronBarsBlock.NORTH, true).setValue(IronBarsBlock.SOUTH, true);
+            BlockState copperBars = Blocks.COPPER_BARS.weathering().unaffected().defaultBlockState().setValue(IronBarsBlock.EAST, true).setValue(IronBarsBlock.WEST, true);
+            return List.of(
+                Blocks.AIR.defaultBlockState(), Blocks.STONE.defaultBlockState(), Blocks.GLASS.defaultBlockState(),
+                Blocks.STAINED_GLASS.white().defaultBlockState(), Blocks.TINTED_GLASS.defaultBlockState(), Blocks.ICE.defaultBlockState(),
+                Blocks.OAK_LEAVES.defaultBlockState(), Blocks.CHERRY_LEAVES.defaultBlockState(), Blocks.MANGROVE_ROOTS.defaultBlockState(),
+                Blocks.IRON_BARS.defaultBlockState(), bars, pane, copperBars, Blocks.WATER.defaultBlockState(),
+                Blocks.WATER.defaultBlockState().setValue(LiquidBlock.LEVEL, 3), Blocks.LAVA.defaultBlockState(), Blocks.KELP.defaultBlockState(),
+                Blocks.OAK_SLAB.defaultBlockState().setValue(SlabBlock.WATERLOGGED, true), Blocks.POWDER_SNOW.defaultBlockState(),
+                Blocks.SLIME_BLOCK.defaultBlockState(), Blocks.HONEY_BLOCK.defaultBlockState(), Blocks.BARRIER.defaultBlockState(),
+                Blocks.COPPER_GRATE.weathering().unaffected().defaultBlockState(), Blocks.BUBBLE_COLUMN.defaultBlockState()
+            );
+        }
+
+        /**
+         * Binds the vanilla data pack's block tags, which a client has from the server it joins and the default
+         * `isSuffocating` reads. Nothing binds them before this suite, so the suites before it see none.
+         */
+        static void bindBlockTags() {
+            CloseableResourceManager resources = new MultiPackResourceManager(
+                PackType.SERVER_DATA, ServerPacksSource.createVanillaPackSource().asResourcesSupplier().openResources(null, null).toList()
+            );
+            TagLoader.loadTagsForExistingRegistries(resources, RegistryLayer.createRegistryAccess().getLayer(RegistryLayer.STATIC))
+                .stream()
+                .filter(tags -> tags.key() == Registries.BLOCK)
+                .forEach(Registry.PendingTags::apply);
+        }
+
         @Override
         public void write(final GoldenWriter writer) throws IOException {
+            bindBlockTags();
+            Map<String, Integer> indexes = new LinkedHashMap<>();
+            List<JsonElement> shapes = new ArrayList<>();
+            java.util.function.Function<VoxelShape, JsonPrimitive> index = shape -> {
+                JsonElement encoded = shape(shape);
+                Integer i = indexes.computeIfAbsent(encoded.toString(), key -> {
+                    shapes.add(encoded);
+                    return shapes.size() - 1;
+                });
+                return new JsonPrimitive(i);
+            };
+            EmptyBlockGetter level = EmptyBlockGetter.INSTANCE;
+            AABB nearPlane = new AABB(POS);
+            List<BlockState> neighbours = neighbours();
             for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
-                if (CLASSES.stream().noneMatch(type -> type.isInstance(state.getBlock()))) {
-                    continue;
+                JsonArray faces = new JsonArray();
+                int sturdy = 0;
+                for (Direction direction : Direction.values()) {
+                    faces.add(index.apply(state.getFaceOcclusionShape(direction)));
+                    for (SupportType type : SupportType.values()) {
+                        if (state.isFaceSturdy(level, BlockPos.ZERO, direction, type)) {
+                            sturdy |= 1 << direction.ordinal() * 3 + type.ordinal();
+                        }
+                    }
                 }
-                JsonArray args = BlockSuites.array(new JsonPrimitive(Block.BLOCK_STATE_REGISTRY.getId(state)));
-                BlockSuites.call(
-                    writer, "getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)" + SHAPE_TYPE, args,
-                    () -> shape(state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
+                List<BlockState> asked = new ArrayList<>(List.of(state, state.getBlock().defaultBlockState()));
+                asked.addAll(neighbours);
+                BigInteger skips = BigInteger.ZERO;
+                for (int i = 0; i < asked.size(); i++) {
+                    for (Direction direction : Direction.values()) {
+                        if (state.skipRendering(asked.get(i), direction)) {
+                            skips = skips.setBit(i * 6 + direction.ordinal());
+                        }
+                    }
+                }
+                JsonArray result = BlockSuites.array(
+                    index.apply(state.getShape(level, BlockPos.ZERO)), index.apply(state.getCollisionShape(level, BlockPos.ZERO)),
+                    index.apply(state.getOcclusionShape()), faces, index.apply(state.getBlockSupportShape(level, BlockPos.ZERO)),
+                    index.apply(state.getInteractionShape(level, BlockPos.ZERO)),
+                    index.apply(state.getVisualShape(level, BlockPos.ZERO, CollisionContext.empty())),
+                    new JsonPrimitive(state.useShapeForLightOcclusion()), new JsonPrimitive(state.propagatesSkylightDown()),
+                    new JsonPrimitive(state.getLightDampening()), new JsonPrimitive(state.isSolidRender()), new JsonPrimitive(state.isSolid()),
+                    new JsonPrimitive(state.isCollisionShapeFullBlock(level, BlockPos.ZERO)), new JsonPrimitive(state.hasLargeCollisionShape()),
+                    new JsonPrimitive(sturdy), f(state.getShadeBrightness(level, BlockPos.ZERO)), new JsonPrimitive(state.getRenderShape().name()),
+                    new JsonPrimitive(state.getSeed(POS)), new JsonPrimitive(skips.toString(16)),
+                    new JsonPrimitive(state.isRedstoneConductor(level, POS)), new JsonPrimitive(state.isSuffocating(level, POS)),
+                    new JsonPrimitive(state.isViewBlocking(level, POS, nearPlane))
                 );
-                BlockSuites.call(
-                    writer, "getCollisionShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)" + SHAPE_TYPE, args,
-                    () -> shape(state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
+                writer.result("state", BlockSuites.array(BlockSuites.state(state)), result, null);
+                if (state.hasOffsetFunction()) {
+                    writer.result(
+                        "getOffset", BlockSuites.array(BlockSuites.state(state)), BlockSuites.list(POSITIONS, pos -> CoreValues.encode(state.getOffset(pos))),
+                        null
+                    );
+                }
+            }
+            List<CollisionContext> contexts = contexts();
+            for (Block block : BuiltInRegistries.BLOCK) {
+                List<BlockState> states = block.getStateDefinition().getPossibleStates();
+                List<JsonArray> base = null;
+                JsonArray changed = new JsonArray();
+                for (int variant = 0; variant < contexts.size() + POSITIONS.size() - 1; variant++) {
+                    CollisionContext context = variant < contexts.size() ? contexts.get(variant) : CollisionContext.empty();
+                    BlockPos pos = variant < contexts.size() ? BlockPos.ZERO : POSITIONS.get(variant - contexts.size() + 1);
+                    List<JsonArray> asked = states.stream().map(state -> BlockSuites.array(
+                        index.apply(state.getShape(level, pos, context)), index.apply(state.getCollisionShape(level, pos, context)),
+                        index.apply(state.getVisualShape(level, pos, context)), index.apply(state.getInteractionShape(level, pos)),
+                        index.apply(state.getBlockSupportShape(level, pos))
+                    )).toList();
+                    if (base == null) {
+                        base = asked;
+                        continue;
+                    }
+                    JsonArray differences = new JsonArray();
+                    for (int i = 0; i < states.size(); i++) {
+                        if (!asked.get(i).equals(base.get(i))) {
+                            differences.add(BlockSuites.array(new JsonPrimitive(i), asked.get(i)));
+                        }
+                    }
+                    if (!differences.isEmpty()) {
+                        changed.add(BlockSuites.array(new JsonPrimitive(variant), differences));
+                    }
+                }
+                writer.result(
+                    "variants", BlockSuites.array(BlockSuites.block(block)), BlockSuites.array(ChunkSuites.runs(base.iterator(), tuple -> tuple), changed),
+                    null
                 );
             }
-            for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
-                Block block = state.getBlock();
-                boolean ported = block.getClass() == Block.class || block instanceof LeavesBlock
-                    || CLASSES.stream().anyMatch(type -> type.isInstance(block));
-                if (!ported) {
-                    continue;
-                }
-                for (Direction direction : Direction.values()) {
-                    JsonArray args = BlockSuites.array(
-                        new JsonPrimitive(Block.BLOCK_STATE_REGISTRY.getId(state)), new JsonPrimitive(direction.name())
-                    );
-                    BlockSuites.call(
-                        writer,
-                        "isFaceSturdy(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)Z",
-                        args,
-                        () -> new JsonPrimitive(state.isFaceSturdy(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, direction))
-                    );
-                }
+            for (int i = 0; i < shapes.size(); i++) {
+                writer.result("shape", BlockSuites.array(new JsonPrimitive(i)), shapes.get(i), null);
             }
         }
     }

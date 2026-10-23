@@ -3,9 +3,12 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
 
+use crate::net::minecraft::core::direction::Axis;
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
@@ -18,6 +21,7 @@ use crate::net::minecraft::world::level::material::fluids::Fluids;
 pub struct MangroveRootsBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    skip_rendering: Some(MangroveRootsBlock::skip_rendering),
     get_fluid_state: Some(MangroveRootsBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.MangroveRootsBlock",
@@ -64,5 +68,17 @@ impl MangroveRootsBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl MangroveRootsBlock {
+    /// `skipRendering`: the faces between two blocks of mangrove roots stacked up.
+    fn skip_rendering(
+        _block: &BlockData,
+        _state: BlockState,
+        neighbor_state: BlockState,
+        direction: Direction,
+    ) -> bool {
+        neighbor_state.is(Blocks::MANGROVE_ROOTS) && direction.get_axis() == Axis::Y
     }
 }
