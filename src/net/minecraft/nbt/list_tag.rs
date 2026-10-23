@@ -40,6 +40,11 @@ impl ListTag {
         ListTag { list: Vec::new() }
     }
 
+    /// The package-private `ListTag(List)`: a list of these tags.
+    pub(crate) fn from_list(list: Vec<Tag>) -> ListTag {
+        ListTag { list }
+    }
+
     // A compound of one tag under the empty key is the tag it wraps.
     fn try_unwrap(mut tag: CompoundTag) -> Tag {
         if tag.size() == 1

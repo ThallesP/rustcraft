@@ -485,16 +485,61 @@ impl<R: fmt::Display> fmt::Display for DataResult<R> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::panic::{self, AssertUnwindSafe};
 
     use serde_json::Value;
 
     use super::DataResult;
     use crate::com::mojang::serialization::lifecycle::Lifecycle;
-    use crate::golden::Golden;
+    use crate::golden::{Encode, Golden};
 
-    fn lifecycle(spec: &Value) -> Lifecycle {
+    /// A result as the codec suites record it (`DfuValues.result`): `["success", value,
+    /// lifecycle]` or `["error", message, [partial] or [], lifecycle]`.
+    pub(crate) fn encode_result<R>(
+        result: &DataResult<R>,
+        value: impl Fn(&R) -> Box<dyn Encode>,
+    ) -> Box<dyn Encode> {
+        let lifecycle: Box<dyn Encode> = Box::new(encode_lifecycle(result.lifecycle()));
+        Box::new(match result {
+            DataResult::Success(success) => vec![
+                Box::new(Value::from("success")) as Box<dyn Encode>,
+                value(success.value()),
+                lifecycle,
+            ],
+            DataResult::Error(error) => vec![
+                Box::new(Value::from("error")) as Box<dyn Encode>,
+                Box::new(Value::from(error.message())),
+                Box::new(
+                    error
+                        .partial_value()
+                        .map(&value)
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                ),
+                lifecycle,
+            ],
+        })
+    }
+
+    /// A result the codec suites recorded, its value decoded by `value`.
+    pub(crate) fn decode_result<R>(spec: &Value, value: impl Fn(&Value) -> R) -> DataResult<R> {
+        let spec = spec.as_array().unwrap();
+        let lifecycle = lifecycle(spec.last().unwrap());
+        if spec[0] == "success" {
+            DataResult::success_lifecycle(value(&spec[1]), lifecycle)
+        } else {
+            let message = spec[1].as_str().unwrap().to_owned();
+            match spec[2].as_array().unwrap().first() {
+                Some(partial) => {
+                    DataResult::error_partial_lifecycle(|| message, value(partial), lifecycle)
+                }
+                None => DataResult::error_lifecycle(|| message, lifecycle),
+            }
+        }
+    }
+
+    pub(crate) fn lifecycle(spec: &Value) -> Lifecycle {
         match spec {
             Value::Array(deprecated) => {
                 Lifecycle::deprecated(deprecated[1].as_i64().unwrap() as i32)
@@ -504,7 +549,7 @@ mod tests {
         }
     }
 
-    fn encode_lifecycle(lifecycle: Lifecycle) -> Value {
+    pub(crate) fn encode_lifecycle(lifecycle: Lifecycle) -> Value {
         match lifecycle {
             Lifecycle::Deprecated(since) => {
                 Value::from(vec![Value::from("Deprecated"), Value::from(since)])

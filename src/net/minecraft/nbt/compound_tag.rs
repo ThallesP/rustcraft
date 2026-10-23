@@ -2,8 +2,9 @@
 //!
 //! Not ported yet: `toString` and `accept`, like every tag's (see `Tag`); `CODEC`, `store`,
 //! `storeNullable` and `read`, which wait for DataFixerUpper's codecs; `forEach`, whose
-//! `BiConsumer` the golden harness can't generate (iterate `entry_set` instead); and the
-//! package-private `shallowCopy`, which `NbtOps` calls.
+//! `BiConsumer` the golden harness can't generate (iterate `entry_set` instead). The
+//! package-private `shallowCopy`, which `NbtOps` calls, copies the map (`new HashMap<>(tags)`,
+//! sized for its size) with its tags, which Java shares: a copy of a value nothing changes after.
 //!
 //! Its tags are in a `java::util::hash_map::HashMap`, a port of Java's, since a compound writes
 //! its tags in the order its map iterates them. A key's getters hand out what they find, or the
@@ -270,6 +271,13 @@ impl CompoundTag {
 
     pub fn is_empty(&self) -> bool {
         self.tags.is_empty()
+    }
+
+    /// `shallowCopy`: the map copied, `new HashMap<>(tags)`, which sizes its table for the size.
+    pub(crate) fn shallow_copy(&self) -> CompoundTag {
+        CompoundTag {
+            tags: HashMap::from_map(&self.tags),
+        }
     }
 
     /// A copy of each tag, put in this compound's order into a new map.

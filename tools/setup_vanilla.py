@@ -38,7 +38,8 @@ VINEFLOWER_SHA256 = "1dfcfe974395734fa467ce620661c7623d05ba83670de0529b1fbd63ff5
 VINEFLOWER_URL = f"https://repo1.maven.org/maven2/org/vineflower/vineflower/{VINEFLOWER_VERSION}/vineflower-{VINEFLOWER_VERSION}.jar"
 MAVEN_CENTRAL = "https://repo1.maven.org/maven2/"
 # Libraries the port translates like the game's own classes, from their published sources.
-SOURCE_LIBRARIES = {"org.joml:joml", "io.netty:netty-buffer", "com.google.guava:guava"}
+# Gson's JsonReader and JsonWriter read and write text components' JSON (LenientJsonParser, the status).
+SOURCE_LIBRARIES = {"org.joml:joml", "io.netty:netty-buffer", "com.google.guava:guava", "com.google.code.gson:gson"}
 # Ones it translates that publish no sources, so they're decompiled like the game: authlib, and DataFixerUpper, whose
 # codecs read and write text components and the vanilla pack's JSON.
 DECOMPILED_LIBRARIES = {"com.mojang:authlib", "com.mojang:datafixerupper"}

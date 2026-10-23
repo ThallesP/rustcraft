@@ -12,6 +12,7 @@ pub mod long_array_tag;
 pub mod long_tag;
 pub mod nbt_accounter;
 pub mod nbt_io;
+pub mod nbt_ops;
 pub mod numeric_tag;
 pub mod short_tag;
 pub mod snbt_grammar;

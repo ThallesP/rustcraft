@@ -1253,6 +1253,7 @@ public final class Golden {
         // The game protocol's packets that read the registries, and what they hold: the registries a RegistryFriendlyByteBuf
         // carries (RegistryValues), the clocks' time, an entity's attributes, the world's spawn and an entity's data.
         new DataResultSuite(),
+        new NbtOpsSuite(),
         new RegistryValues.RegistriesSuite(),
         new StaticSuite(Attributes.class),
         InstanceSuite.every(WorldClock.class),
