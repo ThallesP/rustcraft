@@ -3,6 +3,12 @@
 //! `Screenshot.takeScreenshot`. Each run is the `rustcraft` binary under `xvfb-run -a`, so SDL's
 //! and GL's process state stays out of the other tests. Without `xvfb-run` the tests say so and
 //! pass, since there's no display to open a context on.
+//!
+//! Vanilla's pixels are only the port's to match on the driver vanilla's screenshots were taken
+//! on (`ORACLE_DRIVER`): another llvmpipe needn't rasterize and sample to the same bits. On
+//! another driver the frames only have to render. With `RUSTCRAFT_ORACLE_DRIVER=1` (CI's job in
+//! the oracle's Ubuntu and Mesa) nothing is skipped: no `xvfb-run`, another driver, or a capture
+//! or live run missing fails the test.
 
 use md5::{Digest, Md5};
 use std::path::{Path, PathBuf};
@@ -10,11 +16,48 @@ use std::process::Command;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rustcraft");
 
+/// The lines vanilla logged about its device on the oracle machine
+/// (`vanilla/26.3/oracle/*/client.log`): Mesa 26.0.8-1ubuntu0.3's llvmpipe on LLVM 21.1.8, the
+/// extensions in their `HashSet`'s order.
+const ORACLE_DEVICE: [&str; 3] = [
+    "backend OpenGL, using drivers: 4.5 (Core Profile) Mesa 26.0.8-1ubuntu0.3",
+    "device: llvmpipe (LLVM 21.1.8, 256 bits) (Mesa)",
+    "device extensions: GL_ARB_multi_draw_indirect, GL_ARB_buffer_storage, \
+     GL_ARB_shader_draw_parameters, GL_ARB_base_instance, GL_KHR_debug, GL_ARB_draw_indirect, \
+     GL_ARB_clip_control, GL_ARB_vertex_attrib_binding, GL_ARB_direct_state_access, \
+     GL_EXT_texture_filter_anisotropic",
+];
+const ORACLE_DRIVER: &str = "4.5 (Core Profile) Mesa 26.0.8-1ubuntu0.3";
+
+/// Whether every pixel check must run here: `RUSTCRAFT_ORACLE_DRIVER=1`.
+fn strict() -> bool {
+    std::env::var_os("RUSTCRAFT_ORACLE_DRIVER").is_some_and(|value| value == "1")
+}
+
+/// A check that can't run here: a failure where it must, a note otherwise.
+fn skip(reason: &str) {
+    assert!(!strict(), "RUSTCRAFT_ORACLE_DRIVER=1, but {reason}");
+    eprintln!("skipped: {reason}");
+}
+
+/// Whether the binary renders on the oracle's driver here, after `run` found `xvfb-run`.
+fn on_oracle_driver() -> bool {
+    let device = run(&["--device-info"]).expect("xvfb-run ran before");
+    let on_it = device.contains(&format!("using drivers: {ORACLE_DRIVER}\n"));
+    if !on_it {
+        skip(&format!(
+            "vanilla's screenshots were taken on {ORACLE_DRIVER}, this is {}",
+            device.lines().next().unwrap_or_default()
+        ));
+    }
+    on_it
+}
+
 /// The binary under a fresh Xvfb with llvmpipe, or `None` without `xvfb-run`.
 fn run(arguments: &[&str]) -> Option<String> {
     let found = Command::new("xvfb-run").arg("--help").output().is_ok();
     if !found {
-        eprintln!("skipped: no xvfb-run (sudo apt install xvfb)");
+        skip("no xvfb-run (sudo apt install xvfb)");
         return None;
     }
     let output = Command::new("xvfb-run")
@@ -57,31 +100,35 @@ fn makes_the_device_vanilla_makes() {
     assert_eq!(lines[3], flags);
 
     // The oracle client's log, when this machine has run it, says what vanilla made of the same
-    // driver, extensions in its HashSet's order. Then the flags must be the ones the shader
-    // goldens are recorded with (RenderSuites' LLVMPIPE). Elsewhere (CI) Mesa can differ.
+    // driver, extensions in its HashSet's order; on the oracle's driver without one, it's the
+    // lines the oracle logged. Then the flags must be the ones the shader goldens are recorded
+    // with (RenderSuites' LLVMPIPE). Elsewhere (CI's runner) Mesa can differ.
+    let port: Vec<&str> = lines[..3]
+        .iter()
+        .map(|line| line.strip_prefix("Using graphics ").expect("a device line"))
+        .collect();
     let log = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("vanilla")
         .join(include_str!("../MINECRAFT_VERSION").trim())
         .join("oracle/walk/client.log");
-    let Ok(log) = std::fs::read_to_string(&log) else {
+    if let Ok(log) = std::fs::read_to_string(&log) {
+        let vanilla: Vec<&str> = log
+            .lines()
+            .filter_map(|line| {
+                line.split_once("(Minecraft) Using graphics ")
+                    .map(|(_, rest)| rest)
+            })
+            .collect();
+        assert_eq!(port, vanilla);
+    } else if strict() {
+        assert_eq!(port, ORACLE_DEVICE);
+    } else {
         eprintln!(
             "no oracle client log at {}: checked the flags against the extensions only",
             log.display()
         );
         return;
-    };
-    let vanilla: Vec<&str> = log
-        .lines()
-        .filter_map(|line| {
-            line.split_once("(Minecraft) Using graphics ")
-                .map(|(_, rest)| rest)
-        })
-        .collect();
-    let port: Vec<&str> = lines[..3]
-        .iter()
-        .map(|line| line.strip_prefix("Using graphics ").expect("a device line"))
-        .collect();
-    assert_eq!(port, vanilla);
+    }
     assert_eq!(
         lines[3],
         "isZZeroToOne: true, shaderDrawParameters: true, isExplicitDepthRequired: false"
@@ -322,18 +369,35 @@ fn draws_the_block_atlas_from_vanillas_sprites() {
     }
 }
 
-/// The digest of vanilla's GUI-free walk spawn view
-/// (`vanilla/26.3/oracle/walk-no-gui/screenshots/spawn.png`'s RGBA bytes), which the oracle
-/// recorded on this driver: the same rasterizer and sampler give the same pixels, another
-/// llvmpipe needn't (CI's Mesa 25.2 differs from the oracle machine's 26.0.8).
-const VANILLA_WALK_SPAWN_MD5: &str = "a38fcf9081510059fb5d52b0f34716e9";
-const VANILLA_WALK_SPAWN_DRIVER: &str = "4.5 (Core Profile) Mesa 26.0.8-1ubuntu0.3";
+/// Vanilla's screenshots of the scenarios whose screenshots the port takes too, each by the
+/// digest of its RGBA bytes (`vanilla/26.3/oracle/<scenario>/screenshots/<name>.png`), which the
+/// oracle recorded on `ORACLE_DRIVER`.
+const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
+    ("walk-no-gui", "spawn", "a38fcf9081510059fb5d52b0f34716e9"),
+    (
+        "walk-no-gui",
+        "after-walk",
+        "7d2656aefedcf34c937e0b57f87101f5",
+    ),
+];
+
+fn rgba_digest(pixels: &[u8]) -> String {
+    let digest: [u8; 16] = Md5::digest(pixels).into();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn vanilla_screenshot(scenario: &str, name: &str) -> &'static str {
+    VANILLA_SCREENSHOTS
+        .iter()
+        .find(|(listed, listed_name, _)| *listed == scenario && *listed_name == name)
+        .map(|(_, _, digest)| *digest)
+        .unwrap_or_else(|| panic!("no digest of vanilla's {scenario} {name}"))
+}
 
 /// The walk's spawn view, rendered offscreen from the level a capture of the walk's server fills
-/// (`--render-scenario`): vanilla's, pixel for pixel, on the driver vanilla's screenshot was
-/// taken on; on another the frame only has to render. The capture is the oracle's on a machine
-/// that has it, or the port's own (CI records it before the tests); without one the test says
-/// so and passes.
+/// (`--render-scenario`): vanilla's, pixel for pixel, on the oracle's driver; on another the
+/// frame only has to render. The capture is the oracle's on a machine that has it, or the port's
+/// own (CI records it before the tests); without one the test says so and passes.
 #[test]
 fn renders_the_walks_spawn_view_like_vanilla() {
     let capture = [
@@ -347,7 +411,7 @@ fn renders_the_walks_spawn_view_like_vanilla() {
     .flatten()
     .find(|path| path.exists());
     let Some(capture) = capture else {
-        eprintln!("skipped: no capture of the walk (tools/port_client.py capture walk)");
+        skip("no capture of the walk (tools/port_client.py capture walk)");
         return;
     };
     let Some((width, height, color_type, pixels)) = screenshot(
@@ -365,15 +429,56 @@ fn renders_the_walks_spawn_view_like_vanilla() {
         (width, height, color_type),
         (854, 480, png::ColorType::Rgba)
     );
-    let digest: [u8; 16] = Md5::digest(&pixels).into();
-    let digest: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    let device = run(&["--device-info"]).expect("xvfb-run ran above");
-    if device.contains(&format!("using drivers: {VANILLA_WALK_SPAWN_DRIVER}\n")) {
-        assert_eq!(digest, VANILLA_WALK_SPAWN_MD5);
-    } else {
-        eprintln!(
-            "not compared: vanilla's screenshot was taken on {VANILLA_WALK_SPAWN_DRIVER}, this is {}",
-            device.lines().next().unwrap_or_default()
+    if on_oracle_driver() {
+        assert_eq!(
+            rgba_digest(&pixels),
+            vanilla_screenshot("walk-no-gui", "spawn")
+        );
+    }
+}
+
+/// The screenshots of the port's own runs on a server (`tools/port_client.py capture
+/// <scenario>`, into `target/oracle/<scenario>/screenshots/`) against vanilla's, every one of
+/// them, on the oracle's driver; a scenario the port hasn't run here is skipped. Where vanilla's
+/// screenshots are, their digests are checked to be the ones above.
+#[test]
+fn takes_vanillas_screenshots_on_a_server() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let vanilla_dir = root
+        .join("vanilla")
+        .join(include_str!("../MINECRAFT_VERSION").trim())
+        .join("oracle");
+    for &(scenario, name, digest) in VANILLA_SCREENSHOTS {
+        let path = vanilla_dir.join(format!("{scenario}/screenshots/{name}.png"));
+        if path.exists() {
+            let (_, _, _, pixels) = read_png(&path);
+            assert_eq!(
+                rgba_digest(&pixels),
+                digest,
+                "vanilla's {scenario} {name} changed: update its digest"
+            );
+        }
+    }
+
+    if run(&["--device-info"]).is_none() || !on_oracle_driver() {
+        return;
+    }
+    for &(scenario, name, digest) in VANILLA_SCREENSHOTS {
+        let path = root.join(format!("target/oracle/{scenario}/screenshots/{name}.png"));
+        if !path.exists() {
+            skip(&format!(
+                "no screenshot of the port's {scenario} (tools/port_client.py capture {scenario})"
+            ));
+            continue;
+        }
+        let (_, _, color_type, pixels) = read_png(&path);
+        assert_eq!(color_type, png::ColorType::Rgba, "{scenario} {name}");
+        assert_eq!(
+            rgba_digest(&pixels),
+            digest,
+            "the port's {scenario} {name} differs from vanilla's: oracle-diff image \
+             vanilla/26.3/oracle/{scenario}/screenshots/{name}.png {}",
+            path.display()
         );
     }
 }

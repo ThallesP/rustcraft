@@ -112,6 +112,13 @@ Handoffs:
 
 ## Log
 
+### 2026-10-23 (render): CI checks the frames' pixels on the oracle's Mesa
+
+- CI's new `frames` job renders in an `ubuntu:26.04` container on the driver vanilla's screenshots were taken on: Mesa 26.0.8-1ubuntu0.3's llvmpipe on LLVM 21.1.8, from Ubuntu's archive as snapshot.ubuntu.com froze it on 2026-10-23, each package that renders pinned to the oracle machine's version (TESTING.md, "Screenshots"). It records the port's live run of `walk-no-gui` on a vanilla server, then runs `tests/opengl_frame.rs` with `RUSTCRAFT_ORACLE_DRIVER=1`, which fails where it would have skipped (no `xvfb-run`, another driver, no capture or run). The other job is unchanged; on its Mesa 25.2 the frames only have to render.
+- `tests/opengl_frame.rs` checks vanilla's screenshots by the digests of their RGBA bytes (`VANILLA_SCREENSHOTS`): the offline spawn view, and now every screenshot of the port's own runs on a server where the port has run the scenario (`target/oracle/<scenario>/screenshots/`); where vanilla's files are, their digests are checked to be the committed ones. The device's three lines are checked against the oracle's (`ORACLE_DEVICE`) where there's no oracle log.
+- Why CI needs SDL's EGL path, found on the way: Xvfb's GLX visuals come from Mesa's dril, which gets its configs through GBM on the GPU's DRM node. Without one (a runner, a container) dril has a fixed list without sRGB-capable visuals, and SDL finds none for the framebuffer vanilla asks for. The oracle machine has a DRM node. The pixels are llvmpipe's either way: in the container, through EGL, the offline spawn view and both live `walk-no-gui` screenshots are vanilla's, the same digests as here through GLX.
+- Evidence: `docker run` of `ubuntu:26.04` with the pinned packages, the binaries built here: all 8 frame tests pass with `RUSTCRAFT_ORACLE_DRIVER=1`; the same on this machine.
+
 ### 2026-10-23 (net): Text components on JSON, Gson's reader and writer, java.net.URI, RegistryOps, and the packets that carry components
 
 - Ported, Gson 2.14.0 from its sources (Apache 2.0, notices kept): `JsonReader` (every strictness, the lenient extensions, the nesting limit, Java's messages and locations), `JsonWriter`, `JsonElement`/`JsonPrimitive`/`JsonObject` as Gson's (a primitive holds Java's `Number` box; `equals` as Gson's), `Streams`, `JsonElementTypeAdapter`, `JsonParser.parseString`, `Gson.toJson`, `LazilyParsedNumber`, `NumberLimits`; the game's `LenientJsonParser` and `StrictJsonParser` (block models now read through the real reader); from the JDK, `BigDecimal` as far as Gson reaches, `Long`, `Short` and `Byte`'s `parse…`, `Float.parseFloat`/`Double.parseDouble` (`FloatingDecimal`), `Throwable` and the exceptions as values. Checked: `GsonSuites` (TESTING.md): `JsonParser` 3,029 inputs both ways, `JsonReader` 2,898 programs, `JsonElement` 2,141 `toString`s and 5,216 `equals`, `Gson` `toJson` of 2,141 elements three ways, `JsonPrimitive` 20 methods on 589 primitives.
@@ -185,7 +192,6 @@ Handoffs:
 - Checked: `ComponentSuite` (TESTING.md), 5,982 cases: 1,500 components' `toString`, `getString` and encoding, and 1,482 decodes, all identical to vanilla. It passed once a decode of a type not ported yet (`nbt`) was left out of the suite; letting the fuzzy matcher take a partial result fails 8 decodes. `Character.digit` in radix 16 matches on every char.
 - Not yet: JSON (Gson's reader and writer are being ported, then `JsonOps`), `RegistryOps`, the stream codecs and the packets; scores, selectors, NBT and object contents; `open_url` (`java.net.URI`, being ported) and dialogs; item and entity tooltips.
 - Evidence: `cargo test --workspace` passes; fmt, clippy and the port check are clean.
-
 
 ### 2026-10-23 (render): The walk's world on screen: the frame, the window, and the scenarios' screenshots
 
