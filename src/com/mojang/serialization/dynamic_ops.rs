@@ -205,6 +205,14 @@ pub trait DynamicOps<T: OpsValue>: fmt::Display {
         false
     }
 
+    /// `ops instanceof RegistryOps`: the registries a holder codec looks elements up in, for a
+    /// `RegistryOps` (the game's, `net::minecraft::resources::registry_ops`).
+    fn as_registry_ops(
+        &self,
+    ) -> Option<&dyn crate::net::minecraft::resources::registry_ops::RegistryInfoLookup> {
+        None
+    }
+
     fn get(&self, input: &T, key: &str) -> DataResult<T> {
         self.get_generic(input, &self.create_string(key))
     }

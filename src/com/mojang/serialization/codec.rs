@@ -9,7 +9,7 @@
 //!
 //! The primitive codecs are unit structs (`BOOL`, `INT`, `STRING`…). `PASSTHROUGH`, `EMPTY`,
 //! `pair`, `xor`, `compoundList`, `simpleMap`, `dispatchedMap`, `mapResult`, `orElse` and its
-//! kin, `promotePartial`, the ranges and `string(min, max)` aren't ported yet: nothing the text
+//! kin, `promotePartial` and `string(min, max)` aren't ported yet: nothing the text
 //! components reach calls them. Codecs' `toString` isn't either: no error message prints one.
 
 use std::sync::{Arc, OnceLock, Weak};
@@ -737,6 +737,76 @@ where
             .decode(ops, input)
             .map(|value| value.unwrap_or_else(|| self.default_value.clone()))
     }
+}
+
+/// `checkRange`: the value if it's in the range by its `compareTo`, else an error printing it
+/// and the bounds with `to_string`.
+fn check_range<N: Copy>(
+    value: N,
+    min_inclusive: N,
+    max_inclusive: N,
+    compare: fn(N, N) -> std::cmp::Ordering,
+    to_string: fn(N) -> String,
+) -> DataResult<N> {
+    if compare(value, min_inclusive).is_ge() && compare(value, max_inclusive).is_le() {
+        DataResult::success(value)
+    } else {
+        DataResult::error(|| {
+            format!(
+                "Value {} outside of range [{}:{}]",
+                to_string(value),
+                to_string(min_inclusive),
+                to_string(max_inclusive)
+            )
+        })
+    }
+}
+
+/// `Codec.intRange`: `INT` checked both ways.
+pub fn int_range(min_inclusive: i32, max_inclusive: i32) -> BoxedCodec<i32> {
+    let checker = move |value: i32| {
+        check_range(
+            value,
+            min_inclusive,
+            max_inclusive,
+            |a, b| a.cmp(&b),
+            |n| n.to_string(),
+        )
+    };
+    INT.flat_xmap(checker, move |value: &i32| checker(*value))
+        .boxed()
+}
+
+/// `Codec.floatRange`: `FLOAT` checked both ways, by `Float.compareTo`.
+pub fn float_range(min_inclusive: f32, max_inclusive: f32) -> BoxedCodec<f32> {
+    let checker = move |value: f32| {
+        check_range(
+            value,
+            min_inclusive,
+            max_inclusive,
+            |a, b| crate::java::lang::double::Double::compare(f64::from(a), f64::from(b)),
+            crate::java::lang::float::Float::to_string,
+        )
+    };
+    FLOAT
+        .flat_xmap(checker, move |value: &f32| checker(*value))
+        .boxed()
+}
+
+/// `Codec.doubleRange`: `DOUBLE` checked both ways, by `Double.compareTo`.
+pub fn double_range(min_inclusive: f64, max_inclusive: f64) -> BoxedCodec<f64> {
+    let checker = move |value: f64| {
+        check_range(
+            value,
+            min_inclusive,
+            max_inclusive,
+            crate::java::lang::double::Double::compare,
+            crate::java::lang::double::Double::to_string,
+        )
+    };
+    DOUBLE
+        .flat_xmap(checker, move |value: &f64| checker(*value))
+        .boxed()
 }
 
 /// `RecursiveCodec`: `recursive(name, wrapped)` and `lazyInitialized`, a codec made on first use

@@ -1,5 +1,7 @@
 pub mod ai;
+pub mod animal;
 pub mod avatar;
+pub mod decoration;
 #[allow(clippy::module_inception)]
 pub mod entity;
 pub mod entity_dimensions;

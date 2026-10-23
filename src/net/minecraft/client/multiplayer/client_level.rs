@@ -30,9 +30,8 @@
 //! spawn as it came, where Java moves one outside the world border to the heightmap's top at the
 //! border's center (`getWorldBorderAdjustedRespawnData`), which waits for the heightmaps.
 //!
-//! The level's height is its dimension type's, which the vanilla pack's data gives for the
-//! built-in types (`DimensionType::height_of`); a server sending a type of its own isn't read
-//! yet.
+//! Its dimension type is the synchronized registry's value of the holder the login named
+//! (`dimensionType()`), which gives its height, sky light, cardinal lighting and fast lava.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -84,6 +83,7 @@ use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 pub struct ClientLevel {
     dimension: ResourceKey,
     dimension_type: Holder,
+    dimension_type_value: DimensionType,
     height: Height,
     chunk_source: ClientChunkCache,
     server_chunk_radius: i32,
@@ -110,8 +110,7 @@ pub struct ClientLevel {
 pub type LightUpdate = Box<dyn FnOnce(&mut ClientLevel)>;
 
 impl ClientLevel {
-    /// Panics on a dimension type that isn't one of the vanilla pack's, or registries without
-    /// biomes.
+    /// Panics on registries without the dimension type's value, or without biomes.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         registry_access: &RegistryAccess,
@@ -125,13 +124,18 @@ impl ClientLevel {
         biome_zoom_seed: i64,
         sea_level: i32,
     ) -> ClientLevel {
-        let height = DimensionType::height_of(&dimension_type);
+        let dimension_type_value = registry_access
+            .lookup_or_throw(Registries::DIMENSION_TYPE)
+            .value::<DimensionType>(&dimension_type)
+            .clone();
+        let height = dimension_type_value.level_height();
         let factory = PalettedContainerFactory::create(registry_access);
         let biomes = registry_access.lookup_or_throw(Registries::BIOME).clone();
-        let has_sky_light = DimensionType::has_sky_light_of(&dimension_type);
+        let has_sky_light = dimension_type_value.has_sky_light();
         ClientLevel {
             dimension,
             dimension_type,
+            dimension_type_value,
             height,
             chunk_source: ClientChunkCache::new(
                 height,
@@ -220,7 +224,7 @@ impl ClientLevel {
 
     /// `Holder.value()` of one of the level's biomes.
     pub fn biome_value(&self, biome: &Holder) -> &Biome {
-        self.biomes.value_biome(biome)
+        self.biomes.value::<Biome>(biome)
     }
 
     /// `getUncachedNoiseBiome`: plains, where the level has no chunk.
@@ -346,6 +350,11 @@ impl ClientLevel {
 
     pub fn dimension_type_registration(&self) -> &Holder {
         &self.dimension_type
+    }
+
+    /// `dimensionType()`: the registration's value.
+    pub fn dimension_type(&self) -> &DimensionType {
+        &self.dimension_type_value
     }
 
     pub fn server_chunk_radius(&self) -> i32 {
@@ -504,7 +513,7 @@ impl BlockAndLightGetter for ClientLevel {
 impl BlockAndTintGetter for ClientLevel {
     /// `dimensionType().cardinalLightType().get()`.
     fn cardinal_lighting(&self) -> CardinalLighting {
-        DimensionType::cardinal_light_type_of(&self.dimension_type).get()
+        self.dimension_type_value.cardinal_light_type().get()
     }
 
     /// The resolver's cached tint. Panics for a resolver that isn't one of `BiomeColors`', where
@@ -596,9 +605,9 @@ impl Level for ClientLevel {
         Some(has_fluid)
     }
 
-    /// The vanilla pack's dimension types' `gameplay/fast_lava`.
+    /// `environmentAttributes().getDimensionValue(FAST_LAVA)`: the dimension type's.
     fn has_fast_lava(&self) -> bool {
-        DimensionType::fast_lava_of(&self.dimension_type)
+        self.dimension_type_value.fast_lava()
     }
 }
 

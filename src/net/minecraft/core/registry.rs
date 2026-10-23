@@ -5,51 +5,155 @@
 //! their network id needs, `asHolderIdMap()`'s `byIdOrThrow` and `getIdOrThrow`: the registry's
 //! key, and its elements' keys in id order, which is the order the server sent them in
 //! (`RegistryDataLoader.loadContentsFromNetwork` registers them as they come). The elements'
-//! values come with the registries' classes: so far the biomes' (`Biome`), which the biome
-//! registry holds in id order (`with_biomes`), and which `value_biome` hands out for a holder.
+//! values come with the registries' classes: a registry whose class is ported holds its values in
+//! id order (`with_values`, `RegistryValues`), which `value` hands out for a holder
+//! (`Holder.value()`). Java's registries compare by reference; here two registries with values
+//! are the same when they share them.
 
 use std::sync::Arc;
 
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::id_map::IdMap;
+use crate::net::minecraft::network::chat::chat_type::ChatType;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::world::damagesource::damage_type::DamageType;
+use crate::net::minecraft::world::entity::animal::wolf::wolf_variant::WolfVariant;
+use crate::net::minecraft::world::entity::decoration::painting::painting_variant::PaintingVariant;
 use crate::net::minecraft::world::level::biome::biome::Biome;
+use crate::net::minecraft::world::level::dimension::dimension_type::DimensionType;
 
 /// A registry's elements, by network id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Registry {
     key: ResourceKey,
     by_id: Vec<ResourceKey>,
-    biomes: Option<Arc<Vec<Biome>>>,
+    values: Option<RegistryValues>,
 }
+
+/// The values of a registry's elements in id order, for the registries whose classes are ported.
+#[derive(Clone, Debug)]
+pub enum RegistryValues {
+    Biome(Arc<Vec<Biome>>),
+    DimensionType(Arc<Vec<DimensionType>>),
+    DamageType(Arc<Vec<DamageType>>),
+    ChatType(Arc<Vec<ChatType>>),
+    PaintingVariant(Arc<Vec<PaintingVariant>>),
+    WolfVariant(Arc<Vec<WolfVariant>>),
+}
+
+/// Java's `Object.equals` of registries: the same values.
+impl PartialEq for RegistryValues {
+    fn eq(&self, other: &RegistryValues) -> bool {
+        match (self, other) {
+            (RegistryValues::Biome(a), RegistryValues::Biome(b)) => Arc::ptr_eq(a, b),
+            (RegistryValues::DimensionType(a), RegistryValues::DimensionType(b)) => {
+                Arc::ptr_eq(a, b)
+            }
+            (RegistryValues::DamageType(a), RegistryValues::DamageType(b)) => Arc::ptr_eq(a, b),
+            (RegistryValues::ChatType(a), RegistryValues::ChatType(b)) => Arc::ptr_eq(a, b),
+            (RegistryValues::PaintingVariant(a), RegistryValues::PaintingVariant(b)) => {
+                Arc::ptr_eq(a, b)
+            }
+            (RegistryValues::WolfVariant(a), RegistryValues::WolfVariant(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+/// A class a registry holds values of: Java's `T` in `Registry<T>`.
+pub trait RegistryValue: Sized {
+    /// The values, if the registry holds this class's.
+    fn of(values: &RegistryValues) -> Option<&[Self]>;
+
+    /// A registry's values of this class.
+    fn wrap(values: Vec<Self>) -> RegistryValues;
+}
+
+macro_rules! registry_value {
+    ($($class:ident),*) => {
+        $(
+            impl RegistryValue for $class {
+                fn of(values: &RegistryValues) -> Option<&[$class]> {
+                    match values {
+                        RegistryValues::$class(values) => Some(values),
+                        _ => None,
+                    }
+                }
+
+                fn wrap(values: Vec<$class>) -> RegistryValues {
+                    RegistryValues::$class(Arc::new(values))
+                }
+            }
+        )*
+    };
+}
+
+registry_value!(
+    Biome,
+    DimensionType,
+    DamageType,
+    ChatType,
+    PaintingVariant,
+    WolfVariant
+);
 
 impl Registry {
     pub fn new(key: ResourceKey, by_id: Vec<ResourceKey>) -> Registry {
         Registry {
             key,
             by_id,
-            biomes: None,
+            values: None,
         }
     }
 
-    /// The biome registry, with its elements' values in id order.
-    pub fn with_biomes(key: ResourceKey, by_id: Vec<ResourceKey>, biomes: Vec<Biome>) -> Registry {
-        assert_eq!(by_id.len(), biomes.len(), "a value for each element");
+    /// A registry with its elements' values in id order.
+    pub fn with_values(
+        key: ResourceKey,
+        by_id: Vec<ResourceKey>,
+        values: RegistryValues,
+    ) -> Registry {
+        let count = match &values {
+            RegistryValues::Biome(values) => values.len(),
+            RegistryValues::DimensionType(values) => values.len(),
+            RegistryValues::DamageType(values) => values.len(),
+            RegistryValues::ChatType(values) => values.len(),
+            RegistryValues::PaintingVariant(values) => values.len(),
+            RegistryValues::WolfVariant(values) => values.len(),
+        };
+        assert_eq!(by_id.len(), count, "a value for each element");
         Registry {
             key,
             by_id,
-            biomes: Some(Arc::new(biomes)),
+            values: Some(values),
         }
     }
 
-    /// `Holder.value()` of one of its biomes. Panics for a registry without them, or a holder
-    /// it doesn't have.
-    pub fn value_biome(&self, holder: &Holder) -> &Biome {
-        let biomes = self
-            .biomes
-            .as_ref()
-            .unwrap_or_else(|| panic!("{} holds no biomes", self.key));
-        &biomes[self.holder_id_or_throw(holder) as usize]
+    /// `Holder.value()` of one of its elements. Panics for a registry without values of the
+    /// class, or a holder it doesn't have.
+    pub fn value<T: RegistryValue>(&self, holder: &Holder) -> &T {
+        let values = self.values.as_ref().and_then(T::of).unwrap_or_else(|| {
+            panic!(
+                "{} holds no {}",
+                self.key,
+                std::any::type_name::<T>()
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or("values")
+            )
+        });
+        &values[self.holder_id_or_throw(holder) as usize]
+    }
+
+    /// Its values in id order, if it holds the class's.
+    pub fn values<T: RegistryValue>(&self) -> Option<&[T]> {
+        self.values.as_ref().and_then(T::of)
+    }
+
+    /// `get(ResourceKey)`: the element's holder, if it has the key.
+    pub fn get(&self, key: &ResourceKey) -> Option<Holder> {
+        self.by_id
+            .contains(key)
+            .then(|| Holder::Reference(key.clone()))
     }
 
     /// `getOrThrow(key)`'s holder: panics for a key it doesn't have, where Java throws

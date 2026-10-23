@@ -1,12 +1,46 @@
 //! net/minecraft/world/level/biome/BiomeSpecialEffects.java
 //!
 //! A biome's colours: its water's, and the overrides of its grass's, leaves' and dry leaves' and
-//! the modifier of its grass's. Not ported yet: `CODEC` (DataFixerUpper's), which `Biome`'s
-//! temporary readers stand in for, and the `Builder`, which only the server's biomes use.
+//! the modifier of its grass's. Not ported yet: the `Builder`, which only the server's biomes use.
 
+use std::sync::LazyLock;
+
+use crate::com::mojang::serialization::codec::{CodecExt, SharedCodec, StaticCodec};
+use crate::com::mojang::serialization::codecs::record_codec_builder;
+use crate::com::mojang::serialization::map_codec::MapCodecExt;
 use crate::net::minecraft::util::argb::ARGB;
-use crate::net::minecraft::util::string_representable::StringRepresentable;
+use crate::net::minecraft::util::extra_codecs::ExtraCodecs;
+use crate::net::minecraft::util::string_representable::{self, StringRepresentable};
 use crate::net::minecraft::world::level::biome::biome::BIOME_INFO_NOISE;
+
+static CODEC: StaticCodec<BiomeSpecialEffects> = LazyLock::new(|| {
+    record_codec_builder::create(
+        (
+            ExtraCodecs::STRING_RGB_COLOR
+                .shared()
+                .field_of("water_color")
+                .for_getter(|o: &BiomeSpecialEffects| o.water_color),
+            ExtraCodecs::STRING_RGB_COLOR
+                .shared()
+                .optional_field_of("foliage_color")
+                .for_getter(|o: &BiomeSpecialEffects| o.foliage_color_override),
+            ExtraCodecs::STRING_RGB_COLOR
+                .shared()
+                .optional_field_of("dry_foliage_color")
+                .for_getter(|o: &BiomeSpecialEffects| o.dry_foliage_color_override),
+            ExtraCodecs::STRING_RGB_COLOR
+                .shared()
+                .optional_field_of("grass_color")
+                .for_getter(|o: &BiomeSpecialEffects| o.grass_color_override),
+            GrassColorModifier::CODEC
+                .shared()
+                .optional_field_of_default("grass_color_modifier", GrassColorModifier::NONE)
+                .for_getter(|o: &BiomeSpecialEffects| o.grass_color_modifier),
+        ),
+        BiomeSpecialEffects::new,
+    )
+    .boxed()
+});
 
 /// A biome's colours.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +53,8 @@ pub struct BiomeSpecialEffects {
 }
 
 impl BiomeSpecialEffects {
+    pub const CODEC: &'static StaticCodec<BiomeSpecialEffects> = &CODEC;
+
     pub fn new(
         water_color: i32,
         foliage_color_override: Option<i32>,
@@ -93,13 +129,13 @@ impl GrassColorModifier {
     pub fn get_name(&self) -> &'static str {
         self.get_serialized_name()
     }
+}
 
-    /// The constant with that name, as the codec reads it.
-    pub fn by_name(name: &str) -> Option<GrassColorModifier> {
-        GrassColorModifier::VALUES
-            .into_iter()
-            .find(|modifier| modifier.get_serialized_name() == name)
-    }
+static GRASS_COLOR_MODIFIER_CODEC: StaticCodec<GrassColorModifier> =
+    LazyLock::new(|| string_representable::from_values(&GrassColorModifier::VALUES));
+
+impl GrassColorModifier {
+    pub const CODEC: &'static StaticCodec<GrassColorModifier> = &GRASS_COLOR_MODIFIER_CODEC;
 }
 
 impl StringRepresentable for GrassColorModifier {

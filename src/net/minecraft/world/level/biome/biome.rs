@@ -1,19 +1,12 @@
 //! net/minecraft/world/level/biome/Biome.java
 //!
-//! A biome as the client knows it: its climate (`ClimateSettings`) and its colours
-//! (`BiomeSpecialEffects`), what `NETWORK_CODEC` reads of it. Not ported yet: its environment
-//! attributes (`EnvironmentAttributeMap`: the sky's, fog's and water fog's colours, ambient
-//! particles and sounds, which come with the sky and fog), the temperature at a block
-//! (`getTemperature` with its cache, `getHeightAdjustedTemperature`, `TemperatureModifier`'s
-//! `modifyTemperature` and `FROZEN_TEMPERATURE_NOISE`), precipitation, freezing and snow, which
-//! come with weather, and the generation settings, which only the server has.
-//!
-//! **Temporary readers, until DataFixerUpper's codecs come** (the net track's): Java reads a
-//! biome with `NETWORK_CODEC`, from the server's NBT (`from_network_nbt`), or for a biome of a
-//! pack the client knows, from that pack's JSON (`from_network_json`, through Gson's tree). Each
-//! reads the codec's fields with their defaults, and panics where the codec would give an error.
-//! A colour (`ExtraCodecs.STRING_RGB_COLOR`) is read as its hex string or an int; its third form,
-//! a list of three floats, which no vanilla biome has, panics.
+//! A biome as the client knows it: its climate (`ClimateSettings`), its environment attributes
+//! (`EnvironmentAttributeMap`, the syncable ones) and its colours (`BiomeSpecialEffects`), what
+//! `NETWORK_CODEC` reads of it (`RegistryDataLoader`, from the server's NBT or a known pack's
+//! JSON). Not ported yet: the temperature at a block (`getTemperature` with its cache,
+//! `getHeightAdjustedTemperature`, `TemperatureModifier`'s `modifyTemperature` and
+//! `FROZEN_TEMPERATURE_NOISE`), precipitation, freezing and snow, which come with weather, and
+//! the generation settings and `DIRECT_CODEC`, which only the server has.
 //!
 //! `BIOME_INFO_NOISE` is a `SimplexNoise` of a `WorldgenRandom` over a `LegacyRandomSource`,
 //! whose bits `WorldgenRandom` draws from the legacy source, so the noise is made from the legacy
@@ -21,16 +14,13 @@
 
 use std::sync::LazyLock;
 
-use crate::com::google::gson::json_element::JsonElement;
-use crate::com::google::gson::json_object::JsonObject;
-use crate::net::minecraft::nbt::compound_tag::CompoundTag;
-use crate::net::minecraft::nbt::tag::Tag;
-use crate::net::minecraft::util::argb::ARGB;
+use crate::com::mojang::serialization::codec::{BOOL, CodecExt, FLOAT, SharedCodec, StaticCodec};
+use crate::com::mojang::serialization::codecs::record_codec_builder;
+use crate::com::mojang::serialization::map_codec::{MapCodecExt, SharedMapCodec, StaticMapCodec};
 use crate::net::minecraft::util::mth::Mth;
-use crate::net::minecraft::util::string_representable::StringRepresentable;
-use crate::net::minecraft::world::level::biome::biome_special_effects::{
-    BiomeSpecialEffects, GrassColorModifier,
-};
+use crate::net::minecraft::util::string_representable::{self, StringRepresentable};
+use crate::net::minecraft::world::attribute::environment_attribute_map::EnvironmentAttributeMap;
+use crate::net::minecraft::world::level::biome::biome_special_effects::BiomeSpecialEffects;
 use crate::net::minecraft::world::level::dry_foliage_color::DryFoliageColor;
 use crate::net::minecraft::world::level::foliage_color::FoliageColor;
 use crate::net::minecraft::world::level::grass_color::GrassColor;
@@ -41,19 +31,52 @@ use crate::net::minecraft::world::level::levelgen::synth::simplex_noise::Simplex
 pub static BIOME_INFO_NOISE: LazyLock<SimplexNoise> =
     LazyLock::new(|| SimplexNoise::new_discarding_offset(&mut LegacyRandomSource::new(2345)));
 
-/// A biome's climate and colours.
+static NETWORK_CODEC: StaticCodec<Biome> = LazyLock::new(|| {
+    record_codec_builder::create(
+        (
+            CLIMATE_SETTINGS_CODEC
+                .shared()
+                .for_getter(|o: &Biome| o.climate_settings.clone()),
+            EnvironmentAttributeMap::NETWORK_CODEC
+                .shared()
+                .optional_field_of_default("attributes", EnvironmentAttributeMap::empty())
+                .for_getter(|o: &Biome| o.attributes.clone()),
+            BiomeSpecialEffects::CODEC
+                .shared()
+                .field_of("effects")
+                .for_getter(|o: &Biome| o.special_effects.clone()),
+        ),
+        Biome::new,
+    )
+    .boxed()
+});
+
+/// A biome's climate, attributes and colours.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Biome {
     climate_settings: ClimateSettings,
+    attributes: EnvironmentAttributeMap,
     special_effects: BiomeSpecialEffects,
 }
 
 impl Biome {
-    pub fn new(climate_settings: ClimateSettings, special_effects: BiomeSpecialEffects) -> Biome {
+    pub const NETWORK_CODEC: &'static StaticCodec<Biome> = &NETWORK_CODEC;
+
+    /// The constructor `NETWORK_CODEC` makes a biome with, without generation settings.
+    pub fn new(
+        climate_settings: ClimateSettings,
+        attributes: EnvironmentAttributeMap,
+        special_effects: BiomeSpecialEffects,
+    ) -> Biome {
         Biome {
             climate_settings,
+            attributes,
             special_effects,
         }
+    }
+
+    pub fn get_attributes(&self) -> &EnvironmentAttributeMap {
+        &self.attributes
     }
 
     pub fn has_precipitation(&self) -> bool {
@@ -119,126 +142,28 @@ impl Biome {
     pub fn get_water_color(&self) -> i32 {
         self.special_effects.water_color()
     }
-
-    /// Temporary: `NETWORK_CODEC` over Gson's tree of a pack's JSON. Panics where the codec
-    /// gives an error.
-    pub fn from_network_json(json: &JsonElement) -> Biome {
-        let object = json.get_as_json_object();
-        let field = |name: &str| {
-            object
-                .get(name)
-                .unwrap_or_else(|| panic!("No key {name} in {json}"))
-        };
-        let climate_settings = ClimateSettings {
-            has_precipitation: field("has_precipitation").get_as_boolean(),
-            temperature: field("temperature").get_as_float(),
-            temperature_modifier: object
-                .get("temperature_modifier")
-                .map_or(TemperatureModifier::NONE, |name| {
-                    TemperatureModifier::by_name_or_panic(&name.get_as_string())
-                }),
-            downfall: field("downfall").get_as_float(),
-        };
-        let effects: &JsonObject = field("effects").get_as_json_object();
-        let color = |name: &str| effects.get(name).map(Biome::json_color);
-        let special_effects = BiomeSpecialEffects::new(
-            color("water_color").unwrap_or_else(|| panic!("No key water_color in effects")),
-            color("foliage_color"),
-            color("dry_foliage_color"),
-            color("grass_color"),
-            effects
-                .get("grass_color_modifier")
-                .map_or(GrassColorModifier::NONE, |name| {
-                    let name = name.get_as_string();
-                    GrassColorModifier::by_name(&name)
-                        .unwrap_or_else(|| panic!("Unknown element name: {name}"))
-                }),
-        );
-        Biome::new(climate_settings, special_effects)
-    }
-
-    fn json_color(color: &JsonElement) -> i32 {
-        let primitive = color
-            .as_json_primitive()
-            .unwrap_or_else(|| panic!("a colour the temporary reader takes: {color}"));
-        if primitive.is_string() {
-            Biome::hex_color(&primitive.get_as_string())
-        } else {
-            primitive.get_as_int()
-        }
-    }
-
-    /// Temporary: `NETWORK_CODEC` over the server's NBT. Panics where the codec gives an error.
-    pub fn from_network_nbt(tag: &Tag) -> Biome {
-        let Tag::Compound(compound) = tag else {
-            panic!("Not a map: {tag:?}");
-        };
-        let number = |compound: &CompoundTag, name: &str| {
-            compound
-                .get(name)
-                .and_then(Tag::as_numeric_tag)
-                .unwrap_or_else(|| panic!("No number {name}"))
-                .float_value()
-        };
-        let climate_settings = ClimateSettings {
-            has_precipitation: compound
-                .get("has_precipitation")
-                .and_then(Tag::as_numeric_tag)
-                .unwrap_or_else(|| panic!("No boolean has_precipitation"))
-                .byte_value()
-                != 0,
-            temperature: number(compound, "temperature"),
-            temperature_modifier: compound.get_string("temperature_modifier").map_or(
-                TemperatureModifier::NONE,
-                TemperatureModifier::by_name_or_panic,
-            ),
-            downfall: number(compound, "downfall"),
-        };
-        let effects = compound
-            .get_compound("effects")
-            .unwrap_or_else(|| panic!("No key effects"));
-        let color = |name: &str| effects.get(name).map(Biome::nbt_color);
-        let special_effects = BiomeSpecialEffects::new(
-            color("water_color").unwrap_or_else(|| panic!("No key water_color in effects")),
-            color("foliage_color"),
-            color("dry_foliage_color"),
-            color("grass_color"),
-            effects
-                .get_string("grass_color_modifier")
-                .map_or(GrassColorModifier::NONE, |name| {
-                    GrassColorModifier::by_name(name)
-                        .unwrap_or_else(|| panic!("Unknown element name: {name}"))
-                }),
-        );
-        Biome::new(climate_settings, special_effects)
-    }
-
-    fn nbt_color(color: &Tag) -> i32 {
-        match color {
-            Tag::String(string) => Biome::hex_color(string.value()),
-            other => other
-                .as_numeric_tag()
-                .unwrap_or_else(|| panic!("a colour the temporary reader takes: {other:?}"))
-                .int_value(),
-        }
-    }
-
-    /// `ExtraCodecs.hexColor(6)`, made opaque: `#` and six hex digits.
-    fn hex_color(string: &str) -> i32 {
-        let digits = string
-            .strip_prefix('#')
-            .unwrap_or_else(|| panic!("Hex color must begin with #"));
-        if digits.chars().count() != 6 {
-            panic!(
-                "Hex color is wrong size, expected 6 digits but got {}",
-                digits.chars().count()
-            );
-        }
-        let value = i64::from_str_radix(digits, 16)
-            .unwrap_or_else(|_| panic!("Invalid color value: {string}"));
-        ARGB::opaque(value as i32)
-    }
 }
+
+static CLIMATE_SETTINGS_CODEC: StaticMapCodec<ClimateSettings> = LazyLock::new(|| {
+    record_codec_builder::map_codec(
+        (
+            BOOL.field_of("has_precipitation")
+                .for_getter(|o: &ClimateSettings| o.has_precipitation),
+            FLOAT
+                .field_of("temperature")
+                .for_getter(|o: &ClimateSettings| o.temperature),
+            TemperatureModifier::CODEC
+                .shared()
+                .optional_field_of_default("temperature_modifier", TemperatureModifier::NONE)
+                .for_getter(|o: &ClimateSettings| o.temperature_modifier),
+            FLOAT
+                .field_of("downfall")
+                .for_getter(|o: &ClimateSettings| o.downfall),
+        ),
+        ClimateSettings::new,
+    )
+    .boxed()
+});
 
 /// `Biome.ClimateSettings`.
 #[derive(Clone, Debug, PartialEq)]
@@ -250,6 +175,8 @@ pub struct ClimateSettings {
 }
 
 impl ClimateSettings {
+    pub const CODEC: &'static StaticMapCodec<ClimateSettings> = &CLIMATE_SETTINGS_CODEC;
+
     pub fn new(
         has_precipitation: bool,
         temperature: f32,
@@ -290,16 +217,13 @@ pub enum TemperatureModifier {
     FROZEN,
 }
 
+static TEMPERATURE_MODIFIER_CODEC: StaticCodec<TemperatureModifier> =
+    LazyLock::new(|| string_representable::from_values(&TemperatureModifier::VALUES));
+
 impl TemperatureModifier {
     pub const VALUES: [TemperatureModifier; 2] =
         [TemperatureModifier::NONE, TemperatureModifier::FROZEN];
-
-    fn by_name_or_panic(name: &str) -> TemperatureModifier {
-        TemperatureModifier::VALUES
-            .into_iter()
-            .find(|modifier| modifier.get_serialized_name() == name)
-            .unwrap_or_else(|| panic!("Unknown element name: {name}"))
-    }
+    pub const CODEC: &'static StaticCodec<TemperatureModifier> = &TEMPERATURE_MODIFIER_CODEC;
 }
 
 impl StringRepresentable for TemperatureModifier {
@@ -316,21 +240,26 @@ pub(crate) mod tests {
     use serde_json::{Value, json};
 
     use super::Biome;
+    use crate::com::mojang::serialization::decoder::Decoder;
     use crate::golden::{Decode, Golden, unhex};
     use crate::io::netty::buffer::byte_buf_input_stream::ByteBufInputStream;
     use crate::io::netty::buffer::unpooled;
     use crate::net::minecraft::client::multiplayer::registry_data_collector::RegistryDataCollector;
+    use crate::net::minecraft::core::registries::built_in_registries::BuiltInRegistries;
     use crate::net::minecraft::core::registries::registries::Registries;
     use crate::net::minecraft::core::registry_access::RegistryAccess;
     use crate::net::minecraft::core::registry_synchronization::PackedRegistryEntry;
     use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
     use crate::net::minecraft::nbt::nbt_io::NbtIo;
+    use crate::net::minecraft::nbt::nbt_ops::NbtOps;
     use crate::net::minecraft::resources::identifier::Identifier;
+    use crate::net::minecraft::resources::registry_ops::RegistryOps;
     use crate::net::minecraft::util::string_representable::StringRepresentable;
     use crate::net::minecraft::world::level::color_map_color_util::tests::load_colormaps;
 
     /// The registries the client collects from the walk's registry data: the biomes by name, none
-    /// sent whole, so each is read from the vanilla pack, like a known pack's.
+    /// sent whole, so each is read from the vanilla pack, like a known pack's, and the vanilla
+    /// dimension types, which a level reads its height from.
     pub(crate) fn biome_registries(biomes: &Value) -> RegistryAccess {
         let entries: Vec<PackedRegistryEntry> = Vec::<String>::decode(biomes)
             .iter()
@@ -338,6 +267,10 @@ pub(crate) mod tests {
             .collect();
         let mut collector = RegistryDataCollector::new();
         collector.append_contents(Registries::BIOME, &entries);
+        collector.append_contents(
+            Registries::DIMENSION_TYPE,
+            &crate::net::minecraft::client::multiplayer::registry_data_collector::tests::dimension_type_entries(),
+        );
         collector.collect_game_registries()
     }
 
@@ -379,7 +312,7 @@ pub(crate) mod tests {
                 Registries::BIOME,
                 Identifier::parse(id.as_str().expect("an identifier")),
             );
-            biomes.value_biome(&biomes.get_or_throw(&key)).clone()
+            biomes.value::<Biome>(&biomes.get_or_throw(&key)).clone()
         };
         let json_cases = golden.cases("json");
         assert_eq!(
@@ -389,11 +322,14 @@ pub(crate) mod tests {
         for (args, expected) in json_cases {
             assert_eq!(fields(&biome(&args[0])), expected[0], "{}", args[0]);
         }
+        // NETWORK_CODEC over registry ops of the static registries, as the harness reads it.
+        let static_registries = RegistryAccess::new(BuiltInRegistries::registries());
+        let ops = RegistryOps::create(&NbtOps::INSTANCE, &static_registries);
         for (args, expected) in golden.cases("nbt") {
-            assert_eq!(
-                fields(&Biome::from_network_nbt(&read_nbt(&args[0]))),
-                expected
-            );
+            let biome = Biome::NETWORK_CODEC
+                .parse(&ops, &read_nbt(&args[0]))
+                .get_or_throw();
+            assert_eq!(fields(&biome), expected);
         }
         for (args, expected) in golden.cases("colors") {
             let biome = biome(&args[0]);

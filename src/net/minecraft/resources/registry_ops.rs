@@ -4,8 +4,11 @@
 //! read NBT with (`RegistryAccess.createSerializationContext`). Every `DynamicOps` method forwards
 //! to the delegate (`DelegatingOps`), and `getter` looks a registry up. Java's
 //! `RegistryInfoLookup` over a `HolderLookup.Provider` is the `RegistryAccess` here, the client's
-//! registries; `retrieveGetter`, `retrieveElement` and `withParent` come with the codecs that call
-//! them (holders).
+//! registries, and while the synchronized registries load, also the registries being loaded,
+//! whose getters hand out a holder for any key (`HolderGetter::Registration`, Java's
+//! `createRegistrationLookup`). The holder codecs ask for a getter through
+//! `DynamicOps::as_registry_ops`, Java's `instanceof RegistryOps`. `retrieveGetter`,
+//! `retrieveElement` and `withParent` come with the codecs that call them.
 
 use std::fmt;
 
@@ -16,16 +19,20 @@ use crate::com::mojang::serialization::list_builder::ListBuilder;
 use crate::com::mojang::serialization::map_like::MapLike;
 use crate::com::mojang::serialization::record_builder::RecordBuilder;
 use crate::java::lang::number::Number;
+use crate::net::minecraft::core::holder::Holder;
+use crate::net::minecraft::core::holder_set::HolderSet;
 use crate::net::minecraft::core::registry::Registry;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::resources::delegating_ops::{
     DelegateListBuilder, DelegateRecordBuilder,
 };
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::tags::tag_key::TagKey;
 
 pub struct RegistryOps<'a, T> {
     delegate: &'a dyn DynamicOps<T>,
     lookup_provider: &'a RegistryAccess,
+    registering: &'a [ResourceKey],
 }
 
 impl<'a, T: OpsValue> RegistryOps<'a, T> {
@@ -37,12 +44,68 @@ impl<'a, T: OpsValue> RegistryOps<'a, T> {
         RegistryOps {
             delegate: parent,
             lookup_provider,
+            registering: &[],
         }
     }
 
-    /// `getter`: the registry under the key, if the provider has it.
-    pub fn getter(&self, registry_key: &ResourceKey) -> Option<&'a Registry> {
-        self.lookup_provider.lookup(registry_key)
+    /// `create(DynamicOps, RegistryInfoLookup)` over `RegistryDataLoader.createContext`'s
+    /// lookup: the context's registries, and the registries being loaded (`registering`), whose
+    /// getters create what they're asked for.
+    pub fn create_loading(
+        parent: &'a dyn DynamicOps<T>,
+        context: &'a RegistryAccess,
+        registering: &'a [ResourceKey],
+    ) -> RegistryOps<'a, T> {
+        RegistryOps {
+            delegate: parent,
+            lookup_provider: context,
+            registering,
+        }
+    }
+}
+
+/// `RegistryOps.RegistryInfoLookup`'s getters, what the holder codecs look elements and tags up in.
+pub trait RegistryInfoLookup {
+    /// `getter`: the registry's getter, if the ops has it.
+    fn getter(&self, registry_key: &ResourceKey) -> Option<HolderGetter<'_>>;
+}
+
+impl<T: OpsValue> RegistryInfoLookup for RegistryOps<'_, T> {
+    fn getter(&self, registry_key: &ResourceKey) -> Option<HolderGetter<'_>> {
+        // createContext puts the registries being loaded over the context's.
+        if self.registering.contains(registry_key) {
+            return Some(HolderGetter::Registration(registry_key.clone()));
+        }
+        self.lookup_provider
+            .lookup(registry_key)
+            .map(HolderGetter::Registry)
+    }
+}
+
+/// `HolderGetter`: a registry's elements and tags by key.
+#[derive(Clone, Debug)]
+pub enum HolderGetter<'a> {
+    /// A frozen registry's: the elements it has. Its tags are what the server sends
+    /// (`update_tags`), which isn't ported, so every tag is a named set of its key.
+    Registry(&'a Registry),
+    /// `MappedRegistry.createRegistrationLookup()` of a registry being loaded: a holder for any
+    /// key and a named set for any tag, bound once the registry is (Java's `freeze` fails on a
+    /// holder that never was).
+    Registration(ResourceKey),
+}
+
+impl HolderGetter<'_> {
+    /// `get(ResourceKey)`.
+    pub fn get(&self, id: &ResourceKey) -> Option<Holder> {
+        match self {
+            HolderGetter::Registry(registry) => registry.get(id),
+            HolderGetter::Registration(_) => Some(Holder::Reference(id.clone())),
+        }
+    }
+
+    /// `get(TagKey)`.
+    pub fn get_tag(&self, id: &TagKey) -> Option<HolderSet> {
+        Some(HolderSet::Named(id.clone()))
     }
 }
 
@@ -56,6 +119,10 @@ impl<T> fmt::Display for RegistryOps<'_, T> {
 impl<T: OpsValue> DynamicOps<T> for RegistryOps<'_, T> {
     fn kind(&self) -> OpsKind {
         OpsKind::Registry
+    }
+
+    fn as_registry_ops(&self) -> Option<&dyn RegistryInfoLookup> {
+        Some(self)
     }
 
     fn delegate_kind(&self) -> OpsKind {

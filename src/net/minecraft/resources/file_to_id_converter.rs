@@ -1,6 +1,6 @@
 //! net/minecraft/resources/FileToIdConverter.java
 //!
-//! Not ported yet: `registry` and `listMatchingResourceStacks`, which come with their callers.
+//! Not ported yet: `listMatchingResourceStacks`, which comes with its callers.
 
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::packs::resources::resource::Resource;
@@ -25,6 +25,17 @@ impl FileToIdConverter {
 
     pub fn json(prefix: &str) -> FileToIdConverter {
         FileToIdConverter::new(prefix, ".json")
+    }
+
+    /// `registry(ResourceKey)`: a registry's elements' JSON files.
+    pub fn registry(
+        registry: &crate::net::minecraft::resources::resource_key::ResourceKey,
+    ) -> FileToIdConverter {
+        FileToIdConverter::json(
+            &crate::net::minecraft::core::registries::registries::Registries::elements_dir_path(
+                registry,
+            ),
+        )
     }
 
     pub fn prefix(&self) -> &str {

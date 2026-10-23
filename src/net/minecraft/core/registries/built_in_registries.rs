@@ -1,7 +1,7 @@
 //! net/minecraft/core/registries/BuiltInRegistries.java
 //!
-//! Not ported yet: every registry but the attributes' and the entity types', which come with
-//! their classes (blocks' is `Block`'s own numbering, `BLOCK_STATE_REGISTRY`). A registry here is
+//! Not ported yet: every registry but the attributes', the blocks' and the entity types', which
+//! come with their classes (blocks' is `blocks::registry()`, with `BLOCK_STATE_REGISTRY`). A registry here is
 //! its elements' keys in id order, the order Java registers them in (`Registry`). The entity
 //! types' is also the registry `EntityTypes` fills, which hands out the types themselves, falling
 //! back to the pig like Java's `DefaultedRegistry`.
@@ -12,6 +12,7 @@ use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::core::registry::Registry;
 use crate::net::minecraft::world::entity::ai::attributes::attributes::{self, Attributes};
 use crate::net::minecraft::world::entity::entity_types::{self, EntityTypeRegistry};
+use crate::net::minecraft::world::level::block::blocks;
 
 static ATTRIBUTE: LazyLock<Registry> = LazyLock::new(|| {
     Registry::new(
@@ -39,6 +40,10 @@ impl BuiltInRegistries {
     pub fn registries() -> Vec<Registry> {
         vec![
             Registry::clone(BuiltInRegistries::ATTRIBUTE),
+            Registry::new(
+                (**Registries::BLOCK).clone(),
+                blocks::registry().keys().to_vec(),
+            ),
             Registry::new(
                 (**Registries::ENTITY_TYPE).clone(),
                 BuiltInRegistries::ENTITY_TYPE.keys().to_vec(),

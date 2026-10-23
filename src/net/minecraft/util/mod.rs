@@ -26,4 +26,5 @@ pub mod string_util;
 // Java's net/minecraft/util/Util.java.
 #[allow(clippy::module_inception)]
 pub mod util;
+pub mod valueproviders;
 pub mod zero_bit_storage;

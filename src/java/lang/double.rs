@@ -1,5 +1,5 @@
 //! java.lang.Double, where it differs from Rust's std: what `equals` and `hashCode` methods use,
-//! `toString`, and `parseDouble`, whose grammar is Java's (surrounding whitespace, `NaN`,
+//! `compare`, `toString`, and `parseDouble`, whose grammar is Java's (surrounding whitespace, `NaN`,
 //! `Infinity`, hexadecimal, a type suffix).
 
 use crate::java::lang::number_format_exception::NumberFormatException;
@@ -16,6 +16,18 @@ impl Double {
         } else {
             value.to_bits() as i64
         }
+    }
+
+    /// `compare(double, double)`, `compareTo`'s order: by value, -0.0 below 0.0, and every NaN
+    /// equal to every other and above everything else.
+    pub fn compare(d1: f64, d2: f64) -> std::cmp::Ordering {
+        if d1 < d2 {
+            return std::cmp::Ordering::Less;
+        }
+        if d1 > d2 {
+            return std::cmp::Ordering::Greater;
+        }
+        Double::double_to_long_bits(d1).cmp(&Double::double_to_long_bits(d2))
     }
 
     /// The two halves of the bits, XORed.

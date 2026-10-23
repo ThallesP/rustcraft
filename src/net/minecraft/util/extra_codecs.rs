@@ -1,7 +1,9 @@
 //! net/minecraft/util/ExtraCodecs.java
 //!
-//! The game's own codecs and combinators, as far as text components reach: `VECTOR4F`,
-//! `ARGB_COLOR_CODEC`, `POSITIVE_INT`, `UNTRUSTED_URI`, `CHAT_STRING`, `NBT` (`converter(NbtOps.INSTANCE)`, which
+//! The game's own codecs and combinators, as far as text components and the synchronized
+//! registries reach: `VECTOR3F`, `VECTOR4F`, `RGB_COLOR_CODEC`, `ARGB_COLOR_CODEC`,
+//! `STRING_RGB_COLOR` (with `hexColor`), `POSITIVE_INT`, `intRange`, `compactListCodec`,
+//! `catchDecoderException`, `UNTRUSTED_URI`, `CHAT_STRING`, `NBT` (`converter(NbtOps.INSTANCE)`, which
 //! reads any data as the tag it converts to), `nonEmptyList`, `orCompressed` of map codecs (the
 //! normal one, since no ops the game's codecs reach compresses), `idResolverCodec` of a codec of
 //! ids, and `LateBoundIdMapper`. The rest comes with its callers.
@@ -12,10 +14,12 @@
 
 use std::sync::LazyLock;
 
+use crate::com::mojang::datafixers::util::either::Either;
 use crate::com::mojang::datafixers::util::pair::Pair;
 use crate::com::mojang::serialization::codec::{
-    CodecExt, FLOAT, INT, STRING, StaticCodec, Validate,
+    CodecExt, FLOAT, INT, STRING, StaticCodec, Validate, Xmap,
 };
+use crate::com::mojang::serialization::codecs::either_codec::EitherCodec;
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::decoder::Decoder;
 use crate::com::mojang::serialization::dynamic_ops::{DynamicOps, OpsKind, OpsValue};
@@ -32,9 +36,22 @@ use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::string_util::StringUtil;
 use crate::net::minecraft::util::util::Util;
+use crate::org::joml::vector3f::Vector3f;
 use crate::org::joml::vector4f::Vector4f;
 
 pub struct ExtraCodecs;
+
+static VECTOR3F: StaticCodec<Vector3f> = LazyLock::new(|| {
+    FLOAT
+        .list_of()
+        .comap_flat_map(
+            |input: Vec<f32>| {
+                Util::fixed_size(input, 3).map(|d| Vector3f::from_xyz(d[0], d[1], d[2]))
+            },
+            |vec: &Vector3f| vec![vec.x, vec.y, vec.z],
+        )
+        .boxed()
+});
 
 static VECTOR4F: StaticCodec<Vector4f> = LazyLock::new(|| {
     FLOAT
@@ -59,6 +76,60 @@ static ARGB_COLOR_CODEC: StaticCodec<i32> = LazyLock::new(|| {
     })
     .boxed()
 });
+
+static RGB_COLOR_CODEC: StaticCodec<i32> = LazyLock::new(|| {
+    INT.with_alternative_converted(VECTOR3F.clone(), |v: Vector3f| {
+        ARGB::color_from_float(1.0, v.x, v.y, v.z)
+    })
+    .boxed()
+});
+
+static STRING_RGB_COLOR: StaticCodec<i32> = LazyLock::new(|| {
+    hex_color(6)
+        .xmap(ARGB::opaque, |color: &i32| ARGB::transparent(*color))
+        .with_alternative(RGB_COLOR_CODEC.clone())
+        .boxed()
+});
+
+// `hexColor(expectedDigits)`: `#` and that many hex digits, written in lowercase.
+fn hex_color(expected_digits: i32) -> crate::com::mojang::serialization::codec::BoxedCodec<i32> {
+    let max_value = (1_i64 << (expected_digits * 4)) - 1;
+    STRING
+        .comap_flat_map(
+            move |string: String| {
+                let Some(hex) = string.strip_prefix('#') else {
+                    return DataResult::error(|| "Hex color must begin with #".to_owned());
+                };
+                // String.length(), in UTF-16 units.
+                let digits = hex.encode_utf16().count() as i32;
+                if digits != expected_digits {
+                    return DataResult::error(|| {
+                        format!(
+                            "Hex color is wrong size, expected {expected_digits} digits but got {digits}"
+                        )
+                    });
+                }
+                // HexFormat.fromHexDigitsToLong: only 0-9, a-f and A-F.
+                match hex
+                    .chars()
+                    .try_fold(0_i64, |value, c| c.to_digit(16).map(|d| value << 4 | i64::from(d)))
+                {
+                    Some(value) if value >= 0 && value <= max_value => {
+                        DataResult::success(value as i32)
+                    }
+                    Some(_) => DataResult::error(|| format!("Color value out of range: {string}")),
+                    None => DataResult::error(|| format!("Invalid color value: {string}")),
+                }
+            },
+            // HexFormat.of().toHexDigits(value, digits): the low digits, lowercase.
+            move |value: &i32| {
+                let digits = expected_digits as usize;
+                let hex = format!("{:08x}", *value as u32);
+                format!("#{}", &hex[hex.len() - digits..])
+            },
+        )
+        .boxed()
+}
 
 static POSITIVE_INT: StaticCodec<i32> = LazyLock::new(|| {
     int_range_with_message(1, i32::MAX, |n| format!("Value must be positive: {n}"))
@@ -110,12 +181,66 @@ fn int_range_with_message(
 }
 
 impl ExtraCodecs {
+    pub const VECTOR3F: &'static StaticCodec<Vector3f> = &VECTOR3F;
     pub const VECTOR4F: &'static StaticCodec<Vector4f> = &VECTOR4F;
+    pub const RGB_COLOR_CODEC: &'static StaticCodec<i32> = &RGB_COLOR_CODEC;
     pub const ARGB_COLOR_CODEC: &'static StaticCodec<i32> = &ARGB_COLOR_CODEC;
+    pub const STRING_RGB_COLOR: &'static StaticCodec<i32> = &STRING_RGB_COLOR;
     pub const POSITIVE_INT: &'static StaticCodec<i32> = &POSITIVE_INT;
     pub const UNTRUSTED_URI: &'static StaticCodec<URI> = &UNTRUSTED_URI;
     pub const CHAT_STRING: &'static StaticCodec<String> = &CHAT_STRING;
     pub const NBT: &'static StaticCodec<Tag> = &NBT;
+
+    /// `intRange`: an int in the range, or the message saying which range.
+    pub fn int_range(
+        min_inclusive: i32,
+        max_inclusive: i32,
+    ) -> crate::com::mojang::serialization::codec::BoxedCodec<i32> {
+        INT.validate(move |value| {
+            if value >= min_inclusive && value <= max_inclusive {
+                DataResult::success(value)
+            } else {
+                DataResult::error(|| {
+                    format!("Value must be within range [{min_inclusive};{max_inclusive}]: {value}")
+                })
+            }
+        })
+        .boxed()
+    }
+
+    /// `compactListCodec(elementCodec, listCodec)`: a list, or one element alone, which a list of
+    /// one is written as.
+    #[allow(clippy::type_complexity)]
+    pub fn compact_list_codec<C, L>(
+        element_codec: C,
+        list_codec: L,
+    ) -> Xmap<
+        EitherCodec<L, C>,
+        fn(Either<Vec<C::Value>, C::Value>) -> Vec<C::Value>,
+        fn(&Vec<C::Value>) -> Either<Vec<C::Value>, C::Value>,
+    >
+    where
+        C: CodecExt,
+        L: CodecExt<Value = Vec<C::Value>>,
+        C::Value: Clone,
+    {
+        EitherCodec::new(list_codec, element_codec).xmap(
+            |either| either.map(|list| list, |element| vec![element]),
+            |list| {
+                if list.len() == 1 {
+                    Either::Right(list[0].clone())
+                } else {
+                    Either::Left(list.clone())
+                }
+            },
+        )
+    }
+
+    /// `catchDecoderException`: the codec, with an exception its decoding throws (a panic here)
+    /// turned into an error naming the input.
+    pub fn catch_decoder_exception<C>(codec: C) -> CatchDecoderException<C> {
+        CatchDecoderException { codec }
+    }
 
     /// `nonEmptyList`: the list codec, failing on an empty list.
     #[allow(clippy::type_complexity)]
@@ -169,6 +294,41 @@ impl ExtraCodecs {
                 },
             )
             .boxed()
+    }
+}
+
+/// `catchDecoderException`'s codec: Java's `Codec.of` of the codec and a decoder catching what it
+/// throws, whose message is the panic's.
+#[derive(Clone)]
+pub struct CatchDecoderException<C> {
+    codec: C,
+}
+
+impl<C: Valued> Valued for CatchDecoderException<C> {
+    type Value = C::Value;
+}
+
+impl<T: OpsValue, C: Encoder<T>> Encoder<T> for CatchDecoderException<C> {
+    fn encode(&self, input: &C::Value, ops: &dyn DynamicOps<T>, prefix: T) -> DataResult<T> {
+        self.codec.encode(input, ops, prefix)
+    }
+}
+
+impl<T: OpsValue, C: Decoder<T>> Decoder<T> for CatchDecoderException<C> {
+    fn decode(&self, ops: &dyn DynamicOps<T>, input: &T) -> DataResult<Pair<C::Value, T>> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.codec.decode(ops, input)
+        })) {
+            Ok(result) => result,
+            Err(payload) => {
+                let message = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_default();
+                DataResult::error(|| format!("Caught exception decoding {input}: {message}"))
+            }
+        }
     }
 }
 

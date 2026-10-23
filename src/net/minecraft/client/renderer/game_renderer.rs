@@ -113,7 +113,6 @@ use crate::net::minecraft::world::entity::entity::EntityClass;
 use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::cardinal_lighting;
-use crate::net::minecraft::world::level::dimension::dimension_type::DimensionType;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
 use crate::net::minecraft::world::level::material::fog_type::FogType;
 use crate::org::joml::matrix4f::Matrix4f;
@@ -838,8 +837,7 @@ impl GameRenderer {
         self.lightmap_needs_update = false;
         self.extract_player_state(level, player, partial_ticks);
         // setLevel's Lighting.updateLevel, for the level's cardinal lighting.
-        let cardinal_light_type =
-            DimensionType::cardinal_light_type_of(level.dimension_type_registration());
+        let cardinal_light_type = level.dimension_type().cardinal_light_type();
         if self.lighting_level_type != Some(cardinal_light_type) {
             self.lighting.update_level(device, cardinal_light_type);
             self.lighting_level_type = Some(cardinal_light_type);

@@ -243,13 +243,17 @@ pub(crate) mod tests {
     use crate::net::minecraft::world::level::block::state::block_state::BlockState;
     use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
 
-    /// The registries with the biomes a golden file names, in its order.
+    /// The registries with the biomes a golden file names, in its order, and the vanilla
+    /// dimension types, which a level reads its height from.
     pub(crate) fn registries(biomes: &Value) -> RegistryAccess {
         let keys = Vec::<String>::decode(biomes)
             .iter()
             .map(|name| ResourceKey::create(Registries::BIOME, Identifier::parse(name)))
             .collect();
-        RegistryAccess::new(vec![Registry::new((**Registries::BIOME).clone(), keys)])
+        RegistryAccess::new(vec![
+            Registry::new((**Registries::BIOME).clone(), keys),
+            crate::net::minecraft::client::multiplayer::registry_data_collector::tests::dimension_types(),
+        ])
     }
 
     /// A section as the goldens encode it: `[counts, statesBits, states, biomesBits, biomes]`,

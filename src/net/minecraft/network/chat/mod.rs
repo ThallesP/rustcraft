@@ -1,3 +1,5 @@
+pub mod chat_type;
+pub mod chat_type_decoration;
 pub mod click_event;
 pub mod component;
 pub mod component_contents;

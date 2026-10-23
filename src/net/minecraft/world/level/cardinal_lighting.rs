@@ -1,9 +1,10 @@
 //! net/minecraft/world/level/CardinalLighting.java
-//!
-//! Not ported yet: `Type`'s `CODEC`, which waits for DataFixerUpper's codecs and the dimension
-//! types' fields.
 
+use std::sync::LazyLock;
+
+use crate::com::mojang::serialization::codec::StaticCodec;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::string_representable::{self, StringRepresentable};
 
 /// How bright a face looks by the way it faces, in a dimension.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -53,15 +54,23 @@ pub enum Type {
     NETHER,
 }
 
+static TYPE_CODEC: StaticCodec<Type> =
+    LazyLock::new(|| string_representable::from_values(&Type::VALUES));
+
 impl Type {
+    pub const VALUES: [Type; 2] = [Type::DEFAULT, Type::NETHER];
+    pub const CODEC: &'static StaticCodec<Type> = &TYPE_CODEC;
+
     pub fn get(&self) -> CardinalLighting {
         match self {
             Type::DEFAULT => CardinalLighting::DEFAULT,
             Type::NETHER => CardinalLighting::NETHER,
         }
     }
+}
 
-    pub fn get_serialized_name(&self) -> &'static str {
+impl StringRepresentable for Type {
+    fn get_serialized_name(&self) -> &'static str {
         match self {
             Type::DEFAULT => "default",
             Type::NETHER => "nether",

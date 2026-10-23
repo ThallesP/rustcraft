@@ -350,6 +350,11 @@ impl BlockRegistry {
             .map(|id| Block(id as u16))
     }
 
+    /// Every block's key, by id.
+    pub fn keys(&self) -> &[ResourceKey] {
+        &self.keys
+    }
+
     /// Every block, by id.
     pub fn iter(&self) -> impl Iterator<Item = Block> + use<> {
         (0..self.blocks.len() as u16).map(Block)

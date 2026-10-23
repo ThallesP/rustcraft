@@ -1,31 +1,25 @@
 //! net/minecraft/client/multiplayer/RegistryDataCollector.java
 //!
-//! What it collects is each registry's elements' identifiers in the order they came, which are
-//! their network ids (`Registry`), and the biomes' values, which the client reads from the data
-//! the server sent, or for an element of a pack it knows, from that pack (`RegistryDataLoader`
-//! with `Biome.NETWORK_CODEC`). **Temporary, until DataFixerUpper's codecs come**: the biomes are
-//! read by `Biome::from_network_nbt` and `from_network_json`, and the known pack is the vanilla
-//! pack's `data/` (`KnownPacksManager.createResourceManager`, which only knows `vanilla`'s
-//! elements here). Not ported yet: the other registries' values, and the tags (`appendTags`),
-//! which come with `ClientboundUpdateTagsPacket`.
+//! What it collects is each registry's elements in the order they came, which are their network
+//! ids, loaded by `RegistryDataLoader` (`loadNewElementsAndTags`): from the data the server sent,
+//! or for an element of a pack it knows, from that pack. The known pack is the vanilla pack's
+//! `data/` (`KnownPacksManager.createResourceManager`, which only knows `vanilla`'s elements
+//! here). Not ported yet: the tags (`appendTags`), which come with `ClientboundUpdateTagsPacket`,
+//! and the layered access (`ClientRegistryLayer`), which is the static registries the port has,
+//! then the loaded ones in the order they came.
 
 use std::path::Path;
 use std::rc::Rc;
 
-use crate::com::google::gson::json_parser::JsonParser;
 use crate::net::minecraft::core::registries::built_in_registries::BuiltInRegistries;
-use crate::net::minecraft::core::registries::registries::Registries;
-use crate::net::minecraft::core::registry::Registry;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::registry_synchronization::PackedRegistryEntry;
-use crate::net::minecraft::resources::identifier::Identifier;
+use crate::net::minecraft::resources::registry_data_loader::RegistryDataLoader;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::server::packs::pack_resources::PackResources;
 use crate::net::minecraft::server::packs::pack_type::PackType;
 use crate::net::minecraft::server::packs::resources::multi_pack_resource_manager::MultiPackResourceManager;
-use crate::net::minecraft::server::packs::resources::resource_manager::ResourceManager;
 use crate::net::minecraft::server::packs::vanilla_pack_resources::VanillaPackResources;
-use crate::net::minecraft::world::level::biome::biome::Biome;
 
 /// The registries the server sends during configuration, as they come.
 #[derive(Debug, Default)]
@@ -45,52 +39,20 @@ impl RegistryDataCollector {
     }
 
     /// The registries the game protocol reads with: the client's static ones the port has
-    /// (`ClientRegistryLayer.STATIC`, `BuiltInRegistries`), then the ones the server sent.
+    /// (`ClientRegistryLayer.STATIC`, `BuiltInRegistries`), then the ones the server sent, loaded
+    /// with the static ones as their context. Panics where Java throws the loader's
+    /// `ReportedException`.
     pub fn collect_game_registries(&self) -> RegistryAccess {
-        let received = self
-            .contents_collector
-            .iter()
-            .flat_map(|collector| &collector.elements)
-            .map(|(registry, entries)| {
-                let keys = entries
-                    .iter()
-                    .map(|entry| ResourceKey::create(registry, entry.id().clone()))
-                    .collect();
-                if registry == &**Registries::BIOME {
-                    let biomes = entries.iter().map(RegistryDataCollector::biome).collect();
-                    Registry::with_biomes(registry.clone(), keys, biomes)
-                } else {
-                    Registry::new(registry.clone(), keys)
-                }
-            });
+        let static_registries = RegistryAccess::new(BuiltInRegistries::registries());
+        let received = match &self.contents_collector {
+            Some(collector) => VANILLA_DATA.with(|known_data_source| {
+                RegistryDataLoader::load(&collector.elements, known_data_source, &static_registries)
+            }),
+            None => Vec::new(),
+        };
         let mut registries = BuiltInRegistries::registries();
         registries.extend(received);
         RegistryAccess::new(registries)
-    }
-}
-
-impl RegistryDataCollector {
-    /// Temporary: a biome from the server's data, or the vanilla pack's.
-    pub(crate) fn biome(entry: &PackedRegistryEntry) -> Biome {
-        match entry.data() {
-            Some(data) => Biome::from_network_nbt(data),
-            None => {
-                let id = entry.id();
-                let location = Identifier::from_namespace_and_path(
-                    id.get_namespace(),
-                    &format!("worldgen/biome/{}.json", id.get_path()),
-                );
-                let resource = VANILLA_DATA
-                    .with(|data| data.get_resource(&location))
-                    .unwrap_or_else(|| panic!("the known packs have no biome {id}"));
-                let text = resource
-                    .read_all_as_string()
-                    .unwrap_or_else(|error| panic!("can't read the biome {id}: {error}"));
-                let json = JsonParser::parse_strict(&text)
-                    .unwrap_or_else(|error| panic!("the biome {id} isn't JSON: {error}"));
-                Biome::from_network_json(&json)
-            }
-        }
     }
 }
 
@@ -122,5 +84,32 @@ impl ContentsCollector {
             Some((_, collected)) => collected.extend_from_slice(entries),
             None => self.elements.push((registry.clone(), entries.to_vec())),
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::RegistryDataCollector;
+    use crate::net::minecraft::core::registries::registries::Registries;
+    use crate::net::minecraft::core::registry::Registry;
+    use crate::net::minecraft::core::registry_synchronization::PackedRegistryEntry;
+    use crate::net::minecraft::resources::identifier::Identifier;
+
+    /// The vanilla dimension types' entries, as a vanilla server sends them: by name.
+    pub(crate) fn dimension_type_entries() -> Vec<PackedRegistryEntry> {
+        ["overworld", "overworld_caves", "the_end", "the_nether"]
+            .into_iter()
+            .map(|name| PackedRegistryEntry::new(Identifier::with_default_namespace(name), None))
+            .collect()
+    }
+
+    /// The vanilla pack's dimension types, loaded like a known pack's elements.
+    pub(crate) fn dimension_types() -> Registry {
+        let mut collector = RegistryDataCollector::new();
+        collector.append_contents(Registries::DIMENSION_TYPE, &dimension_type_entries());
+        collector
+            .collect_game_registries()
+            .lookup_or_throw(Registries::DIMENSION_TYPE)
+            .clone()
     }
 }

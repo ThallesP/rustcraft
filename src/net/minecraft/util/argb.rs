@@ -114,6 +114,11 @@ impl ARGB {
         color | 0xFF000000_u32 as i32
     }
 
+    /// The color with its alpha cleared.
+    pub fn transparent(color: i32) -> i32 {
+        color & 16777215
+    }
+
     /// `color >>> 24`.
     pub fn alpha(color: i32) -> i32 {
         ((color as u32) >> 24) as i32
