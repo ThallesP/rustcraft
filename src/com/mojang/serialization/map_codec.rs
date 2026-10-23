@@ -81,6 +81,20 @@ impl<A, T: OpsValue> MapDecoder<T> for BoxedMapCodec<A> {
     }
 }
 
+/// A static map codec, made on first use.
+pub type StaticMapCodec<A> = std::sync::LazyLock<BoxedMapCodec<A>>;
+
+/// A static map codec handed out to make other codecs with, like `SharedCodec`.
+pub trait SharedMapCodec<A> {
+    fn shared(&self) -> BoxedMapCodec<A>;
+}
+
+impl<A> SharedMapCodec<A> for StaticMapCodec<A> {
+    fn shared(&self) -> BoxedMapCodec<A> {
+        (**self).clone()
+    }
+}
+
 /// Java's methods that make map codecs out of a map codec.
 pub trait MapCodecExt: MapCodec<Tag> + Sized {
     /// `codec()`: the map codec as a codec of a map.
@@ -385,4 +399,41 @@ where
     M: MapCodec<Tag> + Send + Sync + 'static,
 {
     BoxedCodec::new(codec.codec())
+}
+
+/// Not Java's: the map codec of a type the port doesn't have yet, which fails to decode with a
+/// message saying so and can't encode, since no value of the type exists.
+pub struct Unported<A> {
+    what: &'static str,
+    value: std::marker::PhantomData<fn() -> A>,
+}
+
+pub fn unported<A>(what: &'static str) -> Unported<A> {
+    Unported {
+        what,
+        value: std::marker::PhantomData,
+    }
+}
+
+impl<A> Valued for Unported<A> {
+    type Value = A;
+}
+
+impl<T: OpsValue, A> Keyable<T> for Unported<A> {
+    fn keys(&self, _ops: &dyn DynamicOps<T>) -> Vec<T> {
+        Vec::new()
+    }
+}
+
+impl<T: OpsValue, A> MapEncoder<T> for Unported<A> {
+    fn encode(&self, _input: &A, _ops: &dyn DynamicOps<T>, _prefix: &mut dyn RecordBuilder<T>) {
+        panic!("{} isn't ported", self.what)
+    }
+}
+
+impl<T: OpsValue, A> MapDecoder<T> for Unported<A> {
+    fn decode(&self, _ops: &dyn DynamicOps<T>, _input: &dyn MapLike<T>) -> DataResult<A> {
+        let what = self.what;
+        DataResult::error(|| format!("{what} isn't ported"))
+    }
 }

@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod clientbound_packet_listener;
 pub mod codec;
 pub mod compression_decoder;

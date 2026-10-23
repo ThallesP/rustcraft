@@ -13,7 +13,7 @@ use std::fmt;
 use crate::com::mojang::datafixers::util::pair::Pair;
 use crate::com::mojang::serialization::codec::{BoxedCodec, Codec};
 use crate::com::mojang::serialization::data_result::DataResult;
-use crate::com::mojang::serialization::dynamic_ops::{self, DynamicOps, OpsValue};
+use crate::com::mojang::serialization::dynamic_ops::{self, DynamicOps, OpsKind, OpsValue};
 use crate::com::mojang::serialization::list_builder::{self, ListBuilder};
 use crate::com::mojang::serialization::map_codec::{BoxedMapCodec, MapCodec};
 use crate::com::mojang::serialization::map_like::MapLike;
@@ -127,6 +127,10 @@ impl OpsValue for Tag {
 }
 
 impl DynamicOps<Tag> for NbtOps {
+    fn kind(&self) -> OpsKind {
+        OpsKind::Nbt
+    }
+
     fn empty(&self) -> Tag {
         Tag::End(EndTag::INSTANCE)
     }

@@ -194,6 +194,20 @@ impl<A, T: OpsValue> Decoder<T> for BoxedCodec<A> {
     }
 }
 
+/// A static codec, made on first use: `Identifier::CODEC`.
+pub type StaticCodec<A> = std::sync::LazyLock<BoxedCodec<A>>;
+
+/// A static codec handed out to make other codecs with: `Identifier::CODEC.shared().field_of("id")`.
+pub trait SharedCodec<A> {
+    fn shared(&self) -> BoxedCodec<A>;
+}
+
+impl<A> SharedCodec<A> for StaticCodec<A> {
+    fn shared(&self) -> BoxedCodec<A> {
+        (**self).clone()
+    }
+}
+
 /// Java's default methods that make codecs out of a codec.
 pub trait CodecExt: Codec<Tag> + Sized {
     /// `xmap`: the value mapped both ways.

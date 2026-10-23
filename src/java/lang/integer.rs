@@ -1,7 +1,8 @@
 //! java/lang/Integer.java
 //!
-//! Only `parseInt(String)`, which `IntegerProperty.getValue` parses a value's name with. It takes
-//! any Unicode decimal digit, as `Character.digit` does, not only ASCII ones: `"٣"` is 3.
+//! Only `parseInt(String)`, which `IntegerProperty.getValue` parses a value's name with, and
+//! `parseInt(String, int)` in radix 16, which `TextColor.parseColor` reads a hex color with. They
+//! take any digit `Character.digit` does, not only ASCII ones: `"٣"` is 3.
 
 use crate::java::lang::character::Character;
 
@@ -18,6 +19,11 @@ impl Integer {
     /// `parseInt(String)`: an optional sign, then decimal digits, accumulated negatively so
     /// that `MIN_VALUE` fits, like Java's.
     pub fn parse_int(s: &str) -> Result<i32, NumberFormatException> {
+        Integer::parse_int_radix(s, 10)
+    }
+
+    /// `parseInt(String, int)`, for the radixes `Character.digit` is ported for.
+    pub fn parse_int_radix(s: &str, radix: i32) -> Result<i32, NumberFormatException> {
         let chars: Vec<u16> = s.encode_utf16().collect();
         let Some(&first) = chars.first() else {
             return Err(NumberFormatException);
@@ -38,15 +44,15 @@ impl Integer {
             i += 1;
         }
 
-        let multmin = limit / 10;
+        let multmin = limit / radix;
         let mut result = 0i32;
         while i < chars.len() {
-            let digit = Character::digit(chars[i], 10);
+            let digit = Character::digit(chars[i], radix);
             i += 1;
             if digit < 0 || result < multmin {
                 return Err(NumberFormatException);
             }
-            result *= 10;
+            result *= radix;
             if result < limit + digit {
                 return Err(NumberFormatException);
             }

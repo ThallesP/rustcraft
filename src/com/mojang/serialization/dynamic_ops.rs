@@ -41,7 +41,21 @@ pub trait OpsValue: Clone + PartialEq + fmt::Display + fmt::Debug + 'static {
     ) -> &(dyn MapCodec<Self, Value = A> + Send + Sync);
 }
 
+/// Which ops an ops is, where Java compares ops by reference (`Dynamic.convert`): the same kind
+/// is the same ops, except a `RegistryOps`, which each is its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpsKind {
+    Nbt,
+    Json,
+    JsonCompressed,
+    Java,
+    Registry,
+}
+
 pub trait DynamicOps<T: OpsValue>: fmt::Display {
+    /// Which ops this is.
+    fn kind(&self) -> OpsKind;
+
     fn empty(&self) -> T;
 
     fn empty_map(&self) -> T {

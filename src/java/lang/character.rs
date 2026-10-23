@@ -1,7 +1,7 @@
 //! java/lang/Character.java
 //!
-//! Only `digit(char, int)` in radix 10, which `Integer.parseInt` reads digits with. The golden
-//! suite keeps to radix 10 (`where()`).
+//! Only `digit(char, int)` in radixes 10 and 16, which `Integer.parseInt` reads digits with (a
+//! text color's hex). The golden suite keeps to those two (`where()`).
 
 pub struct Character;
 
@@ -16,14 +16,28 @@ const DIGIT_ZEROS: [u16; 37] = [
 ];
 
 impl Character {
-    /// `digit(char, 10)`: the decimal digit's value, or -1. Panics on another radix, which isn't
-    /// ported.
+    /// `digit(char, radix)` for radix 10 or 16: a decimal digit's value, or a Latin letter's
+    /// (`A` to `Z`, either case, ASCII or fullwidth) from 10 up, if it's less than the radix; else
+    /// -1. Panics on another radix, which isn't ported.
     pub fn digit(ch: u16, radix: i32) -> i32 {
-        assert_eq!(radix, 10, "Character.digit is only ported for radix 10");
-        DIGIT_ZEROS
+        assert!(
+            radix == 10 || radix == 16,
+            "Character.digit is only ported for radixes 10 and 16"
+        );
+        let value = DIGIT_ZEROS
             .iter()
             .find(|&&zero| ch >= zero && ch - zero < 10)
-            .map_or(-1, |zero| (ch - zero) as i32)
+            .map(|zero| (ch - zero) as i32)
+            .or_else(|| {
+                [0x41u16, 0x61, 0xFF21, 0xFF41]
+                    .iter()
+                    .find(|&&a| ch >= a && ch - a < 26)
+                    .map(|a| (ch - a) as i32 + 10)
+            });
+        match value {
+            Some(value) if value < radix => value,
+            _ => -1,
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 pub mod client;
 pub mod core;
+pub mod locale;
 pub mod nbt;
 pub mod network;
 pub mod references;

@@ -1,22 +1,25 @@
 //! net/minecraft/resources/Identifier.java
 //!
-//! Not ported yet: `CODEC` and `read(String)`, which wait for DataFixerUpper; `ERROR_INVALID`, `read(StringReader)` and
+//! Not ported yet: `ERROR_INVALID`, `read(StringReader)` and
 //! `readNonEmpty`, which wait for brigadier; `withPath(UnaryOperator)`, which the golden harness
 //! can't generate an argument for; and `resolveAgainst(Path)`, which comes with resource loading.
 //!
 //! Java throws `IdentifierException` for an invalid namespace or path, which is a panic here. Its
-//! message goes through commons-lang's `escapeJava`, which isn't ported: goldens only record the
-//! exception's class. Java's `assert`s in the constructor are off unless the JVM runs with `-ea`,
+//! message goes through commons-lang's `escapeJava`, which `read` returns in its error as Java's
+//! does; the panics' messages don't, since goldens only record a throw's class. Java's `assert`s in the constructor are off unless the JVM runs with `-ea`,
 //! so they aren't ported either.
 
 use std::fmt;
 use std::sync::LazyLock;
 
+use crate::com::mojang::serialization::codec::{CodecExt, STRING, StaticCodec};
+use crate::com::mojang::serialization::data_result::DataResult;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::object::HashCode;
 use crate::java::lang::string::JavaString;
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
 use crate::net::minecraft::network::codec::stream_codec::{StaticStreamCodec, StreamCodec};
+use crate::org::apache::commons::lang3::string_escape_utils::StringEscapeUtils;
 
 /// A namespaced name, `namespace:path`, like `minecraft:block/stone`. Every one that exists is
 /// valid, so its parts are ASCII.
@@ -34,7 +37,19 @@ static STREAM_CODEC: StaticStreamCodec<ByteBuf, Identifier> = LazyLock::new(|| {
     ))
 });
 
+// `Codec.STRING.comapFlatMap(Identifier::read, Identifier::toString).stable()`.
+static CODEC: StaticCodec<Identifier> = LazyLock::new(|| {
+    STRING
+        .comap_flat_map(
+            |input: String| Identifier::read(&input),
+            Identifier::to_string,
+        )
+        .stable()
+        .boxed()
+});
+
 impl Identifier {
+    pub const CODEC: &'static StaticCodec<Identifier> = &CODEC;
     pub const STREAM_CODEC: &'static StaticStreamCodec<ByteBuf, Identifier> = &STREAM_CODEC;
     pub const NAMESPACE_SEPARATOR: u16 = b':' as u16;
     pub const DEFAULT_NAMESPACE: &str = "minecraft";
@@ -69,6 +84,25 @@ impl Identifier {
             "minecraft",
             Identifier::assert_valid_path("minecraft", path),
         )
+    }
+
+    /// `read(String)`: the identifier `parse` makes, or the error naming the input and the
+    /// `IdentifierException`'s message.
+    pub fn read(input: &str) -> DataResult<Identifier> {
+        let (namespace, path) = match split_at_separator(input, Identifier::NAMESPACE_SEPARATOR) {
+            Some((namespace, path)) if !namespace.is_empty() => (namespace, path),
+            Some((_, path)) => (Identifier::DEFAULT_NAMESPACE, path),
+            None => (Identifier::DEFAULT_NAMESPACE, input),
+        };
+        let message = if !Identifier::is_valid_namespace(namespace) {
+            format!("Non [a-z0-9_.-] character in namespace of identifier: {namespace}:{path}")
+        } else if !Identifier::is_valid_path(path) {
+            format!("Non [a-z0-9/._-] character in path of location: {namespace}:{path}")
+        } else {
+            return DataResult::success(Identifier::new(namespace, path));
+        };
+        let escaped = StringEscapeUtils::escape_java(&message);
+        DataResult::error(|| format!("Not a valid resource location: {input} {escaped}"))
     }
 
     pub fn try_parse(identifier: &str) -> Option<Identifier> {

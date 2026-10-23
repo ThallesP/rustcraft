@@ -1,0 +1,11 @@
+pub mod click_event;
+pub mod component;
+pub mod component_contents;
+pub mod component_serialization;
+pub mod contents;
+pub mod font_description;
+pub mod formatted_text;
+pub mod hover_event;
+pub mod mutable_component;
+pub mod style;
+pub mod text_color;

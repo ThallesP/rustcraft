@@ -3,14 +3,32 @@
 //! A grab bag of helpers, ported as the classes calling them are. So far `getRandom` and
 //! `shuffledCopy` of an array, and `shuffle`, which `Direction` uses: its golden cases check
 //! them, since vanilla can't generate Java's generic arrays and lists. And `makeDescriptionId`,
-//! which a block's description id is made with, checked by `Block`'s.
+//! which a block's description id is made with, checked by `Block`'s. And `fixedSize` of a list,
+//! which `ExtraCodecs`' vectors read with, checked by their codecs' cases.
 
+use crate::com::mojang::serialization::data_result::DataResult;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::util::random_source::RandomSource;
 
 pub struct Util;
 
 impl Util {
+    /// `fixedSize(List, int)`: the list if it has the size, else an error, with the first `size`
+    /// elements as its partial value when it has more.
+    pub fn fixed_size<T>(mut list: Vec<T>, size: usize) -> DataResult<Vec<T>> {
+        if list.len() != size {
+            let message = move || format!("Input is not a list of {size} elements");
+            if list.len() >= size {
+                list.truncate(size);
+                DataResult::error_partial(message, list)
+            } else {
+                DataResult::error(message)
+            }
+        } else {
+            DataResult::success(list)
+        }
+    }
+
     /// `block.minecraft.oak_planks`: the prefix, the namespace and the path with its slashes made
     /// dots, or `unregistered_sadface` without an identifier.
     pub fn make_description_id(prefix: &str, location: Option<&Identifier>) -> String {

@@ -523,7 +523,7 @@ public final class Golden {
         new StaticSuite(Integer.class).only("parseInt(Ljava/lang/String;)I").extraInputs("parseInt(Ljava/lang/String;)I", intStrings()),
         new StaticSuite(Character.class)
             .only("digit(CI)I")
-            .where("digit(CI)I", args -> (Integer)args[1] == 10)
+            .where("digit(CI)I", args -> (Integer)args[1] == 10 || (Integer)args[1] == 16)
             .extraInputs("digit(CI)I", decimalDigits()),
         new InstanceSuite(Vector3i.class, "<init>(III)V", "set(III)Lorg/joml/Vector3i;", "get(I)I", "setComponent(II)Lorg/joml/Vector3i;"),
         InstanceSuite.every(Vec3i.class)
@@ -1255,6 +1255,7 @@ public final class Golden {
         new DataResultSuite(),
         new NbtOpsSuite(),
         new DfuCodecSuite(),
+        new ComponentSuite(),
         new RegistryValues.RegistriesSuite(),
         new StaticSuite(Attributes.class),
         InstanceSuite.every(WorldClock.class),
@@ -2891,6 +2892,7 @@ public final class Golden {
         List<Object[]> inputs = new ArrayList<>();
         for (int c = 0; c <= 0xffff; c++) {
             inputs.add(new Object[]{(char)c, 10});
+            inputs.add(new Object[]{(char)c, 16});
         }
         return inputs;
     }
