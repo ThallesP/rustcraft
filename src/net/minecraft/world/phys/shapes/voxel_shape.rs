@@ -7,7 +7,7 @@
 //! (Java's `equals` is `Object`'s). Its methods that a subclass overrides (`getCoords`,
 //! `findIndex`) match on the subclass.
 //!
-//! Not ported yet: `toString`, which prints `AABB.toString` and needs Java's `Double.toString`.
+//! `toString` is `Display`: `EMPTY`, or the bounds as `AABB.toString` prints them.
 //! `DoubleLineConsumer` is a closure.
 
 use std::sync::{Arc, OnceLock};
@@ -61,6 +61,17 @@ impl VoxelShape {
     /// shape lives.
     pub(crate) fn address(&self) -> usize {
         Arc::as_ptr(&self.0) as usize
+    }
+}
+
+/// `toString()`: `EMPTY`, or `VoxelShape[` and the bounds.
+impl std::fmt::Display for VoxelShape {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_empty() {
+            write!(f, "EMPTY")
+        } else {
+            write!(f, "VoxelShape[{}]", self.bounds())
+        }
     }
 }
 
@@ -737,10 +748,9 @@ mod tests {
                 shape.collide(axis, &moving, distance)
             },
         );
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "prints AABB.toString, which needs Java's Double.toString",
-        );
+        golden.check("toString()Ljava/lang/String;", |shape: VoxelShape| {
+            shape.to_string()
+        });
         golden.pending(
             "equals(Ljava/lang/Object;)Z",
             "Object's, by reference, which is VoxelShape's PartialEq",

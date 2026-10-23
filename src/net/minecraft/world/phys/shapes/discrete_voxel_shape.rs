@@ -325,10 +325,13 @@ fn fixup_coordinate(v: &mut Vector3i, index: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use super::rotate;
+    use crate::com::mojang::math::octahedral_group::OctahedralGroup;
     use crate::golden::Golden;
     use crate::net::minecraft::core::direction::{Axis, Direction};
     use crate::net::minecraft::world::phys::shapes::bit_set_discrete_voxel_shape::BitSetDiscreteVoxelShape;
     use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+    use crate::net::minecraft::world::phys::shapes::voxel_shape::golden::discrete;
 
     #[test]
     fn matches_vanilla() {
@@ -388,9 +391,11 @@ mod tests {
                     .is_interior(x, y, z)
             },
         );
-        golden.pending(
+        golden.check(
             "rotate(Lcom/mojang/math/OctahedralGroup;)Lnet/minecraft/world/phys/shapes/DiscreteVoxelShape;",
-            "needs OctahedralGroup",
+            |shape: VoxelShape, rotation: OctahedralGroup| {
+                discrete(&*rotate(shape.shape(), rotation))
+            },
         );
         golden.finish();
     }

@@ -1088,7 +1088,9 @@ final class ShapeSuites {
                     }
                 }
             }
-            writer.skipped("toString()Ljava/lang/String;", "prints AABB.toString, which needs Java's Double.toString");
+            for (Recipe recipe : shapes) {
+                BlockSuites.call(writer, "toString()Ljava/lang/String;", BlockSuites.array(recipe.json), () -> new JsonPrimitive(recipe.make.get().toString()));
+            }
             writer.skipped("equals(Ljava/lang/Object;)Z", "Object's, by reference");
         }
 
@@ -1174,7 +1176,17 @@ final class ShapeSuites {
                     }
                 }
             }
-            writer.skipped("rotate(Lcom/mojang/math/OctahedralGroup;)Lnet/minecraft/world/phys/shapes/DiscreteVoxelShape;", "no generator for com.mojang.math.OctahedralGroup");
+            // The base shapes' and 60 random ones' voxels turned by every symmetry of the group (the identity hands back
+            // the shape itself).
+            for (Recipe recipe : shapes.subList(0, baseCount + 60)) {
+                DiscreteVoxelShape shape = (DiscreteVoxelShape)get(SHAPE, recipe.make.get());
+                for (OctahedralGroup rotation : OctahedralGroup.values()) {
+                    BlockSuites.call(
+                        writer, "rotate(" + OCTAHEDRAL_GROUP_TYPE + ")Lnet/minecraft/world/phys/shapes/DiscreteVoxelShape;",
+                        BlockSuites.array(recipe.json, new JsonPrimitive(rotation.name())), () -> discrete(shape.rotate(rotation))
+                    );
+                }
+            }
         }
 
         private static JsonArray ints(final int... values) {
