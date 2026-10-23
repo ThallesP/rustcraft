@@ -28,16 +28,19 @@ use crate::com::mojang::blaze3d::pipeline::main_target::MainTarget;
 use crate::com::mojang::blaze3d::platform::lighting::{Entry, Lighting};
 use crate::com::mojang::blaze3d::platform::native_image::NativeImage;
 use crate::com::mojang::blaze3d::platform::window::Window;
+use crate::com::mojang::blaze3d::projection_type::ProjectionType;
 use crate::com::mojang::blaze3d::systems::render_system::{AutoStorageIndexBuffer, RenderSystem};
 use crate::com::mojang::blaze3d::systems::sampler_cache::SamplerCache;
 use crate::com::mojang::blaze3d::vertex::pose_stack::PoseStack;
-use crate::com::mojang::blaze3d::vertex::vertex_sorting::VertexSorting;
 use crate::com::mojang::math::axis::Axis;
+use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::GpuBuffer;
+use crate::com::mojang::renderpearl::api::commands::render_pass::RenderPass;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::compiled_render_pipeline::CompiledRenderPipeline;
 use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use crate::com::mojang::renderpearl::api::pipeline::render_pipeline::RenderPipeline;
 use crate::com::mojang::renderpearl::api::textures::filter_mode::FilterMode;
+use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
 use crate::com::mojang::renderpearl::frontend::shaders::pipeline_builder::PipelineBuilder;
 use crate::java::lang::math::Math;
 use crate::net::minecraft::client::camera::{Camera, CameraOptions};
@@ -59,8 +62,11 @@ use crate::net::minecraft::client::renderer::chunk::chunk_sections_to_render::Te
 use crate::net::minecraft::client::renderer::entity::entity_render_dispatcher::EntityRenderDispatcher;
 use crate::net::minecraft::client::renderer::entity::player::avatar_renderer::AvatarEntity;
 use crate::net::minecraft::client::renderer::entity::state::avatar_render_state::AvatarRenderState;
-use crate::net::minecraft::client::renderer::feature::feature_frame_context::FeatureFrameContext;
+use crate::net::minecraft::client::renderer::feature::feature_frame_context::{
+    FeatureFrameContext, SequentialBuffers,
+};
 use crate::net::minecraft::client::renderer::feature::feature_render_dispatcher::FeatureRenderDispatcher;
+use crate::net::minecraft::client::renderer::feature::feature_render_dispatcher::PreparedFrame;
 use crate::net::minecraft::client::renderer::first_person_hands_and_items_renderer::FirstPersonHandsAndItemsRenderer;
 use crate::net::minecraft::client::renderer::fog::environment::atmospheric_fog_environment::AtmosphericFogEnvironment;
 use crate::net::minecraft::client::renderer::fog::environment::lava_fog_environment::LavaFogEnvironment;
@@ -70,7 +76,7 @@ use crate::net::minecraft::client::renderer::fog::fog_data::FogData;
 use crate::net::minecraft::client::renderer::fog::fog_renderer::{FogMode, FogRenderer};
 use crate::net::minecraft::client::renderer::global_settings_uniform::GlobalSettingsUniform;
 use crate::net::minecraft::client::renderer::level_renderer::{
-    LevelRenderOptions, LevelRenderer, LevelResources,
+    LevelFeatures, LevelRenderOptions, LevelRenderer, LevelResources,
 };
 use crate::net::minecraft::client::renderer::lightmap::Lightmap;
 use crate::net::minecraft::client::renderer::projection::Projection;
@@ -80,6 +86,7 @@ use crate::net::minecraft::client::renderer::shader_manager::{Configs, ShaderMan
 use crate::net::minecraft::client::renderer::sky_renderer::{SkyPipelines, SkyRenderState};
 use crate::net::minecraft::client::renderer::staged_vertex_buffer::StagedVertexBuffer;
 use crate::net::minecraft::client::renderer::state::gui::gui_render_state::GuiRenderState;
+use crate::net::minecraft::client::renderer::state::level::block_outline_render_state::BlockOutlineRenderState;
 use crate::net::minecraft::client::renderer::state::level::camera_render_state::CameraRenderState;
 use crate::net::minecraft::client::renderer::state::level::player_render_state::PlayerRenderState;
 use crate::net::minecraft::client::renderer::state::lightmap_render_state::LightmapRenderState;
@@ -113,8 +120,10 @@ use crate::net::minecraft::world::entity::entity::EntityClass;
 use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::cardinal_lighting;
+use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
 use crate::net::minecraft::world::level::material::fog_type::FogType;
+use crate::net::minecraft::world::phys::hit_result::Type as HitType;
 use crate::org::joml::matrix4f::Matrix4f;
 use crate::org::joml::vector4f::Vector4f;
 
@@ -263,6 +272,12 @@ pub struct GameRenderer {
     player_render_state: PlayerRenderState,
     /// `minecraft.gameMode.getPlayerMode() == SPECTATOR`, as of the frame's extract.
     player_is_spectator: bool,
+    /// `RenderSystem.getSequentialBuffer(LINES)`.
+    line_indices: AutoStorageIndexBuffer,
+    /// `LevelRenderer.submitNodeStorage`: the level's features.
+    level_submit_node_storage: SubmitNodeStorage,
+    /// `levelRenderState.blockOutlineRenderState`.
+    block_outline_render_state: Option<BlockOutlineRenderState>,
 }
 
 impl GameRenderer {
@@ -403,6 +418,9 @@ impl GameRenderer {
             staged_vertex_buffer: StagedVertexBuffer::new(),
             player_render_state: PlayerRenderState::default(),
             player_is_spectator: false,
+            line_indices: RenderSystem::sequential_buffer(PrimitiveTopology::LINES),
+            level_submit_node_storage: SubmitNodeStorage::new(),
+            block_outline_render_state: None,
         }
     }
 
@@ -836,6 +854,8 @@ impl GameRenderer {
         self.lightmap_render_state.brightness = options.gamma;
         self.lightmap_needs_update = false;
         self.extract_player_state(level, player, partial_ticks);
+        // Minecraft.pick's hit result, at the frame's partial tick, then its outline.
+        self.extract_block_outline(level, player, partial_ticks);
         // setLevel's Lighting.updateLevel, for the level's cardinal lighting.
         let cardinal_light_type = level.dimension_type().cardinal_light_type();
         if self.lighting_level_type != Some(cardinal_light_type) {
@@ -920,6 +940,32 @@ impl GameRenderer {
         // The main pass's lighting (LevelRenderer.addMainPass), which nothing the level draws
         // reads yet, and the hands do.
         self.lighting.setup_for(Entry::LEVEL);
+        // submitFeatures: the block outline, when GameRenderer.shouldRenderBlockOutline (the
+        // camera's a player and the HUD shows; adventure mode's limits on it aren't ported).
+        if let Some(state) = &self.block_outline_render_state
+            && !options.hide_gui
+        {
+            LevelRenderer::submit_block_outline(
+                &mut self.level_submit_node_storage,
+                state,
+                &self.camera_render_state.pos,
+                GameRenderer::appropriate_line_width(self.main_render_target.width),
+            );
+        }
+        let mut features = LevelFeatureFrame {
+            device,
+            dispatcher: &mut self.feature_render_dispatcher,
+            storage: &mut self.level_submit_node_storage,
+            frame: None,
+            texture_manager: &mut self.texture_manager,
+            sampler_cache: &self.sampler_cache,
+            overlay_texture: self.overlay_texture.get_texture_view(),
+            lightmap_texture: self.lightmap.get_texture_view(),
+            pipelines: &mut self.pipelines,
+            staged_vertex_buffer: &mut self.staged_vertex_buffer,
+            line_indices: &mut self.line_indices,
+            last_transform: None,
+        };
         self.level_renderer.render(
             device,
             &self.main_render_target,
@@ -930,8 +976,52 @@ impl GameRenderer {
             level_options,
             level,
             lighting,
+            &mut features,
         );
         self.render_3d_hud(options);
+    }
+
+    /// `Window.getAppropriateLineWidth()`: 2.5 pixels, wider in windows over 1920 wide.
+    fn appropriate_line_width(width: i32) -> f32 {
+        Math::max_f32(2.5, width as f32 / 1920.0 * 2.5)
+    }
+
+    /// `Minecraft.pick` and `LevelExtractor.extractBlockOutline`: the block the player looks at,
+    /// if it isn't air and is inside the world border, with its shape for the player and whether
+    /// its model draws translucently. The high contrast outline option isn't ported (off).
+    fn extract_block_outline(
+        &mut self,
+        level: &ClientLevel,
+        player: Option<&LocalPlayer>,
+        partial_ticks: f32,
+    ) {
+        self.block_outline_render_state = None;
+        let Some(player) = player else {
+            return;
+        };
+        let hit_result = player.raycast_hit_result(partial_ticks, level);
+        if hit_result.get_type() == HitType::MISS {
+            return;
+        }
+        let pos = hit_result.get_block_pos();
+        let state = level.get_block_state(&pos);
+        if state.is_air()
+            || !level.get_world_border().is_within_bounds_margin(
+                f64::from(pos.get_x()),
+                f64::from(pos.get_z()),
+                0.0,
+            )
+        {
+            return;
+        }
+        let is_block_translucent = self.models.get(state).has_material_flag(1);
+        let shape = state.get_shape_in(level, &pos, &player.collision_context());
+        self.block_outline_render_state = Some(BlockOutlineRenderState {
+            pos,
+            is_translucent: is_block_translucent,
+            high_contrast: false,
+            shape,
+        });
     }
 
     /// `render3dHud`: the HUD's projection over a cleared depth, the hands, and the fog off after.
@@ -1029,9 +1119,11 @@ impl GameRenderer {
             lightmap_texture: self.lightmap.get_texture_view(),
             pipelines: &mut self.pipelines,
             staged_vertex_buffer: &mut self.staged_vertex_buffer,
-            quad_indices: &mut self.quad_indices,
-            // ProjectionType.PERSPECTIVE's.
-            vertex_sorting: VertexSorting::distance_to_origin,
+            sequential_buffers: SequentialBuffers {
+                quads: &mut self.quad_indices,
+                lines: &mut self.line_indices,
+            },
+            projection_type: ProjectionType::PERSPECTIVE,
             use_improved_transparency: false,
             last_transform: None,
         };
@@ -1133,5 +1225,106 @@ impl GameRenderer {
 
     pub fn level_renderer(&self) -> &LevelRenderer {
         &self.level_renderer
+    }
+}
+
+/// The level's prepared features (`LevelRenderer`'s `FeatureRenderDispatcher.PreparedFrame`) and
+/// what draws them, lent to the level renderer for its passes.
+struct LevelFeatureFrame<'a> {
+    device: &'static dyn GpuDevice,
+    dispatcher: &'a mut FeatureRenderDispatcher,
+    storage: &'a mut SubmitNodeStorage,
+    frame: Option<PreparedFrame>,
+    texture_manager: &'a mut TextureManager,
+    sampler_cache: &'a SamplerCache,
+    overlay_texture: &'a GpuTextureView,
+    lightmap_texture: &'a GpuTextureView,
+    pipelines: &'a mut Pipelines,
+    staged_vertex_buffer: &'a mut StagedVertexBuffer,
+    line_indices: &'a mut AutoStorageIndexBuffer,
+    last_transform: Option<(Vec<u8>, Rc<dyn GpuBuffer>)>,
+}
+
+impl LevelFeatureFrame<'_> {
+    /// The frame's context for a call, with the level renderer's quad indices.
+    fn with_context<R>(
+        &mut self,
+        quad_indices: &mut AutoStorageIndexBuffer,
+        f: impl FnOnce(
+            &mut FeatureRenderDispatcher,
+            &mut SubmitNodeStorage,
+            &mut Option<PreparedFrame>,
+            &mut FeatureFrameContext<'_>,
+        ) -> R,
+    ) -> R {
+        let mut context = FeatureFrameContext {
+            device: self.device,
+            texture_manager: self.texture_manager,
+            sampler_cache: self.sampler_cache,
+            overlay_texture: self.overlay_texture,
+            lightmap_texture: self.lightmap_texture,
+            pipelines: self.pipelines,
+            staged_vertex_buffer: self.staged_vertex_buffer,
+            sequential_buffers: SequentialBuffers {
+                quads: quad_indices,
+                lines: self.line_indices,
+            },
+            projection_type: ProjectionType::PERSPECTIVE,
+            use_improved_transparency: false,
+            last_transform: self.last_transform.take(),
+        };
+        let result = f(self.dispatcher, self.storage, &mut self.frame, &mut context);
+        self.last_transform = context.last_transform.take();
+        result
+    }
+}
+
+impl LevelFeatures for LevelFeatureFrame<'_> {
+    fn prepare(&mut self, quad_indices: &mut AutoStorageIndexBuffer) {
+        self.with_context(quad_indices, |dispatcher, storage, frame, context| {
+            *frame = Some(dispatcher.prepare_frame(context, storage));
+        });
+    }
+
+    fn execute_solid(
+        &mut self,
+        quad_indices: &mut AutoStorageIndexBuffer,
+        render_pass: &mut dyn RenderPass,
+    ) {
+        self.with_context(quad_indices, |dispatcher, _, frame, context| {
+            dispatcher.execute_solid(context, render_pass, frame.as_ref().expect("prepared"));
+        });
+    }
+
+    fn execute_translucent(
+        &mut self,
+        quad_indices: &mut AutoStorageIndexBuffer,
+        render_pass: &mut dyn RenderPass,
+    ) {
+        self.with_context(quad_indices, |dispatcher, _, frame, context| {
+            dispatcher.execute_translucent(context, render_pass, frame.as_ref().expect("prepared"));
+        });
+    }
+
+    fn execute_translucent_after_terrain(
+        &mut self,
+        quad_indices: &mut AutoStorageIndexBuffer,
+        render_pass: &mut dyn RenderPass,
+    ) {
+        self.with_context(quad_indices, |dispatcher, _, frame, context| {
+            dispatcher.execute_translucent_after_terrain(
+                context,
+                render_pass,
+                frame.as_ref().expect("prepared"),
+            );
+        });
+    }
+
+    fn close(&mut self, quad_indices: &mut AutoStorageIndexBuffer) {
+        self.with_context(quad_indices, |dispatcher, _, frame, context| {
+            if let Some(frame) = frame.take() {
+                dispatcher.close_frame(context, frame);
+            }
+        });
     }
 }

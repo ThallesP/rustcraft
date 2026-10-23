@@ -8,9 +8,9 @@
 
 use std::rc::Rc;
 
+use crate::com::mojang::blaze3d::projection_type::ProjectionType;
 use crate::com::mojang::blaze3d::systems::render_system::AutoStorageIndexBuffer;
 use crate::com::mojang::blaze3d::systems::sampler_cache::SamplerCache;
-use crate::com::mojang::blaze3d::vertex::vertex_sorting::VertexSorting;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::{self, GpuBuffer};
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
@@ -26,15 +26,23 @@ pub struct FeatureFrameContext<'a> {
     pub lightmap_texture: &'a GpuTextureView,
     pub pipelines: &'a mut Pipelines,
     pub staged_vertex_buffer: &'a mut StagedVertexBuffer,
-    pub quad_indices: &'a mut AutoStorageIndexBuffer,
-    /// `RenderSystem.getProjectionType().vertexSorting()`, how translucent quads sort.
-    pub vertex_sorting: fn() -> VertexSorting,
+    pub sequential_buffers: SequentialBuffers<'a>,
+    /// `RenderSystem.getProjectionType()`: how translucent quads sort, and how render types
+    /// layer.
+    pub projection_type: ProjectionType,
     /// `gameRenderer.useImprovedTransparency()`.
     pub use_improved_transparency: bool,
     /// The last transforms written and their buffer: `DynamicGpuDataStorage.writeData` hands the
     /// last slice back for data equal to the last, so render types prepared one after another
     /// with the same transforms compare equal.
     pub last_transform: Option<(Vec<u8>, Rc<dyn GpuBuffer>)>,
+}
+
+/// `RenderSystem.getSequentialBuffer`'s shared indices, of the topologies features draw: quads,
+/// and lines (two triangles each, like quads).
+pub struct SequentialBuffers<'a> {
+    pub quads: &'a mut AutoStorageIndexBuffer,
+    pub lines: &'a mut AutoStorageIndexBuffer,
 }
 
 impl FeatureFrameContext<'_> {

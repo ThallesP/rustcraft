@@ -60,7 +60,9 @@ impl RenderType {
             lightmap_texture: context.lightmap_texture,
         });
         let mut model_view_matrix = RenderSystem::get_model_view_matrix_copy();
-        self.state.layering_transform.apply(&mut model_view_matrix);
+        self.state
+            .layering_transform
+            .apply(&mut model_view_matrix, context.projection_type);
         let mut transform = Transform::of_model_view(model_view_matrix);
         transform.texture_matrix = self.state.texture_transform.create_matrix();
         let dynamic_transforms = context.write_transform(transform.write());

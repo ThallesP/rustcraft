@@ -37,7 +37,7 @@ impl RenderTypeFeatureRenderer {
             for &draw in &group.draws {
                 context
                     .staged_vertex_buffer
-                    .request_index_count(draw, context.quad_indices);
+                    .request_index_count(draw, &mut context.sequential_buffers);
             }
         }
     }
@@ -55,7 +55,7 @@ impl RenderTypeFeatureRenderer {
             let info = context.staged_vertex_buffer.get_execute_info(
                 *draw,
                 context.device,
-                context.quad_indices,
+                &mut context.sequential_buffers,
             );
             if let Some(info) = info {
                 render_type.draw_from_buffer(&info, render_pass);
@@ -129,7 +129,7 @@ impl Group {
         }
 
         let quad_sorting = (render_type.sort_on_upload() && !context.use_improved_transparency)
-            .then(context.vertex_sorting);
+            .then(|| context.projection_type.vertex_sorting());
         let draw = context.staged_vertex_buffer.append_draw(
             render_type.format(),
             render_type.primitive_topology(),

@@ -90,6 +90,8 @@ impl Player {
             Attributes::FRICTION_MODIFIER,
             Attributes::SNEAKING_SPEED,
             Attributes::ATTACK_SPEED,
+            Attributes::BLOCK_INTERACTION_RANGE,
+            Attributes::ENTITY_INTERACTION_RANGE,
         ]
         .into_iter()
         .map(|attribute| {
@@ -155,6 +157,16 @@ impl Player {
     /// `Avatar.isModelPartShown`.
     pub fn is_model_part_shown(&self, part: PlayerModelPart) -> bool {
         (i32::from(self.model_customisation) & part.get_mask()) == part.get_mask()
+    }
+
+    /// `blockInteractionRange()`.
+    pub fn block_interaction_range(&self) -> f64 {
+        self.get_attribute_value(Attributes::BLOCK_INTERACTION_RANGE)
+    }
+
+    /// `entityInteractionRange()`.
+    pub fn entity_interaction_range(&self) -> f64 {
+        self.get_attribute_value(Attributes::ENTITY_INTERACTION_RANGE)
     }
 
     /// `getCurrentItemAttackStrengthDelay()`: the ticks an attack takes to charge.

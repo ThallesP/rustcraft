@@ -30,6 +30,7 @@ use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
+use crate::java::lang::math::Math;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
 use crate::net::minecraft::client::options::Options;
@@ -57,8 +58,11 @@ use crate::net::minecraft::world::entity::player::input::Input;
 use crate::net::minecraft::world::entity::player::player::{self, Player, PlayerClass};
 use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block_getter::{self, BlockGetter};
+use crate::net::minecraft::world::level::clip_context::{self, ClipContext};
 use crate::net::minecraft::world::level::level::{self, Level};
 use crate::net::minecraft::world::phys::aabb::AABB;
+use crate::net::minecraft::world::phys::block_hit_result::BlockHitResult;
 use crate::net::minecraft::world::phys::vec2::Vec2;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 
@@ -261,6 +265,77 @@ impl LocalPlayer {
 
     pub fn first_person_hands_and_items(&self) -> &FirstPersonHandsAndItems {
         &self.first_person_hands_and_items
+    }
+
+    /// `raycastHitResult(a, cameraEntity)` with the player its own camera: what it looks at within
+    /// its reach. Its held item's attack range doesn't come in (the inventory isn't ported), and
+    /// neither do entities (`ProjectileUtil.getEntityHitResult` over the level's entities, which
+    /// aren't pickable yet), so it's the block it looks at, or a miss.
+    pub fn raycast_hit_result(&self, a: f32, level: &dyn BlockGetter) -> BlockHitResult {
+        let block_interaction_range = self.block_interaction_range();
+        let entity_interaction_range = self.entity_interaction_range();
+        self.pick(block_interaction_range, entity_interaction_range, a, level)
+    }
+
+    /// `LocalPlayer.pick`: the block within the farther of the two reaches, filtered to the block
+    /// reach.
+    fn pick(
+        &self,
+        block_interaction_range: f64,
+        entity_interaction_range: f64,
+        partial_ticks: f32,
+        level: &dyn BlockGetter,
+    ) -> BlockHitResult {
+        let max_distance = Math::max_f64(block_interaction_range, entity_interaction_range);
+        let from = self.entity().get_eye_position_partial(partial_ticks);
+        let block_hit_result = self.entity_pick(max_distance, partial_ticks, level);
+        LocalPlayer::filter_hit_result(block_hit_result, &from, block_interaction_range)
+    }
+
+    /// `Entity.pick(distance, a, false)`: the ray from the eyes along the view, against the
+    /// blocks' outline shapes, without fluids.
+    fn entity_pick(&self, distance: f64, a: f32, level: &dyn BlockGetter) -> BlockHitResult {
+        let from = self.entity().get_eye_position_partial(a);
+        let view_vector = entity::calculate_view_vector(
+            self.entity().get_x_rot_partial(a),
+            self.entity().get_y_rot_partial(a),
+        );
+        let to = from.add_xyz(
+            view_vector.x * distance,
+            view_vector.y * distance,
+            view_vector.z * distance,
+        );
+        block_getter::clip(
+            level,
+            &ClipContext::new(
+                from,
+                to,
+                clip_context::Block::OUTLINE,
+                clip_context::Fluid::NONE,
+                self.collision_context(),
+                self.is_player(),
+            ),
+        )
+    }
+
+    /// `filterHitResult`: a hit beyond the range is a miss there.
+    fn filter_hit_result(
+        hit_result: BlockHitResult,
+        from: &Vec3,
+        max_range: f64,
+    ) -> BlockHitResult {
+        let hit_location = hit_result.get_location();
+        if !hit_location.closer_than(from, max_range) {
+            let location = hit_result.get_location();
+            let direction = Direction::get_approximate_nearest_f64(
+                location.x - from.x,
+                location.y - from.y,
+                location.z - from.z,
+            );
+            BlockHitResult::miss(&location, direction, &BlockPos::containing(&location))
+        } else {
+            hit_result
+        }
     }
 
     /// `isMovingSlowly()`: crouching or crawling.

@@ -24,8 +24,10 @@ use std::sync::Arc;
 use crate::com::mojang::blaze3d::buffers::std140_builder::Std140Builder;
 use crate::com::mojang::blaze3d::pipeline::render_target::RenderTarget;
 use crate::com::mojang::blaze3d::systems::render_system::{AutoStorageIndexBuffer, RenderSystem};
+use crate::com::mojang::blaze3d::vertex::pose_stack::PoseStack;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::{self, GpuBuffer};
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer_slice::GpuBufferSlice;
+use crate::com::mojang::renderpearl::api::commands::render_pass::RenderPass;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::index_type::IndexType;
 use crate::com::mojang::renderpearl::api::textures::address_mode::AddressMode;
@@ -49,15 +51,19 @@ use crate::net::minecraft::client::renderer::chunk::section_render_dispatcher::{
 use crate::net::minecraft::client::renderer::chunk::translucency_point_of_view::TranslucencyPointOfView;
 use crate::net::minecraft::client::renderer::dynamic_gpu_data::{DynamicGpuData, TerrainTransform};
 use crate::net::minecraft::client::renderer::fog::fog_renderer::{FogMode, FogRenderer};
+use crate::net::minecraft::client::renderer::rendertype::render_types::RenderTypes;
 use crate::net::minecraft::client::renderer::section_occlusion_graph::SectionOcclusionGraph;
 use crate::net::minecraft::client::renderer::sky_renderer::{
     SkyPipelines, SkyRenderState, SkyRenderer,
 };
+use crate::net::minecraft::client::renderer::state::level::block_outline_render_state::BlockOutlineRenderState;
 use crate::net::minecraft::client::renderer::state::level::camera_render_state::CameraRenderState;
+use crate::net::minecraft::client::renderer::submit_node_storage::SubmitNodeStorage;
 use crate::net::minecraft::client::renderer::view_area::ViewArea;
 use crate::net::minecraft::client::section_update_tracker::SectionUpdateTracker;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::section_pos::SectionPos;
+use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::level::block::leaves_block::LeavesBlock;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
@@ -85,6 +91,35 @@ pub struct LevelResources<'a> {
     pub lightmap: &'a GpuTextureView,
     pub lightmap_sampler: &'a Rc<dyn GpuSampler>,
     pub quad_indices: &'a mut AutoStorageIndexBuffer,
+}
+
+/// The frame's features as the level's passes draw them: Java's `FeatureRenderDispatcher
+/// .PreparedFrame` of the level's `SubmitNodeStorage`, which the game renderer holds with what
+/// draws them. Each call gets the shared quad indices the level renderer holds.
+pub trait LevelFeatures {
+    /// `prepareFrame`, once the model view has the camera's rotation.
+    fn prepare(&mut self, quad_indices: &mut AutoStorageIndexBuffer);
+
+    fn execute_solid(
+        &mut self,
+        quad_indices: &mut AutoStorageIndexBuffer,
+        render_pass: &mut dyn RenderPass,
+    );
+
+    fn execute_translucent(
+        &mut self,
+        quad_indices: &mut AutoStorageIndexBuffer,
+        render_pass: &mut dyn RenderPass,
+    );
+
+    fn execute_translucent_after_terrain(
+        &mut self,
+        quad_indices: &mut AutoStorageIndexBuffer,
+        render_pass: &mut dyn RenderPass,
+    );
+
+    /// `PreparedFrame.close()`.
+    fn close(&mut self, quad_indices: &mut AutoStorageIndexBuffer);
 }
 
 /// A draw of the multi-draw's command buffer: `DynamicGpuData.IndexedDraw`.
@@ -280,7 +315,9 @@ impl LevelRenderer {
     }
 
     /// `render`: the clear, sky and main passes, then the sections' compiles and uploads and the
-    /// occlusion graph's update.
+    /// occlusion graph's update. The frame's features (`submitFeatures`, which the game renderer
+    /// submits) are prepared once the model view has the camera's rotation, and drawn in the main
+    /// pass.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -293,6 +330,7 @@ impl LevelRenderer {
         options: &LevelRenderOptions,
         level: &ClientLevel,
         lighting: &dyn BlockAndTintGetter,
+        features: &mut dyn LevelFeatures,
     ) {
         let terrain_fog = fog_renderer.get_buffer(FogMode::WORLD);
         let fog_color = camera_state.fog_data.color;
@@ -301,6 +339,7 @@ impl LevelRenderer {
             stack.push_matrix();
             stack.mul(&camera_state.view_rotation_matrix);
         });
+        features.prepare(resources.quad_indices);
 
         let color = main_target
             .get_color_texture_view()
@@ -341,11 +380,13 @@ impl LevelRenderer {
             color,
             depth,
             resources,
+            features,
         );
 
         RenderSystem::with_model_view_stack(|stack| {
             stack.pop_matrix();
         });
+        features.close(resources.quad_indices);
         self.compile_sections(level, lighting);
         self.schedule_translucent_section_resort(&camera_state.pos);
         self.upload_terrain_buffers(device);
@@ -376,6 +417,7 @@ impl LevelRenderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_main_pass(
         &mut self,
         device: &dyn GpuDevice,
@@ -384,6 +426,7 @@ impl LevelRenderer {
         color: &GpuTextureView,
         depth: &GpuTextureView,
         resources: &mut LevelResources<'_>,
+        features: &mut dyn LevelFeatures,
     ) {
         RenderSystem::set_shader_fog(terrain_fog.clone());
         let sampler = self
@@ -418,6 +461,10 @@ impl LevelRenderer {
             resources.lightmap,
             resources.lightmap_sampler,
         );
+        // executeSolid's features, then executeClassicTransparency: the translucent features, the
+        // translucent terrain, then the features after it.
+        features.execute_solid(resources.quad_indices, &mut *render_pass);
+        features.execute_translucent(resources.quad_indices, &mut *render_pass);
         chunk_sections_to_render.render_group(
             &[ChunkSectionLayer::TRANSLUCENT],
             &mut *render_pass,
@@ -429,6 +476,41 @@ impl LevelRenderer {
             resources.lightmap,
             resources.lightmap_sampler,
         );
+        features.execute_translucent_after_terrain(resources.quad_indices, &mut *render_pass);
+    }
+
+    /// `submitBlockOutline`: the outline of the block the player looks at, from the camera, in
+    /// the window's line width (the high contrast option's extra outline and colour, and improved
+    /// transparency's render type, aren't ported: the options are off). `submitHitOutline` without
+    /// the debug shapes.
+    pub fn submit_block_outline(
+        submit_node_collector: &mut SubmitNodeStorage,
+        state: &BlockOutlineRenderState,
+        camera_pos: &Vec3,
+        appropriate_line_width: f32,
+    ) {
+        let mut pose_stack = PoseStack::new();
+        let pos = state.pos;
+        pose_stack.push_pose();
+        pose_stack.translate_f64(
+            f64::from(pos.get_x()) - camera_pos.x,
+            f64::from(pos.get_y()) - camera_pos.y,
+            f64::from(pos.get_z()) - camera_pos.z,
+        );
+        assert!(
+            !state.high_contrast,
+            "the high contrast block outline isn't ported"
+        );
+        let outline_color = ARGB::black(102);
+        submit_node_collector.submit_shape_outline(
+            &pose_stack,
+            state.shape.clone(),
+            &RenderTypes::lines_translucent(),
+            outline_color,
+            appropriate_line_width,
+            state.is_translucent,
+        );
+        pose_stack.pop_pose();
     }
 
     /// `extractSectionDrawGroups`: each visible section's layers' draws, grouped by the buffers

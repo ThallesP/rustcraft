@@ -4,15 +4,16 @@
 //! (each phase's submits, sorted, in runs of one feature type that do or don't have to keep their
 //! order), has each feature renderer prepare its groups into the staged vertex buffer, and uploads
 //! it; `render_all_features` then draws the groups phase by phase, in Java's order. Only the
-//! entity models' renderer is ported, so only their phases run; the others come with their
-//! renderers. Java keeps the groups by phase and by feature in `IdentityHashMap`s; a group is an
-//! index into the frame's groups here, kept in both.
+//! ported renderers' phases run; the others come with their renderers. Java keeps the groups by phase and by feature in `IdentityHashMap`s; a group is an
+//! index into the frame's groups here, kept in both. Only the entity models' and the shape
+//! outlines' renderers are ported.
 
 use crate::com::mojang::renderpearl::api::commands::render_pass::RenderPass;
 use crate::net::minecraft::client::renderer::feature::feature_frame_context::FeatureFrameContext;
 use crate::net::minecraft::client::renderer::feature::feature_renderer_type::FeatureRendererType;
 use crate::net::minecraft::client::renderer::feature::model_feature_renderer::ModelFeatureRenderer;
 use crate::net::minecraft::client::renderer::feature::phase::feature_render_phase::Output;
+use crate::net::minecraft::client::renderer::feature::shape_outline_feature_renderer::ShapeOutlineFeatureRenderer;
 use crate::net::minecraft::client::renderer::feature::submit::submit_node::SubmitNode;
 use crate::net::minecraft::client::renderer::submit_node_collection::Phase;
 use crate::net::minecraft::client::renderer::submit_node_storage::SubmitNodeStorage;
@@ -20,6 +21,7 @@ use crate::net::minecraft::client::renderer::submit_node_storage::SubmitNodeStor
 #[derive(Default)]
 pub struct FeatureRenderDispatcher {
     model_feature_renderer: ModelFeatureRenderer,
+    shape_outline_feature_renderer: ShapeOutlineFeatureRenderer,
 }
 
 /// A phase of the storage: one order's. The see-through phase all orders share comes with name
@@ -187,26 +189,40 @@ impl FeatureRenderDispatcher {
                         submits,
                         group.strictly_ordered,
                     ),
-                    _ => unreachable!("only the entity models' renderer is ported"),
+                    FeatureRendererType::SHAPE_OUTLINE => self
+                        .shape_outline_feature_renderer
+                        .prepare_group(context, submits, group.strictly_ordered),
+                    _ => unreachable!("only the ported renderers make submits"),
                 }
             }
         }
 
         context
             .staged_vertex_buffer
-            .upload(context.device, context.quad_indices);
+            .upload(context.device, &mut context.sequential_buffers);
         frame
     }
 
-    /// `renderAllFeatures`: the solid phases, then the translucent ones, of the phases ported
-    /// (after-terrain's, see-through and always-on-top come with what submits to them).
+    /// `renderAllFeatures`: the solid phases, then the translucent ones and after-terrain's, of
+    /// the phases ported (see-through and always-on-top come with what submits to them).
     pub fn render_all_features(
         &self,
         context: &mut FeatureFrameContext<'_>,
         render_pass: &mut dyn RenderPass,
         frame: &PreparedFrame,
     ) {
-        // executeSolid.
+        self.execute_solid(context, render_pass, frame);
+        self.execute_translucent(context, render_pass, frame);
+        self.execute_translucent_after_terrain(context, render_pass, frame);
+    }
+
+    /// `PreparedFrame.executeSolid`.
+    pub fn execute_solid(
+        &self,
+        context: &mut FeatureFrameContext<'_>,
+        render_pass: &mut dyn RenderPass,
+        frame: &PreparedFrame,
+    ) {
         for &order in &frame.orders {
             self.execute_phase(
                 context,
@@ -215,23 +231,41 @@ impl FeatureRenderDispatcher {
                 PhaseKey::Ordered(order, Phase::Solid),
             );
         }
-        // executeTranslucent: the shadows, the translucent models, the name tags, texts and
-        // custom geometry; then shape outlines and gizmos; then blocks and items, the breaking
-        // overlay and the water mask.
-        for &order in &frame.orders {
-            self.execute_phase(
-                context,
-                render_pass,
-                frame,
-                PhaseKey::Ordered(order, Phase::TranslucentModels),
-            );
+    }
+
+    /// `PreparedFrame.executeTranslucent`: each order's translucent models (with the shadows, name
+    /// tags, texts and custom geometry, not ported), then each order's shape outlines (and
+    /// gizmos), then each order's water mask (after the blocks, items and breaking overlay).
+    pub fn execute_translucent(
+        &self,
+        context: &mut FeatureFrameContext<'_>,
+        render_pass: &mut dyn RenderPass,
+        frame: &PreparedFrame,
+    ) {
+        for phase in [
+            Phase::TranslucentModels,
+            Phase::ShapeOutlines,
+            Phase::WaterMask,
+        ] {
+            for &order in &frame.orders {
+                self.execute_phase(context, render_pass, frame, PhaseKey::Ordered(order, phase));
+            }
         }
+    }
+
+    /// `PreparedFrame.executeTranslucentAfterTerrain`.
+    pub fn execute_translucent_after_terrain(
+        &self,
+        context: &mut FeatureFrameContext<'_>,
+        render_pass: &mut dyn RenderPass,
+        frame: &PreparedFrame,
+    ) {
         for &order in &frame.orders {
             self.execute_phase(
                 context,
                 render_pass,
                 frame,
-                PhaseKey::Ordered(order, Phase::WaterMask),
+                PhaseKey::Ordered(order, Phase::AfterTerrain),
             );
         }
     }
@@ -252,7 +286,10 @@ impl FeatureRenderDispatcher {
                     render_pass,
                     group.feature_group_index,
                 ),
-                _ => unreachable!("only the entity models' renderer is ported"),
+                FeatureRendererType::SHAPE_OUTLINE => self
+                    .shape_outline_feature_renderer
+                    .execute_group(context, render_pass, group.feature_group_index),
+                _ => unreachable!("only the ported renderers make submits"),
             }
             render_pass.pop_debug_group();
         }
@@ -261,6 +298,7 @@ impl FeatureRenderDispatcher {
     /// `PreparedFrame.close()`: the renderers' groups and the staged draws let go.
     pub fn close_frame(&mut self, context: &mut FeatureFrameContext<'_>, _frame: PreparedFrame) {
         self.model_feature_renderer.finish_execute();
+        self.shape_outline_feature_renderer.finish_execute();
         context.staged_vertex_buffer.end_draw();
     }
 }

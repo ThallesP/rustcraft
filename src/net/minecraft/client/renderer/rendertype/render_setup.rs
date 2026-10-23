@@ -152,6 +152,14 @@ impl RenderSetupBuilder {
         self
     }
 
+    pub fn set_layering_transform(
+        mut self,
+        layering_transform: LayeringTransform,
+    ) -> RenderSetupBuilder {
+        self.setup.layering_transform = layering_transform;
+        self
+    }
+
     pub fn set_outline(mut self, outline_property: OutlineProperty) -> RenderSetupBuilder {
         self.setup.outline_property = outline_property;
         self

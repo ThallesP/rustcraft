@@ -379,6 +379,8 @@ const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
         "after-walk",
         "7d2656aefedcf34c937e0b57f87101f5",
     ),
+    ("walk", "spawn", "40f5b5f93bd28c499cf9d2ec70243fed"),
+    ("walk", "after-walk", "b4f2a3b57e31c51be4992e54dd84d878"),
 ];
 
 fn rgba_digest(pixels: &[u8]) -> String {

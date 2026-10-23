@@ -45,7 +45,9 @@ impl ModelFeatureRenderer {
         self.base
             .prepare_group(context, strictly_ordered, |context, group| {
                 for submit in submits {
-                    let SubmitNode::Model(submit) = submit;
+                    let SubmitNode::Model(submit) = submit else {
+                        unreachable!("a group holds one feature's submits");
+                    };
                     ModelFeatureRenderer::prepare_model(pose_stack, context, group, submit);
                 }
             });

@@ -1,9 +1,10 @@
 //! net/minecraft/client/renderer/SubmitNodeCollection.java
 //!
-//! One order's submits, by the phase they draw in. Only entity models are submitted so far
-//! (`submitModel`), so only their phases are here: the solid models, the translucent ones, the
-//! water mask and the outlines; the shadows', texts', blocks', items', particles', gizmos' and
-//! the other phases come with what submits to them. Improved transparency's single phase
+//! One order's submits, by the phase they draw in. Only entity models (`submitModel`) and shapes'
+//! outlines (`submitShapeOutline`) are submitted so far, so only their phases are here: the solid
+//! ones, the shape outlines, the translucent models, the water mask, after-terrain's and the
+//! entity outlines; the shadows', texts', blocks', items', particles', gizmos' and the other
+//! phases come with what submits to them. Improved transparency's single phase
 //! (`oitTranslucent`) comes with it.
 
 use crate::com::mojang::blaze3d::vertex::pose_stack::PoseStack;
@@ -12,8 +13,11 @@ use crate::net::minecraft::client::renderer::feature::model_feature_renderer::Mo
 use crate::net::minecraft::client::renderer::feature::phase::feature_render_phase::FeatureRenderPhase;
 use crate::net::minecraft::client::renderer::feature::phase::simple_feature_render_phase::SimpleFeatureRenderPhase;
 use crate::net::minecraft::client::renderer::feature::phase::translucent_feature_render_phase::TranslucentFeatureRenderPhase;
+use crate::net::minecraft::client::renderer::feature::shape_outline_feature_renderer::ShapeOutlineSubmit;
 use crate::net::minecraft::client::renderer::feature::submit::submit_node::SubmitNode;
 use crate::net::minecraft::client::renderer::rendertype::render_type::RenderType;
+use crate::net::minecraft::util::argb::ARGB;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 use std::rc::Rc;
 
 /// A phase of a collection, which a prepared frame keeps its groups by (Java's phases by
@@ -21,17 +25,21 @@ use std::rc::Rc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     Solid,
+    ShapeOutlines,
     TranslucentModels,
     WaterMask,
+    AfterTerrain,
     Outline,
 }
 
 impl Phase {
     /// `allPhases()`'s order, without improved transparency.
-    pub const ALL: [Phase; 4] = [
+    pub const ALL: [Phase; 6] = [
         Phase::Solid,
+        Phase::ShapeOutlines,
         Phase::TranslucentModels,
         Phase::WaterMask,
+        Phase::AfterTerrain,
         Phase::Outline,
     ];
 }
@@ -41,13 +49,17 @@ pub struct SubmitNodeCollection {
     pub solid: SimpleFeatureRenderPhase,
     pub water_mask: SimpleFeatureRenderPhase,
     pub outline: SimpleFeatureRenderPhase,
+    pub shape_outlines: SimpleFeatureRenderPhase,
     pub translucent_models: TranslucentFeatureRenderPhase,
+    pub after_terrain: SimpleFeatureRenderPhase,
 }
 
 impl SubmitNodeCollection {
     pub fn phase(&mut self, phase: Phase) -> &mut dyn FeatureRenderPhase {
         match phase {
             Phase::Solid => &mut self.solid,
+            Phase::ShapeOutlines => &mut self.shape_outlines,
+            Phase::AfterTerrain => &mut self.after_terrain,
             Phase::TranslucentModels => &mut self.translucent_models,
             Phase::WaterMask => &mut self.water_mask,
             Phase::Outline => &mut self.outline,
@@ -82,6 +94,33 @@ impl SubmitNodeCollection {
             } else {
                 self.solid.submit(submit);
             }
+        }
+    }
+
+    /// `submitShapeOutline`: an opaque outline with the solid submits, a translucent one after the
+    /// translucent terrain or with the other shape outlines.
+    pub fn submit_shape_outline(
+        &mut self,
+        pose_stack: &PoseStack,
+        shape: VoxelShape,
+        render_type: &Rc<RenderType>,
+        color: i32,
+        width: f32,
+        after_terrain: bool,
+    ) {
+        let submit = SubmitNode::ShapeOutline(ShapeOutlineSubmit {
+            pose: pose_stack.last().clone(),
+            shape,
+            render_type: Rc::clone(render_type),
+            color,
+            width,
+        });
+        if ARGB::alpha(color) == 255 {
+            self.solid.submit(submit);
+        } else if after_terrain {
+            self.after_terrain.submit(submit);
+        } else {
+            self.shape_outlines.submit(submit);
         }
     }
 }

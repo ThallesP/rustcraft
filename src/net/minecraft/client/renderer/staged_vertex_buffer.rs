@@ -6,7 +6,8 @@
 //! with them (`GpuBufferPool`); here the upload makes buffers with the same bytes, like the
 //! port's other ring buffers (PORTING.md, "The frame"). A draw's vertices are each a mesh of
 //! their own `BufferBuilder` (Java's share one `ByteBufferBuilder`), appended in the order they
-//! were written. Draws that aren't sorted use the shared sequential indices, of quads only so far.
+//! were written. Draws that aren't sorted use the shared sequential indices, of quads and lines
+//! so far.
 
 use std::rc::Rc;
 
@@ -22,6 +23,7 @@ use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::index_type::IndexType;
 use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use crate::com::mojang::renderpearl::api::vertex::vertex_format::VertexFormat;
+use crate::net::minecraft::client::renderer::feature::feature_frame_context::SequentialBuffers;
 use crate::net::minecraft::util::mth::Mth;
 
 /// A draw's index in the buffer's draws: Java's `StagedVertexBuffer.Draw`.
@@ -79,7 +81,7 @@ impl StagedVertexBuffer {
             "Cannot append draw after upload"
         );
         let draw = &mut self.draws[draw];
-        let mut staging_buffer = ByteBufferBuilder::new(RenderTypeBufferSize::INITIAL);
+        let mut staging_buffer = ByteBufferBuilder::new(INITIAL_BUFFER_SIZE);
         let mut builder =
             BufferBuilder::new(&mut staging_buffer, draw.primitive_topology, draw.format);
         build(&mut builder);
@@ -90,7 +92,11 @@ impl StagedVertexBuffer {
 
     /// Every draw's vertices into one buffer, each at a multiple of its vertex size, and the
     /// sorted draws' indices into another.
-    pub fn upload(&mut self, device: &dyn GpuDevice, quad_indices: &mut AutoStorageIndexBuffer) {
+    pub fn upload(
+        &mut self,
+        device: &dyn GpuDevice,
+        sequential_buffers: &mut SequentialBuffers<'_>,
+    ) {
         assert!(self.current_vertex_buffer.is_none(), "Already uploaded");
         if self.draws.is_empty() {
             return;
@@ -109,8 +115,11 @@ impl StagedVertexBuffer {
                         Mth::round_toward_i32(next_index_offset, index_type.bytes());
                     next_index_offset = draw.index_offset + draw.index_count * index_type.bytes();
                 } else {
-                    StagedVertexBuffer::sequential_buffer(draw.primitive_topology, quad_indices)
-                        .get_buffer(device, draw.index_count);
+                    StagedVertexBuffer::sequential_buffer(
+                        draw.primitive_topology,
+                        sequential_buffers,
+                    )
+                    .get_buffer(device, draw.index_count);
                 }
             }
         }
@@ -182,7 +191,7 @@ impl StagedVertexBuffer {
         &self,
         draw: DrawId,
         device: &dyn GpuDevice,
-        quad_indices: &mut AutoStorageIndexBuffer,
+        sequential_buffers: &mut SequentialBuffers<'_>,
     ) -> Option<ExecuteInfo> {
         let draw = &self.draws[draw];
         if draw.is_empty() {
@@ -205,7 +214,7 @@ impl StagedVertexBuffer {
             });
         }
         let auto_indices =
-            StagedVertexBuffer::sequential_buffer(draw.primitive_topology, quad_indices);
+            StagedVertexBuffer::sequential_buffer(draw.primitive_topology, sequential_buffers);
         auto_indices.request_index_count(draw.index_count);
         Some(ExecuteInfo {
             vertex_buffer,
@@ -217,25 +226,29 @@ impl StagedVertexBuffer {
         })
     }
 
-    pub fn request_index_count(&self, draw: DrawId, quad_indices: &mut AutoStorageIndexBuffer) {
+    pub fn request_index_count(
+        &self,
+        draw: DrawId,
+        sequential_buffers: &mut SequentialBuffers<'_>,
+    ) {
         let draw = &self.draws[draw];
         if self.current_index_buffer.is_none() || draw.quad_sorting.is_none() {
-            StagedVertexBuffer::sequential_buffer(draw.primitive_topology, quad_indices)
+            StagedVertexBuffer::sequential_buffer(draw.primitive_topology, sequential_buffers)
                 .request_index_count(draw.index_count);
         }
     }
 
-    /// `RenderSystem.getSequentialBuffer`: the game renderer's quads' indices, the only kind its
-    /// features draw so far.
-    fn sequential_buffer(
+    /// `RenderSystem.getSequentialBuffer`: the game renderer's quads' or lines' indices, the
+    /// kinds its features draw so far.
+    fn sequential_buffer<'a>(
         primitive_topology: PrimitiveTopology,
-        quad_indices: &mut AutoStorageIndexBuffer,
-    ) -> &mut AutoStorageIndexBuffer {
-        assert!(
-            primitive_topology == PrimitiveTopology::QUADS,
-            "the sequential indices of {primitive_topology:?} aren't ported"
-        );
-        quad_indices
+        sequential_buffers: &'a mut SequentialBuffers<'_>,
+    ) -> &'a mut AutoStorageIndexBuffer {
+        match primitive_topology {
+            PrimitiveTopology::QUADS => sequential_buffers.quads,
+            PrimitiveTopology::LINES => sequential_buffers.lines,
+            _ => panic!("the sequential indices of {primitive_topology:?} aren't ported"),
+        }
     }
 
     pub fn end_draw(&mut self) {
@@ -245,13 +258,8 @@ impl StagedVertexBuffer {
     }
 }
 
-/// The initial capacity of each draw's builder: the size of the small buffers render types
-/// draw from.
-struct RenderTypeBufferSize;
-
-impl RenderTypeBufferSize {
-    const INITIAL: i32 = 1536;
-}
+/// The initial capacity of each draw's builder: `RenderType.TRANSIENT_BUFFER_SIZE`.
+const INITIAL_BUFFER_SIZE: i32 = 1536;
 
 /// `StagedVertexBuffer.Draw`.
 pub struct Draw {

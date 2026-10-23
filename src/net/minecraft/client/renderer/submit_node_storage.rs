@@ -2,9 +2,9 @@
 //! `OrderedSubmitNodeCollector`.
 //!
 //! A frame's submits by their order (lower orders draw first in each phase); the collector's
-//! methods submit at order 0. Only `submitModelPart` is ported (`submitModel` of a
-//! `Model.Simple`): the other kinds of submit come with what makes them, and so do the
-//! see-through phase (the name tags') and improved transparency.
+//! methods submit at order 0. Only `submitModelPart` (`submitModel` of a `Model.Simple`) and
+//! `submitShapeOutline` are ported: the other kinds of submit come with what makes them, and so
+//! do the see-through phase (the name tags') and improved transparency.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -16,6 +16,7 @@ use crate::net::minecraft::client::renderer::rendertype::render_type::RenderType
 use crate::net::minecraft::client::renderer::submit_node_collection::{
     Phase, SubmitNodeCollection,
 };
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 #[derive(Default)]
 pub struct SubmitNodeStorage {
@@ -48,6 +49,25 @@ impl SubmitNodeStorage {
             light_coords,
             overlay_coords,
             -1,
+        );
+    }
+
+    pub fn submit_shape_outline(
+        &mut self,
+        pose_stack: &PoseStack,
+        shape: VoxelShape,
+        render_type: &Rc<RenderType>,
+        color: i32,
+        width: f32,
+        after_terrain: bool,
+    ) {
+        self.order(0).submit_shape_outline(
+            pose_stack,
+            shape,
+            render_type,
+            color,
+            width,
+            after_terrain,
         );
     }
 

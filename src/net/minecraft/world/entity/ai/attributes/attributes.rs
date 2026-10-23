@@ -1,8 +1,9 @@
 //! net/minecraft/world/entity/ai/attributes/Attributes.java
 //!
 //! Only the attributes an entity's movement reads (and the player's health and armor, which the
-//! HUD shows, and its attack speed, which its hands' swap animation reads): their defaults and
-//! ranges as `Attributes` registers them. The others come with what reads them.
+//! HUD shows, its attack speed, which its hands' swap animation reads, and its interaction ranges,
+//! which picking the block it looks at reads): their defaults and ranges as `Attributes` registers
+//! them. The others come with what reads them.
 //!
 //! Java's fields are the attributes' holders, which `BuiltInRegistries.ATTRIBUTE` numbers in the
 //! order they register: the id the server sends an attribute by (`Attribute.STREAM_CODEC`). So
@@ -70,6 +71,8 @@ impl Attributes {
     pub const AIR_DRAG_MODIFIER: &'static Attribute = &AIR_DRAG_MODIFIER;
     pub const ARMOR: &'static Attribute = &ARMOR;
     pub const ATTACK_SPEED: &'static Attribute = &ATTACK_SPEED;
+    pub const BLOCK_INTERACTION_RANGE: &'static Attribute = &BLOCK_INTERACTION_RANGE;
+    pub const ENTITY_INTERACTION_RANGE: &'static Attribute = &ENTITY_INTERACTION_RANGE;
     pub const BOUNCINESS: &'static Attribute = &BOUNCINESS;
     pub const FRICTION_MODIFIER: &'static Attribute = &FRICTION_MODIFIER;
     pub const GRAVITY: &'static Attribute = &GRAVITY;
@@ -103,6 +106,8 @@ impl Attributes {
             "air_drag_modifier" => Attributes::AIR_DRAG_MODIFIER,
             "armor" => Attributes::ARMOR,
             "attack_speed" => Attributes::ATTACK_SPEED,
+            "block_interaction_range" => Attributes::BLOCK_INTERACTION_RANGE,
+            "entity_interaction_range" => Attributes::ENTITY_INTERACTION_RANGE,
             "bounciness" => Attributes::BOUNCINESS,
             "friction_modifier" => Attributes::FRICTION_MODIFIER,
             "gravity" => Attributes::GRAVITY,
@@ -123,6 +128,20 @@ impl Attributes {
 static AIR_DRAG_MODIFIER: Attribute =
     Attribute::ranged("attribute.name.air_drag_modifier", 1.0, 0.0, 2048.0, true);
 static ARMOR: Attribute = Attribute::ranged("attribute.name.armor", 0.0, 0.0, 30.0, true);
+static BLOCK_INTERACTION_RANGE: Attribute = Attribute::ranged(
+    "attribute.name.block_interaction_range",
+    4.5,
+    0.0,
+    64.0,
+    true,
+);
+static ENTITY_INTERACTION_RANGE: Attribute = Attribute::ranged(
+    "attribute.name.entity_interaction_range",
+    3.0,
+    0.0,
+    64.0,
+    true,
+);
 static ATTACK_SPEED: Attribute =
     Attribute::ranged("attribute.name.attack_speed", 4.0, 0.0, 1024.0, true);
 static BOUNCINESS: Attribute = Attribute::ranged("attribute.name.bounciness", 0.0, 0.0, 1.0, true);
@@ -188,6 +207,6 @@ mod tests {
                 ported += 1;
             }
         }
-        assert_eq!(ported, 14);
+        assert_eq!(ported, 16);
     }
 }

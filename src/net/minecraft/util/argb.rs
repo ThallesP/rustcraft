@@ -109,6 +109,16 @@ impl ARGB {
         alpha << 24 | rgb & 16777215
     }
 
+    /// `black(int)`: black with an alpha.
+    pub fn black(alpha: i32) -> i32 {
+        alpha << 24
+    }
+
+    /// `black(float)`: black with an alpha from 0 to 1.
+    pub fn black_f32(alpha: f32) -> i32 {
+        ARGB::as8_bit_channel(alpha) << 24
+    }
+
     /// The color with its alpha full.
     pub fn opaque(color: i32) -> i32 {
         color | 0xFF000000_u32 as i32
@@ -429,6 +439,8 @@ mod tests {
         golden.check("color(III)I", ARGB::color_rgb);
         golden.check("alpha(I)I", ARGB::alpha);
         golden.check("opaque(I)I", ARGB::opaque);
+        golden.check("black(I)I", ARGB::black);
+        golden.check("black(F)I", ARGB::black_f32);
         golden.check("toABGR(I)I", ARGB::to_abgr);
         golden.check("srgbToLinearChannel(I)F", ARGB::srgb_to_linear_channel);
         golden.check("linearToSrgbChannel(F)I", ARGB::linear_to_srgb_channel);
