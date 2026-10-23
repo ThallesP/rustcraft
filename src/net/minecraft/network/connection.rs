@@ -101,7 +101,8 @@ struct Channel {
     /// The socket, for closing it.
     stream: TcpStream,
     events: Sender<Event>,
-    event_loop: ThreadId,
+    /// The event loop's thread, which sets it as it starts, before it takes anything.
+    event_loop: OnceLock<ThreadId>,
 }
 
 /// The pipeline's handlers before the decoder: `ReadTimeoutHandler`'s clock, the splitter with
@@ -672,18 +673,22 @@ impl Connection {
         }
         lock(&connection.inbound).last_read = Instant::now();
 
+        // The channel is active before its event loop starts, which runs while it's open.
         let (events, received) = mpsc::channel();
-        let event_loop = {
-            let connection = Arc::clone(connection);
-            event_loop_group_holder.new_thread(move || connection.run_event_loop(received))?
-        };
         let reader = stream.try_clone()?;
         let _ = connection.channel.set(Channel {
             open: AtomicBool::new(true),
             stream,
             events: events.clone(),
-            event_loop: event_loop.thread().id(),
+            event_loop: OnceLock::new(),
         });
+        let event_loop = {
+            let connection = Arc::clone(connection);
+            event_loop_group_holder.new_thread(move || connection.run_event_loop(received))?
+        };
+        if let Some(channel) = connection.channel.get() {
+            let _ = channel.event_loop.set(event_loop.thread().id());
+        }
         let name = format!("{} reader", event_loop.thread().name().unwrap_or("Netty"));
         thread::Builder::new()
             .name(name)
@@ -770,7 +775,8 @@ impl Connection {
     fn in_event_loop(&self) -> bool {
         self.channel
             .get()
-            .is_some_and(|channel| channel.event_loop == thread::current().id())
+            .and_then(|channel| channel.event_loop.get())
+            .is_some_and(|event_loop| *event_loop == thread::current().id())
     }
 
     /// Runs the task on the event loop: at once from the loop itself, and after what it was
@@ -819,6 +825,9 @@ impl Connection {
     /// what the socket read goes through the pipeline to the listener, the tasks other threads
     /// hand it run, and `ReadTimeoutHandler` closes the connection after 30 seconds of silence.
     fn run_event_loop(&self, events: Receiver<Event>) {
+        if let Some(channel) = self.channel.get() {
+            let _ = channel.event_loop.set(thread::current().id());
+        }
         while self.is_connected() {
             let waited = lock(&self.inbound).last_read.elapsed();
             let timeout = Connection::READ_TIMEOUT
