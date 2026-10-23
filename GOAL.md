@@ -10,11 +10,13 @@ Gates, roughly in order. Each one stays green once reached.
 
 1. **Join.** `cargo run --release -- --server HOST:PORT` joins a vanilla server and stays in the world: keep-alives, pings, chunk batches and teleports are answered like vanilla answers them. `tools/port_client.py capture walk --accept-eula` records the port's run the way `oracle_client.py capture` records vanilla's, into `target/oracle/walk/`. `oracle-diff packets` passes on the join phase.
 2. **The world in a window.** The port opens a real window (SDL3, like vanilla) and renders the world it received: terrain, sky and fog, then the HUD and the hand. Mouse look and WASD/jump/sneak/sprint work, so a person can walk around in it.
-3. **Walk, pixel for pixel.** The port replays `oracle/scenarios/walk.json`, and `cargo run -p oracle-diff -- dir vanilla/<version>/oracle/walk target/oracle/walk` exits 0 with the default settings:
+3. **Walk, pixel for pixel.** The port replays `oracle/scenarios/walk.json`, and `cargo run -p oracle-diff -- dir --strict vanilla/<version>/oracle/walk target/oracle/walk` exits 0 with otherwise default settings:
    - the tick trace is identical;
    - client packets match: the join phase as a multiset, strictly from the scenario-start marker;
    - every screenshot is pixel-identical (threshold 0).
-4. **More of the game, still identical.** More scenarios, each passing `oracle-diff dir`:
+
+   `--strict` makes a file only one side has a difference, so a run missing a screenshot fails rather than passing on what it has.
+4. **More of the game, still identical.** More scenarios, each passing `oracle-diff dir --strict`:
    - screenshots over time, not just stills: a screenshot every few ticks while walking, turning and jumping;
    - screens: the inventory, the pause menu, chat, F3;
    - physics: collisions, steps, stairs and slabs, jumping onto blocks, sprint-jumping, sneaking at an edge, water, ladders. The vanilla client's tick trace is the physics oracle. The C++ bot-client tests the brief mentions can supply the cases.
