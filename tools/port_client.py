@@ -149,7 +149,14 @@ def capture(scenario, out_dir, accept_eula, compression_threshold, ping=False):
             proxy = subprocess.Popen(proxy_command, stdout=proxy_log, stderr=subprocess.STDOUT)
         wait_for_line(logs / "proxy.log", "capturing to", proxy)
 
-        scenario_out = run(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", ping)
+        try:
+            scenario_out = run(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", ping)
+        except SystemExit:
+            # Why the connection ended is often only in the server's or the proxy's log.
+            for name in ("server.log", "proxy.log"):
+                print(f"--- the last lines of {name}:")
+                print("".join((logs / name).read_text().splitlines(keepends=True)[-30:]))
+            raise
         proxy.wait(timeout=30)
     finally:
         if proxy is not None and proxy.poll() is None:
