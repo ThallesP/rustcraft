@@ -2,11 +2,11 @@
 //!
 //! Only what makes a block and its states, and what it keeps from its `Properties`: its state
 //! definition and default state, `BLOCK_STATE_REGISTRY` with `getId` and `stateById`, the
-//! getters of what `BlockBehaviour` copied (`getFriction`, `getExplosionResistance`…) and
-//! `toString`. Not ported yet: every behaviour method (`playerDestroy`, `fallOn`,
-//! `getStateForPlacement`…), the shape helpers (`box`, `column`, `isShapeFullBlock`,
-//! `shouldRenderFace`…), `asItem`, `getName` and `withPropertiesOf`, which come with what calls
-//! them.
+//! getters of what `BlockBehaviour` copied (`getFriction`, `getExplosionResistance`…),
+//! `toString`, and `box`, the shapes' helper in sixteenths (the player track's, with the shapes).
+//! Not ported yet: every behaviour method (`playerDestroy`, `fallOn`, `getStateForPlacement`…),
+//! the other shape helpers (`column`, `isShapeFullBlock`, `shouldRenderFace`…), `asItem`,
+//! `getName` and `withPropertiesOf`, which come with what calls them.
 //!
 //! Java's blocks are objects the game compares by reference, so here a `Block` is its id in
 //! `BuiltInRegistries.BLOCK`: a `Copy` handle that derefs to what Java's object holds, a
@@ -30,6 +30,8 @@ use crate::net::minecraft::world::level::block::state::state_definition::{
     Builder, StateDefinition,
 };
 use crate::net::minecraft::world::level::material::map_color::MapColor;
+use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 /// A block, by its id in `BuiltInRegistries.BLOCK`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -197,6 +199,25 @@ impl Block {
 
     /// None: a plain block has one state.
     pub fn create_block_state_definition(_builder: &mut Builder) {}
+
+    /// `Shapes.box` of sixteenths of a block, the way blocks give their shapes.
+    pub fn r#box(
+        min_x: f64,
+        min_y: f64,
+        min_z: f64,
+        max_x: f64,
+        max_y: f64,
+        max_z: f64,
+    ) -> VoxelShape {
+        Shapes::r#box(
+            min_x / 16.0,
+            min_y / 16.0,
+            min_z / 16.0,
+            max_x / 16.0,
+            max_y / 16.0,
+            max_z / 16.0,
+        )
+    }
 
     /// The block whose id it is, as a field of `Blocks` names it.
     pub(crate) const fn starting_at(id: u16) -> Block {
