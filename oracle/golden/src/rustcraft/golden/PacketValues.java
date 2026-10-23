@@ -5,6 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 import com.mojang.authlib.GameProfile;
 import io.netty.buffer.Unpooled;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
@@ -27,6 +29,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistrySynchronization;
@@ -98,10 +101,13 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
+import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.clock.ClockNetworkState;
 import net.minecraft.world.clock.WorldClock;
 import net.minecraft.world.damagesource.DamageType;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
@@ -152,6 +158,7 @@ import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.flag.FeatureFlag;
 import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.flag.FeatureFlags;
+import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -295,6 +302,9 @@ final class PacketValues {
     private static final Values.Generator DOUBLES = Values.generator(double.class);
     // A damage event's source position: none, or a position like an entity's.
     private static final Values.Generator OPTIONAL_VEC3S = Codecs.optionalOf(CoreValues.VEC3);
+    // A ClientboundRemoveEntitiesPacket's ids: int arrays' edges and random ones as IntArrayLists, and 128 ids, whose count
+    // takes two bytes.
+    private static final Values.Generator INT_LISTS = intLists();
     // Commands around readUtf()'s 32767 characters, and the oracle's setup commands.
     private static final Values.Generator COMMANDS = strings(
         "time set 6000", "tp @s 0.5 -60.0 0.5 0.0 0.0", "", "a".repeat(32767), "a".repeat(32768), "😀".repeat(16383) + "a", "😀".repeat(16384)
@@ -631,10 +641,14 @@ final class PacketValues {
             INTS, FLOATS
         );
         packet(ClientboundEntityEventPacket.class, PacketValues::entityEventPacket, List.of("entityId", "eventId"), INTS, BYTES);
+        packet(
+            ClientboundRemoveEntitiesPacket.class, fields -> new ClientboundRemoveEntitiesPacket(intList(fields[0])), List.of(), INT_LISTS
+        );
 
         // The game protocol's packets that read the registries (RegistryValues), and what they hold: the clocks' time, an
-        // entity's attributes, the world's spawn, an entity's data and its damage. Made when first used: the attributes'
-        // holders need the registries loaded, and the game bootstrapped, which Golden's constants come before.
+        // entity's attributes, the world's spawn, an entity's data, its damage and an entity coming into view. Made when
+        // first used: the attributes' holders need the registries loaded, and the game bootstrapped, which Golden's
+        // constants come before.
         PAYLOADS.put(ClockNetworkState.class, RegistryValues.CLOCK_STATES);
         PAYLOADS.put(WorldClock.class, RegistryValues.lazy(() -> values(WorldClock.class, fields -> new WorldClock(), List.of())));
         PACKETS.put(
@@ -706,6 +720,17 @@ final class PacketValues {
                 List.of(), INTS, RegistryValues.holders(Registries.DAMAGE_TYPE), INTS, INTS, OPTIONAL_VEC3S
             ))
         );
+        // An entity coming into view: any id, UUID, type (made when first used, since the registry needs the game
+        // bootstrapped), position and movement, rotations of every byte, and any data. It's made with its public
+        // constructor from each rotation's angle, which packs back to the byte.
+        PACKETS.put(
+            ClientboundAddEntityPacket.class,
+            RegistryValues.lazy(() -> values(
+                ClientboundAddEntityPacket.class, PacketValues::addEntityPacket,
+                List.of("id", "uuid", "type", "x", "y", "z", "movement", "xRot", "yRot", "yHeadRot", "data"), INTS, UUIDS,
+                RegistryValues.ENTITY_TYPES, DOUBLES, DOUBLES, DOUBLES, CoreValues.VEC3, BYTES, BYTES, BYTES, INTS
+            ))
+        );
     }
 
     private PacketValues() {
@@ -747,6 +772,9 @@ final class PacketValues {
         }
         if (type == ServerboundPlayerCommandPacket.Action.class) {
             return PLAYER_COMMAND_ACTION;
+        }
+        if (type == IntList.class) {
+            return INT_LISTS;
         }
         if (type.isInterface() && PacketListener.class.isAssignableFrom(type)) {
             return new Listener(type);
@@ -1000,6 +1028,21 @@ final class PacketValues {
     @SuppressWarnings("unchecked")
     private static Optional<Vec3> vec3(final Object position) {
         return (Optional<Vec3>)position;
+    }
+
+    private static IntList intList(final Object list) {
+        return (IntList)list;
+    }
+
+    private static Values.Generator intLists() {
+        Values.Generator arrays = Values.generator(int[].class);
+        List<IntList> edges = new ArrayList<>();
+        arrays.edges().forEach(ints -> edges.add(new IntArrayList((int[])ints)));
+        edges.add(new IntArrayList(IntStream.range(0, 128).toArray()));
+        return new JomlValues.Mutable<IntList>(
+            edges, random -> new IntArrayList((int[])arrays.random(random)), IntArrayList::new,
+            list -> (JsonArray)arrays.encode(list.toIntArray())
+        );
     }
 
     @SuppressWarnings("unchecked")
@@ -1283,6 +1326,15 @@ final class PacketValues {
         buffer.writeFloat((Float)fields[4]);
         buffer.writeFloat((Float)fields[5]);
         return ClientboundPlayerAbilitiesPacket.STREAM_CODEC.decode(buffer);
+    }
+
+    // The packet its public constructor makes of the fields, each rotation as its byte's angle (unpackDegrees), which
+    // packDegrees packs back to the byte exactly.
+    private static ClientboundAddEntityPacket addEntityPacket(final Object[] fields) {
+        return new ClientboundAddEntityPacket(
+            (Integer)fields[0], (UUID)fields[1], (Double)fields[3], (Double)fields[4], (Double)fields[5], Mth.unpackDegrees((Byte)fields[7]),
+            Mth.unpackDegrees((Byte)fields[8]), (EntityType<?>)fields[2], (Integer)fields[10], (Vec3)fields[6], Mth.unpackDegrees((Byte)fields[9])
+        );
     }
 
     // The packet its reader makes of the entity's id and the event.

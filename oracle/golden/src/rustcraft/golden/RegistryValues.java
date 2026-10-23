@@ -188,6 +188,38 @@ final class RegistryValues {
         };
     }
 
+    /**
+     * The entity types: every one of BuiltInRegistries.ENTITY_TYPE in id order (the pig, its default, among them), each its
+     * registered name. Made when first used, since the registry needs the game bootstrapped.
+     */
+    static final Values.Generator ENTITY_TYPES = lazy(() -> {
+        List<Object> types = new ArrayList<>();
+        for (int id = 0; id < BuiltInRegistries.ENTITY_TYPE.size(); id++) {
+            types.add(BuiltInRegistries.ENTITY_TYPE.byId(id));
+        }
+        return new Values.Generator() {
+            @Override
+            public List<Object> edges() {
+                return types;
+            }
+
+            @Override
+            public Object random(final Random random) {
+                return types.get(random.nextInt(types.size()));
+            }
+
+            @Override
+            public JsonElement encode(final Object spec) {
+                return RegistryValues.encode(spec);
+            }
+
+            @Override
+            public boolean exhaustive() {
+                return true;
+            }
+        };
+    });
+
     static RegistryAccess.Frozen registries() {
         return Loaded.REGISTRIES;
     }
@@ -220,6 +252,9 @@ final class RegistryValues {
     }
 
     static Values.Generator generator(final Class<?> type) {
+        if (type == EntityType.class) {
+            return ENTITY_TYPES;
+        }
         return type == RegistryFriendlyByteBuf.class ? REGISTRY_FRIENDLY_BUFFER : null;
     }
 

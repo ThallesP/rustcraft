@@ -46,6 +46,7 @@ use crate::net::minecraft::network::packet_listener::PacketListener;
 use crate::net::minecraft::network::protocol::configuration::client_configuration_packet_listener::ClientConfigurationPacketListener;
 use crate::net::minecraft::network::protocol::configuration::configuration_protocols::ConfigurationProtocols;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
+use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
@@ -65,6 +66,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_login_packet::Cl
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
@@ -97,7 +99,7 @@ use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::stats::recipe_book_settings::RecipeBookSettings;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
-use crate::net::minecraft::world::entity::entity::{self, EntityClass};
+use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
 use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::entity::position_move_rotation::PositionMoveRotation;
 use crate::net::minecraft::world::entity::relative::Relative;
@@ -1253,6 +1255,51 @@ impl ClientGamePacketListener for ClientPacketListener {
             .filter(|player| player.get_id() == packet.entity_id())
         {
             player.handle_damage_event();
+        }
+    }
+
+    fn handle_add_entity(&mut self, packet: &ClientboundAddEntityPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java forgets the removed vehicle's id when the entity has it (riding isn't ported),
+        // makes the entity of its type (`createEntityFromPacket`: an entity of a class not ported
+        // yet is a plain `Entity` of the type, a player too, where Java makes a `RemotePlayer`),
+        // sets it up from the packet, adds it to the level, plays its sound (a minecart's, a
+        // bee's) and marks a player it has the info of as seen (sounds and the player list aren't
+        // ported).
+        let r#type = packet.get_type();
+        let mut entity = Entity::new(r#type, r#type.get_dimensions());
+        entity.recreate_from_packet(packet);
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level.add_entity(entity);
+        }
+    }
+
+    fn handle_remove_entities(&mut self, packet: &ClientboundRemoveEntitiesPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java also keeps the id of one the player rides (`removedPlayerVehicleId`) and drops it
+        // from the debug subscriptions, neither ported.
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            for entity_id in packet.entity_ids() {
+                level.remove_entity(entity_id);
+            }
         }
     }
 }

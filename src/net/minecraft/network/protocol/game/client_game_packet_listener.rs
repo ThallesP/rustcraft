@@ -5,6 +5,7 @@
 //! `PacketListener`'s.
 
 use crate::net::minecraft::network::protocol::common::client_common_packet_listener::ClientCommonPacketListener;
+use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
@@ -23,6 +24,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_login_packet::Cl
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
@@ -106,6 +108,10 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
     fn handle_entity_event(&mut self, packet: &ClientboundEntityEventPacket);
 
     fn handle_damage_event(&mut self, packet: &ClientboundDamageEventPacket);
+
+    fn handle_add_entity(&mut self, packet: &ClientboundAddEntityPacket);
+
+    fn handle_remove_entities(&mut self, packet: &ClientboundRemoveEntitiesPacket);
 }
 
 #[cfg(test)]
@@ -262,5 +268,13 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
 
     fn handle_damage_event(&mut self, packet: &ClientboundDamageEventPacket) {
         self.record("handleDamageEvent", packet);
+    }
+
+    fn handle_add_entity(&mut self, packet: &ClientboundAddEntityPacket) {
+        self.record("handleAddEntity", packet);
+    }
+
+    fn handle_remove_entities(&mut self, packet: &ClientboundRemoveEntitiesPacket) {
+        self.record("handleRemoveEntities", packet);
     }
 }

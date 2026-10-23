@@ -35,6 +35,7 @@ use crate::java::lang::math::Math;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
+use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::tags::fluid_tags::{FluidTagKey, FluidTags};
 use crate::net::minecraft::util::mth::Mth;
@@ -49,6 +50,7 @@ use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_getter;
 use crate::net::minecraft::world::level::clip_context::{self, ClipContext};
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
+use crate::net::minecraft::world::level::entity::entity_lookup::EntityAccess;
 use crate::net::minecraft::world::level::level::{self, Level};
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::hit_result::Type;
@@ -180,6 +182,22 @@ impl Entity {
         self.set_x_rot(x_rot);
         self.set_old_pos_and_rot();
         self.reapply_position();
+    }
+
+    /// `recreateFromPacket(ClientboundAddEntityPacket)`: where, which way and how fast the server
+    /// says it is, with its id and UUID. `LivingEntity`'s override, which snaps with `absSnapTo`
+    /// and sets the head's and body's rotation, comes with the living classes: the position is the
+    /// same either way.
+    pub fn recreate_from_packet(&mut self, packet: &ClientboundAddEntityPacket) {
+        let x = packet.get_x();
+        let y = packet.get_y();
+        let z = packet.get_z();
+        // `syncPacketPositionCodec`: the base the moves' deltas are from, which comes with the
+        // move packets.
+        self.snap_to(x, y, z, packet.get_y_rot(), packet.get_x_rot());
+        self.set_id(packet.get_id());
+        self.set_uuid(packet.get_uuid());
+        self.set_delta_movement(packet.get_movement());
     }
 
     /// `absSnapTo(double, double, double, float, float)`: `snapTo` within the world's thirty
@@ -529,6 +547,16 @@ impl Entity {
         } else {
             this.get_default_gravity()
         }
+    }
+}
+
+impl EntityAccess for Entity {
+    fn get_id(&self) -> i32 {
+        self.id
+    }
+
+    fn get_uuid(&self) -> UUID {
+        self.uuid
     }
 }
 

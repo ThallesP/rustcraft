@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
 
 /** Writes trace.jsonl: one line per client tick, floats as raw IEEE bits (TESTING.md). */
@@ -36,7 +38,29 @@ public final class TraceWriter implements AutoCloseable {
             + ",\"vertical_collision\":" + player.verticalCollision
             + ",\"sprinting\":" + player.isSprinting()
             + ",\"crouching\":" + player.isCrouching()
-            + ",\"pose\":\"" + player.getPose().name() + "\"}";
+            + ",\"pose\":\"" + player.getPose().name() + "\""
+            + entities(player)
+            + "}";
+    }
+
+    /**
+     * The other entities the client has, in the order it added them ({@code entitiesForRendering}), each its type and
+     * where it is after the tick; nothing when there are none, so a scenario without them has the lines it always had.
+     */
+    private static String entities(LocalPlayer player) {
+        StringBuilder entities = new StringBuilder();
+        for (Entity entity : ((ClientLevel)player.level()).entitiesForRendering()) {
+            if (entity == player) {
+                continue;
+            }
+            if (!entities.isEmpty()) {
+                entities.append(',');
+            }
+            entities.append("{\"type\":\"").append(entity.typeHolder().getRegisteredName()).append('"')
+                .append(",\"pos\":[").append(bits(entity.getX())).append(',').append(bits(entity.getY())).append(',')
+                .append(bits(entity.getZ())).append("]}");
+        }
+        return entities.isEmpty() ? "" : ",\"entities\":[" + entities + "]";
     }
 
     public void write(String line) {

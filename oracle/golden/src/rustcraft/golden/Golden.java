@@ -127,6 +127,8 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
+import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.clock.ClockNetworkState;
 import net.minecraft.world.clock.WorldClock;
@@ -1249,11 +1251,13 @@ public final class Golden {
         InstanceSuite.every(ClientboundTickingStepPacket.class),
         InstanceSuite.every(ClientboundPlayerAbilitiesPacket.class),
         InstanceSuite.every(ClientboundInitializeBorderPacket.class),
-        // The packets about an entity: its motion, its hurt animation and its events, whose reader also reads the walk's.
+        // The packets about an entity: its motion, its hurt animation and its events, whose reader also reads the walk's,
+        // and the entities leaving the client's view.
         InstanceSuite.every(ClientboundSetEntityMotionPacket.class),
         InstanceSuite.every(ClientboundHurtAnimationPacket.class),
         InstanceSuite.every(ClientboundEntityEventPacket.class)
             .extraInputs("STREAM_CODEC.decode", friendly(List.<Object[]>of(new Object[]{NetworkValues.buffer(0, 0, ENTITY_EVENT)}))),
+        InstanceSuite.every(ClientboundRemoveEntitiesPacket.class),
         InstanceSuite.every(Difficulty.class)
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/Difficulty;", names(Difficulty.values()))
             .extraInputs(
@@ -1266,8 +1270,8 @@ public final class Golden {
         new DfuCodecSuite(),
         new ComponentSuite(),
         // The game protocol's packets that read the registries, and what they hold: the registries a RegistryFriendlyByteBuf
-        // carries (RegistryValues), the clocks' time, an entity's attributes, the world's spawn, an entity's data and its
-        // damage.
+        // carries (RegistryValues), the clocks' time, an entity's attributes, the world's spawn, an entity's data, its
+        // damage and an entity coming into view.
         new RegistryValues.RegistriesSuite(),
         new StaticSuite(Attributes.class),
         InstanceSuite.every(WorldClock.class),
@@ -1304,6 +1308,7 @@ public final class Golden {
             .where("STREAM_CODEC.decode", args -> !RegistryValues.reachesUnported(args[0], true))
             .extraInputs("STREAM_CODEC.decode", registryBuffers(RegistryValues.dataValueBuffers())),
         InstanceSuite.every(ClientboundDamageEventPacket.class).exclude("hashCode()I", HOLDER_IN_RECORD),
+        InstanceSuite.every(ClientboundAddEntityPacket.class),
         // The registries the server sends, by their keys, and their elements.
         InstanceSuite.every(ResourceKey.class),
         new StaticSuite(Registries.class),

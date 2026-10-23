@@ -394,8 +394,9 @@ impl OracleGameTest {
         true
     }
 
-    /// The player's trace line after the scenario's tick.
+    /// The player's trace line after the scenario's tick, with the level's other entities.
     fn write_trace(&mut self, minecraft: &Minecraft, tick: i32) -> std::io::Result<()> {
+        let level = minecraft.level.borrow();
         let line = trace_writer::line(
             tick,
             minecraft
@@ -403,7 +404,12 @@ impl OracleGameTest {
                 .borrow()
                 .as_ref()
                 .expect("the player is in a level"),
+            level
+                .as_ref()
+                .into_iter()
+                .flat_map(|level| level.entities_for_rendering()),
         );
+        drop(level);
         match self.trace.as_mut() {
             Some(trace) => trace.write(&line),
             None => Ok(()),

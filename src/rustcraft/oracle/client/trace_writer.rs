@@ -1,12 +1,14 @@
 //! oracle/client/src/main/java/rustcraft/oracle/client/TraceWriter.java: writes `trace.jsonl`,
-//! a line per tick with the player's state after the tick (TESTING.md), floats as their raw bits.
+//! a line per tick with the player's state after the tick (TESTING.md), floats as their raw bits,
+//! and the other entities the client has, when it has some, each its type and position.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
-use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
+use crate::net::minecraft::world::entity::entity_type::EntityType;
 
 /// The trace's file, written line by line.
 pub struct TraceWriter {
@@ -32,11 +34,34 @@ impl TraceWriter {
     }
 }
 
-/// The line for the player after `tick` ran.
-pub fn line(tick: i32, player: &LocalPlayer) -> String {
+/// The line for the player after `tick` ran, with the other entities, in the order the client
+/// added them (`entitiesForRendering`); nothing of them where there are none, so a scenario
+/// without them has the lines it always had.
+pub fn line<'a>(
+    tick: i32,
+    player: &LocalPlayer,
+    others: impl IntoIterator<Item = &'a Entity>,
+) -> String {
+    let others: Vec<String> = others
+        .into_iter()
+        .map(|entity| {
+            format!(
+                "{{\"type\":\"{}\",\"pos\":[{},{},{}]}}",
+                EntityType::get_key(entity.get_type()),
+                bits_f64(entity.get_x()),
+                bits_f64(entity.get_y()),
+                bits_f64(entity.get_z()),
+            )
+        })
+        .collect();
+    let entities = if others.is_empty() {
+        String::new()
+    } else {
+        format!(",\"entities\":[{}]", others.join(","))
+    };
     let delta = player.get_delta_movement();
     format!(
-        "{{\"tick\":{tick},\"pos\":[{},{},{}],\"delta\":[{},{},{}],\"y_rot\":{},\"x_rot\":{},\"on_ground\":{},\"horizontal_collision\":{},\"vertical_collision\":{},\"sprinting\":{},\"crouching\":{},\"pose\":\"{}\"}}",
+        "{{\"tick\":{tick},\"pos\":[{},{},{}],\"delta\":[{},{},{}],\"y_rot\":{},\"x_rot\":{},\"on_ground\":{},\"horizontal_collision\":{},\"vertical_collision\":{},\"sprinting\":{},\"crouching\":{},\"pose\":\"{}\"{entities}}}",
         bits_f64(player.get_x()),
         bits_f64(player.get_y()),
         bits_f64(player.get_z()),

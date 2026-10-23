@@ -217,8 +217,8 @@ impl Minecraft {
                         &options,
                     );
                 }
-                // `level.tickEntities()`: the player is the only entity the level has
-                // (`ClientLevel.tickNonPassenger`).
+                // `level.tickEntities()` (`ClientLevel.tickNonPassenger`): the player first, as
+                // the first entity the level has, then the others in the order they came.
                 {
                     let level = self.level.borrow();
                     let mut player = self.player.borrow_mut();
@@ -226,6 +226,9 @@ impl Minecraft {
                         player.common_tick();
                         player.tick(level, &self.options.borrow());
                     }
+                }
+                if let Some(level) = self.level.borrow_mut().as_mut() {
+                    level.tick_entities();
                 }
                 // `playerSync`.
                 let mut player = self.player.borrow_mut();

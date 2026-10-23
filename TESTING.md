@@ -355,7 +355,7 @@ A run writes `<out>/<scenario>/trace.jsonl`, one line per client tick, as the ti
 {"tick":0,"pos":["…","…","…"],"delta":["…","…","…"],"y_rot":"…","x_rot":"…","on_ground":true,"horizontal_collision":false,"vertical_collision":true,"sprinting":false,"crouching":false,"pose":"STANDING"}
 ```
 
-`pos` and `delta` (`getDeltaMovement`) are doubles, and the rotations are floats. Screenshots go to `<out>/<scenario>/screenshots/<name>.png`.
+`pos` and `delta` (`getDeltaMovement`) are doubles, and the rotations are floats. Where the client has other entities, the line ends with them, in the order it added them (`entitiesForRendering`), each its type and position after the tick: `"entities":[{"type":"minecraft:pig","pos":["…","…","…"]}]`; a line without other entities has no such field, so the scenarios recorded before it have the lines they had. Screenshots go to `<out>/<scenario>/screenshots/<name>.png`.
 
 A scenario should move the player from tick 0: the client sends its position when it moved, or every 20 ticks without (`positionReminder`), and how many ticks the join took before the marker varies from run to run, so a scenario that starts standing still could send a reminder at a different tick each run.
 
@@ -381,8 +381,8 @@ The server's own packets differed from run to run where a scenario's course was 
 `rustcraft::oracle::client::replay` replays a scenario on the port's `LocalPlayer` without a server: the player put at the scenario's position and settled like the oracle client settles it (20 ticks, then until it's on the ground), then each tick what `Minecraft.tick` does for it (`commonTick`, the player's `tick`, `sendChanges`, then `client_tick_end`), with each step's keys held and its look set before the tick. It gives the trace, and the serverbound packets from the marker on (the marker, then each tick's), written by the game protocol, each `name payload` like the capture's. A test per scenario compares both with vanilla's run, strictly, line by line where vanilla's `vanilla/<version>/oracle/<scenario>/` is, and by MD5s of vanilla's trace and of its packets from the marker on (without what `oracle-diff` ignores by default), committed, everywhere: oracle-diff's strict phase, offline.
 
 The level is replayed two ways:
-- the flat preset (bedrock, two dirt, grass at -61) with the blocks the scenario's `setup` places, which needs no capture and is what CI runs;
-- where a capture of the scenario is (vanilla's, or the port's own in `target/oracle/<scenario>/`, which CI records for the walk), a `ClientLevel` filled from it the way the client's listener fills it: the configuration's registries, the login's level, and every chunk, forgotten chunk, block update and change of view before the marker, in order. Its blocks below y = -32 must be the flat level's, block for block, so a course is what its commands say.
+- the flat preset (bedrock, two dirt, grass at -61) with the blocks the scenario's `setup` places and the entities it summons (`summon <type> <x> <y> <z> {…}`: where it says, in that order, which is where and in the order the server adds and sends them), which needs no capture and is what CI runs;
+- where a capture of the scenario is (vanilla's, or the port's own in `target/oracle/<scenario>/`, which CI records for the walk), a `ClientLevel` filled from it the way the client's listener fills it: the configuration's registries, the login's level, and every chunk, forgotten chunk, block update, change of view and added or removed entity before the marker, in order. Its blocks below y = -32 must be the flat level's, block for block, so a course is what its commands say.
 
 Where the port's own run on a server (`tools/port_client.py capture <scenario>`) wrote its `trace.jsonl`, its trace and its packets from the marker on are checked against the same digests. CI records the walk's, so CI checks the live client's walk too.
 

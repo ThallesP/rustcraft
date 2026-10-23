@@ -5,7 +5,8 @@
 //!
 //! The level is a `ClientLevel` filled from a capture the way the client's listener fills it:
 //! the registries from configuration, the login's level, then every chunk, forgotten chunk, block
-//! update and change of the view before the scenario-start marker, in the order they came. The
+//! update, change of the view and added or removed entity before the scenario-start marker, in the
+//! order they came. The
 //! port's own captures (CI records the walk's with `tools/port_client.py capture`) have the same
 //! chunks as vanilla's, which the server sends either way. Without a capture, the level is the
 //! flat preset's (`FlatLevel`).
@@ -44,6 +45,7 @@ use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::registries::built_in_registries::BuiltInRegistries;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::codec::stream_codec::StreamCodec;
@@ -51,11 +53,13 @@ use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::network::protocol::common::custom::discarded_payload::DiscardedPayload;
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
 use crate::net::minecraft::network::protocol::configuration::clientbound_registry_data_packet::ClientboundRegistryDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
@@ -68,7 +72,7 @@ use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendlyByteBuf;
 use crate::net::minecraft::network::var_int::VarInt;
 use crate::net::minecraft::resources::identifier::Identifier;
-use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks};
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
@@ -301,6 +305,23 @@ impl CapturedLevel {
                         .get_chunk_source_mut()
                         .update_view_center(center.get_x(), center.get_z());
                 }
+                "minecraft:add_entity" => {
+                    let add = ClientboundAddEntityPacket::STREAM_CODEC
+                        .decode(&mut registry_buffer(&packet.payload));
+                    if add.get_id() != player_id {
+                        let r#type = add.get_type();
+                        let mut entity = Entity::new(r#type, r#type.get_dimensions());
+                        entity.recreate_from_packet(&add);
+                        level.add_entity(entity);
+                    }
+                }
+                "minecraft:remove_entities" => {
+                    let remove = ClientboundRemoveEntitiesPacket::STREAM_CODEC
+                        .decode(&mut unpooled::wrapped_buffer(packet.payload.to_vec()));
+                    for entity_id in remove.entity_ids() {
+                        level.remove_entity(entity_id);
+                    }
+                }
                 "minecraft:set_chunk_cache_radius" => {
                     let radius = ClientboundSetChunkCacheRadiusPacket::STREAM_CODEC
                         .decode(&mut friendly(&packet.payload));
@@ -320,15 +341,18 @@ impl CapturedLevel {
 }
 
 /// A scenario's world without a capture: the flat preset (bedrock at y = -64, two dirt, grass at
-/// -61, air above) with the blocks the scenario's setup commands place, every chunk loaded, no
-/// other entities, the default border.
+/// -61, air above) with the blocks the scenario's setup commands place, every chunk loaded, the
+/// entities its `summon`s make, the default border.
 ///
 /// The commands are `fill` and `setblock` in their `strict` mode, which places the states as they
 /// are written, with no shape updates from or to their neighbours (`FillCommand`'s flags 816), so
 /// the blocks are the commands' own. Where vanilla's capture is, the tests check they're the ones
-/// its server sent.
+/// its server sent. A `summon` makes an entity of its type where it says, which is where the
+/// server adds it, in the order the server sends them; it's the client's as long as no entity's
+/// class ticks it anywhere (none is ported), and its data (`NoAI`, `NoGravity`) is the server's.
 pub struct FlatLevel {
     blocks: HashMap<BlockPos, BlockState>,
+    entities: Vec<Entity>,
     world_border: WorldBorder,
 }
 
@@ -336,17 +360,36 @@ impl FlatLevel {
     pub fn new() -> FlatLevel {
         FlatLevel {
             blocks: HashMap::new(),
+            entities: Vec::new(),
             world_border: WorldBorder::new(),
         }
     }
 
-    /// The flat preset with the commands' blocks, in their order; a `gamerule` places none. Panics
-    /// on a command it doesn't know or one that isn't strict.
+    /// The entities the setup summoned, in order.
+    pub fn entities(&self) -> &[Entity] {
+        &self.entities
+    }
+
+    /// The flat preset with the commands' blocks, in their order, and the entities they summon; a
+    /// `gamerule` places none. Panics on a command it doesn't know or one that isn't strict.
     pub fn with_setup(commands: &[String]) -> FlatLevel {
         let mut level = FlatLevel::new();
         for command in commands {
             let words: Vec<&str> = command.split(' ').collect();
             if words.first() == Some(&"gamerule") {
+                continue;
+            }
+            if let ["summon", r#type, x, y, z, ..] = words.as_slice() {
+                let position = |word: &str| -> f64 {
+                    word.parse()
+                        .unwrap_or_else(|_| panic!("{command}: {word} isn't a position"))
+                };
+                let r#type = BuiltInRegistries::ENTITY_TYPE
+                    .get_optional(&Identifier::parse(r#type))
+                    .unwrap_or_else(|| panic!("{command}: no entity type {type}"));
+                let mut entity = Entity::new(r#type, r#type.get_dimensions());
+                entity.snap_to(position(x), position(y), position(z), 0.0, 0.0);
+                level.entities.push(entity);
                 continue;
             }
             let coordinate = |word: &str| -> i32 {
@@ -522,6 +565,7 @@ pub struct Replay {
 pub fn replay(
     scenario: &Scenario,
     level: &dyn Level,
+    others: &[Entity],
     registries: Arc<RegistryAccess>,
     player_id: i32,
     answers: Option<&[CapturedPacket]>,
@@ -607,7 +651,7 @@ pub fn replay(
             tick(&mut player);
             packets.extend(player.sent.drain(..).map(&encode));
             packets.push(encode(Box::new(ServerboundClientTickEndPacket::INSTANCE)));
-            trace.push(trace_writer::line(trace.len() as i32, &player));
+            trace.push(trace_writer::line(trace.len() as i32, &player, others));
             if tick_of_step == step.ticks - 1 && !step.wait_for.is_empty() {
                 let answers = answers.unwrap_or_else(|| {
                     panic!(
@@ -699,6 +743,7 @@ mod tests {
     use super::{Capture, CapturedLevel, FlatLevel, Replay, capture_path, replay, vanilla_dir};
     use crate::net::minecraft::core::block_pos::BlockPos;
     use crate::net::minecraft::core::registry_access::RegistryAccess;
+    use crate::net::minecraft::world::entity::entity::Entity;
     use crate::net::minecraft::world::level::block_getter::BlockGetter;
     use crate::rustcraft::oracle::client::scenario::Scenario;
 
@@ -775,6 +820,7 @@ mod tests {
             let on_flat = replay(
                 &scenario,
                 &flat,
+                flat.entities(),
                 Arc::new(RegistryAccess::new(Vec::new())),
                 1,
                 None,
@@ -809,9 +855,11 @@ mod tests {
                     }
                 }
             }
+            let others: Vec<Entity> = captured.level.entities_for_rendering().cloned().collect();
             let on_captured = replay(
                 &scenario,
                 &captured.level,
+                &others,
                 Arc::clone(&captured.registries),
                 captured.player_id,
                 Some(&capture.play_from_marker()),
@@ -860,6 +908,7 @@ mod tests {
         let draft = replay(
             &scenario,
             &flat,
+            flat.entities(),
             Arc::new(RegistryAccess::new(Vec::new())),
             1,
             None,
@@ -1042,6 +1091,15 @@ mod tests {
             "falls",
             "2f928d8ecf2e4023ea31ca262fa6b8e6",
             "71840c6ffe3f52b3f30db9b7ae551a37",
+        );
+    }
+
+    #[test]
+    fn entities() {
+        check_scenario(
+            "entities",
+            "e912051e4123b118cc6da239e409f820",
+            "31f64f12f277ec87bfca9717685ffdf1",
         );
     }
 }

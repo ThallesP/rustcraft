@@ -4,8 +4,15 @@
 //! (`ClientChunkCache`), reading and setting their blocks, their light (the chunk cache's
 //! `LevelLightEngine`, which the queued light updates feed and `update` runs, once a frame), and
 //! what an entity's movement asks of it (`CollisionGetter` and the entity's `Level`; its world
-//! border is the default one until the border packets set it). Not ported: entities (so no entity
-//! collides), block entities, the block state predictions (`blockStatePredictionHandler`, which
+//! border is the default one until the border packets set it), and its other entities: the
+//! entity storage (`TransientEntitySectionManager`'s lookup, `getEntity`, `entitiesForRendering`)
+//! and the ticking ones (`EntityTickList`, `tickEntities`). An entity of a class not ported yet is
+//! a plain `Entity` of its type; ticking one is its `commonTick`, its class's `tick` being what isn't
+//! ported, so it stays where the server put it. The local player isn't in the storage here:
+//! `Minecraft` holds it and ticks it first, as it is in Java's tick list, added at the login. An
+//! entity ticks from when it's added, where Java waits for its chunk to tick (the chunk is loaded
+//! first in all the server sends). Not ported: entity sections and their visibility, other
+//! entities' collisions with the player, block entities, the block state predictions (`blockStatePredictionHandler`, which
 //! the player's own block changes make), neighbour updates and the renderer's dirty sections
 //! (`setBlocksDirty`, `sendBlockUpdated`, `setSectionDirtyWithNeighbors`).
 //!
@@ -45,7 +52,7 @@ use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::argb::ARGB;
-use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
 use crate::net::minecraft::world::level::biome::biome::Biome;
 use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
 use crate::net::minecraft::world::level::biome::biome_resolver::BiomeResolver;
@@ -62,6 +69,8 @@ use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
 use crate::net::minecraft::world::level::color_resolver::ColorResolver;
 use crate::net::minecraft::world::level::dimension::dimension_type::DimensionType;
+use crate::net::minecraft::world::level::entity::entity_lookup::EntityLookup;
+use crate::net::minecraft::world::level::entity::entity_tick_list::EntityTickList;
 use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::level::level_height_accessor::{Height, LevelHeightAccessor};
 use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
@@ -92,6 +101,9 @@ pub struct ClientLevel {
     biome_manager: BiomeManager,
     tint_caches: [(&'static ColorResolver, BlockTintCache); 4],
     biome_blend_radius: i32,
+    /// `entityStorage`'s entities and `tickingEntities`, the player's aside.
+    entity_storage: EntityLookup<Entity>,
+    ticking_entities: EntityTickList,
 }
 
 /// A light update queued for the level, Java's `Runnable`.
@@ -150,6 +162,49 @@ impl ClientLevel {
                 (&biome_colors::WATER_COLOR_RESOLVER, BlockTintCache::new()),
             ],
             biome_blend_radius: Options::DEFAULT_BIOME_BLEND_RADIUS,
+            entity_storage: EntityLookup::new(),
+            ticking_entities: EntityTickList::new(),
+        }
+    }
+
+    /// `addEntity(Entity)`: in place of one it had by the id, ticking from now on.
+    pub fn add_entity(&mut self, entity: Entity) {
+        self.remove_entity(entity.get_id());
+        self.ticking_entities.add(entity.get_id());
+        self.entity_storage.add(entity);
+    }
+
+    /// `removeEntity(int, RemovalReason)`: gone from the storage and the tick list
+    /// (`setRemoved`'s callbacks).
+    pub fn remove_entity(&mut self, id: i32) {
+        if let Some(entity) = self.entity_storage.get_entity(id) {
+            let uuid = entity.get_uuid();
+            self.ticking_entities.remove(id);
+            self.entity_storage.remove(id, uuid);
+        }
+    }
+
+    /// `getEntity(int)`, the player's aside.
+    pub fn get_entity(&self, id: i32) -> Option<&Entity> {
+        self.entity_storage.get_entity(id)
+    }
+
+    pub fn get_entity_mut(&mut self, id: i32) -> Option<&mut Entity> {
+        self.entity_storage.get_entity_mut(id)
+    }
+
+    /// `entitiesForRendering()`: the entities in the order they were added, the player's aside.
+    pub fn entities_for_rendering(&self) -> impl Iterator<Item = &Entity> {
+        self.entity_storage.get_all_entities()
+    }
+
+    /// `tickEntities()` for the entities besides the player, in the tick list's order:
+    /// `tickNonPassenger`'s `commonTick`; their classes' `tick` isn't ported.
+    pub fn tick_entities(&mut self) {
+        for id in self.ticking_entities.for_each() {
+            if let Some(entity) = self.entity_storage.get_entity_mut(id) {
+                entity.common_tick();
+            }
         }
     }
 
