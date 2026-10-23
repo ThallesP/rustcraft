@@ -8,6 +8,14 @@ is op, so a client can run setup commands.
 
     python3 tools/vanilla_server.py --accept-eula
     python3 tools/vanilla_server.py --accept-eula --name capture --port 25570
+    python3 tools/vanilla_server.py --accept-eula --level-type minecraft:normal --generate-structures --console
+
+`--level-type` and `--generate-structures` give a generated world instead of the flat one, with
+its villages and the rest (`port_client.py soak` uses them). With `--console`, each line the
+script reads on its stdin goes to the server's console once the world is set up, so a parent
+process can drive it (`tp`, `locate`, ...) and read the answers in the server output, which the
+script echoes to its stdout. The end of its stdin stops the server, so a parent that dies
+doesn't leave it running.
 
 Prints "ready on 127.0.0.1:<port>" once the world is set up, and stops the server cleanly
 on Ctrl-C or SIGTERM. Needs tools/setup_vanilla.py to have run for the version.
@@ -20,6 +28,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -69,12 +78,16 @@ def offline_uuid(name):
     return uuid.UUID(bytes=hashlib.md5(f"OfflinePlayer:{name}".encode()).digest(), version=3)
 
 
-def prepare_run_dir(run_dir, port, seed, compression_threshold):
+def prepare_run_dir(run_dir, port, seed, compression_threshold, level_type, generate_structures, view_distance):
     shutil.rmtree(run_dir, ignore_errors=True)
     run_dir.mkdir(parents=True)
 
+    # Overriding keys keeps their place, so the defaults write the same file as ever.
     properties = {
         **SERVER_PROPERTIES,
+        "level-type": level_type,
+        "generate-structures": "true" if generate_structures else "false",
+        "view-distance": str(view_distance),
         "server-port": str(port),
         "level-seed": str(seed),
         "network-compression-threshold": str(compression_threshold),
@@ -93,6 +106,14 @@ def send(server, command):
         pass
 
 
+def forward_console(server, ready):
+    """`--console`: sends each line of our stdin to the server once it's set up, then `stop` at the end of it."""
+    ready.wait()
+    for line in sys.stdin:
+        send(server, line.rstrip("\n"))
+    send(server, "stop")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--accept-eula", action="store_true", help=f"accept Mojang's EULA ({EULA_URL})")
@@ -101,6 +122,10 @@ def main():
     parser.add_argument("--port", type=int, default=25565)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--compression-threshold", type=int, default=-1, help="packet size to compress from (default: -1, off)")
+    parser.add_argument("--level-type", default="minecraft:flat", help="world preset, e.g. minecraft:normal (default: minecraft:flat)")
+    parser.add_argument("--generate-structures", action="store_true", help="generate villages and the other structures")
+    parser.add_argument("--view-distance", type=int, default=4, help="chunks the server sends around a player (default: 4)")
+    parser.add_argument("--console", action="store_true", help="forward stdin to the server's console once it's ready, stopping it at its end")
     args = parser.parse_args()
 
     if not args.accept_eula:
@@ -115,7 +140,10 @@ def main():
     major = json.loads((version_dir / "version.json").read_text())["javaVersion"]["majorVersion"]
     java = TOOLCHAIN_DIR / f"jdk-{major}" / "bin" / "java"
     run_dir = version_dir / "server-run" / args.name
-    prepare_run_dir(run_dir, args.port, args.seed, args.compression_threshold)
+    prepare_run_dir(
+        run_dir, args.port, args.seed, args.compression_threshold,
+        args.level_type, args.generate_structures, args.view_distance,
+    )
 
     # The bundler unpacks the server and its libraries once into the shared repo dir, not every run dir.
     # Its own session keeps a terminal Ctrl-C away from Java, so the server stops through `stop` instead.
@@ -139,6 +167,11 @@ def main():
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
 
+    # Lines that come before the setup is done wait in the pipe, so the console's commands run after it.
+    console_ready = threading.Event()
+    if args.console:
+        threading.Thread(target=forward_console, args=(server, console_ready), daemon=True).start()
+
     ready = False
     setup_failed = False
     for line in server.stdout:
@@ -154,6 +187,7 @@ def main():
         elif BARRIER_OUTPUT in line and not setup_failed:
             ready = True
             print(f"ready on 127.0.0.1:{args.port}", flush=True)
+            console_ready.set()
 
     exit_code = server.wait()
     if setup_failed:

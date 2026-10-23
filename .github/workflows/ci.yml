@@ -38,6 +38,9 @@ jobs:
       # The falls scenario waits for the server's answers to its landings, which its replay test takes from a capture
       # (TESTING.md, "The server's answers"): the port's own, here, whose trace and packets are checked too.
       - run: python3 tools/port_client.py capture falls --accept-eula
+      # The live client on a generated world (TESTING.md, "Soak"): teleports through biomes, a village and caves, failing on
+      # any panic or unported code in the client's log.
+      - run: python3 tools/port_client.py soak --preset normal --accept-eula --seconds-per-stop 5
       - run: python3 tools/golden.py
         env:
           RUSTCRAFT_CHUNK_CAPTURE: ${{ github.workspace }}/target/oracle/walk/capture.jsonl

@@ -30,6 +30,7 @@ python3 tools/oracle_client.py capture walk --accept-eula --ping  # the server l
 python3 tools/port_client.py capture walk --accept-eula --ping    # and the port's (rustcraft --ping)
 cargo run -p oracle-diff -- packets vanilla/26.3/oracle/walk-ping/capture.jsonl target/oracle/walk-ping/capture.jsonl
 cargo run -p oracle-diff -- dir vanilla/26.3/oracle/walk target/oracle/walk
+python3 tools/port_client.py soak --preset normal --accept-eula   # the live client on a generated world (below)
 ```
 
 Wrap the ones that start a server, a client or the proxy in `flock /tmp/rustcraft-oracle.lock`: they use fixed ports, and the machine is shared.
@@ -453,9 +454,16 @@ The port renders the same way: `tests/opengl_frame.rs` runs `rustcraft` under `x
 
 The port's screenshots come from its runs on a server: a scenario with screenshot steps makes the port render (offscreen when it's `--headless`), and `OracleGameTest` renders a frame at a partial tick of 1 and reads it back at each step, like `OracleScreenshot.take`, after waiting, like the oracle client, for every visible section to compile (`hasRenderedAllSections`). `tools/port_client.py` runs such a scenario's port under `xvfb-run -a` with the oracle client's environment (CI adds `SDL_VIDEO_FORCE_EGL=1`). The port renders with the oracle's `options.txt` where it differs from the defaults: no chunk fade, cloud range 64, RGSS texture filtering. `rustcraft --render-scenario SCENARIO --capture CAPTURE --screenshot out.png` renders a scenario's first view offscreen without a server, from the level a capture's packets fill (`CapturedLevel`), its clocks set by the capture's `set_time`s, the player settled where the scenario puts it: the same pixels as the live run's. `tests/opengl_frame.rs` renders the GUI-free walk's spawn view that way from the walk's capture (CI's own) and checks it against the digest of vanilla's screenshot's RGBA bytes on the driver vanilla's screenshot was taken on (Mesa 26.0.8's llvmpipe, the oracle machine's); on another it only has to render, since another llvmpipe needn't rasterize and sample to the same bits (CI's Mesa 25.2 gives other pixels).
 
+## Soak: the live client on a generated world
+
+The scenarios' worlds are flat, with few kinds of blocks. `port_client.py soak` joins the port's live client (headless, straight to the server, no proxy) to a fresh `vanilla_server.py` world of a preset (`--preset normal`, seed 0 unless `--seed`, structures on), and takes the player around it: the spawn, plains, a forest, a desert and the caves under it, an ocean, a village and the caves under the spawn, `--seconds-per-stop` at each (20 by default). Each place comes from the server's `locate`, and its chunks are force-loaded until generated before the player goes there, so every block state, block entity and biome the server sends there reaches the client's chunk handling, light, collisions and tints. It exits 1 if the client exits early, leaves the server (a panic while handling a packet disconnects), or logs a panic or code that isn't ported, printing those lines with their counts and the end of the log (`target/soak/client.log`), and 0 otherwise, with each stop and where the server has the player at its end.
+
+The soak is about the world, not the player's physics, so it keeps the player clear of what the player's port doesn't do yet: the server's ticks are frozen (`tick freeze`, so no fluid flows into what the soak builds), and at each stop the player stands on a 3 by 3 platform the soak builds at a chunk's middle, in a chunk section emptied of fluids (on the surface, the first section above the ground; underground, deepslate around a small room at -47). The spawn stop is built before the client joins, and the world spawn moved onto it. CI runs it with 5 seconds a stop.
+
 ## Where outputs go
 
 - Vanilla runs: `vanilla/<version>/oracle/<scenario>/`
 - Port runs: `target/oracle/<scenario>/`
+- The soak's client log: `target/soak/client.log`
 
 `oracle-diff dir A B` compares the trace, the capture and every screenshot that both directories have. Running vanilla twice and diffing the runs (`check-determinism`) checks that the oracle itself is deterministic. It has to be, or no comparison means anything.
