@@ -2,6 +2,8 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
 
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
@@ -22,6 +24,7 @@ use crate::net::minecraft::world::level::material::fluids::Fluids;
 pub struct ShelfBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    use_shape_for_light_occlusion: Some(ShelfBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(ShelfBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.ShelfBlock",
@@ -80,5 +83,12 @@ impl ShelfBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl ShelfBlock {
+    /// `useShapeForLightOcclusion`.
+    fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

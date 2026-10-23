@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
@@ -494,6 +495,14 @@ final class BlockSuites {
         }
     }
 
+    /** {@code "BLOCK"} for {@code Shapes.block()}, {@code "EMPTY"} for {@code Shapes.empty()}, by reference, else {@code "OTHER"}. */
+    static JsonPrimitive shapeKind(final net.minecraft.world.phys.shapes.VoxelShape shape) {
+        if (shape == net.minecraft.world.phys.shapes.Shapes.block()) {
+            return new JsonPrimitive("BLOCK");
+        }
+        return new JsonPrimitive(shape == net.minecraft.world.phys.shapes.Shapes.empty() ? "EMPTY" : "OTHER");
+    }
+
     /**
      * Each state in Block.BLOCK_STATE_REGISTRY, by its id in `args[0]`: its block and values, what it took from its
      * block's Properties, and its lookups. The functions taking a level are asked at (1, 2, 3) of EmptyBlockGetter.
@@ -530,6 +539,22 @@ final class BlockSuites {
                 writer.result("getDestroySpeed" + GETTER_AND_POS + "F", args, f32(state.getDestroySpeed(level, POS)), null);
                 writer.result("requiresCorrectToolForDrops()Z", args, new JsonPrimitive(state.requiresCorrectToolForDrops()), null);
                 writer.result("canOcclude()Z", args, new JsonPrimitive(state.canOcclude()), null);
+                // What initCache keeps for the light engine, in one case: useShapeForLightOcclusion, propagatesSkylightDown,
+                // getLightDampening, isSolidRender, and which occlusion shape it has and each direction's face of it, as
+                // the light engine and the renderer tell them apart (the whole block, nothing, or another, whose voxels
+                // only come with its class's shapes; ShapeSuites' recipes check the shapes' mechanics).
+                JsonArray faces = new JsonArray();
+                for (Direction direction : Direction.values()) {
+                    faces.add(shapeKind(state.getFaceOcclusionShape(direction)));
+                }
+                writer.result(
+                    "light", args,
+                    array(
+                        new JsonPrimitive(state.useShapeForLightOcclusion()), new JsonPrimitive(state.propagatesSkylightDown()),
+                        new JsonPrimitive(state.getLightDampening()), new JsonPrimitive(state.isSolidRender()), shapeKind(state.getOcclusionShape()), faces
+                    ),
+                    null
+                );
                 writer.result("emissiveRendering()Z", args, new JsonPrimitive(state.emissiveRendering()), null);
                 writer.result("canBeReplaced()Z", args, new JsonPrimitive(state.canBeReplaced()), null);
                 writer.result("shouldSpawnTerrainParticles()Z", args, new JsonPrimitive(state.shouldSpawnTerrainParticles()), null);

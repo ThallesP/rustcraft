@@ -3,6 +3,8 @@
 //! Only what decides its blocks' states so far: its properties, its default state and which of its
 //! states tick. Not ported yet: its behaviour, and its constructor's
 //! `ambientLeavesBlockSoundPlayer`.
+//!
+//! Of its behaviour, `getLightDampening` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -24,6 +26,7 @@ pub struct LeavesBlock;
 static CUTOUT_LEAVES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 pub static CLASS: BlockClass = BlockClass {
+    get_light_dampening: Some(LeavesBlock::get_light_dampening),
     get_fluid_state: Some(LeavesBlock::get_fluid_state),
     is_randomly_ticking: Some(LeavesBlock::is_randomly_ticking),
     ..BlockClass::new("net.minecraft.world.level.block.LeavesBlock", &block::CLASS)
@@ -88,5 +91,12 @@ impl LeavesBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl LeavesBlock {
+    /// `getLightDampening`.
+    fn get_light_dampening(_block: &BlockData, _state: BlockState) -> i32 {
+        1
     }
 }

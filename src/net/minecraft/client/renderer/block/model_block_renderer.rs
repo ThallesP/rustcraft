@@ -364,12 +364,15 @@ pub(crate) mod tests {
     use crate::net::minecraft::world::level::block_getter::BlockGetter;
     use crate::net::minecraft::world::level::cardinal_lighting::CardinalLighting;
     use crate::net::minecraft::world::level::light_layer::LightLayer;
+    use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
     use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 
     /// `ModelSuites.MeshLevel`: a pattern of whole blocks, light that varies, white tints.
     pub(crate) struct MeshLevel {
         seed: i32,
         blocks: Vec<Block>,
+        // `LevelLightEngine.EMPTY`, like the suite's level: its light is `get_brightness`'s own.
+        light_engine: LevelLightEngine,
     }
 
     const BLOCK_NAMES: [&str; 24] = [
@@ -409,7 +412,11 @@ pub(crate) mod tests {
                         .expect("a vanilla block")
                 })
                 .collect();
-            MeshLevel { seed, blocks }
+            MeshLevel {
+                seed,
+                blocks,
+                light_engine: LevelLightEngine::empty(),
+            }
         }
 
         fn hash(x: i32, y: i32, z: i32, seed: i32) -> i32 {
@@ -442,6 +449,10 @@ pub(crate) mod tests {
     }
 
     impl BlockAndLightGetter for MeshLevel {
+        fn get_light_engine(&self) -> &LevelLightEngine {
+            &self.light_engine
+        }
+
         fn get_brightness(&self, layer: LightLayer, pos: &BlockPos) -> i32 {
             let (x, y, z) = (pos.get_x(), pos.get_y(), pos.get_z());
             match layer {

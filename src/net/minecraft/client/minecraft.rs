@@ -5,7 +5,8 @@
 //! here is the game loop's timing and what a tick does with a connection to a server: run the
 //! packets queued for the game thread, then up to 10 ticks, each ticking the connection (the game
 //! mode's, or the connect screen's before there's a level), the player on its level, what the
-//! player sends, and ending with `client_tick_end`.
+//! player sends, and ending with `client_tick_end`; then the frame's update of the level's light
+//! (`renderFrame`'s `level.update()`).
 //!
 //! The game is shared by its listeners and its player, like Java's, so its state is in cells, and
 //! its back-references are parameters (`LocalPlayer::send_changes`). The screen is one of the few
@@ -139,6 +140,11 @@ impl Minecraft {
             for _ in 0..ticks_to_do.min(10) {
                 self.tick();
             }
+        }
+
+        // `renderFrame`'s update, before the frame is drawn: the level's light.
+        if advance_game_time && let Some(level) = self.level.borrow_mut().as_mut() {
+            level.update();
         }
 
         self.pause.set(false);

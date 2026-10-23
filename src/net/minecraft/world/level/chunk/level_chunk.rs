@@ -1,13 +1,14 @@
 //! net/minecraft/world/level/chunk/LevelChunk.java
 //!
-//! The client's side of a chunk: its sections, the heightmaps the server sends, and reading and
-//! setting blocks. Java's `LevelChunk` extends `ChunkAccess`, whose fields it holds here. Not
-//! ported yet: block entities (`replaceWithPacketData` skips the packet's, and `setBlockState`
-//! makes none), the debug level's blocks (`getBlockState` in a debug world), sky light sources
-//! (`initializeLightSources`, `skyLightSources`), heightmaps worked out from blocks (`update`,
-//! priming a heightmap whose data didn't fit), ticks, and everything the server does with a
-//! chunk. `setBlockState`'s light checks and section status go to the level's light engine,
-//! which isn't ported either.
+//! The client's side of a chunk: its sections, the heightmaps the server sends, its sky light
+//! sources, and reading and setting blocks. Java's `LevelChunk` extends `ChunkAccess`, whose
+//! fields it holds here. `setBlockState` tells the level's light engine (Java's
+//! `level.getChunkSource().getLightEngine()`, a parameter here) when a section's emptiness or a
+//! block's light changes. Not ported yet: block entities (`replaceWithPacketData` skips the
+//! packet's, and `setBlockState` makes none), the debug level's blocks (`getBlockState` in a debug
+//! world), heightmaps worked out from blocks (`update`, priming a heightmap whose data didn't fit),
+//! the chunk source's `onSectionEmptinessChanged` (the renderer's), ticks, and everything the
+//! server does with a chunk.
 
 use std::collections::BTreeMap;
 
@@ -18,10 +19,15 @@ use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::chunk::level_chunk_section::LevelChunkSection;
+use crate::net::minecraft::world::level::chunk::light_chunk::LightChunk;
 use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 use crate::net::minecraft::world::level::level_height_accessor::{Height, LevelHeightAccessor};
 use crate::net::minecraft::world::level::levelgen::heightmap::{Heightmap, Types};
+use crate::net::minecraft::world::level::lighting::chunk_sky_light_sources::ChunkSkyLightSources;
+use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
+use crate::net::minecraft::world::level::lighting::light_engine::LightEngine;
+use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 
 /// `ChunkStatus.FULL.heightmapsAfter()`: the heightmaps a full chunk keeps.
@@ -39,6 +45,7 @@ pub struct LevelChunk {
     level_height: Height,
     sections: Vec<LevelChunkSection>,
     heightmaps: BTreeMap<Types, Heightmap>,
+    sky_light_sources: ChunkSkyLightSources,
 }
 
 impl LevelChunk {
@@ -66,6 +73,7 @@ impl LevelChunk {
             level_height,
             sections,
             heightmaps,
+            sky_light_sources: ChunkSkyLightSources::new(&level_height),
         }
     }
 
@@ -80,6 +88,27 @@ impl LevelChunk {
     /// Panics for an index past the sections, where Java throws.
     pub fn get_section(&self, section_index: i32) -> &LevelChunkSection {
         &self.sections[section_index as usize]
+    }
+
+    /// `ChunkAccess.getHighestFilledSectionIndex`: the highest section that isn't only air, or -1.
+    pub fn get_highest_filled_section_index(&self) -> i32 {
+        for section_index in (0..self.sections.len()).rev() {
+            if !self.sections[section_index].has_only_air() {
+                return section_index as i32;
+            }
+        }
+
+        -1
+    }
+
+    /// `ChunkAccess.initializeLightSources`: the sky light sources, from the blocks.
+    pub fn initialize_light_sources(&mut self) {
+        let mut sources = std::mem::replace(
+            &mut self.sky_light_sources,
+            ChunkSkyLightSources::new(&self.level_height),
+        );
+        sources.fill_from(self);
+        self.sky_light_sources = sources;
     }
 
     pub fn get_heightmap(&self, r#type: Types) -> Option<&Heightmap> {
@@ -112,6 +141,7 @@ impl LevelChunk {
         for (&r#type, data) in chunk_data.get_heightmaps() {
             self.set_heightmap(r#type, data);
         }
+        self.initialize_light_sources();
     }
 
     /// `replaceBiomes`: every section's biomes read from the buffer in turn.
@@ -149,14 +179,15 @@ impl LevelChunk {
     }
 
     /// `setBlockState(pos, state, flags)`: the state it replaced, or none when nothing changed
-    /// (air set in a section of only air, or the same state). Also says whether the section went
-    /// from only air to not, or back, which Java tells the light engine and the chunk source.
-    /// Panics past the level's height, where Java throws.
+    /// (air set in a section of only air, or the same state). The light engine hears of a section
+    /// going from only air to not or back, and of a block whose light changed, whose column's sky
+    /// light sources move with it. Panics past the level's height, where Java throws.
     pub fn set_block_state(
         &mut self,
         pos: &BlockPos,
         state: BlockState,
-    ) -> Option<(BlockState, bool)> {
+        light_engine: &mut LevelLightEngine,
+    ) -> Option<BlockState> {
         let y = pos.get_y();
         let section = &mut self.sections[self.level_height.get_section_index(y) as usize];
         let was_empty = section.has_only_air();
@@ -164,13 +195,36 @@ impl LevelChunk {
             return None;
         }
 
-        let old_state = section.set_block_state(pos.get_x() & 15, y & 15, pos.get_z() & 15, state);
+        let local_x = pos.get_x() & 15;
+        let local_y = y & 15;
+        let local_z = pos.get_z() & 15;
+        let old_state = section.set_block_state(local_x, local_y, local_z, state);
         if old_state == state {
             return None;
         }
 
-        let emptiness_changed = was_empty != section.has_only_air();
-        Some((old_state, emptiness_changed))
+        let is_empty = section.has_only_air();
+        if was_empty != is_empty {
+            light_engine.update_section_status_block_pos(pos, is_empty);
+        }
+
+        if LightEngine::has_different_light_properties(old_state, state) {
+            let mut sources = std::mem::replace(
+                &mut self.sky_light_sources,
+                ChunkSkyLightSources::new(&self.level_height),
+            );
+            sources.update(self, local_x, y, local_z);
+            self.sky_light_sources = sources;
+            light_engine.check_block(pos);
+        }
+
+        Some(old_state)
+    }
+}
+
+impl LightChunk for LevelChunk {
+    fn get_sky_light_sources(&self) -> &ChunkSkyLightSources {
+        &self.sky_light_sources
     }
 }
 

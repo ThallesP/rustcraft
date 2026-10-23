@@ -4,6 +4,8 @@
 //! bottom half and a quarter on top (straight), an eighth (outer corners) or three quarters
 //! (inner corners), turned to face each way, and upside down for the top half. Not ported yet: the
 //! rest of its behaviour, and its constructor's `baseState`.
+//!
+//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
 
 use std::sync::LazyLock;
 
@@ -67,6 +69,7 @@ static SHAPES: LazyLock<StairShapes> = LazyLock::new(|| {
 pub struct StairBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    use_shape_for_light_occlusion: Some(StairBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(StairBlock::get_fluid_state),
     get_shape: Some(StairBlock::get_shape),
     ..BlockClass::new("net.minecraft.world.level.block.StairBlock", &block::CLASS)
@@ -148,5 +151,12 @@ impl StairBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl StairBlock {
+    /// `useShapeForLightOcclusion`.
+    fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

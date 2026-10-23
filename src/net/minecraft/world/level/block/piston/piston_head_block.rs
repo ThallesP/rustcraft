@@ -2,6 +2,8 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
 
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::block::{
@@ -9,6 +11,7 @@ use crate::net::minecraft::world::level::block::block::{
 };
 use crate::net::minecraft::world::level::block::directional_block::{self, DirectionalBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
@@ -18,10 +21,13 @@ use crate::net::minecraft::world::level::block::state::state_holder::StateHolder
 
 pub struct PistonHeadBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.piston.PistonHeadBlock",
-    &directional_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    use_shape_for_light_occlusion: Some(PistonHeadBlock::use_shape_for_light_occlusion),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.piston.PistonHeadBlock",
+        &directional_block::CLASS,
+    )
+};
 
 impl PistonHeadBlock {
     pub const TYPE: &'static EnumProperty<PistonType> = BlockStateProperties::PISTON_TYPE;
@@ -58,5 +64,12 @@ impl PistonHeadBlock {
             PistonHeadBlock::TYPE,
             PistonHeadBlock::SHORT,
         ]);
+    }
+}
+
+impl PistonHeadBlock {
+    /// `useShapeForLightOcclusion`.
+    fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

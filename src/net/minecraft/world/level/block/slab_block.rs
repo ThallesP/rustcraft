@@ -2,6 +2,8 @@
 //!
 //! What decides its blocks' states (its properties and its default state) and its shapes: a half
 //! block at the bottom or the top, or a whole one. Not ported yet: the rest of its behaviour.
+//!
+//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
 
 use std::sync::LazyLock;
 
@@ -30,6 +32,7 @@ static SHAPE_TOP: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 8.
 pub struct SlabBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    use_shape_for_light_occlusion: Some(SlabBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(SlabBlock::get_fluid_state),
     get_shape: Some(SlabBlock::get_shape),
     ..BlockClass::new("net.minecraft.world.level.block.SlabBlock", &block::CLASS)
@@ -85,5 +88,12 @@ impl SlabBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl SlabBlock {
+    /// `useShapeForLightOcclusion`: all but a double slab.
+    fn use_shape_for_light_occlusion(_block: &BlockData, state: BlockState) -> bool {
+        state.get_value(SlabBlock::TYPE) != SlabType::DOUBLE
     }
 }

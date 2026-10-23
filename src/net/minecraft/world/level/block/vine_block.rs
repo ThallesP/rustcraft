@@ -2,20 +2,25 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::pipe_block::PipeBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 
 pub struct VineBlock;
 
-pub static CLASS: BlockClass =
-    BlockClass::new("net.minecraft.world.level.block.VineBlock", &block::CLASS);
+pub static CLASS: BlockClass = BlockClass {
+    propagates_skylight_down: Some(VineBlock::propagates_skylight_down),
+    ..BlockClass::new("net.minecraft.world.level.block.VineBlock", &block::CLASS)
+};
 
 impl VineBlock {
     pub const UP: &'static BooleanProperty = PipeBlock::UP;
@@ -55,5 +60,12 @@ impl VineBlock {
             VineBlock::SOUTH,
             VineBlock::WEST,
         ]);
+    }
+}
+
+impl VineBlock {
+    /// `propagatesSkylightDown`.
+    fn propagates_skylight_down(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

@@ -13,14 +13,19 @@
 //! overrides `getShape` or `getCollisionShape` in Java panics when asked, until its override is
 //! ported (`SHAPE_OVERRIDES`).
 //!
+//! `initCache`'s light part, which the light engine reads: `useShapeForLightOcclusion`, the
+//! occlusion shape and its faces, `isSolidRender`, `propagatesSkylightDown` and
+//! `getLightDampening`, with the classes' overrides. They need the state's shape where a class
+//! doesn't answer without one, so a state whose class's shapes aren't ported has none of them yet
+//! (`light_properties_ported`), and asking panics, like the shapes themselves. So does the
+//! occlusion shape of the classes overriding `getOcclusionShape` whose overrides aren't ported
+//! (fence gates, lecterns, sculk shriekers; fences' is).
+//!
 //! Not ported yet: every other behaviour method (`useWithoutItem`, `tick`, `updateShape`…), which
 //! come with the blocks' classes; `Properties.sound` and `SoundType`, `isValidSpawn` (it
 //! takes an `EntityType`) and `requiredFeatures` (`FeatureFlag`), which Blocks' registrations
-//! leave out until they come; `initCache`'s shape-dependent part (`isSolid`, `isSolidRender`,
-//! `getOcclusionShape`, `propagatesSkylightDown`, `getLightDampening`,
-//! `useShapeForLightOcclusion`, the collision shape cache) and `getFluidState`, which wait for
-//! `VoxelShape` and fluids; the offset function itself (`getOffset`), which needs each class's
-//! `getMaxHorizontalOffset`.
+//! leave out until they come; `initCache`'s `isSolid` and collision shape cache; the offset
+//! function itself (`getOffset`), which needs each class's `getMaxHorizontalOffset`.
 //!
 //! Java's state predicates are lambdas, so `Properties` holds them as values that say which they
 //! are: Properties' defaults, which read the block's shapes or tags, Blocks' named ones, or a
@@ -37,7 +42,9 @@ use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::item::dye_color::DyeColor;
-use crate::net::minecraft::world::level::block::block::{Block, BlockClass, ShapeMethod};
+use crate::net::minecraft::world::level::block::block::{
+    Block, BlockClass, BlockData, ShapeMethod,
+};
 use crate::net::minecraft::world::level::block::blocks::REGISTRY;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::note_block_instrument::NoteBlockInstrument;
@@ -563,6 +570,17 @@ pub struct BlockStateBase {
     replaceable: bool,
     fluid_state: FluidState,
     is_randomly_ticking: bool,
+    use_shape_for_light_occlusion: bool,
+    occlusion: Option<Occlusion>,
+    propagates_skylight_down: Option<bool>,
+    light_dampening: Option<i32>,
+}
+
+/// What `initCache` keeps of a state's occlusion shape.
+struct Occlusion {
+    occlusion_shape: VoxelShape,
+    occlusion_shapes_by_face: [VoxelShape; 6],
+    solid_render: bool,
 }
 
 impl BlockStateBase {
@@ -590,14 +608,51 @@ impl BlockStateBase {
             replaceable: properties.replaceable,
             fluid_state: FluidState::EMPTY,
             is_randomly_ticking: false,
+            use_shape_for_light_occlusion: false,
+            occlusion: None,
+            propagates_skylight_down: None,
+            light_dampening: None,
         }
     }
 
-    /// `initCache`'s part that's ported: the state's fluid and whether it ticks randomly, which
-    /// its block's class may decide.
-    pub(crate) fn init_cache(&mut self, fluid_state: FluidState, is_randomly_ticking: bool) {
-        self.fluid_state = fluid_state;
-        self.is_randomly_ticking = is_randomly_ticking;
+    /// `initCache`'s part that's ported: the state's fluid, whether it ticks randomly, its
+    /// occlusion shape, and its light, which its block's class may decide. They need the state's
+    /// shape where the class doesn't answer without it, which a class whose shapes aren't ported
+    /// doesn't have yet: that part is left unknown.
+    pub(crate) fn init_cache(&mut self, block: &BlockData, state: BlockState) {
+        self.fluid_state = block.get_fluid_state_of(state);
+        self.is_randomly_ticking = block.is_randomly_ticking_state(state);
+        // The constructor's, in Java.
+        self.use_shape_for_light_occlusion = block.use_shape_for_light_occlusion_of(state);
+
+        let occlusion_shape = if self.can_occlude {
+            occlusion_shape_of(block, state)
+        } else {
+            Some(Shapes::empty())
+        };
+        self.occlusion = occlusion_shape.map(|occlusion_shape| {
+            let solid_render = Block::is_shape_full_block(&occlusion_shape);
+            let occlusion_shapes_by_face = if occlusion_shape.is_empty() {
+                std::array::from_fn(|_| Shapes::empty())
+            } else if solid_render {
+                std::array::from_fn(|_| Shapes::block())
+            } else {
+                Direction::VALUES.map(|direction| occlusion_shape.get_face_shape(direction))
+            };
+            Occlusion {
+                occlusion_shape,
+                occlusion_shapes_by_face,
+                solid_render,
+            }
+        });
+        self.propagates_skylight_down = block.propagates_skylight_down_of(state, &self.fluid_state);
+        self.light_dampening = block.get_light_dampening_of(
+            state,
+            self.occlusion
+                .as_ref()
+                .map(|occlusion| occlusion.solid_render),
+            self.propagates_skylight_down,
+        );
     }
 }
 
@@ -695,6 +750,59 @@ impl BlockState {
         self.base().is_suffocating.test(*self)
     }
 
+    pub fn use_shape_for_light_occlusion(&self) -> bool {
+        self.base().use_shape_for_light_occlusion
+    }
+
+    /// Whether the state's occlusion shape and light are known: whether its class's shapes are
+    /// ported, where they need them.
+    pub fn light_properties_ported(&self) -> bool {
+        let base = self.base();
+        base.occlusion.is_some()
+            && base.propagates_skylight_down.is_some()
+            && base.light_dampening.is_some()
+    }
+
+    /// Panics for a state whose class's shapes aren't ported, which the value needs.
+    fn known<T>(&self, value: Option<T>, what: &str) -> T {
+        value.unwrap_or_else(|| {
+            panic!(
+                "the {what} of {} needs its shapes, which aren't ported ({})",
+                self,
+                Block::data(self.get_block()).class().name
+            )
+        })
+    }
+
+    fn occlusion(&self) -> &'static Occlusion {
+        self.known(self.base().occlusion.as_ref(), "occlusion shape")
+    }
+
+    pub fn propagates_skylight_down(&self) -> bool {
+        self.known(self.base().propagates_skylight_down, "skylight")
+    }
+
+    pub fn get_light_dampening(&self) -> i32 {
+        self.known(self.base().light_dampening, "light dampening")
+    }
+
+    /// `getFaceOcclusionShape`: nothing and the whole block are the shared constants, which the
+    /// renderer tells apart by reference.
+    pub fn get_face_occlusion_shape(&self, direction: Direction) -> VoxelShape {
+        self.occlusion().occlusion_shapes_by_face[direction as usize].clone()
+    }
+
+    /// `getOcclusionShape()`: the block's shape in an empty level, or nothing for a block that
+    /// can't occlude.
+    pub fn get_occlusion_shape(&self) -> VoxelShape {
+        self.occlusion().occlusion_shape.clone()
+    }
+
+    /// `isSolidRender()`: whether the occlusion shape is the whole block.
+    pub fn is_solid_render(&self) -> bool {
+        self.occlusion().solid_render
+    }
+
     /// `isViewBlocking(BlockGetter, BlockPos, AABB)`, like `is_redstone_conductor`.
     pub fn is_view_blocking(&self) -> bool {
         match self.base().is_view_blocking {
@@ -704,6 +812,55 @@ impl BlockState {
             }
         }
     }
+}
+
+/// `getShape(state, EmptyBlockGetter.INSTANCE, BlockPos.ZERO)`, as `initCache` asks it while the
+/// blocks are still registering: the class's, `AirBlock`'s nothing, or `BlockBehaviour`'s whole
+/// block. None for a class whose shapes aren't ported yet.
+pub(crate) fn shape_in_empty_getter(block: &BlockData, state: BlockState) -> Option<VoxelShape> {
+    let mut class = Some(block.class());
+    while let Some(current) = class {
+        if current.name == "net.minecraft.world.level.block.AirBlock" {
+            return Some(Shapes::empty());
+        }
+        if let Some(get_shape) = current.get_shape {
+            return Some(get_shape(
+                block,
+                state,
+                &EmptyBlockGetter,
+                &BlockPos::ZERO,
+                &collision_context::empty(),
+            ));
+        }
+        if SHAPE_OVERRIDES.contains(&current.name) {
+            return None;
+        }
+        class = current.parent;
+    }
+    Some(Shapes::block())
+}
+
+/// The classes overriding `getOcclusionShape` whose overrides aren't ported yet.
+const OCCLUSION_SHAPE_OVERRIDES: &[&str] = &[
+    "net.minecraft.world.level.block.FenceGateBlock",
+    "net.minecraft.world.level.block.LecternBlock",
+    "net.minecraft.world.level.block.SculkShriekerBlock",
+];
+
+/// `getOcclusionShape(BlockState)`, as `initCache` asks it: the class's, or `BlockBehaviour`'s,
+/// the shape in an empty getter. None for a class whose override or shapes aren't ported yet.
+fn occlusion_shape_of(block: &BlockData, state: BlockState) -> Option<VoxelShape> {
+    let mut class = Some(block.class());
+    while let Some(current) = class {
+        if let Some(get_occlusion_shape) = current.get_occlusion_shape {
+            return Some(get_occlusion_shape(block, state));
+        }
+        if OCCLUSION_SHAPE_OVERRIDES.contains(&current.name) {
+            return None;
+        }
+        class = current.parent;
+    }
+    shape_in_empty_getter(block, state)
 }
 
 /// The block classes that override `getShape` or `getCollisionShape` in Java, whose overrides
@@ -971,31 +1128,6 @@ const RENDER_OVERRIDES: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "getOcclusionShape",
-        &[
-            "net.minecraft.world.level.block.LecternBlock",
-            "net.minecraft.world.level.block.FenceBlock",
-            "net.minecraft.world.level.block.SculkShriekerBlock",
-            "net.minecraft.world.level.block.FenceGateBlock",
-        ],
-    ),
-    (
-        "propagatesSkylightDown",
-        &[
-            "net.minecraft.world.level.block.BambooStalkBlock",
-            "net.minecraft.world.level.block.GlowLichenBlock",
-            "net.minecraft.world.level.block.HangingMossBlock",
-            "net.minecraft.world.level.block.CrossCollisionBlock",
-            "net.minecraft.world.level.block.LiquidBlock",
-            "net.minecraft.world.level.block.MossyCarpetBlock",
-            "net.minecraft.world.level.block.PipeBlock",
-            "net.minecraft.world.level.block.ShulkerBoxBlock",
-            "net.minecraft.world.level.block.VegetationBlock",
-            "net.minecraft.world.level.block.VineBlock",
-            "net.minecraft.world.level.block.WallBlock",
-        ],
-    ),
-    (
         "getShadeBrightness",
         &["net.minecraft.world.level.block.SnowLayerBlock"],
     ),
@@ -1045,74 +1177,6 @@ impl BlockState {
                 current.name
             );
             class = current.parent;
-        }
-    }
-
-    /// `getOcclusionShape()`: the block's `getOcclusionShape`, its shape in an empty level, or
-    /// nothing for a block that can't occlude.
-    pub fn get_occlusion_shape(&self) -> VoxelShape {
-        if !self.can_occlude() {
-            return Shapes::empty();
-        }
-        self.check_render_ported("getOcclusionShape");
-        self.get_shape_in(
-            &EmptyBlockGetter,
-            &BlockPos::ZERO,
-            &collision_context::empty(),
-        )
-    }
-
-    /// `isSolidRender()`: whether the occlusion shape is the whole block.
-    pub fn is_solid_render(&self) -> bool {
-        Block::is_shape_full_block(&self.get_occlusion_shape())
-    }
-
-    /// `getFaceOcclusionShape`: nothing and the whole block are the shared constants, which the
-    /// renderer tells apart by reference.
-    pub fn get_face_occlusion_shape(&self, direction: Direction) -> VoxelShape {
-        let occlusion_shape = self.get_occlusion_shape();
-        if occlusion_shape.is_empty() {
-            Shapes::empty()
-        } else if Block::is_shape_full_block(&occlusion_shape) {
-            Shapes::block()
-        } else {
-            occlusion_shape.get_face_shape(direction)
-        }
-    }
-
-    pub fn propagates_skylight_down(&self) -> bool {
-        self.check_render_ported("propagatesSkylightDown");
-        if self.class_is("net.minecraft.world.level.block.TintedGlassBlock") {
-            return false;
-        }
-        if self.class_is("net.minecraft.world.level.block.TransparentBlock") {
-            return true;
-        }
-        if self.class_is("net.minecraft.world.level.block.BarrierBlock")
-            || self.class_is("net.minecraft.world.level.block.LightBlock")
-        {
-            return self.get_fluid_state().is_empty();
-        }
-        !Block::is_shape_full_block(&self.get_shape_in(
-            &EmptyBlockGetter,
-            &BlockPos::ZERO,
-            &collision_context::empty(),
-        )) && self.get_fluid_state().is_empty()
-    }
-
-    pub fn get_light_dampening(&self) -> i32 {
-        if self.class_is("net.minecraft.world.level.block.TintedGlassBlock") {
-            return 15;
-        }
-        if self.class_is("net.minecraft.world.level.block.LeavesBlock") {
-            return 1;
-        }
-        if self.is_solid_render() {
-            15
-        } else if self.propagates_skylight_down() {
-            0
-        } else {
-            1
         }
     }
 

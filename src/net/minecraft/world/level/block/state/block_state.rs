@@ -90,8 +90,11 @@ mod tests {
     use serde_json::Value;
 
     use super::BlockState;
-    use crate::net::minecraft::core::block_pos::BlockPos;
     use crate::golden::{Decode, Encode, Golden};
+    use crate::net::minecraft::core::block_pos::BlockPos;
+    use crate::net::minecraft::core::direction::Direction;
+    use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+    use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
     use crate::net::minecraft::world::level::block::block::Block;
     use crate::net::minecraft::world::level::block::state::properties::block_state_properties::tests::{
         field_name, property,
@@ -121,6 +124,55 @@ mod tests {
     const PROPERTY: &str = "Lnet/minecraft/world/level/block/state/properties/Property;";
     const GETTER_AND_POS: &str =
         "(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)";
+
+    /// `"BLOCK"`, `"EMPTY"` or `"OTHER"`, as the suite tells shapes apart.
+    fn shape_kind(shape: &VoxelShape) -> &'static str {
+        if *shape == Shapes::block() {
+            "BLOCK"
+        } else if *shape == Shapes::empty() {
+            "EMPTY"
+        } else {
+            "OTHER"
+        }
+    }
+
+    /// The states' light, `initCache`'s, for every state whose class's shapes the light needs are
+    /// ported: the rest have none yet (`light_properties_ported`), and their count is pinned, so
+    /// a state that stops being known fails too.
+    fn check_light(golden: &Golden) {
+        let mut checked = 0;
+        let mut unported = 0;
+        for (args, expected) in golden.cases("light") {
+            let state = BlockState::decode(&args[0]);
+            if !state.light_properties_ported() {
+                unported += 1;
+                continue;
+            }
+            let faces: Vec<&str> = Direction::VALUES
+                .iter()
+                .map(|&direction| shape_kind(&state.get_face_occlusion_shape(direction)))
+                .collect();
+            let actual = serde_json::json!([
+                state.use_shape_for_light_occlusion(),
+                state.propagates_skylight_down(),
+                state.get_light_dampening(),
+                state.is_solid_render(),
+                shape_kind(&state.get_occlusion_shape()),
+                faces,
+            ]);
+            assert_eq!(actual, expected, "the light of {state} ({})", state.id());
+            checked += 1;
+        }
+        assert_eq!(
+            (checked, unported),
+            (LIGHT_PORTED_STATES, 35723 - LIGHT_PORTED_STATES),
+            "states whose light is checked, and not yet"
+        );
+    }
+
+    /// How many states' light is known: those whose classes' shapes are ported, or whose light
+    /// needs none.
+    const LIGHT_PORTED_STATES: usize = 15835;
 
     #[test]
     fn matches_vanilla() {
@@ -162,6 +214,7 @@ mod tests {
             state.requires_correct_tool_for_drops()
         });
         golden.check("canOcclude()Z", |state: BlockState| state.can_occlude());
+        check_light(&golden);
         golden.check("emissiveRendering()Z", |state: BlockState| {
             state.emissive_rendering()
         });

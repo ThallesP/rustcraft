@@ -1,9 +1,10 @@
 //! net/minecraft/world/level/dimension/DimensionType.java
 //!
-//! Not ported yet: everything but `STREAM_CODEC` and the built-in types' heights. A dimension
-//! type's values (its light, effects, the height of one a server sends) come with the
-//! registries' elements; the client reads the vanilla pack's for the types the server names as
-//! known (`data/minecraft/dimension_type/*.json`), whose heights `height_of` has.
+//! Not ported yet: everything but `STREAM_CODEC` and the built-in types' heights, whether they
+//! have a sky, and how their blocks' faces are lit. A dimension type's values (its ambient light,
+//! effects, the values of one a server sends) come with the registries' elements; the client
+//! reads the vanilla pack's for the types the server names as known
+//! (`data/minecraft/dimension_type/*.json`), whose values these have.
 
 use std::sync::LazyLock;
 
@@ -12,6 +13,7 @@ use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
 use crate::net::minecraft::network::codec::stream_codec::StaticStreamCodec;
 use crate::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendlyByteBuf;
+use crate::net::minecraft::world::level::cardinal_lighting;
 use crate::net::minecraft::world::level::level_height_accessor::{self, Height};
 
 static STREAM_CODEC: StaticStreamCodec<RegistryFriendlyByteBuf, Holder> =
@@ -34,6 +36,30 @@ impl DimensionType {
                 level_height_accessor::create(-64, 384)
             }
             "minecraft:the_nether" | "minecraft:the_end" => level_height_accessor::create(0, 256),
+            other => panic!("the dimension type {other} isn't one of the vanilla pack's"),
+        }
+    }
+
+    /// A built-in dimension type's `has_skylight`, which decides whether its level has a sky
+    /// light engine. Panics like `height_of`.
+    pub fn has_sky_light_of(dimension_type: &Holder) -> bool {
+        let Holder::Reference(key) = dimension_type;
+        match key.identifier().to_string().as_str() {
+            "minecraft:overworld" | "minecraft:overworld_caves" | "minecraft:the_end" => true,
+            "minecraft:the_nether" => false,
+            other => panic!("the dimension type {other} isn't one of the vanilla pack's"),
+        }
+    }
+
+    /// A built-in dimension type's `cardinal_light` (`default` unless it says otherwise), how its
+    /// blocks' faces are shaded. Panics like `height_of`.
+    pub fn cardinal_light_type_of(dimension_type: &Holder) -> cardinal_lighting::Type {
+        let Holder::Reference(key) = dimension_type;
+        match key.identifier().to_string().as_str() {
+            "minecraft:overworld" | "minecraft:overworld_caves" | "minecraft:the_end" => {
+                cardinal_lighting::Type::DEFAULT
+            }
+            "minecraft:the_nether" => cardinal_lighting::Type::NETHER,
             other => panic!("the dimension type {other} isn't one of the vanilla pack's"),
         }
     }
@@ -82,6 +108,22 @@ mod tests {
             assert_eq!(
                 height.get_height() as i64,
                 data["height"].as_i64().expect("height"),
+                "{name}"
+            );
+            let holder = Holder::Reference(ResourceKey::create(
+                Registries::DIMENSION_TYPE,
+                Identifier::with_default_namespace(name),
+            ));
+            assert_eq!(
+                DimensionType::has_sky_light_of(&holder),
+                data["has_skylight"].as_bool().expect("has_skylight"),
+                "{name}"
+            );
+            assert_eq!(
+                DimensionType::cardinal_light_type_of(&holder).get_serialized_name(),
+                data.get("cardinal_light")
+                    .map(|light| light.as_str().expect("a name"))
+                    .unwrap_or("default"),
                 "{name}"
             );
             checked += 1;

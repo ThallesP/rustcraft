@@ -4,6 +4,8 @@
 //! which states tick and their fluid states. Not ported yet: the rest. `stateCache`, the fluid
 //! states Java's constructor makes for each level, are made when they're asked for, which is the
 //! same: `FluidState`s are values.
+//!
+//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -22,6 +24,7 @@ pub struct LiquidBlock {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    propagates_skylight_down: Some(LiquidBlock::propagates_skylight_down),
     is_randomly_ticking: Some(LiquidBlock::is_randomly_ticking),
     get_fluid_state: Some(LiquidBlock::get_fluid_state),
     ..BlockClass::new("net.minecraft.world.level.block.LiquidBlock", &block::CLASS)
@@ -78,5 +81,12 @@ impl LiquidBlock {
             8 => fluid.get_flowing(8, true),
             level => fluid.get_flowing(8 - level, false),
         }
+    }
+}
+
+impl LiquidBlock {
+    /// `propagatesSkylightDown`.
+    fn propagates_skylight_down(_block: &BlockData, _state: BlockState) -> bool {
+        false
     }
 }

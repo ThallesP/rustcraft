@@ -1,13 +1,16 @@
 //! net/minecraft/client/multiplayer/ClientLevel.java
 //!
 //! Not ported yet: nearly all of it. So far a level is what the login said about it, its chunks
-//! (`ClientChunkCache`), reading and setting their blocks, and what an entity's movement asks of
-//! it (`CollisionGetter` and the entity's `Level`; its world border is the default one until the
-//! border packets set it). Not ported: entities (so no entity collides), the light
-//! engine (the server's light isn't kept yet: `LevelLightEngine`'s section states decide what it
-//! reads, which come with it), block entities, the block state predictions
-//! (`blockStatePredictionHandler`, which the player's own block changes make), the tint caches,
-//! neighbour updates and the renderer's dirty sections (`setBlocksDirty`, `sendBlockUpdated`).
+//! (`ClientChunkCache`), reading and setting their blocks, their light (the chunk cache's
+//! `LevelLightEngine`, which the queued light updates feed and `update` runs, once a frame), and
+//! what an entity's movement asks of it (`CollisionGetter` and the entity's `Level`; its world
+//! border is the default one until the border packets set it). Not ported: entities (so no entity
+//! collides), block entities, the block state predictions (`blockStatePredictionHandler`, which
+//! the player's own block changes make), the tint caches, neighbour updates and the renderer's
+//! dirty sections (`setBlocksDirty`, `sendBlockUpdated`, `setSectionDirtyWithNeighbors`).
+//!
+//! Java's light updates are `Runnable`s that close over the packet listener; here they're closures
+//! of the level (`queue_light_update`), since all they touch is the level.
 //!
 //! The game time and the spawn are what the server last sent. The level's tick (`tickTime`, which
 //! adds a game tick and ticks the listener's clocks) isn't ported, and `setRespawnData` keeps the
@@ -18,9 +21,11 @@
 //! built-in types (`DimensionType::height_of`); a server sending a type of its own isn't read
 //! yet.
 
+use std::collections::VecDeque;
 use std::fmt;
 
 use crate::net::minecraft::client::multiplayer::client_chunk_cache::ClientChunkCache;
+use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
@@ -29,14 +34,19 @@ use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::world::entity::entity::EntityClass;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGetter;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::border::world_border::WorldBorder;
+use crate::net::minecraft::world::level::cardinal_lighting::CardinalLighting;
+use crate::net::minecraft::world::level::chunk::light_chunk_getter::LightChunkGetter;
 use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
 use crate::net::minecraft::world::level::dimension::dimension_type::DimensionType;
 use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::level::level_height_accessor::{Height, LevelHeightAccessor};
+use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
+use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::storage::level_data::RespawnData;
 use crate::net::minecraft::world::phys::aabb::AABB;
@@ -58,7 +68,11 @@ pub struct ClientLevel {
     world_border: WorldBorder,
     game_time: i64,
     respawn_data: RespawnData,
+    light_update_queue: VecDeque<LightUpdate>,
 }
+
+/// A light update queued for the level, Java's `Runnable`.
+pub type LightUpdate = Box<dyn FnOnce(&mut ClientLevel)>;
 
 impl ClientLevel {
     /// Panics on a dimension type that isn't one of the vanilla pack's, or registries without
@@ -78,11 +92,17 @@ impl ClientLevel {
     ) -> ClientLevel {
         let height = DimensionType::height_of(&dimension_type);
         let factory = PalettedContainerFactory::create(registry_access);
+        let has_sky_light = DimensionType::has_sky_light_of(&dimension_type);
         ClientLevel {
             dimension,
             dimension_type,
             height,
-            chunk_source: ClientChunkCache::new(height, factory, server_chunk_radius),
+            chunk_source: ClientChunkCache::new(
+                height,
+                has_sky_light,
+                factory,
+                server_chunk_radius,
+            ),
             server_chunk_radius,
             server_simulation_distance,
             is_debug,
@@ -93,7 +113,57 @@ impl ClientLevel {
             world_border: WorldBorder::new(),
             game_time: 0,
             respawn_data: RespawnData::clone(RespawnData::DEFAULT),
+            light_update_queue: VecDeque::new(),
         }
+    }
+
+    const NORMAL_LIGHT_UPDATES_PER_FRAME: usize = 10;
+    const LIGHT_UPDATE_QUEUE_SIZE_THRESHOLD: usize = 1000;
+
+    pub fn queue_light_update(&mut self, update: LightUpdate) {
+        self.light_update_queue.push_back(update);
+    }
+
+    /// Runs a tenth of the queued light updates (at least 10), or all of them once there are a
+    /// thousand.
+    pub fn poll_light_updates(&mut self) {
+        let size = self.light_update_queue.len();
+        let light_updates_per_frame = if size < ClientLevel::LIGHT_UPDATE_QUEUE_SIZE_THRESHOLD {
+            ClientLevel::NORMAL_LIGHT_UPDATES_PER_FRAME.max(size / 10)
+        } else {
+            size
+        };
+
+        for _ in 0..light_updates_per_frame {
+            let Some(update) = self.light_update_queue.pop_front() else {
+                break;
+            };
+
+            update(self);
+        }
+    }
+
+    /// How many light updates are queued.
+    #[cfg(test)]
+    pub(crate) fn light_updates_queued(&self) -> usize {
+        self.light_update_queue.len()
+    }
+
+    /// `update()`, once a frame: the queued light updates, then the light engine's own.
+    pub fn update(&mut self) {
+        self.poll_light_updates();
+        let (light_engine, chunks) = self.chunk_source.get_light_engine_mut();
+        light_engine.run_light_updates(chunks);
+    }
+
+    /// `getLightEngine()`, to change: the chunk source's, with the chunks it lights.
+    pub fn get_light_engine_mut(&mut self) -> (&mut LevelLightEngine, &dyn LightChunkGetter) {
+        self.chunk_source.get_light_engine_mut()
+    }
+
+    /// `getSectionYFromSectionIndex`, as `LevelHeightAccessor`'s.
+    pub fn get_section_y_from_section_index(&self, section_index: i32) -> i32 {
+        LevelHeightAccessor::get_section_y_from_section_index(self, section_index)
     }
 
     pub fn get_world_border_mut(&mut self) -> &mut WorldBorder {
@@ -199,8 +269,13 @@ impl ClientLevel {
         let chunk_x = SectionPos::block_to_section_coord(pos.get_x());
         let chunk_z = SectionPos::block_to_section_coord(pos.get_z());
         // Java's level hands out its empty chunk for one it doesn't have, which takes no blocks.
-        match self.chunk_source.get_chunk_mut(chunk_x, chunk_z) {
-            Some(chunk) => chunk.set_block_state(pos, block_state).is_some(),
+        match self
+            .chunk_source
+            .get_chunk_and_light_engine_mut(chunk_x, chunk_z)
+        {
+            Some((chunk, light_engine)) => chunk
+                .set_block_state(pos, block_state, light_engine)
+                .is_some(),
             None => false,
         }
     }
@@ -246,6 +321,20 @@ impl BlockGetter for ClientLevel {
             Some(chunk) => chunk.get_fluid_state(pos),
             None => FluidState::EMPTY,
         }
+    }
+}
+
+impl BlockAndLightGetter for ClientLevel {
+    /// `Level.getLightEngine()`: the chunk source's.
+    fn get_light_engine(&self) -> &LevelLightEngine {
+        self.chunk_source.get_light_engine()
+    }
+}
+
+impl BlockAndTintGetter for ClientLevel {
+    /// `dimensionType().cardinalLightType().get()`.
+    fn cardinal_lighting(&self) -> CardinalLighting {
+        DimensionType::cardinal_light_type_of(&self.dimension_type).get()
     }
 }
 

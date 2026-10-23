@@ -2,6 +2,8 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::{
@@ -19,6 +21,7 @@ use crate::net::minecraft::world::level::material::fluids::Fluids;
 pub struct SculkShriekerBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    use_shape_for_light_occlusion: Some(SculkShriekerBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(SculkShriekerBlock::get_fluid_state),
     ..BlockClass::new(
         "net.minecraft.world.level.block.SculkShriekerBlock",
@@ -71,5 +74,12 @@ impl SculkShriekerBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl SculkShriekerBlock {
+    /// `useShapeForLightOcclusion`.
+    fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

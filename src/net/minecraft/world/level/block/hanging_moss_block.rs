@@ -2,11 +2,14 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
@@ -14,10 +17,13 @@ use crate::net::minecraft::world::level::block::state::state_holder::StateHolder
 
 pub struct HangingMossBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.HangingMossBlock",
-    &block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    propagates_skylight_down: Some(HangingMossBlock::propagates_skylight_down),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.HangingMossBlock",
+        &block::CLASS,
+    )
+};
 
 impl HangingMossBlock {
     pub const TIP: &'static BooleanProperty = BlockStateProperties::TIP;
@@ -47,5 +53,12 @@ impl HangingMossBlock {
 
     pub fn create_block_state_definition(builder: &mut Builder) {
         builder.add(&[HangingMossBlock::TIP]);
+    }
+}
+
+impl HangingMossBlock {
+    /// `propagatesSkylightDown`.
+    fn propagates_skylight_down(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

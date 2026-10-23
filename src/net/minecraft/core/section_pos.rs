@@ -1,16 +1,18 @@
 //! net/minecraft/core/SectionPos.java
 //!
-//! Only what the chunk packets and the client's chunk storage use: making one, packing it into a
-//! long and back (`STREAM_CODEC`), the coordinate conversions and a section-relative position's
-//! block. Not ported yet: the streams (`blocksInside`, `cube`, `betweenClosedStream`), `offset`
-//! and the entity and `Position` factories, which come with what calls them. Java's extends
-//! `Vec3i`, which this one holds and derefs to.
+//! Only what the chunk packets, the client's chunk storage and the light engines use: making one,
+//! packing it into a long and back (`STREAM_CODEC`), the coordinate conversions, a
+//! section-relative position's block, and the packed nodes' helpers (`offset`, `blockToSection`,
+//! `getZeroNode`, `aroundAndAtBlockPos`). Not ported yet: the streams (`blocksInside`, `cube`,
+//! `betweenClosedStream`) and the entity and `Position` factories, which come with what calls
+//! them. Java's extends `Vec3i`, which this one holds and derefs to.
 
 use std::ops::Deref;
 use std::sync::LazyLock;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::vec3i::Vec3i;
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
 use crate::net::minecraft::network::codec::stream_codec::{StaticStreamCodec, StreamCodec};
@@ -173,6 +175,97 @@ impl SectionPos {
     pub fn as_long(&self) -> i64 {
         SectionPos::as_long_xyz(self.x(), self.y(), self.z())
     }
+
+    /// `offset(long, Direction)`: the node next to it that way.
+    pub fn offset_i64(section_node: i64, offset: Direction) -> i64 {
+        SectionPos::offset_i64_xyz(
+            section_node,
+            offset.get_step_x(),
+            offset.get_step_y(),
+            offset.get_step_z(),
+        )
+    }
+
+    /// `offset(long, int, int, int)`.
+    pub fn offset_i64_xyz(section_node: i64, step_x: i32, step_y: i32, step_z: i32) -> i64 {
+        SectionPos::as_long_xyz(
+            SectionPos::x_of(section_node).wrapping_add(step_x),
+            SectionPos::y_of(section_node).wrapping_add(step_y),
+            SectionPos::z_of(section_node).wrapping_add(step_z),
+        )
+    }
+
+    /// `blockToSection(long)`: the node of the section a packed block is in.
+    pub fn block_to_section(block_node: i64) -> i64 {
+        SectionPos::as_long_xyz(
+            SectionPos::block_to_section_coord(BlockPos::get_x_i64(block_node)),
+            SectionPos::block_to_section_coord(BlockPos::get_y_i64(block_node)),
+            SectionPos::block_to_section_coord(BlockPos::get_z_i64(block_node)),
+        )
+    }
+
+    /// `getZeroNode(int, int)`: the column's node at section y 0.
+    pub fn get_zero_node_xz(x: i32, z: i32) -> i64 {
+        SectionPos::get_zero_node(SectionPos::as_long_xyz(x, 0, z))
+    }
+
+    /// `getZeroNode(long)`: the node with its y cleared.
+    pub fn get_zero_node(section_node: i64) -> i64 {
+        section_node & -1048576
+    }
+
+    /// `sectionToChunk(long)`: the packed `ChunkPos` of the node's column.
+    pub fn section_to_chunk(section_node: i64) -> i64 {
+        ChunkPos::pack_xz(
+            SectionPos::x_of(section_node),
+            SectionPos::z_of(section_node),
+        )
+    }
+
+    /// `aroundAndAtBlockPos(long, LongConsumer)`.
+    pub fn around_and_at_block_pos_i64(block_pos: i64, section_consumer: impl FnMut(i64)) {
+        SectionPos::around_and_at_block_pos_xyz(
+            BlockPos::get_x_i64(block_pos),
+            BlockPos::get_y_i64(block_pos),
+            BlockPos::get_z_i64(block_pos),
+            section_consumer,
+        );
+    }
+
+    /// `aroundAndAtBlockPos(int, int, int, LongConsumer)`: the sections a block and its
+    /// neighbours (diagonals included) are in, x outermost, each once.
+    pub fn around_and_at_block_pos_xyz(
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+        mut section_consumer: impl FnMut(i64),
+    ) {
+        let min_section_x = SectionPos::block_to_section_coord(block_x.wrapping_sub(1));
+        let max_section_x = SectionPos::block_to_section_coord(block_x.wrapping_add(1));
+        let min_section_y = SectionPos::block_to_section_coord(block_y.wrapping_sub(1));
+        let max_section_y = SectionPos::block_to_section_coord(block_y.wrapping_add(1));
+        let min_section_z = SectionPos::block_to_section_coord(block_z.wrapping_sub(1));
+        let max_section_z = SectionPos::block_to_section_coord(block_z.wrapping_add(1));
+        if min_section_x == max_section_x
+            && min_section_y == max_section_y
+            && min_section_z == max_section_z
+        {
+            section_consumer(SectionPos::as_long_xyz(
+                min_section_x,
+                min_section_y,
+                min_section_z,
+            ));
+        } else {
+            // Java's `int` loops, which a range of the same bounds runs alike.
+            for section_x in min_section_x..=max_section_x {
+                for section_y in min_section_y..=max_section_y {
+                    for section_z in min_section_z..=max_section_z {
+                        section_consumer(SectionPos::as_long_xyz(section_x, section_y, section_z));
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Deref for SectionPos {
@@ -180,5 +273,44 @@ impl Deref for SectionPos {
 
     fn deref(&self) -> &Vec3i {
         &self.vec3i
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SectionPos;
+    use crate::golden::Golden;
+
+    /// The packed nodes' helpers the light engines run on.
+    #[test]
+    fn section_nodes_match_vanilla() {
+        let golden = Golden::load("net.minecraft.core.SectionPos");
+        golden.check(
+            "offset(JLnet/minecraft/core/Direction;)J",
+            SectionPos::offset_i64,
+        );
+        golden.check("offset(JIII)J", SectionPos::offset_i64_xyz);
+        golden.check("blockToSection(J)J", SectionPos::block_to_section);
+        golden.check("getZeroNode(II)J", SectionPos::get_zero_node_xz);
+        golden.check("getZeroNode(J)J", SectionPos::get_zero_node);
+        golden.check("sectionToChunk(J)J", SectionPos::section_to_chunk);
+        golden.check("x(J)I", SectionPos::x_of);
+        golden.check("y(J)I", SectionPos::y_of);
+        golden.check("z(J)I", SectionPos::z_of);
+        golden.check("asLong(III)J", SectionPos::as_long_xyz);
+        golden.check(
+            "blockToSectionCoord(I)I",
+            SectionPos::block_to_section_coord,
+        );
+        golden.check("sectionRelative(I)I", SectionPos::section_relative);
+        golden.check(
+            "sectionToBlockCoord(I)I",
+            SectionPos::section_to_block_coord,
+        );
+        golden.check(
+            "sectionToBlockCoord(II)I",
+            SectionPos::section_to_block_coord_offset,
+        );
+        golden.finish();
     }
 }

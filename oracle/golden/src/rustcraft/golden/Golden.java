@@ -43,6 +43,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistrySynchronization;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.Vec3i;
 import net.minecraft.core.registries.Registries;
@@ -988,6 +989,12 @@ public final class Golden {
             .function(SPARSE, "get2DDataValue, [], UP", leading -> ByIdMap.sparse(Direction::get2DDataValue, new Direction[0], Direction.UP), Direction.class),
         InstanceSuite.every(ByIdMap.OutOfBoundsStrategy.class)
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;", names(ByIdMap.OutOfBoundsStrategy.values())),
+        // The packed section nodes the light engines key their sections by.
+        new StaticSuite(SectionPos.class).only(
+            "offset(JLnet/minecraft/core/Direction;)J", "offset(JIII)J", "blockToSection(J)J", "getZeroNode(II)J", "getZeroNode(J)J",
+            "sectionToChunk(J)J", "x(J)I", "y(J)I", "z(J)I", "asLong(III)J", "blockToSectionCoord(I)I", "sectionRelative(I)I",
+            "sectionToBlockCoord(I)I", "sectionToBlockCoord(II)I"
+        ),
         new StaticSuite(LpVec3.class)
             .extraInputs("write(Lio/netty/buffer/ByteBuf;Lnet/minecraft/world/phys/Vec3;)V", lpWrites())
             .extraInputs("read(Lio/netty/buffer/ByteBuf;)Lnet/minecraft/world/phys/Vec3;", lpReads())
@@ -1329,7 +1336,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), PlayerSuites.suites(), ModelSuites.suites()).flatMap(List::stream).toList()) {
+        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), PlayerSuites.suites(), ModelSuites.suites()).flatMap(List::stream).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }

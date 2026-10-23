@@ -237,12 +237,15 @@ mod tests {
     use crate::net::minecraft::world::level::chunk::level_chunk_section::tests::registries;
     use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
     use crate::net::minecraft::world::level::light_layer::LightLayer;
+    use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
     use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 
     /// What `ModelSuites.GoldenRegion` answers for the level: `MeshLevel`'s light, the default
     /// cardinal lighting.
     struct Lighting {
         seed: i32,
+        // `LevelLightEngine.EMPTY`: its light is `get_brightness`'s own.
+        light_engine: LevelLightEngine,
     }
 
     impl BlockGetter for Lighting {
@@ -256,6 +259,10 @@ mod tests {
     }
 
     impl BlockAndLightGetter for Lighting {
+        fn get_light_engine(&self) -> &LevelLightEngine {
+            &self.light_engine
+        }
+
         fn get_brightness(&self, layer: LightLayer, pos: &BlockPos) -> i32 {
             let (x, y, z) = (pos.get_x(), pos.get_y(), pos.get_z());
             match layer {
@@ -373,7 +380,10 @@ mod tests {
         }
         let walk_camera = [0.5, -60.0 + f64::from(1.62f32), 0.5];
         let cache = RefCell::new(RenderRegionCache::new());
-        let lighting = Lighting { seed: 0 };
+        let lighting = Lighting {
+            seed: 0,
+            light_engine: LevelLightEngine::empty(),
+        };
         golden.check("walk", |x: i32, y: i32, z: i32, ambient_occlusion: bool| {
             let region = cache.borrow_mut().create_region(
                 &level,
@@ -414,7 +424,10 @@ mod tests {
                         }
                     }
                 }
-                let lighting = Lighting { seed };
+                let lighting = Lighting {
+                    seed,
+                    light_engine: LevelLightEngine::empty(),
+                };
                 let region = RenderSectionRegion::new(&lighting, -1, -1, -1, sections);
                 compile(
                     &compilers[usize::from(ambient_occlusion)],

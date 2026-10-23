@@ -1,6 +1,8 @@
 //! net/minecraft/world/level/block/GlowLichenBlock.java
 //!
 //! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
+//!
+//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
@@ -14,10 +16,13 @@ use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 
 pub struct GlowLichenBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.GlowLichenBlock",
-    &multiface_spreadeable_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    propagates_skylight_down: Some(GlowLichenBlock::propagates_skylight_down),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.GlowLichenBlock",
+        &multiface_spreadeable_block::CLASS,
+    )
+};
 
 impl GlowLichenBlock {
     pub fn new(properties: Properties) -> BlockData {
@@ -45,5 +50,12 @@ impl GlowLichenBlock {
                 0
             }
         }
+    }
+}
+
+impl GlowLichenBlock {
+    /// `propagatesSkylightDown`: without a fluid.
+    fn propagates_skylight_down(block: &BlockData, state: BlockState) -> bool {
+        block.get_fluid_state_of(state).is_empty()
     }
 }

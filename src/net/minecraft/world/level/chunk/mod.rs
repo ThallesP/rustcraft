@@ -4,6 +4,8 @@ pub mod global_palette;
 pub mod hash_map_palette;
 pub mod level_chunk;
 pub mod level_chunk_section;
+pub mod light_chunk;
+pub mod light_chunk_getter;
 pub mod linear_palette;
 pub mod missing_palette_entry_exception;
 pub mod palette;

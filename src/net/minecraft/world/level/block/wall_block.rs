@@ -2,6 +2,8 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -20,6 +22,7 @@ use crate::net::minecraft::world::level::material::fluids::Fluids;
 pub struct WallBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    propagates_skylight_down: Some(WallBlock::propagates_skylight_down),
     get_fluid_state: Some(WallBlock::get_fluid_state),
     ..BlockClass::new("net.minecraft.world.level.block.WallBlock", &block::CLASS)
 };
@@ -76,5 +79,12 @@ impl WallBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl WallBlock {
+    /// `propagatesSkylightDown`: unless it's waterlogged.
+    fn propagates_skylight_down(_block: &BlockData, state: BlockState) -> bool {
+        !state.get_value(BlockStateProperties::WATERLOGGED)
     }
 }

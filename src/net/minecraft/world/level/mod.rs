@@ -14,5 +14,6 @@ pub mod level;
 pub mod level_height_accessor;
 pub mod levelgen;
 pub mod light_layer;
+pub mod lighting;
 pub mod material;
 pub mod storage;

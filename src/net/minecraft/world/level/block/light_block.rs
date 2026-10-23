@@ -2,6 +2,8 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -19,6 +21,7 @@ use crate::net::minecraft::world::level::material::fluids::Fluids;
 pub struct LightBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    propagates_skylight_down: Some(LightBlock::propagates_skylight_down),
     get_fluid_state: Some(LightBlock::get_fluid_state),
     ..BlockClass::new("net.minecraft.world.level.block.LightBlock", &block::CLASS)
 };
@@ -69,5 +72,12 @@ impl LightBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl LightBlock {
+    /// `propagatesSkylightDown`: without a fluid.
+    fn propagates_skylight_down(block: &BlockData, state: BlockState) -> bool {
+        block.get_fluid_state_of(state).is_empty()
     }
 }

@@ -2,6 +2,8 @@
 //!
 //! Only what decides its blocks' states so far: its properties, its default state and which of its
 //! states tick. Not ported yet: its behaviour.
+//!
+//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -18,6 +20,7 @@ use crate::net::minecraft::world::level::block::state::state_holder::StateHolder
 pub struct BambooStalkBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    propagates_skylight_down: Some(BambooStalkBlock::propagates_skylight_down),
     is_randomly_ticking: Some(BambooStalkBlock::is_randomly_ticking),
     ..BlockClass::new(
         "net.minecraft.world.level.block.BambooStalkBlock",
@@ -65,5 +68,12 @@ impl BambooStalkBlock {
 
     fn is_randomly_ticking(_block: &BlockData, state: BlockState) -> bool {
         state.get_value(BambooStalkBlock::STAGE) == 0
+    }
+}
+
+impl BambooStalkBlock {
+    /// `propagatesSkylightDown`.
+    fn propagates_skylight_down(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

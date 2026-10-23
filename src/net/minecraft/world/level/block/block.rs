@@ -25,7 +25,7 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::id_mapper::IdMapper;
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks, REGISTRY};
 use crate::net::minecraft::world::level::block::state::block_behaviour::{
-    BlockBehaviour, Properties,
+    self, BlockBehaviour, Properties,
 };
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_definition::{
@@ -68,6 +68,14 @@ pub struct BlockClass {
     /// `getCollisionShape(BlockState, BlockGetter, BlockPos, CollisionContext)`, if it overrides
     /// it.
     pub get_collision_shape: Option<ShapeMethod>,
+    /// `useShapeForLightOcclusion(BlockState)`, if it overrides it.
+    pub use_shape_for_light_occlusion: Option<fn(&BlockData, BlockState) -> bool>,
+    /// `propagatesSkylightDown(BlockState)`, if it overrides it.
+    pub propagates_skylight_down: Option<fn(&BlockData, BlockState) -> bool>,
+    /// `getLightDampening(BlockState)`, if it overrides it.
+    pub get_light_dampening: Option<fn(&BlockData, BlockState) -> i32>,
+    /// `getOcclusionShape(BlockState)`, if it overrides it.
+    pub get_occlusion_shape: Option<fn(&BlockData, BlockState) -> VoxelShape>,
 }
 
 impl BlockClass {
@@ -81,6 +89,10 @@ impl BlockClass {
             get_fluid_state: None,
             get_shape: None,
             get_collision_shape: None,
+            use_shape_for_light_occlusion: None,
+            propagates_skylight_down: None,
+            get_light_dampening: None,
+            get_occlusion_shape: None,
         }
     }
 
@@ -103,6 +115,10 @@ pub static CLASS: BlockClass = BlockClass {
     get_fluid_state: None,
     get_shape: None,
     get_collision_shape: None,
+    use_shape_for_light_occlusion: None,
+    propagates_skylight_down: None,
+    get_light_dampening: None,
+    get_occlusion_shape: None,
 };
 
 /// What a Java `Block` object holds: `BlockBehaviour`'s fields, which it derefs to, its state
@@ -189,6 +205,49 @@ impl BlockData {
         match self.class.find(|class| class.is_randomly_ticking) {
             Some(is_randomly_ticking) => is_randomly_ticking(self, state),
             None => self.is_randomly_ticking,
+        }
+    }
+
+    /// `BlockBehaviour.useShapeForLightOcclusion(BlockState)`, which a class may override: false.
+    pub fn use_shape_for_light_occlusion_of(&self, state: BlockState) -> bool {
+        match self.class.find(|class| class.use_shape_for_light_occlusion) {
+            Some(use_shape_for_light_occlusion) => use_shape_for_light_occlusion(self, state),
+            None => false,
+        }
+    }
+
+    /// `BlockBehaviour.propagatesSkylightDown(BlockState)`, which a class may override: whether
+    /// the shape isn't the whole block and the state holds no fluid. None where that needs a
+    /// shape that isn't ported.
+    pub fn propagates_skylight_down_of(
+        &self,
+        state: BlockState,
+        fluid: &FluidState,
+    ) -> Option<bool> {
+        match self.class.find(|class| class.propagates_skylight_down) {
+            Some(propagates_skylight_down) => Some(propagates_skylight_down(self, state)),
+            // Java asks the shape first, which changes nothing when there's a fluid.
+            None if !fluid.is_empty() => Some(false),
+            None => block_behaviour::shape_in_empty_getter(self, state)
+                .map(|shape| !Block::is_shape_full_block(&shape)),
+        }
+    }
+
+    /// `BlockBehaviour.getLightDampening(BlockState)`, which a class may override: 15 for a
+    /// solid render, else 0 if skylight goes down through it and 1 if not. None where that needs
+    /// a shape that isn't ported.
+    pub fn get_light_dampening_of(
+        &self,
+        state: BlockState,
+        solid_render: Option<bool>,
+        propagates_skylight_down: Option<bool>,
+    ) -> Option<i32> {
+        match self.class.find(|class| class.get_light_dampening) {
+            Some(get_light_dampening) => Some(get_light_dampening(self, state)),
+            None => match solid_render? {
+                true => Some(15),
+                false => propagates_skylight_down.map(|propagates| if propagates { 0 } else { 1 }),
+            },
         }
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! The blocks a section's compile reads: its own and its 26 neighbours', copied, with the level's
 //! light, tints and cardinal lighting. Java's region holds the `ClientLevel` and its light engine;
-//! until `ClientLevel` answers light and tints (the world track's light engine and biome colours),
-//! what the region asks the level goes to a `BlockAndTintGetter` standing in for those answers.
+//! here it holds a `BlockAndTintGetter`, the `ClientLevel` or a test's level, whose light engine it
+//! hands out and whose light it asks.
 //! Block entities aren't ported (`SectionCopy`).
 
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGe
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::cardinal_lighting::CardinalLighting;
 use crate::net::minecraft::world::level::light_layer::LightLayer;
+use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 
 pub struct RenderSectionRegion<'a> {
@@ -89,8 +90,13 @@ impl BlockGetter for RenderSectionRegion<'_> {
     }
 }
 
-/// `getBrightness` is the level's light engine's, which the level answers.
+/// `getLightEngine` is the level's, which `getBrightness` asks through the level, so a test level
+/// answering it itself is asked too.
 impl BlockAndLightGetter for RenderSectionRegion<'_> {
+    fn get_light_engine(&self) -> &LevelLightEngine {
+        self.level.get_light_engine()
+    }
+
     fn get_brightness(&self, layer: LightLayer, pos: &BlockPos) -> i32 {
         self.level.get_brightness(layer, pos)
     }

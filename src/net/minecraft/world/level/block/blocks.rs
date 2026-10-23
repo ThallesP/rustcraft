@@ -491,10 +491,7 @@ impl Blocks {
             for state in block.get_state_definition().get_possible_states() {
                 block_state_registry.add(state);
                 let mut base = BlockStateBase::new(block.properties(), state);
-                base.init_cache(
-                    block.get_fluid_state_of(state),
-                    block.is_randomly_ticking_state(state),
-                );
+                base.init_cache(block, state);
                 states.push(base);
             }
         }

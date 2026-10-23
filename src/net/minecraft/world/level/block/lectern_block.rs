@@ -2,6 +2,8 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
 
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
@@ -10,6 +12,7 @@ use crate::net::minecraft::world::level::block::block::{
 };
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
@@ -18,10 +21,13 @@ use crate::net::minecraft::world::level::block::state::state_holder::StateHolder
 
 pub struct LecternBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.LecternBlock",
-    &base_entity_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    use_shape_for_light_occlusion: Some(LecternBlock::use_shape_for_light_occlusion),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.LecternBlock",
+        &base_entity_block::CLASS,
+    )
+};
 
 impl LecternBlock {
     pub const FACING: &'static EnumProperty<Direction> = HorizontalDirectionalBlock::FACING;
@@ -59,5 +65,12 @@ impl LecternBlock {
             LecternBlock::POWERED,
             LecternBlock::HAS_BOOK,
         ]);
+    }
+}
+
+impl LecternBlock {
+    /// `useShapeForLightOcclusion`.
+    fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

@@ -104,6 +104,12 @@ impl DataLayer {
         self.clone()
     }
 
+    /// Java's `data` field: the bytes, if it has made them. `getData` without making them, for a
+    /// layer that isn't homogenous.
+    pub fn raw_data(&self) -> Option<&[i8; 2048]> {
+        self.data.as_deref()
+    }
+
     /// `layerToString(layer)`: the first 256 values (Java's ignores the layer), 16 to a line, in
     /// hex.
     pub fn layer_to_string(&self, _layer: i32) -> String {

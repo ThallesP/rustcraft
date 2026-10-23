@@ -4,15 +4,17 @@
 //! join needs: the login, the teleports, bundles, the chunk batches (the chunks themselves are the
 //! world track's), the chunk cache's radius, the simulation distance, the game events (only
 //! `LEVEL_CHUNKS_LOAD_START` does anything yet) and the return to configuration, with the common
-//! ones. The chunk cache's center, the player's abilities, health, experience and held slot, the
-//! difficulty, the world border and the tick rate are read too, and their handlers leave what they
-//! set (the chunk storage's, the player's, the level's) for the tracks that port it. The time sets
-//! the level's game time and the clocks (`clockManager`, which the sky's timelines read), the
-//! spawn the level's, and the player's attributes and synced data are kept on the player for the
-//! player track (`LocalPlayer`); other entities' aren't ported, like the entities. Every other
-//! packet is `Unported`, and answers nothing. Also not ported: chat signing, the command tree
-//! (`sendCommand` sends every command unsigned, which is what a command without signed arguments
-//! is), recipes, advancements, the scoreboard, telemetry and the debug subscriptions.
+//! ones. The chunks, their light, block updates and biomes fill the level (`ClientLevel`), whose
+//! light updates the handlers queue like Java's. The chunk cache's center, the player's abilities,
+//! health, experience and held slot, the difficulty, the world border and the tick rate are read
+//! too, and their handlers leave what they set (the player's, the level's) for the tracks that
+//! port it. The time sets the level's game time and the clocks (`clockManager`, which the sky's
+//! timelines read), the spawn the level's, and the player's attributes and synced data are kept on
+//! the player for the player track (`LocalPlayer`); other entities' aren't ported, like the
+//! entities. Every other packet is `Unported`, and answers nothing. Also not ported: chat signing,
+//! the command tree (`sendCommand` sends every command unsigned, which is what a command without
+//! signed arguments is), recipes, advancements, the scoreboard, telemetry and the debug
+//! subscriptions.
 //!
 //! Java's level is the game's (`minecraft.level`), which the listener makes on login, and the
 //! listener reads it from there. The player's connection, and the game mode's, is this listener.
@@ -22,6 +24,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use crate::com::mojang::authlib::game_profile::GameProfile;
+use crate::java::util::bit_set::BitSet;
 use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::chunk_batch_size_calculator::ChunkBatchSizeCalculator;
@@ -36,6 +39,7 @@ use crate::net::minecraft::client::multiplayer::multi_player_game_mode::MultiPla
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
+use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::connection::Connection;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::packet_listener::PacketListener;
@@ -53,6 +57,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_game_event_packe
 use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet_data::ClientboundLightUpdatePacketData;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
@@ -92,6 +97,12 @@ use crate::net::minecraft::world::entity::entity::{self, EntityClass};
 use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::entity::position_move_rotation::PositionMoveRotation;
 use crate::net::minecraft::world::entity::relative::Relative;
+use crate::net::minecraft::world::level::chunk::data_layer::DataLayer;
+use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
+use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
+use crate::net::minecraft::world::level::light_layer::LightLayer;
+use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
+use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 
 /// The client's listener in the game protocol.
@@ -244,6 +255,164 @@ impl ClientPacketListener {
     /// the world track's chunk packets and storage come.
     pub fn chunks_in_finished_batches(&self) -> i32 {
         self.chunks_in_finished_batches
+    }
+
+    /// `handleLevelChunkWithLight`'s body on the game thread, on the level: the chunk goes into
+    /// the level's storage, and its light is queued, to be kept and turned on.
+    pub fn handle_level_chunk_with_light_in(
+        level: &mut ClientLevel,
+        packet: &ClientboundLevelChunkWithLightPacket,
+    ) {
+        let x = packet.x();
+        let z = packet.z();
+        level
+            .get_chunk_source_mut()
+            .replace_with_packet_data(x, z, packet.chunk_data());
+        let light_data = packet.light_data().clone();
+        level.queue_light_update(Box::new(move |level| {
+            ClientPacketListener::apply_light_data(level, x, z, &light_data, false);
+            if level.get_chunk_source().get_chunk(x, z).is_some() {
+                ClientPacketListener::enable_chunk_light(level, x, z);
+            }
+        }));
+    }
+
+    /// `handleLightUpdatePacket`'s body on the game thread, on the level.
+    pub fn handle_light_update_packet_in(
+        level: &mut ClientLevel,
+        packet: &ClientboundLightUpdatePacket,
+    ) {
+        let x = packet.x();
+        let z = packet.z();
+        let light_data = packet.light_data().clone();
+        level.queue_light_update(Box::new(move |level| {
+            ClientPacketListener::apply_light_data(level, x, z, &light_data, true);
+        }));
+    }
+
+    /// `handleForgetLevelChunk`'s body on the game thread, on the level.
+    pub fn handle_forget_level_chunk_in(
+        level: &mut ClientLevel,
+        packet: &ClientboundForgetLevelChunkPacket,
+    ) {
+        level.get_chunk_source_mut().drop(packet.pos());
+        ClientPacketListener::queue_light_removal(level, packet);
+    }
+
+    /// Each section's emptiness, which turns the light engine's storage of it on, for a chunk the
+    /// level has. Java then marks the sections around it dirty for the renderer, which isn't
+    /// ported.
+    fn enable_chunk_light(level: &mut ClientLevel, x: i32, z: i32) {
+        let chunk = level
+            .get_chunk_source()
+            .get_chunk(x, z)
+            .expect("the caller checked the chunk is there");
+        let chunk_pos = chunk.get_pos();
+        let emptiness: Vec<bool> = chunk
+            .get_sections()
+            .iter()
+            .map(|section| section.has_only_air())
+            .collect();
+
+        for (section_index, has_only_air) in emptiness.into_iter().enumerate() {
+            let section_y = level.get_section_y_from_section_index(section_index as i32);
+            let (light_engine, _) = level.get_light_engine_mut();
+            light_engine.update_section_status(
+                SectionPos::of_chunk_pos(&chunk_pos, section_y),
+                has_only_air,
+            );
+        }
+    }
+
+    /// The chunk's light goes off, its queued layers are dropped, and its sections stop being
+    /// stored, once the level runs it.
+    fn queue_light_removal(level: &mut ClientLevel, packet: &ClientboundForgetLevelChunkPacket) {
+        let chunk_pos = packet.pos();
+        level.queue_light_update(Box::new(move |level| {
+            let min_section_y = level.get_min_section_y();
+            let max_section_y = level.get_max_section_y();
+            let (light_engine, chunks) = level.get_light_engine_mut();
+            light_engine.set_light_enabled(chunks, chunk_pos, false);
+
+            for section_y in
+                light_engine.get_min_light_section()..light_engine.get_max_light_section()
+            {
+                let section_pos = SectionPos::of_chunk_pos(&chunk_pos, section_y);
+                light_engine.queue_section_data(LightLayer::BLOCK, &section_pos, None);
+                light_engine.queue_section_data(LightLayer::SKY, &section_pos, None);
+            }
+
+            for section_y in min_section_y..=max_section_y {
+                light_engine
+                    .update_section_status(SectionPos::of_chunk_pos(&chunk_pos, section_y), true);
+            }
+        }));
+    }
+
+    /// The server's light for a chunk: each layer's sections queued, then the chunk's light on.
+    /// With `schedule_rebuild`, Java marks each section it read dirty for the renderer, which
+    /// isn't ported.
+    fn apply_light_data(
+        level: &mut ClientLevel,
+        x: i32,
+        z: i32,
+        light_data: &ClientboundLightUpdatePacketData,
+        schedule_rebuild: bool,
+    ) {
+        let (light_engine, chunks) = level.get_light_engine_mut();
+        ClientPacketListener::read_section_list(
+            x,
+            z,
+            light_engine,
+            LightLayer::SKY,
+            light_data.sky_y_mask(),
+            light_data.empty_sky_y_mask(),
+            &mut light_data.sky_updates().iter(),
+            schedule_rebuild,
+        );
+        ClientPacketListener::read_section_list(
+            x,
+            z,
+            light_engine,
+            LightLayer::BLOCK,
+            light_data.block_y_mask(),
+            light_data.empty_block_y_mask(),
+            &mut light_data.block_updates().iter(),
+            schedule_rebuild,
+        );
+        light_engine.set_light_enabled(chunks, ChunkPos::new(x, z), true);
+    }
+
+    /// Each light section the masks name: its layer from the updates, in order, or an empty one.
+    /// Panics when the updates run out, or a layer isn't 2048 bytes, where Java throws.
+    #[allow(clippy::too_many_arguments)]
+    fn read_section_list<'a>(
+        chunk_x: i32,
+        chunk_z: i32,
+        light_engine: &mut LevelLightEngine,
+        layer: LightLayer,
+        y_mask: &BitSet,
+        empty_y_mask: &BitSet,
+        updates: &mut impl Iterator<Item = &'a Vec<i8>>,
+        _schedule_rebuild: bool,
+    ) {
+        for section_index in 0..light_engine.get_light_section_count() {
+            let section_y = light_engine.get_min_light_section() + section_index;
+            let have_data = y_mask.get(section_index);
+            let have_empty = empty_y_mask.get(section_index);
+            if have_data || have_empty {
+                let data = if have_data {
+                    DataLayer::from_data(updates.next().expect("an update for each section"))
+                } else {
+                    DataLayer::new()
+                };
+                light_engine.queue_section_data(
+                    layer,
+                    &SectionPos::of(chunk_x, section_y, chunk_z),
+                    Some(data),
+                );
+            }
+        }
     }
 
     /// `setValuesFromPositionPacket` without interpolation, which is what the player's teleport
@@ -528,28 +697,29 @@ impl ClientGamePacketListener for ClientPacketListener {
             return;
         }
         if let Some(level) = minecraft.level.borrow_mut().as_mut() {
-            level.get_chunk_source_mut().replace_with_packet_data(
-                packet.x(),
-                packet.z(),
-                packet.chunk_data(),
-            );
+            ClientPacketListener::handle_level_chunk_with_light_in(level, packet);
         }
     }
 
-    /// Java queues the light for the level's light engine (`applyLightData`), which isn't
-    /// ported, so it's read and kept nowhere yet, which answers nothing.
+    /// The light the server sent for the chunk, queued for the level.
     fn handle_light_update_packet(&mut self, packet: &ClientboundLightUpdatePacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
-        // Moves the packet to the game thread when it isn't there; nothing else to do yet.
-        let _ = PacketUtils::ensure_running_on_same_thread(
+        if PacketUtils::ensure_running_on_same_thread(
             packet,
             &self.this,
             minecraft.packet_processor(),
-        );
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            ClientPacketListener::handle_light_update_packet_in(level, packet);
+        }
     }
 
-    /// The chunk leaves the level's chunk storage. Java also drops the debug subscriptions' data
-    /// for it and queues its light's removal, neither of which is ported.
+    /// The chunk leaves the level's chunk storage, and its light's removal is queued. Java also
+    /// drops the debug subscriptions' data for it, which isn't ported.
     fn handle_forget_level_chunk(&mut self, packet: &ClientboundForgetLevelChunkPacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
         if PacketUtils::ensure_running_on_same_thread(
@@ -562,7 +732,7 @@ impl ClientGamePacketListener for ClientPacketListener {
             return;
         }
         if let Some(level) = minecraft.level.borrow_mut().as_mut() {
-            level.get_chunk_source_mut().drop(packet.pos());
+            ClientPacketListener::handle_forget_level_chunk_in(level, packet);
         }
     }
 

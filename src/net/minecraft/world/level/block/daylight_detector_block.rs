@@ -2,12 +2,15 @@
 //!
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
+//!
+//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
 
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
@@ -16,10 +19,13 @@ use crate::net::minecraft::world::level::block::state::state_holder::StateHolder
 
 pub struct DaylightDetectorBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.DaylightDetectorBlock",
-    &base_entity_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    use_shape_for_light_occlusion: Some(DaylightDetectorBlock::use_shape_for_light_occlusion),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.DaylightDetectorBlock",
+        &base_entity_block::CLASS,
+    )
+};
 
 impl DaylightDetectorBlock {
     pub const POWER: &'static IntegerProperty = BlockStateProperties::POWER;
@@ -54,5 +60,12 @@ impl DaylightDetectorBlock {
             DaylightDetectorBlock::POWER,
             DaylightDetectorBlock::INVERTED,
         ]);
+    }
+}
+
+impl DaylightDetectorBlock {
+    /// `useShapeForLightOcclusion`.
+    fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

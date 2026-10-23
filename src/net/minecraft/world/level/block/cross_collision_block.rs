@@ -5,6 +5,8 @@
 //! collision shape, worked out for each state when it's made (`makeShapes`). The constructor's
 //! sizes are its subclasses' (`FenceBlock`, `IronBarsBlock`). Not ported yet: the rest of its
 //! behaviour.
+//!
+//! Of its behaviour, `propagatesSkylightDown` is ported, for the light engine.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
@@ -24,13 +26,17 @@ use crate::net::minecraft::world::phys::shapes::collision_context::CollisionCont
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
+#[derive(Clone)]
 pub struct CrossCollisionBlock {
     /// `collisionShapes` and `shapes`, by state index.
     collision_shapes: Vec<VoxelShape>,
     shapes: Vec<VoxelShape>,
+    /// `FenceBlock.occlusionShapes`, a subclass's field kept with its parent's: a fence's own.
+    pub(crate) occlusion_shapes: Option<Vec<VoxelShape>>,
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    propagates_skylight_down: Some(CrossCollisionBlock::propagates_skylight_down),
     get_fluid_state: Some(CrossCollisionBlock::get_fluid_state),
     get_shape: Some(CrossCollisionBlock::get_shape),
     get_collision_shape: Some(CrossCollisionBlock::get_collision_shape),
@@ -86,13 +92,14 @@ impl CrossCollisionBlock {
         block.set_fields(CrossCollisionBlock {
             collision_shapes,
             shapes,
+            occlusion_shapes: None,
         });
         block
     }
 
     /// Each state's post with its arms. The arms are joined in `PROPERTY_BY_DIRECTION`'s order,
     /// which doesn't change the union.
-    fn make_shapes(
+    pub(crate) fn make_shapes(
         block: &BlockData,
         post_width: f32,
         post_height: f32,
@@ -148,5 +155,12 @@ impl CrossCollisionBlock {
         } else {
             Fluids::EMPTY.default_fluid_state()
         }
+    }
+}
+
+impl CrossCollisionBlock {
+    /// `propagatesSkylightDown`: unless it's waterlogged.
+    fn propagates_skylight_down(_block: &BlockData, state: BlockState) -> bool {
+        !state.get_value(BlockStateProperties::WATERLOGGED)
     }
 }

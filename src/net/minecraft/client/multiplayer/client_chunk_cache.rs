@@ -1,24 +1,30 @@
 //! net/minecraft/client/multiplayer/ClientChunkCache.java
 //!
 //! The chunks the server sent, in an array as wide as the view distance, indexed by chunk
-//! position modulo its width, so moving the view center needs no copying. Not ported yet: the
-//! light engine (`getLightEngine`, `onLightUpdate`), the empty chunk Java hands out for one it
-//! doesn't have (`EmptyLevelChunk`, whose blocks are all void air: `get_chunk` answers `None`,
-//! and the level answers void air), and the sets of sections and chunks added and removed since
-//! the renderer last looked (`addedEmptySections` and the rest, `flipUpdateTrackingSets`), which
-//! come with the renderer's section compiler. A chunk dropped or replaced also unloads in Java's
-//! level (`ClientLevel.unload`: block entities, light, entities), none of which is ported.
+//! position modulo its width, so moving the view center needs no copying, and the level's light
+//! engine, which lights them (the storage is its `LightChunkGetter`). Not ported yet: the empty
+//! chunk Java hands out for one it doesn't have (`EmptyLevelChunk`, whose blocks are all void air:
+//! `get_chunk` answers `None`, and the level answers void air), `onLightUpdate`'s dirty sections
+//! and the sets of sections and chunks added and removed since the renderer last looked
+//! (`addedEmptySections` and the rest, `flipUpdateTrackingSets`), which come with the renderer's
+//! section compiler. A chunk dropped or replaced unloads in Java's level (`ClientLevel.unload`),
+//! which turns its light off; its block entities and entities aren't ported.
 
 use crate::java::lang::math::Math;
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_packet_data::ClientboundLevelChunkPacketData;
 use crate::net::minecraft::world::level::chunk::level_chunk::LevelChunk;
+use crate::net::minecraft::world::level::chunk::light_chunk::LightChunk;
+use crate::net::minecraft::world::level::chunk::light_chunk_getter::LightChunkGetter;
 use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 use crate::net::minecraft::world::level::level_height_accessor::Height;
+use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
+use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 
-/// The level's chunks, as far as the server's view distance reaches.
+/// The level's chunks, as far as the server's view distance reaches, and their light.
 pub struct ClientChunkCache {
+    light_engine: LevelLightEngine,
     storage: Storage,
     level_height: Height,
     container_factory: PalettedContainerFactory,
@@ -26,19 +32,42 @@ pub struct ClientChunkCache {
 
 impl ClientChunkCache {
     /// `ClientChunkCache(level, serverChunkRadius)`, for a level of that height whose sections
-    /// number their biomes by the factory's registry.
+    /// number their biomes by the factory's registry, with sky light if its dimension has a sky.
     pub fn new(
         level_height: Height,
+        has_sky_light: bool,
         container_factory: PalettedContainerFactory,
         server_chunk_radius: i32,
     ) -> ClientChunkCache {
         ClientChunkCache {
+            light_engine: LevelLightEngine::new(level_height, true, has_sky_light),
             storage: Storage::new(ClientChunkCache::calculate_storage_range(
                 server_chunk_radius,
             )),
             level_height,
             container_factory,
         }
+    }
+
+    pub fn get_light_engine(&self) -> &LevelLightEngine {
+        &self.light_engine
+    }
+
+    /// The light engine, with the chunks it lights, which its methods that read chunks take.
+    pub fn get_light_engine_mut(&mut self) -> (&mut LevelLightEngine, &dyn LightChunkGetter) {
+        (&mut self.light_engine, &self.storage)
+    }
+
+    /// A chunk to set blocks in, with the light engine its `setBlockState` tells.
+    pub fn get_chunk_and_light_engine_mut(
+        &mut self,
+        x: i32,
+        z: i32,
+    ) -> Option<(&mut LevelChunk, &mut LevelLightEngine)> {
+        let light_engine = &mut self.light_engine;
+        self.storage
+            .get_chunk_mut(x, z)
+            .map(|chunk| (chunk, light_engine))
     }
 
     fn is_valid_chunk(chunk: Option<&LevelChunk>, x: i32, z: i32) -> bool {
@@ -57,32 +86,25 @@ impl ClientChunkCache {
                 pos.z(),
             ) {
                 self.storage.drop(index);
+                self.unload(pos);
             }
         }
+    }
+
+    /// `ClientLevel.unload(chunk)`'s part that's ported: the chunk's light goes off.
+    fn unload(&mut self, pos: ChunkPos) {
+        self.light_engine
+            .set_light_enabled(&self.storage, pos, false);
     }
 
     /// `getChunk(x, z, status, false)`: the chunk at that position, if the cache has it.
     #[inline]
     pub fn get_chunk(&self, x: i32, z: i32) -> Option<&LevelChunk> {
-        if self.storage.in_range(x, z) {
-            let chunk = self.storage.chunks[self.storage.get_index(x, z)].as_ref();
-            if ClientChunkCache::is_valid_chunk(chunk, x, z) {
-                return chunk;
-            }
-        }
-
-        None
+        self.storage.get_chunk(x, z)
     }
 
     pub fn get_chunk_mut(&mut self, x: i32, z: i32) -> Option<&mut LevelChunk> {
-        if self.storage.in_range(x, z) {
-            let index = self.storage.get_index(x, z);
-            if ClientChunkCache::is_valid_chunk(self.storage.chunks[index].as_ref(), x, z) {
-                return self.storage.chunks[index].as_mut();
-            }
-        }
-
-        None
+        self.storage.get_chunk_mut(x, z)
     }
 
     /// The chunk's biomes, from the server's: ignored, like Java (which logs a warning), for a
@@ -123,7 +145,9 @@ impl ClientChunkCache {
                 ChunkPos::new(chunk_x, chunk_z),
             );
             chunk.replace_with_packet_data(chunk_x, chunk_z, chunk_data);
-            self.storage.replace(index, Some(chunk));
+            if let Some(removed_chunk) = self.storage.replace(index, Some(chunk)) {
+                self.unload(removed_chunk);
+            }
         }
 
         self.storage.chunks[index].as_ref()
@@ -150,7 +174,8 @@ impl ClientChunkCache {
                 let pos = chunk.get_pos();
                 if new_storage.in_range(pos.x(), pos.z()) {
                     let index = new_storage.get_index(pos.x(), pos.z());
-                    new_storage.replace(index, Some(chunk));
+                    // Each slot of the new storage takes one of the chunks in its range.
+                    let _ = new_storage.replace(index, Some(chunk));
                 }
             }
 
@@ -205,15 +230,41 @@ impl Storage {
             + Math::floor_mod_i32(chunk_x, self.view_range)) as usize
     }
 
-    fn replace(&mut self, index: usize, new_chunk: Option<LevelChunk>) {
+    /// Puts the chunk in the slot: where the chunk it replaced was, which its level unloads.
+    fn replace(&mut self, index: usize, new_chunk: Option<LevelChunk>) -> Option<ChunkPos> {
         let added = new_chunk.is_some();
-        if std::mem::replace(&mut self.chunks[index], new_chunk).is_some() {
+        let removed_chunk = std::mem::replace(&mut self.chunks[index], new_chunk);
+        if removed_chunk.is_some() {
             self.chunk_count -= 1;
         }
 
         if added {
             self.chunk_count += 1;
         }
+
+        removed_chunk.map(|chunk| chunk.get_pos())
+    }
+
+    fn get_chunk(&self, x: i32, z: i32) -> Option<&LevelChunk> {
+        if self.in_range(x, z) {
+            let chunk = self.chunks[self.get_index(x, z)].as_ref();
+            if ClientChunkCache::is_valid_chunk(chunk, x, z) {
+                return chunk;
+            }
+        }
+
+        None
+    }
+
+    fn get_chunk_mut(&mut self, x: i32, z: i32) -> Option<&mut LevelChunk> {
+        if self.in_range(x, z) {
+            let index = self.get_index(x, z);
+            if ClientChunkCache::is_valid_chunk(self.chunks[index].as_ref(), x, z) {
+                return self.chunks[index].as_mut();
+            }
+        }
+
+        None
     }
 
     fn drop(&mut self, index: usize) {
@@ -229,8 +280,16 @@ impl Storage {
     }
 }
 
+/// `getChunkForLighting(x, z)`: the chunk, if the cache has it. Java's `onLightUpdate` marks the
+/// section dirty for the renderer, which isn't ported.
+impl LightChunkGetter for Storage {
+    fn get_chunk_for_lighting(&self, x: i32, z: i32) -> Option<&dyn LightChunk> {
+        self.get_chunk(x, z).map(|chunk| chunk as &dyn LightChunk)
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use serde_json::Value;
 
     use crate::golden::Golden;
@@ -250,7 +309,8 @@ mod tests {
     use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
     use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
 
-    fn overworld(
+    /// A level of the overworld's height, with a storage of that radius.
+    pub(crate) fn overworld(
         registries: &crate::net::minecraft::core::registry_access::RegistryAccess,
         radius: i32,
     ) -> ClientLevel {
