@@ -61,7 +61,7 @@ Left from the registry, for when what needs them comes:
 
 ## Log
 
-### 2026-10-22 (render): Draws on the OpenGL device, the vanilla pack's resources and stb's textures
+### 2026-10-23 (render): Draws on the OpenGL device, the vanilla pack's resources and stb's textures
 
 - Ported and checked:
   - The pipeline's last step to the driver: `GlPipelineRecompiler.compileShader` and `compileProgram`, `GlShaderModule`, `GlProgram` (linking, and `setupBindGroupLayouts`: each `_uniform_00_NN` block, sampler and texel buffer at the next binding or texture unit, the push constant block first), `Uniform`, `VertexArray` (both `Separate`, `ARB_vertex_attrib_binding`'s, which llvmpipe takes, and `Emulated`), `GlRenderPipeline` (its fixed-function state and `bind`), `GlDevice.compilePipeline`, and `PipelineBuilder.compilePipeline`, which makes the `FrontendRenderPipeline`.
