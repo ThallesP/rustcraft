@@ -113,6 +113,13 @@ Handoffs:
 
 ## Log
 
+### 2026-10-23 (render): The client reads the network however long its frames take; `AABB.of` and `BlockPos.betweenClosedStream(BoundingBox)`
+
+- The stall the coordinator and the player track saw (a server re-sending its teleport under load, CI's captures disconnected): `Connection.run_event_loop`, the port's Netty thread, which the game runs between frames until the next frame is due, returned without reading when the frame had already run past that time. A client whose every frame overran its 1/120 s never read: on CI's `frames` job (llvmpipe on a 4-core runner) the live `walk-no-gui` sat in `WaitingForChunks` until the server timed it out ("rustcraft lost connection: Timed out", 33 s after the setup). Netty reads while the game draws, so now the bytes that came during a frame are read after it whatever its length: reading goes on until the socket has nothing more within a millisecond.
+- The frames themselves: a live `walk` here at a load of 21 on 10 cores, timed (not committed): 32 frames over 30 ms, the longest 90 ms; the longest synchronous section compile 55 ms (9 sections, after a chunk batch). Nothing takes seconds, but the sections compile on the render thread, where vanilla's go to worker threads (`SectionRenderDispatcher`'s executor), so a big batch on a generated world costs a frame; that's gate 5's (the perf track's) to move off the thread. Its run's trace and 156 packets from the marker are vanilla's; its screenshots differ only by the hand and the block outline.
+- Un-pended (the comparison agent's audit): `AABB.of(BoundingBox)` and `BlockPos.betweenClosedStream(BoundingBox)`, with a `BoundingBox` generator in the golden harness (sections' boxes, a block, the world's height, the ints' ends where `maxX + 1` wraps and a side's length wraps, any corners): 508 cases each, identical. A mutation adding 1 as a double instead of an int fails 4 of 508.
+- Evidence: `cargo test --workspace` passes but for `slabs_and_fences`, whose vanilla run another track recorded again at 05:53 into the shared oracle directory without its digest yet ("vanilla's trace changed: update the digest"); fmt, clippy and the port check are clean.
+
 ### 2026-10-23 (gui): The font, text in the GUI, and the HUD's experience level, identical to vanilla's
 
 - Ported, the font from the vanilla pack:

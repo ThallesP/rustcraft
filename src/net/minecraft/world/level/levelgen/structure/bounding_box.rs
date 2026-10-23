@@ -63,3 +63,19 @@ impl BoundingBox {
         self.max_z
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::BoundingBox;
+    use crate::golden::encode_fields;
+
+    // [minX, minY, minZ, maxX, maxY, maxZ], made through the constructor, so in order.
+    encode_fields!(BoundingBox {
+        min_x: i32,
+        min_y: i32,
+        min_z: i32,
+        max_x: i32,
+        max_y: i32,
+        max_z: i32
+    });
+}

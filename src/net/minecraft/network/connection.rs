@@ -673,7 +673,11 @@ impl Connection {
     }
 
     /// Netty's event loop for this connection, until `deadline`: decodes and hands on every
-    /// packet whose bytes have arrived, waiting on the socket for more in between.
+    /// packet whose bytes have arrived, waiting on the socket for more in between. Netty's thread
+    /// reads while the game draws, so the bytes that came during a frame are read even when the
+    /// frame ran past `deadline`: reading goes on until the socket has nothing more within a
+    /// millisecond. Before, a client whose every frame overran (llvmpipe on a loaded machine)
+    /// never read, and the server timed it out or sent its teleport again.
     pub fn run_event_loop(&self, deadline: Instant) {
         let _scope = EventLoopScope::enter();
         loop {
@@ -682,10 +686,7 @@ impl Connection {
                 return;
             }
 
-            let now = Instant::now();
-            if now >= deadline {
-                return;
-            }
+            let left = deadline.saturating_duration_since(Instant::now());
             let reading = self
                 .channel
                 .borrow()
@@ -693,10 +694,10 @@ impl Connection {
                 .is_some_and(|channel| channel.auto_read);
             if !reading {
                 // Reading is off until the game thread sets the next protocol up.
-                std::thread::sleep(deadline - now);
+                std::thread::sleep(left);
                 return;
             }
-            if !self.read_socket(deadline - now) {
+            if !self.read_socket(left) {
                 return;
             }
         }

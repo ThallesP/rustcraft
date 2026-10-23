@@ -1,7 +1,6 @@
 //! net/minecraft/core/BlockPos.java
 //!
-//! Not ported yet: `CODEC`, which waits for DataFixerUpper's codecs;
-//! `betweenClosedStream(BoundingBox)`, which comes with `BoundingBox`; and
+//! Not ported yet: `CODEC`, which waits for DataFixerUpper's codecs, and
 //! `breadthFirstTraversal`, which only the server's blocks call (`SpongeBlock`,
 //! `CreakingHeartBlockEntity`).
 //!
@@ -26,6 +25,7 @@ use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::rotation::Rotation;
+use crate::net::minecraft::world::level::levelgen::structure::bounding_box::BoundingBox;
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 
@@ -526,6 +526,20 @@ impl BlockPos {
             Mth::floor_f64(r#box.max_x),
             Mth::floor_f64(r#box.max_y),
             Mth::floor_f64(r#box.max_z),
+        )
+    }
+
+    /// The box's blocks, its corners in order again (a box has them in order already).
+    pub fn between_closed_stream_bounding_box(
+        bounding_box: &BoundingBox,
+    ) -> impl Iterator<Item = BlockPos> {
+        BlockPos::between_closed_stream_xyz(
+            bounding_box.min_x().min(bounding_box.max_x()),
+            bounding_box.min_y().min(bounding_box.max_y()),
+            bounding_box.min_z().min(bounding_box.max_z()),
+            bounding_box.min_x().max(bounding_box.max_x()),
+            bounding_box.min_y().max(bounding_box.max_y()),
+            bounding_box.min_z().max(bounding_box.max_z()),
         )
     }
 
@@ -1068,6 +1082,7 @@ mod tests {
     use crate::net::minecraft::core::vec3i::Vec3i;
     use crate::net::minecraft::util::random_source::RandomSource;
     use crate::net::minecraft::world::level::block::rotation::Rotation;
+    use crate::net::minecraft::world::level::levelgen::structure::bounding_box::BoundingBox;
     use crate::net::minecraft::world::phys::aabb::AABB;
     use crate::net::minecraft::world::phys::vec3::Vec3;
 
@@ -1120,9 +1135,11 @@ mod tests {
         let golden = Golden::load("net.minecraft.core.BlockPos");
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
         golden.check_codec("STREAM_CODEC", || BlockPos::STREAM_CODEC);
-        golden.pending(
+        golden.check(
             "betweenClosedStream(Lnet/minecraft/world/level/levelgen/structure/BoundingBox;)Ljava/util/stream/Stream;",
-            "waits for BoundingBox",
+            |bounding_box: BoundingBox| {
+                first(BlockPos::between_closed_stream_bounding_box(&bounding_box))
+            },
         );
         golden.pending(
             "breadthFirstTraversal(Lnet/minecraft/core/BlockPos;IILjava/util/function/BiConsumer;Ljava/util/function/Function;)I",

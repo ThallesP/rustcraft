@@ -1,6 +1,4 @@
 //! net/minecraft/world/phys/AABB.java
-//!
-//! Not ported yet: `of(BoundingBox)`, which comes with `BoundingBox`.
 
 use std::fmt;
 
@@ -9,6 +7,7 @@ use crate::java::lang::math::Math;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::world::level::levelgen::structure::bounding_box::BoundingBox;
 use crate::net::minecraft::world::phys::block_hit_result::BlockHitResult;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::joml::vector3f::Vector3f;
@@ -66,6 +65,18 @@ impl AABB {
             f64::from(pos.get_x().wrapping_add(1)),
             f64::from(pos.get_y().wrapping_add(1)),
             f64::from(pos.get_z().wrapping_add(1)),
+        )
+    }
+
+    /// The box's blocks. Its far sides are int sums, which wrap at `Integer.MAX_VALUE`.
+    pub fn of(r#box: &BoundingBox) -> AABB {
+        AABB::new(
+            f64::from(r#box.min_x()),
+            f64::from(r#box.min_y()),
+            f64::from(r#box.min_z()),
+            f64::from(r#box.max_x().wrapping_add(1)),
+            f64::from(r#box.max_y().wrapping_add(1)),
+            f64::from(r#box.max_z().wrapping_add(1)),
         )
     }
 
@@ -842,6 +853,7 @@ mod tests {
     use super::{AABB, Builder};
     use crate::golden::{Golden, encode_fields};
     use crate::net::minecraft::core::block_pos::BlockPos;
+    use crate::net::minecraft::world::level::levelgen::structure::bounding_box::BoundingBox;
     use crate::net::minecraft::world::phys::vec3::Vec3;
     use crate::org::joml::vector3f::Vector3f;
 
@@ -867,9 +879,9 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.world.phys.AABB");
-        golden.pending(
+        golden.check(
             "of(Lnet/minecraft/world/level/levelgen/structure/BoundingBox;)Lnet/minecraft/world/phys/AABB;",
-            "waits for BoundingBox",
+            |r#box: BoundingBox| AABB::of(&r#box),
         );
         golden.check_method("toString()Ljava/lang/String;", |this: &mut AABB| {
             this.to_string()

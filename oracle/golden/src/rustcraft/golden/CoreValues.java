@@ -26,6 +26,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.ByIdMap;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -160,6 +161,21 @@ final class CoreValues {
         CoreValues::randomBox,
         CoreValues::copyBox,
         box -> doubles(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)
+    );
+
+    // A section's box as the octree and the frustum make it, a single block, the world's height at the spawn, boxes at the
+    // ints' ends (where maxX + 1 wraps, and a side's length wraps to 0 or below), and any corners, which the constructor
+    // puts in order. BoundingBox's move and encapsulate change it, so each call gets its own copy.
+    static final Values.Generator BOUNDING_BOX = new JomlValues.Mutable<>(
+        List.of(
+            new BoundingBox(0, -64, 0, 15, -49, 15), new BoundingBox(BlockPos.ZERO), new BoundingBox(-1, -64, -1, 1, 319, 1),
+            new BoundingBox(-16, 0, -16, -1, 15, -1), new BoundingBox(0, 0, 0, Integer.MAX_VALUE, 0, 0),
+            new BoundingBox(Integer.MIN_VALUE, 0, 0, Integer.MAX_VALUE, 1, 1), new BoundingBox(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE),
+            new BoundingBox(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE)
+        ),
+        CoreValues::randomBoundingBox,
+        box -> new BoundingBox(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()),
+        box -> ints(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ())
     );
 
     // A block's shape as VoxelShape.toAabbs gives it (none, a whole block, a slab, stairs, a fence with two arms), relative
@@ -327,6 +343,9 @@ final class CoreValues {
         }
         if (type == AABB.Builder.class) {
             return BOX_BUILDER;
+        }
+        if (type == BoundingBox.class) {
+            return BOUNDING_BOX;
         }
         if (type == HitResult.Type.class) {
             return HIT_RESULT_TYPE;
@@ -538,6 +557,17 @@ final class CoreValues {
             boxes.add(shape ? blockShape(random) : randomBox(random));
         }
         return List.copyOf(boxes);
+    }
+
+    private static BoundingBox randomBoundingBox(final Random random) {
+        if (random.nextInt(4) == 0) {
+            return new BoundingBox(random.nextInt(), random.nextInt(), random.nextInt(), random.nextInt(), random.nextInt(), random.nextInt());
+        }
+        BlockPos corner = randomBlockPos(random);
+        return new BoundingBox(
+            corner.getX(), corner.getY(), corner.getZ(),
+            corner.getX() + random.nextInt(9) - 4, corner.getY() + random.nextInt(9) - 4, corner.getZ() + random.nextInt(9) - 4
+        );
     }
 
     private static AABB copyBox(final AABB box) {
