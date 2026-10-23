@@ -323,11 +323,14 @@ fn draws_the_block_atlas_from_vanillas_sprites() {
 
 /// The digest of vanilla's GUI-free walk spawn view
 /// (`vanilla/26.3/oracle/walk-no-gui/screenshots/spawn.png`'s RGBA bytes), which the oracle
-/// recorded.
+/// recorded on this driver: the same rasterizer and sampler give the same pixels, another
+/// llvmpipe needn't (CI's Mesa 25.2 differs from the oracle machine's 26.0.8).
 const VANILLA_WALK_SPAWN_MD5: &str = "a38fcf9081510059fb5d52b0f34716e9";
+const VANILLA_WALK_SPAWN_DRIVER: &str = "4.5 (Core Profile) Mesa 26.0.8-1ubuntu0.3";
 
 /// The walk's spawn view, rendered offscreen from the level a capture of the walk's server fills
-/// (`--render-scenario`): vanilla's, pixel for pixel. The capture is the oracle's on a machine
+/// (`--render-scenario`): vanilla's, pixel for pixel, on the driver vanilla's screenshot was
+/// taken on; on another the frame only has to render. The capture is the oracle's on a machine
 /// that has it, or the port's own (CI records it before the tests); without one the test says
 /// so and passes.
 #[test]
@@ -363,5 +366,13 @@ fn renders_the_walks_spawn_view_like_vanilla() {
     );
     let digest: [u8; 16] = Md5::digest(&pixels).into();
     let digest: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    assert_eq!(digest, VANILLA_WALK_SPAWN_MD5);
+    let device = run(&["--device-info"]).expect("xvfb-run ran above");
+    if device.contains(&format!("using drivers: {VANILLA_WALK_SPAWN_DRIVER}\n")) {
+        assert_eq!(digest, VANILLA_WALK_SPAWN_MD5);
+    } else {
+        eprintln!(
+            "not compared: vanilla's screenshot was taken on {VANILLA_WALK_SPAWN_DRIVER}, this is {}",
+            device.lines().next().unwrap_or_default()
+        );
+    }
 }
