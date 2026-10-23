@@ -70,6 +70,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_pa
 use crate::net::minecraft::network::protocol::game::clientbound_clear_titles_packet::ClientboundClearTitlesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
@@ -83,10 +84,12 @@ use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet_data::ClientboundLightUpdatePacketData;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_move_entity_packet::ClientboundMoveEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_rotate_head_packet::ClientboundRotateHeadPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_server_data_packet::ClientboundServerDataPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_action_bar_text_packet::ClientboundSetActionBarTextPacket;
@@ -106,6 +109,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_titles_anima
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_teleport_entity_packet::ClientboundTeleportEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
@@ -131,6 +135,7 @@ use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes
 use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
 use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::entity::position_move_rotation::PositionMoveRotation;
+use crate::net::minecraft::world::entity::position_path::PositionPath;
 use crate::net::minecraft::world::entity::relative::Relative;
 use crate::net::minecraft::world::level::chunk::data_layer::DataLayer;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
@@ -568,6 +573,171 @@ impl ClientPacketListener {
             interpolation_values.y_rot(),
             interpolation_values.x_rot(),
         );
+    }
+}
+
+impl ClientPacketListener {
+    /// `createEntityFromPacket`, then `recreateFromPacket`: an entity of the type, with what its
+    /// class's `createInterpolationHandler` makes, set up from the packet. A class not ported yet
+    /// is a plain `Entity` of the type, a player too, where Java makes a `RemotePlayer`.
+    pub fn create_entity_from_packet(packet: &ClientboundAddEntityPacket) -> Entity {
+        let r#type = packet.get_type();
+        let mut entity = Entity::new(r#type, r#type.get_dimensions());
+        entity.set_interpolation_handler(Entity::create_interpolation_handler(r#type));
+        entity.recreate_from_packet(packet);
+        entity
+    }
+
+    /// `handleMoveEntity` for an entity in the level besides the player: the move from its
+    /// codec's base, interpolated, and whether it's on the ground.
+    pub fn handle_move_entity_in(level: &mut ClientLevel, packet: &ClientboundMoveEntityPacket) {
+        level.with_entity(packet.entity_id(), |entity, level| {
+            if packet.has_position() {
+                let position_codec = entity.get_position_codec();
+                let pos = packet.get_position_delta().decode(position_codec);
+                position_codec.set_base(pos.end_position());
+                entity.move_or_interpolate_to(
+                    level,
+                    Some(&pos),
+                    packet.get_y_rot(),
+                    packet.get_x_rot(),
+                    packet.has_rotation(),
+                );
+            } else if packet.has_rotation() {
+                entity.move_or_interpolate_to(
+                    level,
+                    None,
+                    packet.get_y_rot(),
+                    packet.get_x_rot(),
+                    true,
+                );
+            }
+
+            entity::set_on_ground(entity, level, packet.is_on_ground());
+        });
+    }
+
+    /// `handleTeleportEntity` for an entity in the level: interpolated there, since the client
+    /// isn't its authority, and nothing rides it (riding isn't ported).
+    pub fn handle_teleport_entity_in(
+        level: &mut ClientLevel,
+        packet: &ClientboundTeleportEntityPacket,
+    ) {
+        level.with_entity(packet.id(), |entity, level| {
+            ClientPacketListener::set_entity_values_from_position_packet(
+                &packet.change(),
+                &packet.relatives(),
+                entity,
+                level,
+                true,
+            );
+            entity::set_on_ground(entity, level, packet.on_ground());
+        });
+    }
+
+    /// `handleEntityPositionSync` for an entity in the level besides the player.
+    pub fn handle_entity_position_sync_in(
+        level: &mut ClientLevel,
+        packet: &ClientboundEntityPositionSyncPacket,
+    ) {
+        let position_path = packet.position();
+        let pos = position_path.end_position();
+        level.with_entity(packet.id(), |entity, level| {
+            entity.get_position_codec().set_base(pos);
+            let too_big_to_interpolate = entity.position().distance_to_sqr(&pos) > 4096.0;
+            if level.is_ticking_entity(packet.id()) && !too_big_to_interpolate {
+                entity.move_or_interpolate_to(
+                    level,
+                    Some(&position_path),
+                    packet.y_rot(),
+                    packet.x_rot(),
+                    true,
+                );
+            } else {
+                entity.snap_to(pos.x, pos.y, pos.z, packet.y_rot(), packet.x_rot());
+            }
+
+            entity::set_on_ground(entity, level, packet.on_ground());
+        });
+    }
+
+    /// `assignValues` for an entity in the level: the items a plain `Entity` keeps, its shared
+    /// flags (0), whether it has gravity (5) and its pose (6).
+    pub fn assign_entity_values(entity: &mut Entity, packet: &ClientboundSetEntityDataPacket) {
+        const DATA_SHARED_FLAGS_ID: i32 = 0;
+        const DATA_NO_GRAVITY: i32 = 5;
+        const DATA_POSE: i32 = 6;
+        for item in packet.packed_items() {
+            match (item.id(), item.value()) {
+                (DATA_SHARED_FLAGS_ID, EntityDataValue::Byte(flags)) => {
+                    for flag in 0..8 {
+                        entity.set_shared_flag(flag, flags & (1 << flag) != 0);
+                    }
+                }
+                (DATA_NO_GRAVITY, EntityDataValue::Boolean(no_gravity)) => {
+                    entity.set_no_gravity(*no_gravity);
+                }
+                (DATA_POSE, EntityDataValue::Pose(pose)) => entity::set_pose(entity, *pose),
+                _ => {}
+            }
+        }
+    }
+
+    /// `setValuesFromPositionPacket` for an entity in the level: where the change puts it, by its
+    /// handler unless asked not to or it's too far, and whether it was interpolated.
+    fn set_entity_values_from_position_packet(
+        change: &PositionMoveRotation,
+        relatives: &[Relative],
+        entity: &mut Entity,
+        level: &ClientLevel,
+        interpolate: bool,
+    ) -> bool {
+        // `PositionMoveRotation.of(entity)`: its known movement is its delta movement.
+        let current_values = PositionMoveRotation::new(
+            entity.position(),
+            entity.get_delta_movement(),
+            entity.get_y_rot(),
+            entity.get_x_rot(),
+        );
+        let new_values =
+            PositionMoveRotation::calculate_absolute(&current_values, change, relatives);
+        let too_big_to_interpolate = current_values
+            .position()
+            .distance_to_sqr(&new_values.position())
+            > 4096.0;
+        if interpolate && !too_big_to_interpolate {
+            entity.move_or_interpolate_to(
+                level,
+                Some(&PositionPath::of(new_values.position())),
+                new_values.y_rot(),
+                new_values.x_rot(),
+                true,
+            );
+            entity.set_delta_movement(new_values.delta_movement());
+            true
+        } else {
+            entity.set_pos_vec3(&new_values.position());
+            entity.set_delta_movement(new_values.delta_movement());
+            entity.set_y_rot(new_values.y_rot());
+            entity.set_x_rot(new_values.x_rot());
+            let current_interpolation_values = PositionMoveRotation::new(
+                entity.old_position(),
+                Vec3::ZERO,
+                entity.y_rot_o,
+                entity.x_rot_o,
+            );
+            let interpolation_values = PositionMoveRotation::calculate_absolute(
+                &current_interpolation_values,
+                change,
+                relatives,
+            );
+            entity.set_old_pos_and_rot_to(
+                interpolation_values.position(),
+                interpolation_values.y_rot(),
+                interpolation_values.x_rot(),
+            );
+            false
+        }
     }
 }
 
@@ -1569,6 +1739,16 @@ impl ClientGamePacketListener for ClientPacketListener {
             .as_mut()
             .filter(|player| player.get_id() == packet.id())
         else {
+            // Another entity's: what a plain `Entity` keeps of them, its shared flags, its pose
+            // and whether it has gravity.
+            if let Some(entity) = minecraft
+                .level
+                .borrow_mut()
+                .as_mut()
+                .and_then(|level| level.get_entity_mut(packet.id()))
+            {
+                ClientPacketListener::assign_entity_values(entity, packet);
+            }
             return;
         };
         // `Entity.DATA_SHARED_FLAGS_ID`'s and `DATA_POSE`'s ids, the first items `defineId` gives,
@@ -1625,7 +1805,7 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
-        // Java looks the entity up in the level, whose only entity so far is the player.
+        // Java looks the entity up in the level, the player among them.
         if let Some(player) = minecraft
             .player
             .borrow_mut()
@@ -1633,7 +1813,109 @@ impl ClientGamePacketListener for ClientPacketListener {
             .filter(|player| player.get_id() == packet.id())
         {
             player.entity_mut().lerp_motion(packet.movement());
+            return;
         }
+        if let Some(entity) = minecraft
+            .level
+            .borrow_mut()
+            .as_mut()
+            .and_then(|level| level.get_entity_mut(packet.id()))
+        {
+            entity.lerp_motion(packet.movement());
+        }
+    }
+
+    fn handle_move_entity(&mut self, packet: &ClientboundMoveEntityPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // The player, the one entity the client is the authority on (riding isn't ported), only
+        // has its codec's base moved.
+        if let Some(player) = minecraft
+            .player
+            .borrow_mut()
+            .as_mut()
+            .filter(|player| player.get_id() == packet.entity_id())
+        {
+            if packet.has_position() {
+                let position_codec = player.entity_mut().get_position_codec();
+                let pos = packet.get_position_delta().decode(position_codec);
+                position_codec.set_base(pos.end_position());
+            }
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            ClientPacketListener::handle_move_entity_in(level, packet);
+        }
+    }
+
+    fn handle_teleport_entity(&mut self, packet: &ClientboundTeleportEntityPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // An entity the level hasn't is the player's removed vehicle or nothing (riding isn't
+        // ported).
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            ClientPacketListener::handle_teleport_entity_in(level, packet);
+        }
+    }
+
+    fn handle_entity_position_sync(&mut self, packet: &ClientboundEntityPositionSyncPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(player) = minecraft
+            .player
+            .borrow_mut()
+            .as_mut()
+            .filter(|player| player.get_id() == packet.id())
+        {
+            player
+                .entity_mut()
+                .get_position_codec()
+                .set_base(packet.position().end_position());
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            ClientPacketListener::handle_entity_position_sync_in(level, packet);
+        }
+    }
+
+    fn handle_rotate_mob(&mut self, packet: &ClientboundRotateHeadPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // `lerpHeadTo(yHeadRot, 3)`: an `Entity` has no head (`setYHeadRot` does nothing), and a
+        // living entity's, which it turns to over its next ticks, comes with the living classes.
+        let _ = packet.get_y_head_rot();
     }
 
     fn handle_hurt_animation(&mut self, packet: &ClientboundHurtAnimationPacket) {
@@ -1718,14 +2000,10 @@ impl ClientGamePacketListener for ClientPacketListener {
             return;
         }
         // Java forgets the removed vehicle's id when the entity has it (riding isn't ported),
-        // makes the entity of its type (`createEntityFromPacket`: an entity of a class not ported
-        // yet is a plain `Entity` of the type, a player too, where Java makes a `RemotePlayer`),
-        // sets it up from the packet, adds it to the level, plays its sound (a minecart's, a
-        // bee's) and marks a player it has the info of as seen (sounds and the player list aren't
-        // ported).
-        let r#type = packet.get_type();
-        let mut entity = Entity::new(r#type, r#type.get_dimensions());
-        entity.recreate_from_packet(packet);
+        // makes the entity of its type and sets it up from the packet, adds it to the level, plays
+        // its sound (a minecart's, a bee's) and marks a player it has the info of as seen (sounds
+        // and the player list aren't ported).
+        let entity = ClientPacketListener::create_entity_from_packet(packet);
         if let Some(level) = minecraft.level.borrow_mut().as_mut() {
             level.add_entity(entity);
         }
@@ -2034,6 +2312,22 @@ impl ClientGamePacketListener for NettyHalf {
     }
 
     fn handle_set_entity_motion(&mut self, packet: &ClientboundSetEntityMotionPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_move_entity(&mut self, packet: &ClientboundMoveEntityPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_teleport_entity(&mut self, packet: &ClientboundTeleportEntityPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_entity_position_sync(&mut self, packet: &ClientboundEntityPositionSyncPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_rotate_mob(&mut self, packet: &ClientboundRotateHeadPacket) {
         self.common.on_game_thread(&self.this, packet);
     }
 

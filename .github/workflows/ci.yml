@@ -42,6 +42,9 @@ jobs:
       # The falls scenario waits for the server's answers to its landings, which its replay test takes from a capture
       # (TESTING.md, "The server's answers"): the port's own, here, whose trace and packets are checked too.
       - run: python3 tools/port_client.py capture falls --accept-eula
+      # The entities-falling scenario's armor stands fall as the server moves them, which its replay test takes from a
+      # capture too (TESTING.md, "Offline replays"), and its live run is checked like the falls'.
+      - run: python3 tools/port_client.py capture entities-falling --accept-eula
       # Every screen the port has, opened, drawn, ticked, sent a key and a scroll (TESTING.md, "The GUI"): a screen
       # whose drawing or input reaches back into a cell of the game that the frame holds panics, and fails this.
       - run: python3 tools/port_client.py capture screens --accept-eula

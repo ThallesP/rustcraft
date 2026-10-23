@@ -23,9 +23,12 @@
 //!   (`applyEffectsFromBlocks`: none of the blocks ported so far does anything there), and the
 //!   movement's sounds and game events (`applyMovementEmissionAndPlaySound`), which change nothing
 //!   an entity's movement reads;
-//! - vehicles and passengers, portals, fire and freezing, the interpolation of entities the server
-//!   moves, `lastKnownSpeed`, and entity data (only the shared flags, pose and no-gravity flag are
-//!   here, as fields).
+//! - vehicles and passengers, portals, fire and freezing, `lastKnownSpeed`, and entity data (only
+//!   the shared flags, pose and no-gravity flag are here, as fields).
+//!
+//! The entities the server moves are interpolated (`moveOrInterpolateTo`), each with what its
+//! class's `createInterpolationHandler` makes (`create_interpolation_handler`, by its type until
+//! the classes come), from the moves' deltas off its position codec (`getPositionCodec`).
 
 // Java's negated comparisons are kept as they are: they differ from the plain ones for NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -36,14 +39,20 @@ use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
+use crate::net::minecraft::network::protocol::game::vec_delta_codec::VecDeltaCodec;
 use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::tags::fluid_tags::{FluidTagKey, FluidTags};
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::world::entity::abstract_interpolation_handler::Interpolated;
 use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
 use crate::net::minecraft::world::entity::entity_fluid_interaction::EntityFluidInteraction;
 use crate::net::minecraft::world::entity::entity_type::EntityType;
+use crate::net::minecraft::world::entity::interpolation_handler::InterpolationHandler;
+use crate::net::minecraft::world::entity::linear_interpolation_handler::LinearInterpolationHandler;
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::pose::Pose;
+use crate::net::minecraft::world::entity::position_path::PositionPath;
+use crate::net::minecraft::world::entity::stepped_interpolation_handler::SteppedInterpolationHandler;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::fence_gate_block;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -104,6 +113,9 @@ pub struct Entity {
     /// `DATA_AIR_SUPPLY_ID`'s value, synced data that's a plain field until entity data is
     /// ported, like the shared flags.
     air_supply: i32,
+    /// `packetPositionCodec`: where the server's moves have it, which their deltas are from.
+    packet_position_codec: VecDeltaCodec,
+    interpolation_handler: InterpolationHandler,
 }
 
 impl Entity {
@@ -170,7 +182,205 @@ impl Entity {
             no_gravity: false,
             in_block_state: None,
             air_supply: Entity::TOTAL_AIR_SUPPLY,
+            packet_position_codec: VecDeltaCodec::new(),
+            interpolation_handler: InterpolationHandler::NoOp,
         }
+    }
+
+    /// What the class of an entity of the type makes in `createInterpolationHandler`, on the client:
+    /// a living entity's moves are stepped over its type's update interval (`LivingEntity`), but a
+    /// shulker's, which stays put; boats', minecarts', experience orbs' and fishing bobbers' are
+    /// linear over 3 ticks, displays' at once; any other's isn't interpolated (`Entity`'s
+    /// `NO_OP`). The living types are the 93 whose classes extend `LivingEntity`, the shulker
+    /// left out.
+    pub fn create_interpolation_handler(r#type: EntityType) -> InterpolationHandler {
+        const LIVING: [&str; 92] = [
+            "allay",
+            "armadillo",
+            "armor_stand",
+            "axolotl",
+            "bat",
+            "bee",
+            "blaze",
+            "bogged",
+            "breeze",
+            "camel",
+            "camel_husk",
+            "cat",
+            "cave_spider",
+            "chicken",
+            "cod",
+            "copper_golem",
+            "cow",
+            "creaking",
+            "creeper",
+            "dolphin",
+            "donkey",
+            "drowned",
+            "elder_guardian",
+            "enderman",
+            "endermite",
+            "ender_dragon",
+            "evoker",
+            "fox",
+            "frog",
+            "ghast",
+            "happy_ghast",
+            "giant",
+            "glow_squid",
+            "goat",
+            "guardian",
+            "hoglin",
+            "horse",
+            "husk",
+            "illusioner",
+            "iron_golem",
+            "llama",
+            "magma_cube",
+            "mannequin",
+            "mooshroom",
+            "mule",
+            "nautilus",
+            "ocelot",
+            "panda",
+            "parched",
+            "parrot",
+            "phantom",
+            "pig",
+            "piglin",
+            "piglin_brute",
+            "pillager",
+            "polar_bear",
+            "pufferfish",
+            "rabbit",
+            "ravager",
+            "salmon",
+            "sheep",
+            "silverfish",
+            "skeleton",
+            "skeleton_horse",
+            "slime",
+            "sniffer",
+            "snow_golem",
+            "spider",
+            "squid",
+            "stray",
+            "strider",
+            "sulfur_cube",
+            "tadpole",
+            "trader_llama",
+            "tropical_fish",
+            "turtle",
+            "vex",
+            "villager",
+            "vindicator",
+            "wandering_trader",
+            "warden",
+            "witch",
+            "wither",
+            "wither_skeleton",
+            "wolf",
+            "zoglin",
+            "zombie",
+            "zombie_horse",
+            "zombie_nautilus",
+            "zombie_villager",
+            "zombified_piglin",
+            "player",
+        ];
+        let name = r#type.to_short_string();
+        if LIVING.contains(&name) {
+            InterpolationHandler::Stepped(SteppedInterpolationHandler::create(
+                r#type.update_interval(),
+            ))
+        } else if name.ends_with("_boat")
+            || name.ends_with("_raft")
+            || name.ends_with("minecart")
+            || name == "experience_orb"
+            || name == "fishing_bobber"
+        {
+            InterpolationHandler::Linear(LinearInterpolationHandler::create(
+                LinearInterpolationHandler::DEFAULT_INTERPOLATION_STEPS,
+            ))
+        } else if name.ends_with("_display") {
+            InterpolationHandler::Linear(LinearInterpolationHandler::create(0))
+        } else {
+            InterpolationHandler::NoOp
+        }
+    }
+
+    pub fn set_interpolation_handler(&mut self, interpolation_handler: InterpolationHandler) {
+        self.interpolation_handler = interpolation_handler;
+    }
+
+    pub fn get_interpolation(&self) -> &InterpolationHandler {
+        &self.interpolation_handler
+    }
+
+    pub fn is_interpolating(&self) -> bool {
+        self.interpolation_handler.has_active_interpolation()
+    }
+
+    /// `syncPacketPositionCodec(double, double, double)`.
+    pub fn sync_packet_position_codec(&mut self, x: f64, y: f64, z: f64) {
+        self.packet_position_codec.set_base(Vec3::new(x, y, z));
+    }
+
+    /// `getPositionCodec()`.
+    pub fn get_position_codec(&mut self) -> &mut VecDeltaCodec {
+        &mut self.packet_position_codec
+    }
+
+    /// `moveOrInterpolateTo(PositionPath, float, float, boolean)`: its handler takes it there, or
+    /// it's put there at once.
+    pub fn move_or_interpolate_to(
+        &mut self,
+        level: &dyn Level,
+        position: Option<&PositionPath>,
+        y_rot: f32,
+        x_rot: f32,
+        has_rotation: bool,
+    ) {
+        let mut handler = std::mem::take(&mut self.interpolation_handler);
+        let interpolated = handler.interpolate_to(
+            &mut InLevel {
+                entity: self,
+                level,
+            },
+            position,
+            y_rot,
+            x_rot,
+            has_rotation,
+        );
+        self.interpolation_handler = handler;
+        if !interpolated {
+            if let Some(position) = position {
+                self.set_pos_vec3(&position.end_position());
+            }
+
+            if has_rotation {
+                self.set_rot(y_rot, x_rot);
+            }
+        }
+    }
+
+    /// `setRot(float, float)`: each rotation `% 360`.
+    pub fn set_rot(&mut self, y_rot: f32, x_rot: f32) {
+        self.set_y_rot(y_rot % 360.0);
+        self.set_x_rot(x_rot % 360.0);
+    }
+
+    /// `commonTick()` on the client, for an entity in the level: where it was, its interpolation's
+    /// step, and the tick counted. The player's own (`common_tick`) has none to step.
+    pub fn common_tick_in(&mut self, level: &dyn Level) {
+        self.set_old_pos_and_rot();
+        let mut handler = std::mem::take(&mut self.interpolation_handler);
+        handler.interpolate(&mut InLevel {
+            entity: self,
+            level,
+        });
+        self.interpolation_handler = handler;
+        self.tick_count = self.tick_count.wrapping_add(1);
     }
 
     /// `TOTAL_AIR_SUPPLY`, what `getMaxAirSupply()` answers.
@@ -227,8 +437,7 @@ impl Entity {
         let x = packet.get_x();
         let y = packet.get_y();
         let z = packet.get_z();
-        // `syncPacketPositionCodec`: the base the moves' deltas are from, which comes with the
-        // move packets.
+        self.sync_packet_position_codec(x, y, z);
         self.snap_to(x, y, z, packet.get_y_rot(), packet.get_x_rot());
         self.set_id(packet.get_id());
         self.set_uuid(packet.get_uuid());
@@ -626,6 +835,65 @@ impl EntityAccess for Entity {
 
 /// Java's `Entity` methods that subclasses override or that call overridden ones. The defaults
 /// are `Entity`'s.
+/// An entity in its level, as its interpolation handler moves it.
+struct InLevel<'a> {
+    entity: &'a mut Entity,
+    level: &'a dyn Level,
+}
+
+impl Interpolated for InLevel<'_> {
+    fn position(&self) -> Vec3 {
+        self.entity.position()
+    }
+
+    fn get_y_rot(&self) -> f32 {
+        self.entity.get_y_rot()
+    }
+
+    fn get_x_rot(&self) -> f32 {
+        self.entity.get_x_rot()
+    }
+
+    fn set_pos(&mut self, position: &Vec3) {
+        self.entity.set_pos_vec3(position);
+    }
+
+    fn set_rot(&mut self, y_rot: f32, x_rot: f32) {
+        self.entity.set_rot(y_rot, x_rot);
+    }
+
+    fn snap_to(&mut self, position: &Vec3, y_rot: f32, x_rot: f32) {
+        self.entity
+            .snap_to(position.x, position.y, position.z, y_rot, x_rot);
+    }
+
+    fn no_collision_at(&self, position: &Vec3) -> bool {
+        let r#box = self.entity.make_bounding_box_at(position);
+        level::collisions(self.level).no_collision(Some(&*self.entity), &r#box)
+    }
+
+    /// `ClientLevel.getRelativeTickSpeed()`: the tick rate over 20, at least 1. The client's tick
+    /// rate manager isn't ported, so it's 20 (TESTING.md: a paced scenario's client keeps it).
+    fn relative_tick_speed(&self) -> f32 {
+        1.0
+    }
+}
+
+/// A plain entity, of a class not ported yet: what its type says.
+impl EntityClass for Entity {
+    fn entity(&self) -> &Entity {
+        self
+    }
+
+    fn entity_mut(&mut self) -> &mut Entity {
+        self
+    }
+
+    fn get_dimensions(&self, _pose: Pose) -> EntityDimensions {
+        self.r#type.get_dimensions()
+    }
+}
+
 pub trait EntityClass {
     fn entity(&self) -> &Entity;
 

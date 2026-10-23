@@ -29,6 +29,14 @@
 //! (`set_entity_motion`, `lerpMotion`) and its health and food (`set_health`, `hurtTo`), and the
 //! damage event's hurt timers (`damage_event`). A scenario that waits can only be replayed on a
 //! capture.
+//!
+//! On a capture, the other entities move as its packets say (their moves, teleports, position
+//! syncs, motion and data, through the listener's own handling): before the marker as the level is
+//! filled, each of the client's `client_tick_end`s ticking them (their interpolation), and from
+//! the marker on before each tick, the clientbound packets that came before the tick's own (which
+//! a paced scenario's client handles at the tick's slot), the entities ticked after the player.
+//! On the flat level they stay where they're summoned, so a scenario whose entities move can only
+//! be replayed on a capture.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -57,16 +65,20 @@ use crate::net::minecraft::network::protocol::configuration::clientbound_registr
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_move_entity_packet;
 use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_entity_data_packet::ClientboundSetEntityDataPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_teleport_entity_packet::ClientboundTeleportEntityPacket;
 use crate::net::minecraft::network::protocol::game::game_protocols::{self, GameProtocols};
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_chat_command_packet::ServerboundChatCommandPacket;
@@ -184,14 +196,25 @@ impl Capture {
             .collect()
     }
 
-    /// The clientbound packets of the game protocol before the marker, on its connection, by
-    /// name.
+    /// The packets of the game protocol before the marker, on its connection, both ways.
     fn play_before_marker(&self) -> impl Iterator<Item = &CapturedPacket> {
         let marker = self.marker();
         let connection = self.packets[marker].connection;
-        self.packets[..marker].iter().filter(move |packet| {
-            !packet.serverbound && packet.state == "play" && packet.connection == connection
-        })
+        self.packets[..marker]
+            .iter()
+            .filter(move |packet| packet.state == "play" && packet.connection == connection)
+    }
+
+    /// The packets of the game protocol after the marker, on its connection, both ways: the
+    /// scenario's ticks and what came between them.
+    pub fn play_after_marker(&self) -> Vec<CapturedPacket> {
+        let marker = self.marker();
+        let connection = self.packets[marker].connection;
+        self.packets[marker + 1..]
+            .iter()
+            .filter(|packet| packet.state == "play" && packet.connection == connection)
+            .cloned()
+            .collect()
     }
 }
 
@@ -265,6 +288,15 @@ impl CapturedLevel {
         let mut level: Option<ClientLevel> = None;
         let mut player_id = 0;
         for packet in capture.play_before_marker() {
+            if packet.serverbound {
+                // Each of the client's ticks ticks the level's other entities.
+                if packet.name == "minecraft:client_tick_end"
+                    && let Some(level) = level.as_mut()
+                {
+                    level.tick_entities();
+                }
+                continue;
+            }
             if packet.name == "minecraft:login" {
                 let login = ClientboundLoginPacket::STREAM_CODEC
                     .decode(&mut registry_buffer(&packet.payload));
@@ -349,22 +381,16 @@ impl CapturedLevel {
                         .get_chunk_source_mut()
                         .update_view_center(center.get_x(), center.get_z());
                 }
-                "minecraft:add_entity" => {
-                    let add = ClientboundAddEntityPacket::STREAM_CODEC
-                        .decode(&mut registry_buffer(&packet.payload));
-                    if add.get_id() != player_id {
-                        let r#type = add.get_type();
-                        let mut entity = Entity::new(r#type, r#type.get_dimensions());
-                        entity.recreate_from_packet(&add);
-                        level.add_entity(entity);
-                    }
-                }
-                "minecraft:remove_entities" => {
-                    let remove = ClientboundRemoveEntitiesPacket::STREAM_CODEC
-                        .decode(&mut unpooled::wrapped_buffer(packet.payload.to_vec()));
-                    for entity_id in remove.entity_ids() {
-                        level.remove_entity(entity_id);
-                    }
+                "minecraft:add_entity"
+                | "minecraft:remove_entities"
+                | "minecraft:move_entity_pos"
+                | "minecraft:move_entity_pos_rot"
+                | "minecraft:move_entity_rot"
+                | "minecraft:teleport_entity"
+                | "minecraft:entity_position_sync"
+                | "minecraft:set_entity_motion"
+                | "minecraft:set_entity_data" => {
+                    apply_entity_packet(level, packet, player_id, &registry_buffer);
                 }
                 "minecraft:set_chunk_cache_radius" => {
                     let radius = ClientboundSetChunkCacheRadiusPacket::STREAM_CODEC
@@ -613,13 +639,41 @@ pub struct Replay {
     pub packets: Vec<String>,
 }
 
+/// The level a replay runs on.
+pub enum ReplayLevel<'a> {
+    /// The flat preset and the entities its setup summons, which stay where they are.
+    Flat(&'a FlatLevel),
+    /// The level a capture filled, whose other entities its packets after the marker (its play
+    /// packets, both ways) move between the ticks, and the ticks interpolate.
+    Captured {
+        level: &'a mut ClientLevel,
+        play: &'a [CapturedPacket],
+    },
+}
+
+impl ReplayLevel<'_> {
+    fn level(&self) -> &dyn Level {
+        match self {
+            ReplayLevel::Flat(flat) => *flat,
+            ReplayLevel::Captured { level, .. } => &**level,
+        }
+    }
+
+    /// The other entities, in the order the client added them.
+    fn others(&self) -> Vec<&Entity> {
+        match self {
+            ReplayLevel::Flat(flat) => flat.entities().iter().collect(),
+            ReplayLevel::Captured { level, .. } => level.entities_for_rendering().collect(),
+        }
+    }
+}
+
 /// Replays the scenario on the level, as the player with the entity id, writing packets with the
 /// game protocol bound to the registries. `answers` are the server's clientbound packets from the
 /// marker on, which a step's `wait_for` takes from; a scenario that waits panics without them.
 pub fn replay(
     scenario: &Scenario,
-    level: &dyn Level,
-    others: &[Entity],
+    mut level: ReplayLevel,
     registries: Arc<RegistryAccess>,
     player_id: i32,
     answers: Option<&[CapturedPacket]>,
@@ -666,14 +720,15 @@ pub fn replay(
     player.set_y_rot(scenario.player.y_rot);
     player.set_x_rot(scenario.player.x_rot);
 
-    let tick = |player: &mut LocalPlayer| {
+    let tick = |player: &mut LocalPlayer, level: &dyn Level| {
         player.common_tick();
         player.tick(level, &minecraft.options.borrow());
         player.send_changes(&minecraft);
     };
-    // OracleGameTest.settle: 20 ticks, then until the player is on the ground.
+    // OracleGameTest.settle: 20 ticks, then until the player is on the ground. The other entities'
+    // ticks before the marker are the capture's, which filled the level.
     for _ in 0..OracleGameTest::SETTLE_TICKS {
-        tick(&mut player);
+        tick(&mut player, level.level());
     }
     let mut settling = 0;
     while !player.on_ground() {
@@ -682,7 +737,7 @@ pub fn replay(
             settling < OracleGameTest::LOAD_TIMEOUT_TICKS,
             "the player never landed"
         );
-        tick(&mut player);
+        tick(&mut player, level.level());
     }
     player.sent.clear();
 
@@ -690,8 +745,10 @@ pub fn replay(
         Arc::new(DiscardedPayload::new(OracleGameTest::scenario_start())),
     )))];
     let mut trace = Vec::new();
-    // The next of the server's answers not yet taken.
+    // The next of the server's answers not yet taken, and of the capture's packets after the
+    // marker.
     let mut answered = 0;
+    let mut next = 0;
     for step in &scenario.steps {
         // The replay opens no screens: a command is sent as it is, and other input does nothing
         // to the player, which holds for the scenarios replayed (none holds keys over a screen).
@@ -709,10 +766,39 @@ pub fn replay(
                 player.set_y_rot(y_rot);
                 player.set_x_rot(x_rot);
             }
-            tick(&mut player);
+            // What came before the tick's own packets, which the client handled at its slot.
+            if let ReplayLevel::Captured { level, play } = &mut level {
+                while let Some(packet) = play.get(next) {
+                    if packet.serverbound && !NOT_TICKS.contains(&packet.name.as_str()) {
+                        break;
+                    }
+                    if !packet.serverbound {
+                        apply_entity_packet(level, packet, player_id, &registry_buffer);
+                    }
+                    next += 1;
+                }
+            }
+            tick(&mut player, level.level());
+            if let ReplayLevel::Captured { level, play } = &mut level {
+                level.tick_entities();
+                // The tick's own packets, up to its end; what came amid them is handled before the
+                // next tick.
+                while let Some(packet) = play.get(next) {
+                    next += 1;
+                    if !packet.serverbound {
+                        apply_entity_packet(level, packet, player_id, &registry_buffer);
+                    } else if packet.name == "minecraft:client_tick_end" {
+                        break;
+                    }
+                }
+            }
             packets.extend(player.sent.drain(..).map(&encode));
             packets.push(encode(Box::new(ServerboundClientTickEndPacket::INSTANCE)));
-            trace.push(trace_writer::line(trace.len() as i32, &player, others));
+            trace.push(trace_writer::line(
+                trace.len() as i32,
+                &player,
+                level.others(),
+            ));
             if tick_of_step == step.ticks - 1 && !step.wait_for.is_empty() {
                 let answers = answers.unwrap_or_else(|| {
                     panic!(
@@ -733,6 +819,96 @@ pub fn replay(
         }
     }
     Replay { trace, packets }
+}
+
+/// The serverbound packets the client sends on no tick of its own: the answers to the server's
+/// clock and its chunk batches.
+const NOT_TICKS: [&str; 4] = [
+    "minecraft:keep_alive",
+    "minecraft:pong",
+    "minecraft:ping_request",
+    "minecraft:chunk_batch_received",
+];
+
+/// What the client's listener does with a packet about another entity than the player (an entity
+/// coming or going, a move, a teleport, a position sync, its motion or data); the others change
+/// none of the level's entities.
+fn apply_entity_packet(
+    level: &mut ClientLevel,
+    packet: &CapturedPacket,
+    player_id: i32,
+    registry_buffer: &impl Fn(&[i8]) -> RegistryFriendlyByteBuf,
+) {
+    match packet.name.as_str() {
+        "minecraft:add_entity" => {
+            let add = ClientboundAddEntityPacket::STREAM_CODEC
+                .decode(&mut registry_buffer(&packet.payload));
+            if add.get_id() != player_id {
+                level.add_entity(ClientPacketListener::create_entity_from_packet(&add));
+            }
+        }
+        "minecraft:remove_entities" => {
+            let remove = ClientboundRemoveEntitiesPacket::STREAM_CODEC
+                .decode(&mut unpooled::wrapped_buffer(packet.payload.to_vec()));
+            for entity_id in remove.entity_ids() {
+                level.remove_entity(entity_id);
+            }
+        }
+        "minecraft:move_entity_pos" => {
+            let r#move = clientbound_move_entity_packet::Pos::STREAM_CODEC
+                .decode(&mut friendly(&packet.payload));
+            if r#move.entity_id() != player_id {
+                ClientPacketListener::handle_move_entity_in(level, &r#move);
+            }
+        }
+        "minecraft:move_entity_pos_rot" => {
+            let r#move = clientbound_move_entity_packet::PosRot::STREAM_CODEC
+                .decode(&mut friendly(&packet.payload));
+            if r#move.entity_id() != player_id {
+                ClientPacketListener::handle_move_entity_in(level, &r#move);
+            }
+        }
+        "minecraft:move_entity_rot" => {
+            let r#move = clientbound_move_entity_packet::Rot::STREAM_CODEC
+                .decode(&mut friendly(&packet.payload));
+            if r#move.entity_id() != player_id {
+                ClientPacketListener::handle_move_entity_in(level, &r#move);
+            }
+        }
+        "minecraft:teleport_entity" => {
+            let teleport = ClientboundTeleportEntityPacket::STREAM_CODEC
+                .decode(&mut friendly(&packet.payload));
+            if teleport.id() != player_id {
+                ClientPacketListener::handle_teleport_entity_in(level, &teleport);
+            }
+        }
+        "minecraft:entity_position_sync" => {
+            let sync = ClientboundEntityPositionSyncPacket::STREAM_CODEC
+                .decode(&mut friendly(&packet.payload));
+            if sync.id() != player_id {
+                ClientPacketListener::handle_entity_position_sync_in(level, &sync);
+            }
+        }
+        "minecraft:set_entity_motion" => {
+            let motion = ClientboundSetEntityMotionPacket::STREAM_CODEC
+                .decode(&mut unpooled::wrapped_buffer(packet.payload.to_vec()));
+            if motion.id() != player_id
+                && let Some(entity) = level.get_entity_mut(motion.id())
+            {
+                entity.lerp_motion(motion.movement());
+            }
+        }
+        "minecraft:set_entity_data" => {
+            let data = ClientboundSetEntityDataPacket::STREAM_CODEC
+                .decode(&mut registry_buffer(&packet.payload));
+            if data.id() != player_id
+                && let Some(entity) = level.get_entity_mut(data.id())
+            {
+                ClientPacketListener::assign_entity_values(entity, &data);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// What the client's listener does with one of the server's answers to the player
@@ -801,10 +977,11 @@ mod tests {
 
     use md5::{Digest, Md5};
 
-    use super::{Capture, CapturedLevel, FlatLevel, Replay, capture_path, replay, vanilla_dir};
+    use super::{
+        Capture, CapturedLevel, FlatLevel, Replay, ReplayLevel, capture_path, replay, vanilla_dir,
+    };
     use crate::net::minecraft::core::block_pos::BlockPos;
     use crate::net::minecraft::core::registry_access::RegistryAccess;
-    use crate::net::minecraft::world::entity::entity::Entity;
     use crate::net::minecraft::world::level::block_getter::BlockGetter;
     use crate::rustcraft::oracle::client::scenario::Scenario;
 
@@ -875,13 +1052,19 @@ mod tests {
         )
         .unwrap();
         let waits = scenario.steps.iter().any(|step| !step.wait_for.is_empty());
+        // The flat level's entities stay where they're summoned, which the server's stay too only
+        // without its AI or gravity moving them.
+        let moves = scenario.setup.iter().any(|command| {
+            command.starts_with("summon ")
+                && !command.contains("NoAI:1b")
+                && !command.contains("NoGravity:1b")
+        });
         // Vanilla's player is the server's first entity.
         let flat = FlatLevel::with_setup(&scenario.setup);
-        if !waits {
+        if !waits && !moves {
             let on_flat = replay(
                 &scenario,
-                &flat,
-                flat.entities(),
+                ReplayLevel::Flat(&flat),
                 Arc::new(RegistryAccess::new(Vec::new())),
                 1,
                 None,
@@ -891,7 +1074,7 @@ mod tests {
 
         if let Some(path) = capture_path(name) {
             let capture = Capture::load(&path).unwrap();
-            let captured = CapturedLevel::from_capture(&capture);
+            let mut captured = CapturedLevel::from_capture(&capture);
             let chunks = captured.level.get_chunk_source();
             assert!(
                 chunks.get_loaded_chunks_count() >= 81,
@@ -916,18 +1099,22 @@ mod tests {
                     }
                 }
             }
-            let others: Vec<Entity> = captured.level.entities_for_rendering().cloned().collect();
+            let registries = Arc::clone(&captured.registries);
+            let play = capture.play_after_marker();
             let on_captured = replay(
                 &scenario,
-                &captured.level,
-                &others,
-                Arc::clone(&captured.registries),
+                ReplayLevel::Captured {
+                    level: &mut captured.level,
+                    play: &play,
+                },
+                registries,
                 captured.player_id,
                 Some(&capture.play_from_marker()),
             );
             check(name, &on_captured, trace_md5, packets_md5);
         } else {
             assert!(!waits, "{name} waits for the server, so it needs a capture");
+            assert!(!moves, "{name}'s entities move, so it needs a capture");
         }
 
         let out = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -968,8 +1155,7 @@ mod tests {
         let flat = FlatLevel::with_setup(&scenario.setup);
         let draft = replay(
             &scenario,
-            &flat,
-            flat.entities(),
+            ReplayLevel::Flat(&flat),
             Arc::new(RegistryAccess::new(Vec::new())),
             1,
             None,
@@ -1196,6 +1382,15 @@ mod tests {
             "falls",
             "2f928d8ecf2e4023ea31ca262fa6b8e6",
             "71840c6ffe3f52b3f30db9b7ae551a37",
+        );
+    }
+
+    #[test]
+    fn entities_falling() {
+        check_scenario(
+            "entities-falling",
+            "4f44104845a42ec6bdf62d78c5d4af91",
+            "c1cc2fe9f328c4e6633af5fd1018cb93",
         );
     }
 

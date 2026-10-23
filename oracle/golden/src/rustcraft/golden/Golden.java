@@ -115,6 +115,14 @@ import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.network.protocol.game.ClientboundSetExperiencePacket;
 import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
+import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
+import net.minecraft.network.protocol.game.VecDelta;
+import net.minecraft.network.protocol.game.VecDeltaCodec;
+import net.minecraft.world.entity.PositionPath;
+import net.minecraft.world.entity.PositionStep;
 import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
@@ -291,6 +299,11 @@ public final class Golden {
         "continuous(Ljava/util/function/ToIntFunction;[Ljava/lang/Object;Lnet/minecraft/util/ByIdMap$OutOfBoundsStrategy;)Ljava/util/function/IntFunction;";
     // A record's hashCode adds up its components', and an enum constant's is its identity hash.
     private static final String ENUM_IN_RECORD = "hashes an enum constant's identity hash, which changes from run to run";
+    // What each kind of ClientboundMoveEntityPacket inherits, but its toString (Object's) and getEntity (a level).
+    private static final String[] MOVE_ENTITY_INHERITED = {
+        "getPositionDelta()Lnet/minecraft/network/protocol/game/VecDelta;", "getYRot()F", "getXRot()F", "hasRotation()Z", "hasPosition()Z",
+        "isOnGround()Z", "handle(Lnet/minecraft/network/protocol/game/ClientGamePacketListener;)V"
+    };
     // An array's hashCode and toString are Object's, so a record holding one hashes and prints its identity hash.
     private static final String ARRAY_IN_RECORD = "goes by an array component's identity hash, which changes from run to run";
     // A ResourceKey doesn't override hashCode, since keys are interned, so a record holding one hashes its identity hash.
@@ -1300,6 +1313,24 @@ public final class Golden {
         InstanceSuite.every(ClientboundEntityEventPacket.class)
             .extraInputs("STREAM_CODEC.decode", friendly(List.<Object[]>of(new Object[]{NetworkValues.buffer(0, 0, ENTITY_EVENT)}))),
         InstanceSuite.every(ClientboundRemoveEntitiesPacket.class),
+        // Other entities moving: the moves' deltas from VecDeltaCodec's base, linear or in steps, the paths a position
+        // sync carries, and the four packets. A move's toString prints Object's, an identity hash.
+        new StaticSuite(VecDelta.class),
+        InstanceSuite.every(VecDelta.Linear.class),
+        InstanceSuite.every(VecDelta.Stepped.class),
+        InstanceSuite.every(VecDelta.Stepped.DeltaStep.class),
+        InstanceSuite.every(VecDeltaCodec.class),
+        InstanceSuite.every(PositionStep.class),
+        new StaticSuite(PositionPath.class),
+        InstanceSuite.every(PositionPath.Linear.class),
+        InstanceSuite.every(PositionPath.Stepped.class),
+        InstanceSuite.every(ClientboundMoveEntityPacket.Pos.class).inherited(MOVE_ENTITY_INHERITED),
+        InstanceSuite.every(ClientboundMoveEntityPacket.PosRot.class).inherited(MOVE_ENTITY_INHERITED),
+        InstanceSuite.every(ClientboundMoveEntityPacket.Rot.class).inherited(MOVE_ENTITY_INHERITED),
+        // Its set of relatives is an EnumSet, whose hashCode adds its constants' identity hashes.
+        InstanceSuite.every(ClientboundTeleportEntityPacket.class).exclude("hashCode()I", ENUM_IN_RECORD),
+        InstanceSuite.every(ClientboundEntityPositionSyncPacket.class),
+        InstanceSuite.every(ClientboundRotateHeadPacket.class),
         InstanceSuite.every(Difficulty.class)
             .extraInputs("valueOf(Ljava/lang/String;)Lnet/minecraft/world/Difficulty;", names(Difficulty.values()))
             .extraInputs(

@@ -45,6 +45,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_pa
 use crate::net::minecraft::network::protocol::game::clientbound_clear_titles_packet::ClientboundClearTitlesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_entity_position_sync_packet::ClientboundEntityPositionSyncPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
@@ -57,10 +58,12 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_border_cente
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_move_entity_packet;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_remove_entities_packet::ClientboundRemoveEntitiesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_rotate_head_packet::ClientboundRotateHeadPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_server_data_packet::ClientboundServerDataPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_action_bar_text_packet::ClientboundSetActionBarTextPacket;
@@ -80,6 +83,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_titles_anima
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_teleport_entity_packet::ClientboundTeleportEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_state_packet::ClientboundTickingStatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_ticking_step_packet::ClientboundTickingStepPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
@@ -538,7 +542,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_ENTITY_POSITION_SYNC,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_ENTITY_POSITION_SYNC),
+                ClientboundEntityPositionSyncPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_EXPLODE,
@@ -614,11 +618,11 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_MOVE_ENTITY_POS,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_MOVE_ENTITY_POS),
+                clientbound_move_entity_packet::Pos::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_MOVE_ENTITY_POS_ROT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_MOVE_ENTITY_POS_ROT),
+                clientbound_move_entity_packet::PosRot::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_MOVE_MINECART_ALONG_TRACK,
@@ -626,7 +630,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_MOVE_ENTITY_ROT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_MOVE_ENTITY_ROT),
+                clientbound_move_entity_packet::Rot::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_MOVE_VEHICLE,
@@ -738,7 +742,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_ROTATE_HEAD,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_ROTATE_HEAD),
+                ClientboundRotateHeadPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SECTION_BLOCKS_UPDATE,
@@ -910,7 +914,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_TELEPORT_ENTITY,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_TELEPORT_ENTITY),
+                ClientboundTeleportEntityPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_TEST_INSTANCE_BLOCK_STATUS,

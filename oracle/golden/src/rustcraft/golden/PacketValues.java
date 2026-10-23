@@ -124,6 +124,12 @@ import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
+import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
+import net.minecraft.network.protocol.game.VecDelta;
+import net.minecraft.network.protocol.game.VecDeltaCodec;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.clock.ClockNetworkState;
 import net.minecraft.world.clock.WorldClock;
@@ -174,6 +180,8 @@ import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.server.packs.repository.KnownPack;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.PositionMoveRotation;
+import net.minecraft.world.entity.PositionPath;
+import net.minecraft.world.entity.PositionStep;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.ChatVisiblity;
 import net.minecraft.world.entity.player.Input;
@@ -211,6 +219,18 @@ final class PacketValues {
     static final Values.Generator PLAYER_COMMAND_ACTION = new CoreValues.Constants<>(ServerboundPlayerCommandPacket.Action.class);
 
     private static final Values.Generator INTS = Values.generator(int.class);
+    // A move's delta along an axis, in 4096ths of a block: none, an ulp of it, a block, and the shorts' limits, and
+    // mostly within a few blocks; and a step's tick offset, mostly an update interval's few ticks.
+    private static final Values.Generator DELTA_SHORTS = new Values.Simple(
+        List.<Object>of((short)0, (short)1, (short)-1, (short)4096, (short)-4096, Short.MAX_VALUE, Short.MIN_VALUE),
+        random -> random.nextBoolean() ? (short)(random.nextInt(16385) - 8192) : (short)random.nextInt(),
+        value -> new JsonPrimitive((Short)value)
+    );
+    private static final Values.Generator TICK_OFFSETS = new Values.Simple(
+        List.<Object>of(0, 1, 2, 3, 20, -1, Integer.MAX_VALUE, Integer.MIN_VALUE),
+        random -> random.nextBoolean() ? random.nextInt(8) : random.nextInt(),
+        value -> new JsonPrimitive((Integer)value)
+    );
     private static final Values.Generator BYTES = Values.generator(byte.class);
     private static final Values.Generator LONGS = Values.generator(long.class);
     private static final Values.Generator STRINGS = Values.generator(String.class);
@@ -357,6 +377,8 @@ final class PacketValues {
     // The generators of the payloads packets hold, by their class and by their interface, and of the other records they
     // hold.
     private static final Map<Class<?>, Values.Generator> PAYLOADS = new HashMap<>();
+    // A position sync's steps (List<PositionStep>), made with the other entities' moves below.
+    private static Values.Generator POSITION_STEP_LISTS;
     // The fields each packet class that isn't a record is encoded as.
     private static final Map<Class<?>, List<Field>> FIELDS = new LinkedHashMap<>();
     // The select_known_packs packets' packs.
@@ -709,6 +731,75 @@ final class PacketValues {
             ClientboundRemoveEntitiesPacket.class, fields -> new ClientboundRemoveEntitiesPacket(intList(fields[0])), List.of(), INT_LISTS
         );
 
+        // Other entities moving. A move's delta from where the client last had the entity (VecDelta, in 4096ths of a
+        // block of VecDeltaCodec's base) is linear, or steps each with its tick offset, whose count the move's properties
+        // VarInt carries; a VecDelta declared as its interface is [class, fields] by its record's simple name, like a
+        // payload, and so is a PositionPath, a position or steps (a position sync's). Each kind of move is the fields every
+        // kind has, the ones a kind sets to a constant constant; a teleport's change is the player's; a head's rotation is
+        // read from a buffer, since its public constructor takes the entity.
+        Values.Generator linearDeltas = values(
+            VecDelta.Linear.class, fields -> new VecDelta.Linear((Short)fields[0], (Short)fields[1], (Short)fields[2]), List.of(), DELTA_SHORTS,
+            DELTA_SHORTS, DELTA_SHORTS
+        );
+        Values.Generator deltaSteps = values(
+            VecDelta.Stepped.DeltaStep.class,
+            fields -> new VecDelta.Stepped.DeltaStep((Short)fields[0], (Short)fields[1], (Short)fields[2], (Integer)fields[3]), List.of(),
+            DELTA_SHORTS, DELTA_SHORTS, DELTA_SHORTS, TICK_OFFSETS
+        );
+        Values.Generator steppedDeltas = values(
+            VecDelta.Stepped.class, fields -> new VecDelta.Stepped(castList(fields[0])), List.of(), shortListsOf(deltaSteps, 1, 2, 3)
+        );
+        Values.Generator deltas = new Tagged(List.of(linearDeltas, steppedDeltas));
+        PAYLOADS.put(VecDelta.Linear.class, linearDeltas);
+        PAYLOADS.put(VecDelta.Stepped.DeltaStep.class, deltaSteps);
+        PAYLOADS.put(VecDelta.Stepped.class, steppedDeltas);
+        PAYLOADS.put(VecDelta.class, deltas);
+        Values.Generator positionSteps = values(
+            PositionStep.class, fields -> new PositionStep((Vec3)fields[0], (Integer)fields[1]), List.of(), CoreValues.VEC3, TICK_OFFSETS
+        );
+        POSITION_STEP_LISTS = shortListsOf(positionSteps, 1, 2, 3);
+        Values.Generator linearPaths = values(
+            PositionPath.Linear.class, fields -> new PositionPath.Linear((Vec3)fields[0]), List.of(), CoreValues.VEC3
+        );
+        Values.Generator steppedPaths = values(
+            PositionPath.Stepped.class, fields -> new PositionPath.Stepped((Vec3)fields[0], castList(fields[1])), List.of(), CoreValues.VEC3,
+            POSITION_STEP_LISTS
+        );
+        Values.Generator paths = new Tagged(List.of(linearPaths, steppedPaths));
+        PAYLOADS.put(PositionStep.class, positionSteps);
+        PAYLOADS.put(PositionPath.Linear.class, linearPaths);
+        PAYLOADS.put(PositionPath.Stepped.class, steppedPaths);
+        PAYLOADS.put(PositionPath.class, paths);
+        PAYLOADS.put(VecDeltaCodec.class, values(VecDeltaCodec.class, PacketValues::vecDeltaCodec, List.of("base"), CoreValues.VEC3));
+        List<String> entityMoveFields = List.of("entityId", "delta", "yRot", "xRot", "onGround", "hasRot", "hasPos");
+        packet(
+            ClientboundMoveEntityPacket.Pos.class,
+            fields -> new ClientboundMoveEntityPacket.Pos((Integer)fields[0], (VecDelta)fields[1], (Boolean)fields[4]), entityMoveFields, INTS,
+            deltas, constant((byte)0, byte.class), constant((byte)0, byte.class), BOOLEANS, constant(false, boolean.class),
+            constant(true, boolean.class)
+        );
+        packet(
+            ClientboundMoveEntityPacket.PosRot.class,
+            fields -> new ClientboundMoveEntityPacket.PosRot((Integer)fields[0], (VecDelta)fields[1], (Byte)fields[2], (Byte)fields[3], (Boolean)fields[4]),
+            entityMoveFields, INTS, deltas, BYTES, BYTES, BOOLEANS, constant(true, boolean.class), constant(true, boolean.class)
+        );
+        packet(
+            ClientboundMoveEntityPacket.Rot.class,
+            fields -> new ClientboundMoveEntityPacket.Rot((Integer)fields[0], (Byte)fields[2], (Byte)fields[3], (Boolean)fields[4]), entityMoveFields,
+            INTS, constant(VecDelta.ZERO, VecDelta.class), BYTES, BYTES, BOOLEANS, constant(true, boolean.class), constant(false, boolean.class)
+        );
+        packet(
+            ClientboundTeleportEntityPacket.class,
+            fields -> new ClientboundTeleportEntityPacket((Integer)fields[0], (PositionMoveRotation)fields[1], relativeSet(fields[2]), (Boolean)fields[3]),
+            List.of(), INTS, PAYLOADS.get(PositionMoveRotation.class), RELATIVE_SETS, BOOLEANS
+        );
+        packet(
+            ClientboundEntityPositionSyncPacket.class,
+            fields -> new ClientboundEntityPositionSyncPacket((Integer)fields[0], (PositionPath)fields[1], (Float)fields[2], (Float)fields[3], (Boolean)fields[4]),
+            List.of(), INTS, paths, FLOATS, FLOATS, BOOLEANS
+        );
+        packet(ClientboundRotateHeadPacket.class, PacketValues::rotateHeadPacket, List.of("entityId", "yHeadRot"), INTS, BYTES);
+
         // The game protocol's packets that read the registries (RegistryValues), and what they hold: the clocks' time, an
         // entity's attributes, the world's spawn, an entity's data, its damage and an entity coming into view. Made when
         // first used: the attributes' holders need the registries loaded, and the game bootstrapped, which Golden's
@@ -936,6 +1027,9 @@ final class PacketValues {
             return REPORT_DETAILS;
         }
         if (type.getRawType() == List.class) {
+            if (element == PositionStep.class) {
+                return POSITION_STEP_LISTS;
+            }
             if (element == KnownPack.class) {
                 return KNOWN_PACK_LISTS;
             }
@@ -982,6 +1076,8 @@ final class PacketValues {
             case CustomQueryPayload payload -> Values.encode(payload, payload.getClass());
             // Declared as their interface, which several classes implement.
             case CustomPacketPayload payload -> AnyPayload.tagged(payload);
+            case VecDelta delta -> Tagged.tagged(delta);
+            case PositionPath path -> Tagged.tagged(path);
             case ProtocolInfo<?> protocol -> {
                 JsonArray array = new JsonArray();
                 array.add(Values.encode(protocol.id(), ConnectionProtocol.class));
@@ -1320,6 +1416,39 @@ final class PacketValues {
     }
 
     /**
+     * Values declared as a sealed interface whose kinds are records (VecDelta, PositionPath), any of the generators':
+     * {@code [class, fields]}, by the record's simple name, since two kinds can have the same fields.
+     */
+    private record Tagged(List<Values.Generator> kinds) implements Values.Generator {
+        static JsonElement tagged(final Object value) {
+            JsonArray array = new JsonArray();
+            array.add(value.getClass().getSimpleName());
+            array.add(Values.encode(value, value.getClass()));
+            return array;
+        }
+
+        @Override
+        public List<Object> edges() {
+            return this.kinds.stream().flatMap(generator -> generator.edges().stream()).toList();
+        }
+
+        @Override
+        public Object random(final Random random) {
+            return this.kinds.get(random.nextInt(this.kinds.size())).random(random);
+        }
+
+        @Override
+        public JsonElement encode(final Object spec) {
+            return tagged(spec);
+        }
+
+        @Override
+        public Object instantiate(final Object spec) {
+            return PAYLOADS.get(spec.getClass()).instantiate(spec);
+        }
+    }
+
+    /**
      * Payloads declared as CustomPacketPayload, any of the generators': {@code [class, fields]}, by the class's simple
      * name, since a DiscardedPayload can have a BrandPayload's identifier.
      */
@@ -1477,6 +1606,25 @@ final class PacketValues {
 
     // A key packet as a server reads it, since its public constructor encrypts with Crypt.
     // The packet its reader makes of the flags and speeds: the flags in a byte's low bits.
+    // Its public constructor takes the entity.
+    private static ClientboundRotateHeadPacket rotateHeadPacket(final Object[] fields) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeVarInt((Integer)fields[0]);
+        buffer.writeByte((Byte)fields[1]);
+        return ClientboundRotateHeadPacket.STREAM_CODEC.decode(buffer);
+    }
+
+    private static VecDeltaCodec vecDeltaCodec(final Object[] fields) {
+        VecDeltaCodec codec = new VecDeltaCodec();
+        codec.setBase((Vec3)fields[0]);
+        return codec;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> List<T> castList(final Object list) {
+        return (List<T>)list;
+    }
+
     private static ClientboundPlayerAbilitiesPacket abilitiesPacket(final Object[] fields) {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         int bitfield = 0;

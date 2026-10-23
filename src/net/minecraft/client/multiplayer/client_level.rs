@@ -1145,8 +1145,6 @@ impl ClientLevel {
         level.add_particle(drip_particle, x, y, z, 0.0, 0.0, 0.0);
     }
 
-    /// `tickEntities()` for the entities besides the player, in the tick list's order:
-    /// `tickNonPassenger`'s `commonTick`; their classes' `tick` isn't ported.
     /// `Level.tickBlockEntities()`: the pending tickers added to the end, then each ticker in
     /// order, a removed one dropped from the list. Those added while they tick wait for the next
     /// tick. Java's `tickRateManager().runsNormally()` and `shouldTickBlocksAt` are always true
@@ -1191,12 +1189,31 @@ impl ClientLevel {
         state.trigger_event(level, pos, b0, b1);
     }
 
+    /// `tickEntities()` for the entities besides the player, in the tick list's order:
+    /// `tickNonPassenger`'s `commonTick`, which steps their interpolation; their classes' `tick`
+    /// isn't ported.
     pub fn tick_entities(&mut self) {
         for id in self.ticking_entities.for_each() {
-            if let Some(entity) = self.entity_storage.get_entity_mut(id) {
-                entity.common_tick();
-            }
+            self.with_entity(id, |entity, level| entity.common_tick_in(level));
         }
+    }
+
+    /// Runs `f` on the entity with the level, which it's out of meanwhile, and answers what `f`
+    /// does, or none without the entity. Java's entity reaches its level while it's in it.
+    pub fn with_entity<R>(
+        &mut self,
+        id: i32,
+        f: impl FnOnce(&mut Entity, &ClientLevel) -> R,
+    ) -> Option<R> {
+        let (index, mut entity) = self.entity_storage.take(id)?;
+        let result = f(&mut entity, self);
+        self.entity_storage.put_back(index, entity);
+        Some(result)
+    }
+
+    /// `isTickingEntity(Entity)`: every entity the port has ticks.
+    pub fn is_ticking_entity(&self, id: i32) -> bool {
+        self.ticking_entities.contains(id)
     }
 
     /// The options' `biomeBlendRadius`, which the tints blend over.

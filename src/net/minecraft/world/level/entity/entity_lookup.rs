@@ -75,6 +75,18 @@ impl<T: EntityAccess> EntityLookup<T> {
             .map(|(_, entity)| entity)
     }
 
+    /// The entity taken out for a while, with its place, which `put_back` gives it again: Java's
+    /// entity is in its level while its code runs, which Rust's borrows don't let it be.
+    pub fn take(&mut self, id: i32) -> Option<(usize, T)> {
+        let index = self.by_id.iter().position(|(known, _)| *known == id)?;
+        Some((index, self.by_id.remove(index).1))
+    }
+
+    pub fn put_back(&mut self, index: usize, entity: T) {
+        let id = entity.get_id();
+        self.by_id.insert(index, (id, entity));
+    }
+
     pub fn count(&self) -> usize {
         self.by_uuid.len()
     }
