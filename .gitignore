@@ -1,5 +1,5 @@
 # Mojang code and assets, fetched by tools/setup_vanilla.py. Not redistributable.
 /vanilla/
 
-/target/
+/target
 __pycache__/
