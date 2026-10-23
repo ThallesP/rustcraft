@@ -1595,6 +1595,68 @@ impl Matrix4f {
         self
     }
 
+    /// `setOrtho2D`: an orthographic projection with depth from -1 to 1.
+    pub fn set_ortho2_d(&mut self, left: f32, right: f32, bottom: f32, top: f32) -> &mut Self {
+        if (self.properties & PROPERTY_IDENTITY) == 0 {
+            self.identity_fields();
+        }
+        self.m00 = 2.0 / (right - left);
+        self.m11 = 2.0 / (top - bottom);
+        self.m22 = -1.0;
+        self.m30 = (right + left) / (left - right);
+        self.m31 = (top + bottom) / (bottom - top);
+        self.properties = PROPERTY_AFFINE;
+        self
+    }
+
+    /// `ortho2D(left, right, bottom, top)`: this matrix times the projection. JOML reads every
+    /// field it needs before writing each, in its order, so the fluent overload writes into a copy.
+    pub fn ortho2_d(&mut self, left: f32, right: f32, bottom: f32, top: f32) -> &mut Self {
+        let this = *self;
+        this.ortho2_d_into(left, right, bottom, top, self);
+        self
+    }
+
+    pub fn ortho2_d_into<'a>(
+        &self,
+        left: f32,
+        right: f32,
+        bottom: f32,
+        top: f32,
+        dest: &'a mut Matrix4f,
+    ) -> &'a mut Matrix4f {
+        if (self.properties & PROPERTY_IDENTITY) != 0 {
+            return dest.set_ortho2_d(left, right, bottom, top);
+        }
+        let rm00 = 2.0 / (right - left);
+        let rm11 = 2.0 / (top - bottom);
+        let rm30 = (right + left) / (left - right);
+        let rm31 = (top + bottom) / (bottom - top);
+        let m = *self;
+        dest.m30 = m.m00 * rm30 + m.m10 * rm31 + m.m30;
+        dest.m31 = m.m01 * rm30 + m.m11 * rm31 + m.m31;
+        dest.m32 = m.m02 * rm30 + m.m12 * rm31 + m.m32;
+        dest.m33 = m.m03 * rm30 + m.m13 * rm31 + m.m33;
+        dest.m00 = m.m00 * rm00;
+        dest.m01 = m.m01 * rm00;
+        dest.m02 = m.m02 * rm00;
+        dest.m03 = m.m03 * rm00;
+        dest.m10 = m.m10 * rm11;
+        dest.m11 = m.m11 * rm11;
+        dest.m12 = m.m12 * rm11;
+        dest.m13 = m.m13 * rm11;
+        dest.m20 = -m.m20;
+        dest.m21 = -m.m21;
+        dest.m22 = -m.m22;
+        dest.m23 = -m.m23;
+        dest.properties = m.properties
+            & !(PROPERTY_PERSPECTIVE
+                | PROPERTY_IDENTITY
+                | PROPERTY_TRANSLATION
+                | PROPERTY_ORTHONORMAL);
+        dest
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn set_ortho(
         &mut self,
@@ -2393,6 +2455,24 @@ mod tests {
              z_zero_to_one,
              mut dest: Matrix4f| {
                 *this.perspective_into(fovy, aspect, z_near, z_far, z_zero_to_one, &mut dest)
+            },
+        );
+        golden.check_method(
+            "setOrtho2D(FFFF)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, left, right, bottom, top| {
+                *this.set_ortho2_d(left, right, bottom, top)
+            },
+        );
+        golden.check_method(
+            "ortho2D(FFFF)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, left, right, bottom, top| {
+                *this.ortho2_d(left, right, bottom, top)
+            },
+        );
+        golden.check_method(
+            "ortho2D(FFFFLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
+            |this: &mut Matrix4f, left, right, bottom, top, mut dest: Matrix4f| {
+                *this.ortho2_d_into(left, right, bottom, top, &mut dest)
             },
         );
         golden.check_method(

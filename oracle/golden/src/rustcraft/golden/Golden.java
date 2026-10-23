@@ -255,7 +255,7 @@ public final class Golden {
                 "floorDiv(II)I", "floorDiv(JJ)J", "floorMod(II)I", "floorMod(JJ)J",
                 "sin(D)D", "cos(D)D", "tan(D)D", "asin(D)D", "log(D)D", "pow(DD)D", "sqrt(D)D",
                 "acos(D)D", "atan2(DD)D", "rint(D)D", "round(F)I", "round(D)J", "signum(F)F", "signum(D)D",
-                "toRadians(D)D", "toDegrees(D)D", "hypot(DD)D", "nextUp(D)D", "nextDown(D)D", "clamp(DDD)D"
+                "toRadians(D)D", "toDegrees(D)D", "hypot(DD)D", "nextUp(D)D", "nextDown(D)D", "clamp(DDD)D", "clamp(FFF)F"
             )
             .extraInputs("sin(D)D", trigInputs(1, -253, 16))
             .extraInputs("cos(D)D", trigInputs(2, -253, 16))
@@ -263,7 +263,8 @@ public final class Golden {
             .extraInputs("log(D)D", logInputs())
             .extraInputs("pow(DD)D", powInputs())
             .extraInputs("hypot(DD)D", hypotInputs())
-            .extraInputs("clamp(DDD)D", clampInputs()),
+            .extraInputs("clamp(DDD)D", clampInputs())
+            .extraInputs("clamp(FFF)F", clampInputs().stream().map(Golden::asFloats).toList()),
         new StringSuite(),
         // JOML's own fast paths are off (no -Djoml.fastmath), so its trig goes through java.lang.Math.
         new StaticSuite(org.joml.Math.class).exclude("random()D", "seeded from the clock"),
@@ -347,6 +348,7 @@ public final class Golden {
             "perspective(FFFF)Lorg/joml/Matrix4f;", "perspective(FFFFZ)Lorg/joml/Matrix4f;",
             "perspective(FFFFLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;", "perspective(FFFFZLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
             "setOrtho(FFFFFF)Lorg/joml/Matrix4f;", "setOrtho(FFFFFFZ)Lorg/joml/Matrix4f;",
+            "setOrtho2D(FFFF)Lorg/joml/Matrix4f;", "ortho2D(FFFF)Lorg/joml/Matrix4f;", "ortho2D(FFFFLorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
             "assume(I)Lorg/joml/Matrix4f;",
             "transformProject(Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
             "transformProject(Lorg/joml/Vector3fc;Lorg/joml/Vector3f;)Lorg/joml/Vector3f;",
@@ -3345,6 +3347,14 @@ public final class Golden {
             }
         }
         return inputs;
+    }
+
+    private static Object[] asFloats(final Object[] doubles) {
+        Object[] floats = new Object[doubles.length];
+        for (int i = 0; i < doubles.length; i++) {
+            floats[i] = (float)(double)(Double)doubles[i];
+        }
+        return floats;
     }
 
     private static List<Object[]> everyByte() {

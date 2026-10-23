@@ -7,5 +7,6 @@ pub mod multiplayer;
 pub mod options;
 pub mod player;
 pub mod renderer;
+pub mod resources;
 pub mod screenshot;
 pub mod user;

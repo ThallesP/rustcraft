@@ -222,3 +222,100 @@ fn draws_gui_fills_exactly() {
         }
     }
 }
+
+/// The block atlas drawn on the GPU like vanilla's `TextureAtlas.upload`, read back like
+/// `dumpContents`, against the pixels its draws are known to give. The layout and every sprite's
+/// mip levels are vanilla's (the `SpriteLoader` goldens); each sprite is drawn by
+/// `pipeline/animate_sprite_blit` over its padded place, and with nearest filtering and clamped
+/// edges the pixel `k` pixels into the place at mip level `L` is the sprite's texel `k - p_L`
+/// (`p_L` the padding at that level) clamped into the sprite, of its first frame. Every sprite's
+/// size and padding are multiples of `2^L`, so each pixel's texture coordinate lands on a texel's
+/// center, far from any edge. llvmpipe zeroes a new texture, so where no sprite is drawn the atlas
+/// is transparent black.
+#[test]
+fn draws_the_block_atlas_from_vanillas_sprites() {
+    use rustcraft::net::minecraft::client::renderer::texture::sprite_loader::SpriteLoader;
+    use rustcraft::net::minecraft::resources::identifier::Identifier;
+    use rustcraft::net::minecraft::server::packs::pack_resources::PackResources;
+    use rustcraft::net::minecraft::server::packs::pack_type::PackType;
+    use rustcraft::net::minecraft::server::packs::resources::multi_pack_resource_manager::MultiPackResourceManager;
+    use rustcraft::net::minecraft::server::packs::vanilla_pack_resources::VanillaPackResources;
+    use std::rc::Rc;
+
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("atlas");
+    let _ = std::fs::remove_dir_all(&dir);
+    let Some(output) = run(&["--dump-atlas", dir.to_str().expect("a UTF-8 path")]) else {
+        return;
+    };
+    assert!(output.contains("2048x2048, 5 mip levels"), "{output}");
+
+    let vanilla = VanillaPackResources::create_client_pack(
+        &VanillaPackResources::vanilla_jar_root(),
+        Path::new("no-asset-index"),
+    );
+    let layers = vanilla
+        .resource_layers()
+        .iter()
+        .map(|layer| layer.clone() as Rc<dyn PackResources>)
+        .collect();
+    let manager = MultiPackResourceManager::new(PackType::CLIENT_RESOURCES, layers);
+    let preparations = SpriteLoader::new(Identifier::with_default_namespace("blocks"), 16384)
+        .load_and_stitch(
+            &manager,
+            &Identifier::with_default_namespace("blocks"),
+            4,
+            0,
+        )
+        .expect("the atlas fits");
+
+    for level in 0..=preparations.mip_level {
+        let width = (preparations.width >> level) as usize;
+        let height = (preparations.height >> level) as usize;
+        let mut expected = vec![0u8; width * height * 4];
+        for sprite in &preparations.regions {
+            let contents = sprite.contents();
+            let image = &contents.by_mip_level()[level as usize];
+            let (frame_x, frame_y) = contents.animated_texture().map_or((0, 0), |animated| {
+                let frame = animated.frames[0].index;
+                (
+                    (animated.get_frame_x(frame) * contents.width()) >> level,
+                    (animated.get_frame_y(frame) * contents.height()) >> level,
+                )
+            });
+            let padding = sprite.padding() >> level;
+            let sprite_width = contents.width() >> level;
+            let sprite_height = contents.height() >> level;
+            for j in 0..(contents.height() + sprite.padding() * 2) >> level {
+                for i in 0..(contents.width() + sprite.padding() * 2) >> level {
+                    let source_x = (i - padding).clamp(0, sprite_width - 1) + frame_x;
+                    let source_y = (j - padding).clamp(0, sprite_height - 1) + frame_y;
+                    let pixel = image.get_pixel_abgr(source_x, source_y).to_le_bytes();
+                    let x = (sprite.get_x() >> level) + i;
+                    let y = (sprite.get_y() >> level) + j;
+                    let start = (x as usize + y as usize * width) * 4;
+                    expected[start..start + 4].copy_from_slice(&pixel);
+                }
+            }
+        }
+
+        let (actual_width, actual_height, color_type, actual) =
+            read_png(&dir.join(format!("minecraft_textures_atlas_blocks.png_{level}.png")));
+        assert_eq!(
+            (actual_width as usize, actual_height as usize, color_type),
+            (width, height, png::ColorType::Rgba)
+        );
+        let differing = (0..width * height)
+            .filter(|pixel| actual[pixel * 4..pixel * 4 + 4] != expected[pixel * 4..pixel * 4 + 4])
+            .collect::<Vec<_>>();
+        assert!(
+            differing.is_empty(),
+            "mip level {level}: {} of {} pixels differ, the first at ({}, {}): {:?} instead of {:?}",
+            differing.len(),
+            width * height,
+            differing[0] % width,
+            differing[0] / width,
+            &actual[differing[0] * 4..differing[0] * 4 + 4],
+            &expected[differing[0] * 4..differing[0] * 4 + 4]
+        );
+    }
+}

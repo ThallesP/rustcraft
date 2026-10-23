@@ -216,6 +216,19 @@ impl Math {
         Math::min_f64(max, Math::max_f64(value, min))
     }
 
+    /// `clamp(float, float, float)`. Panics where Java throws `IllegalArgumentException`, like
+    /// `clamp_f64`.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    pub fn clamp_f32(value: f32, min: f32, max: f32) -> f32 {
+        if !(min < max) {
+            assert!(!min.is_nan(), "min is NaN");
+            assert!(!max.is_nan(), "max is NaN");
+            assert!(min.total_cmp(&max) != Ordering::Greater, "{min} > {max}");
+        }
+
+        Math::min_f32(max, Math::max_f32(value, min))
+    }
+
     /// The next double toward positive infinity. -0.0 becomes 0.0 first, so its next is
     /// `Double.MIN_VALUE`.
     pub fn next_up_f64(d: f64) -> f64 {
@@ -279,6 +292,7 @@ mod tests {
         golden.check("nextUp(D)D", Math::next_up_f64);
         golden.check("nextDown(D)D", Math::next_down_f64);
         golden.check("clamp(DDD)D", Math::clamp_f64);
+        golden.check("clamp(FFF)F", Math::clamp_f32);
         golden.finish();
     }
 }

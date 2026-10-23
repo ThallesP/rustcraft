@@ -11,6 +11,8 @@
 //!   rustcraft --device-info                     prints the device as vanilla logs it
 //!   rustcraft --compile-pipelines               compiles every pipeline `ShaderManager` does,
 //!                                               printing how many linked
+//!   rustcraft --dump-atlas DIR                  loads the block atlas from the vanilla pack and
+//!                                               dumps it like `TextureAtlas.dumpContents`
 //!   rustcraft --screenshot out.png [--size WxH] [--clear AARRGGBB] [--quadrant AARRGGBB]
 //!             [--gui-scale N] [--fill X0,Y0,X1,Y1,AARRGGBB]...
 //!                                               renders a frame offscreen and writes it as a PNG
@@ -26,6 +28,7 @@
 use rustcraft::com::mojang::blaze3d::pipeline::main_target::MainTarget;
 use rustcraft::com::mojang::blaze3d::platform::window::Window;
 use rustcraft::com::mojang::blaze3d::systems::render_system::RenderSystem;
+use rustcraft::com::mojang::blaze3d::systems::sampler_cache::SamplerCache;
 use rustcraft::com::mojang::blaze3d::vertex::buffer_builder::BufferBuilder;
 use rustcraft::com::mojang::blaze3d::vertex::byte_buffer_builder::ByteBufferBuilder;
 use rustcraft::com::mojang::blaze3d::vertex::default_vertex_format::DefaultVertexFormat;
@@ -45,7 +48,16 @@ use rustcraft::net::minecraft::client::renderer::projection::Projection;
 use rustcraft::net::minecraft::client::renderer::projection_matrix_buffer::ProjectionMatrixBuffer;
 use rustcraft::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
 use rustcraft::net::minecraft::client::renderer::shader_manager::{Configs, ShaderManager};
+use rustcraft::net::minecraft::client::renderer::texture::sprite_loader::SpriteLoader;
+use rustcraft::net::minecraft::client::renderer::texture::texture_atlas::{
+    AnimationPipelines, TextureAtlas,
+};
 use rustcraft::net::minecraft::client::screenshot::Screenshot;
+use rustcraft::net::minecraft::resources::identifier::Identifier;
+use rustcraft::net::minecraft::server::packs::pack_resources::PackResources;
+use rustcraft::net::minecraft::server::packs::pack_type::PackType;
+use rustcraft::net::minecraft::server::packs::resources::multi_pack_resource_manager::MultiPackResourceManager;
+use rustcraft::net::minecraft::server::packs::vanilla_pack_resources::VanillaPackResources;
 use rustcraft::net::minecraft::util::argb::ARGB;
 use rustcraft::org::joml::matrix3x2f::Matrix3x2f;
 use rustcraft::org::joml::matrix4f::Matrix4f;
@@ -58,6 +70,7 @@ use std::rc::Rc;
 enum Mode {
     DeviceInfo,
     CompilePipelines,
+    DumpAtlas(PathBuf),
     Screenshot(PathBuf),
     Window,
 }
@@ -114,6 +127,7 @@ fn parse_arguments() -> Result<Arguments, String> {
             "--compile-pipelines" => mode = Some(Mode::CompilePipelines),
             "--screenshot" => mode = Some(Mode::Screenshot(PathBuf::from(value()?))),
             "--window" => mode = Some(Mode::Window),
+            "--dump-atlas" => mode = Some(Mode::DumpAtlas(PathBuf::from(value()?))),
             "--size" => {
                 let size = value()?;
                 let (w, h) = size
@@ -187,6 +201,60 @@ fn shaders(device: &dyn GpuDevice) -> Result<(Configs, PipelineBuilder), String>
         info.hints_and_workarounds.is_explicit_depth_required,
     );
     Ok((configs, builder))
+}
+
+/// The block atlas as the client loads it at startup (`AtlasManager`'s blocks entry, with
+/// `Options`' default mipmap levels, 4, and no anisotropic filtering), dumped into `dir`.
+fn dump_block_atlas(device: &dyn GpuDevice, dir: &Path) -> Result<(), String> {
+    let (configs, builder) = shaders(device)?;
+    let compile = |pipeline| {
+        builder
+            .compile_pipeline(pipeline, &configs, device)
+            .map(|pipeline| pipeline as Rc<dyn CompiledRenderPipeline>)
+            .ok_or("an animation pipeline didn't compile")
+    };
+    let pipelines = AnimationPipelines {
+        blit: compile(&RenderPipelines::get().ANIMATE_SPRITE_BLIT)?,
+        interpolate: compile(&RenderPipelines::get().ANIMATE_SPRITE_INTERPOLATE)?,
+    };
+    let sampler_cache = SamplerCache::new(device);
+    let vanilla = VanillaPackResources::create_client_pack(
+        &VanillaPackResources::vanilla_jar_root(),
+        Path::new("no-asset-index"),
+    );
+    let layers = vanilla
+        .resource_layers()
+        .iter()
+        .map(|layer| layer.clone() as Rc<dyn PackResources>)
+        .collect();
+    let manager = MultiPackResourceManager::new(PackType::CLIENT_RESOURCES, layers);
+    let mut atlas = TextureAtlas::new(
+        device,
+        Identifier::with_default_namespace(TextureAtlas::LOCATION_BLOCKS),
+    );
+    let preparations =
+        SpriteLoader::new(atlas.location().clone(), atlas.max_supported_texture_size())
+            .load_and_stitch(
+                &manager,
+                &Identifier::with_default_namespace("blocks"),
+                4,
+                0,
+            )
+            .map_err(|error| format!("couldn't stitch {}", error.sprite))?;
+    atlas.upload(device, &sampler_cache, &pipelines, preparations);
+    std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    let location = atlas.location().clone();
+    atlas
+        .dump_contents(device, &location, dir)
+        .map_err(|error| format!("can't dump the atlas into {}: {error}", dir.display()))?;
+    println!(
+        "dumped {} ({}x{}, {} mip levels)",
+        location,
+        atlas.get_width(),
+        atlas.get_height(),
+        atlas.max_mip_level() + 1
+    );
+    Ok(())
 }
 
 impl Gui {
@@ -403,6 +471,7 @@ fn run(arguments: Arguments) -> Result<(), String> {
             }
             println!("compiled {compiled} of {} pipelines", pipelines.len());
         }
+        Mode::DumpAtlas(ref dir) => dump_block_atlas(&*device, dir)?,
         Mode::Screenshot(ref path) => {
             let main_target = MainTarget::new(&*device, arguments.width, arguments.height);
             render_frame(&*device, &main_target, &arguments, &mut gui);
@@ -451,9 +520,10 @@ fn run(arguments: Arguments) -> Result<(), String> {
 }
 
 /// The render track's modes, which `parse_arguments` reads; anything else goes to `Main`.
-const RENDER_MODES: [&str; 4] = [
+const RENDER_MODES: [&str; 5] = [
     "--device-info",
     "--compile-pipelines",
+    "--dump-atlas",
     "--screenshot",
     "--window",
 ];

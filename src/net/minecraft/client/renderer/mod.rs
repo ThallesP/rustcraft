@@ -7,3 +7,4 @@ pub mod projection_matrix_buffer;
 pub mod render_pipelines;
 pub mod shader_defines;
 pub mod shader_manager;
+pub mod texture;

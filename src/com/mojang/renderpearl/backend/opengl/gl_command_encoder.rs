@@ -831,6 +831,63 @@ impl CommandEncoder for GlCommandEncoder {
         }
     }
 
+    /// Java's frontend checks the copy's ranges; until it's ported, only the backend's part runs.
+    fn copy_buffer_to_texture(
+        &self,
+        source: &GpuBufferSlice,
+        source_x: i32,
+        source_y: i32,
+        source_width: i32,
+        source_height: i32,
+        destination: &dyn GpuTexture,
+        destination_x: i32,
+        destination_y: i32,
+        copy_width: i32,
+        copy_height: i32,
+        mip_level: i32,
+        array_layer: i32,
+    ) {
+        self.check_not_in_render_pass();
+        assert!(
+            destination.get_usage() & gpu_texture::USAGE_CUBEMAP_COMPATIBLE == 0
+                && array_layer == 0,
+            "cubemaps aren't ported yet"
+        );
+        let format = destination.get_format();
+        let texel_size = i64::from(format.block_size());
+        let skip_texels = i64::from(source_x) + i64::from(source_y) * i64::from(source_width);
+        let skip_bytes = skip_texels * texel_size;
+        // SAFETY: the device's context is current, and the texture and buffer are its.
+        unsafe {
+            self.gl
+                .bind_texture(glow::TEXTURE_2D, Some(gl_texture(destination).id));
+            self.gl.bind_buffer(
+                glow::PIXEL_UNPACK_BUFFER,
+                Some(gl_buffer(&*source.buffer).handle),
+            );
+            self.gl
+                .pixel_store_i32(glow::UNPACK_ROW_LENGTH, source_width);
+            self.gl
+                .pixel_store_i32(glow::UNPACK_IMAGE_HEIGHT, source_height);
+            self.gl.pixel_store_i32(glow::UNPACK_SKIP_PIXELS, 0);
+            self.gl.pixel_store_i32(glow::UNPACK_SKIP_ROWS, 0);
+            self.gl
+                .pixel_store_i32(glow::UNPACK_ALIGNMENT, format.byte_alignment());
+            self.gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                mip_level,
+                destination_x,
+                destination_y,
+                copy_width,
+                copy_height,
+                GlConst::to_gl_external_id(format),
+                GlConst::to_gl_type(format),
+                glow::PixelUnpackData::BufferOffset((source.offset + skip_bytes) as u32),
+            );
+            self.gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
+        }
+    }
+
     /// Panics where Java throws `IllegalStateException` on a GL error.
     fn copy_texture_to_buffer(
         &self,

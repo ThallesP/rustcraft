@@ -1,9 +1,11 @@
 //! net/minecraft/resources/FileToIdConverter.java
 //!
-//! Not ported yet: `registry`, and `listMatchingResources` and `listMatchingResourceStacks`,
-//! which come with the `ResourceManager`.
+//! Not ported yet: `registry` and `listMatchingResourceStacks`, which come with their callers.
 
 use crate::net::minecraft::resources::identifier::Identifier;
+use crate::net::minecraft::server::packs::resources::resource::Resource;
+use crate::net::minecraft::server::packs::resources::resource_manager::ResourceManager;
+use std::collections::BTreeMap;
 
 /// Turns a resource's file (`minecraft:shaders/core/gui.vsh`) into the id the game names it by
 /// (`minecraft:core/gui`), and back.
@@ -53,6 +55,14 @@ impl FileToIdConverter {
         let start = self.prefix.len() + 1;
         assert!(start <= end, "StringIndexOutOfBoundsException");
         file.with_path(&path[start..end])
+    }
+
+    /// Every resource under the prefix with the extension.
+    pub fn list_matching_resources(
+        &self,
+        manager: &dyn ResourceManager,
+    ) -> BTreeMap<Identifier, Resource> {
+        manager.list_resources(&self.prefix, &|id| self.extension_matches(id))
     }
 
     pub fn extension_matches(&self, id: &Identifier) -> bool {

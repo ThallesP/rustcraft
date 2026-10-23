@@ -225,7 +225,11 @@ The port compiles through the same native libraries (PORTING.md), so its SPIR-V 
 - `MultiPackResourceManager`: `getNamespaces`, what `listResources` lists under `textures`, `textures/block`, `atlases`, `models/block` and `blockstates`, in its `TreeMap`'s order, and each atlas definition's resource stack.
 - `NativeImage.read` of every PNG under `textures/` (3,964): the RGBA stb decodes.
 
+- `SpriteLoader` (the block atlas's CPU half, as `loadAndStitch` runs it with the oracle client's options: mipmap levels 4, filtering that isn't anisotropic, and llvmpipe's 16384 as the largest texture): the sprites `atlases/blocks.json`'s sources list, loaded by `SpriteResourceLoader`, then `stitch`, `[atlas, maxMipmapLevels]` → `[width, height, mipLevel, [[name, x, y, width, height, padding], …]]` in the order `gatherSprites` hands them out, and `increaseMipLevel` of each sprite, `[name, mipLevel]` → `[animated, [image, …]]`, every mip level as `[width, height, md5]`. `SpriteLoader.stitch` reads the options from `Minecraft.getInstance()`, which the generator has none of, so the suite runs its steps with those values.
+
 The port reads the pack from `vanilla/<version>/resources/` (the client jar unpacked) and decodes with LWJGL's own `liblwjgl_stb.so`, so both sides run the same decoder.
+
+The atlas's GPU half, drawing each sprite into each mip level, is a frame test (`tests/opengl_frame.rs`, below).
 
 ## 2. Scenarios and tick traces
 
@@ -326,6 +330,7 @@ The port renders the same way: `tests/opengl_frame.rs` runs `rustcraft` under `x
 - the device: `--device-info` prints the three lines vanilla logs about it (`Minecraft.java`'s "Using graphics backend…", "Using graphics device…" and "Using graphics device extensions…", the extensions in their `HashSet`'s order), whose flags follow from the extensions, and which equal the oracle client's log when this machine has one, with the shader goldens' flags;
 - frames read back like `Screenshot.takeScreenshot`: `--screenshot` clears the main render target like `GameRenderer.render` (to `GuiRenderState.clearColorOverride`'s transparent black, or the loading overlay's brand background), and every pixel of the PNG is that color with its alpha made opaque, RGBA at the target's size like vanilla's; and a render pass clearing GL's lower left quarter shows up at the image's lower left.
 - every pipeline `ShaderManager.reload` compiles (the 190 required and 2 optional ones) compiles and links on the driver from the GLSL vanilla hands it (`--compile-pipelines`);
+- the block atlas: `--dump-atlas` loads it like the client and uploads it like `TextureAtlas.upload` (each sprite drawn into each mip level by `pipeline/animate_sprite_blit`, animated ones from their first frame's texture), then writes it like `dumpContents` (`<id>_<level>.png` and `<id>.txt`). Its pixels are known from the goldens: the layout and the sprites' mip levels are vanilla's, and with nearest filtering and clamped edges the pixel `k` into a sprite's padded place at level `L` is the sprite's texel `k - p_L` clamped into it, each texture coordinate on a texel's center since every size and padding is a multiple of `2^L`; llvmpipe zeroes new textures, so the rest is transparent black. All five levels match those pixels exactly;
 - draws: `--fill` draws `GuiGraphicsExtractor.fill`s through `pipeline/gui` the way `GuiRenderer` does (a `BufferBuilder` mesh of `ColoredRectangleRenderState`'s vertices, the shared quad indices, the GUI's orthographic projection and model view in their uniform blocks), and the test knows every pixel: the fills' corners are whole pixels at the GUI scale, so no pixel's center lies on an edge, an opaque color blends to itself, a fill with alpha 0 is discarded, and later fills cover earlier ones.
 
 ## Where outputs go

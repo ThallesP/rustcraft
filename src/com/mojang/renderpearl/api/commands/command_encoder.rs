@@ -96,6 +96,25 @@ pub trait CommandEncoder {
         height: i32,
     );
 
+    /// `copyBufferToTexture`: a rectangle of a buffer holding a `source_width` by `source_height`
+    /// image, from (`source_x`, `source_y`), into the texture's mip level at a place.
+    #[allow(clippy::too_many_arguments)]
+    fn copy_buffer_to_texture(
+        &self,
+        source: &GpuBufferSlice,
+        source_x: i32,
+        source_y: i32,
+        source_width: i32,
+        source_height: i32,
+        destination: &dyn GpuTexture,
+        destination_x: i32,
+        destination_y: i32,
+        copy_width: i32,
+        copy_height: i32,
+        mip_level: i32,
+        array_layer: i32,
+    );
+
     fn copy_texture_to_buffer(
         &self,
         source: &dyn GpuTexture,
