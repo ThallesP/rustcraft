@@ -6,8 +6,9 @@
 //! which for the vanilla pack in `en_us` is the same file, so the port reads it from
 //! `vanilla/<version>/resources/` once, on first use. Both files are read with Gson's strict
 //! parser (`StrictJsonParser`, which `DeprecatedTranslationsInfo` uses; `en_us.json` is valid JSON
-//! however Gson reads it). `inject`, `getVisualOrder` (bidirectional text) and right-to-left come
-//! with the client's languages.
+//! however Gson reads it). `getVisualOrder` is the injected `ClientLanguage`'s
+//! (`FormattedBidiReorder`). `inject` and right-to-left languages come with the client's
+//! languages.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -79,6 +80,17 @@ impl Language {
 
     pub fn has(&self, element_id: &str) -> bool {
         self.storage.contains_key(element_id)
+    }
+
+    /// `getVisualOrder(FormattedText)`, `ClientLanguage`'s.
+    pub fn get_visual_order(
+        &self,
+        logical_order_text: &impl crate::net::minecraft::network::chat::formatted_text::FormattedText,
+    ) -> crate::net::minecraft::util::formatted_char_sequence::FormattedCharSequence {
+        crate::net::minecraft::client::resources::language::formatted_bidi_reorder::FormattedBidiReorder::reorder(
+            logical_order_text,
+            self.is_default_right_to_left(),
+        )
     }
 
     pub fn is_default_right_to_left(&self) -> bool {

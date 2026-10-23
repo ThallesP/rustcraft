@@ -18,4 +18,5 @@ pub mod resources;
 pub mod rotating_section_storage;
 pub mod screenshot;
 pub mod section_update_tracker;
+pub mod string_splitter;
 pub mod user;

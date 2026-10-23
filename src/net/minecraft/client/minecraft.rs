@@ -375,8 +375,10 @@ impl Minecraft {
     ) {
         let gui_scale = self.options.borrow().gui_scale;
         let game_mode = self.game_mode.borrow().clone();
+        let font = std::rc::Rc::clone(game_renderer.font());
         let hud_context = match (player, game_mode.as_ref()) {
             (Some(player), Some(game_mode)) => Some(HudContext {
+                font: &font,
                 is_hidden: self.hud_hidden.get(),
                 player,
                 player_mode: game_mode.get_player_mode(),
@@ -387,7 +389,8 @@ impl Minecraft {
             _ => None,
         };
         let mut gui = self.gui.borrow_mut();
-        game_renderer.extract_gui(gui_scale, 0, 0, |graphics| {
+        let text_background_color = self.options.borrow().get_background_color(0.0);
+        game_renderer.extract_gui(gui_scale, text_background_color, 0, 0, |graphics| {
             gui.extract_render_state(graphics, hud_context.as_ref());
         });
         game_renderer.render_gui(gui_scale);

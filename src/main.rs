@@ -542,7 +542,9 @@ fn render_scenario(
             eye_y,
             &CameraEntityState::of(Some(&player)),
         );
+        let font = Rc::clone(game_renderer.font());
         let hud_context = HudContext {
+            font: &font,
             is_hidden: scenario.options.hide_gui,
             player: &player,
             player_mode,
@@ -550,9 +552,15 @@ fn render_scenario(
             has_experience: player_mode.is_survival(),
             is_hardcore: level.is_hardcore(),
         };
-        game_renderer.extract_gui(options.gui_scale, 0, 0, |graphics| {
-            gui.extract_render_state(graphics, Some(&hud_context));
-        });
+        game_renderer.extract_gui(
+            options.gui_scale,
+            options.get_background_color(0.0),
+            0,
+            0,
+            |graphics| {
+                gui.extract_render_state(graphics, Some(&hud_context));
+            },
+        );
         game_renderer.render_gui(options.gui_scale);
         ticks += 1;
         if ticks > OracleGameTest::LOAD_TIMEOUT_TICKS {

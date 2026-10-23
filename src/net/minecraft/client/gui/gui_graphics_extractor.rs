@@ -6,9 +6,10 @@
 //! the texture manager from its `Minecraft`, a back-reference; here they're its fields, borrowed
 //! from what owns them for the extract.
 //!
-//! Not ported yet: text (with the font), items and their decorations, maps, the picture in picture
-//! states (entities, skins, books, banners, the profiler chart), tooltips, the hovered text's
-//! effects, the cursor and the preedit overlay.
+//! Not ported yet: word-wrapped text (`textWithWordWrap`, with `StringSplitter`'s `FormattedText`
+//! lines), items and their decorations, maps, the picture in picture states (entities, skins,
+//! books, banners, the profiler chart), tooltips, the active text collectors and the hovered
+//! text's effects, the cursor and the preedit overlay.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,12 +17,14 @@ use std::sync::Arc;
 use crate::com::mojang::renderpearl::api::pipeline::render_pipeline::RenderPipeline;
 use crate::com::mojang::renderpearl::api::textures::gpu_sampler::GpuSampler;
 use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
+use crate::net::minecraft::client::gui::font::Font;
 use crate::net::minecraft::client::gui::navigation::screen_rectangle::ScreenRectangle;
 use crate::net::minecraft::client::gui::render::texture_setup::TextureSetup;
 use crate::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
 use crate::net::minecraft::client::renderer::state::gui::blit_render_state::BlitRenderState;
 use crate::net::minecraft::client::renderer::state::gui::colored_rectangle_render_state::ColoredRectangleRenderState;
 use crate::net::minecraft::client::renderer::state::gui::gui_render_state::GuiRenderState;
+use crate::net::minecraft::client::renderer::state::gui::gui_text_render_state::GuiTextRenderState;
 use crate::net::minecraft::client::renderer::state::gui::tiled_blit_render_state::TiledBlitRenderState;
 use crate::net::minecraft::client::renderer::texture::texture_atlas::TextureAtlas;
 use crate::net::minecraft::client::renderer::texture::texture_atlas_sprite::TextureAtlasSprite;
@@ -30,13 +33,18 @@ use crate::net::minecraft::client::resources::metadata::gui::gui_metadata_sectio
 use crate::net::minecraft::client::resources::metadata::gui::gui_sprite_scaling::{
     GuiSpriteScaling, NineSlice,
 };
+use crate::net::minecraft::locale::language::Language;
+use crate::net::minecraft::network::chat::formatted_text::{FormattedText, Of};
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::util::argb::ARGB;
+use crate::net::minecraft::util::formatted_char_sequence::FormattedCharSequence;
 use crate::org::joml::matrix3x2f_stack::Matrix3x2fStack;
 
 pub struct GuiGraphicsExtractor<'a> {
     gui_width: i32,
     gui_height: i32,
+    /// `minecraft.options.getBackgroundColor(0.0F)`, behind `textWithBackdrop`'s text.
+    text_background_color: i32,
     pose: Matrix3x2fStack,
     scissor_stack: ScissorStack,
     gui_sprites: &'a TextureAtlas,
@@ -47,11 +55,13 @@ pub struct GuiGraphicsExtractor<'a> {
 }
 
 impl<'a> GuiGraphicsExtractor<'a> {
-    /// The window's GUI size, the GUI atlas (`AtlasManager.getAtlasOrThrow(AtlasIds.GUI)`) and the
-    /// texture manager are what Java reads from its `Minecraft`.
+    /// The window's GUI size, the GUI atlas (`AtlasManager.getAtlasOrThrow(AtlasIds.GUI)`), the
+    /// texture manager and the options' text background are what Java reads from its `Minecraft`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         gui_width: i32,
         gui_height: i32,
+        text_background_color: i32,
         gui_sprites: &'a TextureAtlas,
         texture_manager: &'a TextureManager,
         gui_render_state: &'a mut GuiRenderState,
@@ -61,6 +71,7 @@ impl<'a> GuiGraphicsExtractor<'a> {
         GuiGraphicsExtractor {
             gui_width,
             gui_height,
+            text_background_color,
             pose: Matrix3x2fStack::new(16),
             scissor_stack: ScissorStack::new(ScreenRectangle::new(0, 0, gui_width, gui_height)),
             gui_sprites,
@@ -231,6 +242,106 @@ impl<'a> GuiGraphicsExtractor<'a> {
             y1,
             -16776961,
         );
+    }
+
+    /// `text(Font, String, int, int, int, boolean)`: nothing for none (Java's null).
+    pub fn text_str(
+        &mut self,
+        font: &Rc<Font>,
+        str: Option<&str>,
+        x: i32,
+        y: i32,
+        color: i32,
+        drop_shadow: bool,
+    ) {
+        if let Some(str) = str {
+            let text = Language::get_instance().get_visual_order(&Of(str.to_owned()));
+            self.text_sequence(font, &text, x, y, color, drop_shadow);
+        }
+    }
+
+    /// `text(Font, FormattedCharSequence, int, int, int, boolean)`: nothing when transparent.
+    pub fn text_sequence(
+        &mut self,
+        font: &Rc<Font>,
+        str: &FormattedCharSequence,
+        x: i32,
+        y: i32,
+        color: i32,
+        drop_shadow: bool,
+    ) {
+        if ARGB::alpha(color) != 0 {
+            self.gui_render_state.add_text(GuiTextRenderState::new(
+                Rc::clone(font),
+                str.clone(),
+                *self.pose,
+                x,
+                y,
+                color,
+                0,
+                drop_shadow,
+                false,
+                self.scissor_stack.peek(),
+            ));
+        }
+    }
+
+    /// `text(Font, Component, int, int, int, boolean)`: its visual order's
+    /// (`getVisualOrderText`).
+    pub fn text_component(
+        &mut self,
+        font: &Rc<Font>,
+        str: &impl FormattedText,
+        x: i32,
+        y: i32,
+        color: i32,
+        drop_shadow: bool,
+    ) {
+        let text = Language::get_instance().get_visual_order(str);
+        self.text_sequence(font, &text, x, y, color, drop_shadow);
+    }
+
+    /// `centeredText(Font, String, int, int, int)`.
+    pub fn centered_text_str(&mut self, font: &Rc<Font>, str: &str, x: i32, y: i32, color: i32) {
+        let width = font.width(str);
+        self.text_str(font, Some(str), x - width / 2, y, color, true);
+    }
+
+    /// `centeredText(Font, Component, int, int, int)`.
+    pub fn centered_text_component(
+        &mut self,
+        font: &Rc<Font>,
+        text: &impl FormattedText,
+        x: i32,
+        y: i32,
+        color: i32,
+    ) {
+        let to_render = Language::get_instance().get_visual_order(text);
+        let width = font.width_sequence(&to_render);
+        self.text_sequence(font, &to_render, x - width / 2, y, color, true);
+    }
+
+    /// `textWithBackdrop`: the text over the options' background, the text's alpha applied.
+    pub fn text_with_backdrop(
+        &mut self,
+        font: &Rc<Font>,
+        str: &impl FormattedText,
+        text_x: i32,
+        text_y: i32,
+        text_width: i32,
+        text_color: i32,
+    ) {
+        let background_color = self.text_background_color;
+        if background_color != 0 {
+            self.fill(
+                text_x - 2,
+                text_y - 2,
+                text_x + text_width + 2,
+                text_y + 9 + 2,
+                ARGB::multiply(background_color, text_color),
+            );
+        }
+        self.text_component(font, str, text_x, text_y, text_color, true);
     }
 
     /// `blit(RenderPipeline, Identifier, int, int, float, float, int, int, int, int, int)`.

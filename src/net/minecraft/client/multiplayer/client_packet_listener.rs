@@ -969,8 +969,13 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
-        // Java sets the player's experience (`setExperienceValues`), which the player track ports.
-        let _ = packet;
+        if let Some(player) = minecraft.player.borrow_mut().as_mut() {
+            player.set_experience_values(
+                packet.get_experience_progress(),
+                packet.get_total_experience(),
+                packet.get_experience_level(),
+            );
+        }
     }
 
     fn handle_set_health(&mut self, packet: &ClientboundSetHealthPacket) {

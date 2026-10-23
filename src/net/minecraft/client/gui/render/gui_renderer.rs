@@ -8,9 +8,9 @@
 //! makes a buffer of the same bytes, and the draws read it at the same offsets, which changes no
 //! pixel.
 //!
-//! Not ported yet: text (`prepareText`, with the font), items (`prepareItemElements` and the GUI's
-//! item atlas, `GuiItemAtlas`), pictures in pictures, the panorama (`CubeMap`), and the blur
-//! between strata (`processBlurEffect`), which the pause screen asks for.
+//! Not ported yet: items (`prepareItemElements` and the GUI's item atlas, `GuiItemAtlas`), pictures
+//! in pictures, the panorama (`CubeMap`), and the blur between strata (`processBlurEffect`), which
+//! the pause screen asks for.
 
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -25,6 +25,8 @@ use crate::com::mojang::renderpearl::api::commands::render_pass::RenderPass;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use crate::com::mojang::renderpearl::api::pipeline::render_pipeline::RenderPipeline;
+use crate::com::mojang::renderpearl::api::textures::gpu_sampler::GpuSampler;
+use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
 use crate::com::mojang::renderpearl::api::vertex::vertex_format::VertexFormat;
 use crate::net::minecraft::client::gui::navigation::screen_rectangle::ScreenRectangle;
 use crate::net::minecraft::client::gui::render::texture_setup::TextureSetup;
@@ -32,6 +34,7 @@ use crate::net::minecraft::client::renderer::dynamic_gpu_data::Transform;
 use crate::net::minecraft::client::renderer::game_renderer::Pipelines;
 use crate::net::minecraft::client::renderer::projection::Projection;
 use crate::net::minecraft::client::renderer::projection_matrix_buffer::ProjectionMatrixBuffer;
+use crate::net::minecraft::client::renderer::state::gui::glyph_render_state::GlyphRenderState;
 use crate::net::minecraft::client::renderer::state::gui::gui_element_render_state::GuiElementRenderState;
 use crate::net::minecraft::client::renderer::state::gui::gui_render_state::{
     GuiRenderState, TraverseRange,
@@ -62,6 +65,15 @@ struct Draw {
     vertex_count: i32,
     index_count: i32,
     vertex_offset: usize,
+}
+
+/// What a text's glyphs bind (`GlyphRenderState.textureSetup()`): the sampler cache's
+/// `getClampToEdge(NEAREST)` for the font page, and the game renderer's lightmap, the UI's while
+/// the GUI renders, with `getClampToEdge(LINEAR)`.
+pub struct GlyphTextures {
+    pub sampler: Rc<dyn GpuSampler>,
+    pub lightmap: GpuTextureView,
+    pub lightmap_sampler: Rc<dyn GpuSampler>,
 }
 
 /// The window the GUI draws over: its size and GUI scale (`WindowRenderState`).
@@ -115,15 +127,34 @@ impl GuiRenderer {
         pipelines: &mut Pipelines,
         main_render_target: &MainTarget,
         window: GuiWindow,
+        glyph_textures: &GlyphTextures,
     ) {
-        self.prepare(render_state);
+        self.prepare(render_state, glyph_textures);
         self.draw(device, pipelines, main_render_target, window);
         self.draws.clear();
         render_state.reset();
         self.first_draw_index_after_blur = usize::MAX;
     }
 
-    fn prepare(&mut self, render_state: &mut GuiRenderState) {
+    fn prepare(&mut self, render_state: &mut GuiRenderState, glyph_textures: &GlyphTextures) {
+        // prepareText: each text's glyphs, in its layer.
+        render_state.prepare_text(|text, renderable| {
+            let texture_view = renderable
+                .texture_view()
+                .expect("a font page on the device")
+                .clone();
+            Box::new(GlyphRenderState::new(
+                text.pose,
+                renderable.clone(),
+                text.scissor,
+                TextureSetup::single_texture_with_lightmap(
+                    texture_view,
+                    Rc::clone(&glyph_textures.sampler),
+                    glyph_textures.lightmap.clone(),
+                    Rc::clone(&glyph_textures.lightmap_sampler),
+                ),
+            ))
+        });
         render_state.sort_elements(element_sort_comparator);
         self.add_elements_to_meshes(render_state, TraverseRange::BEFORE_BLUR);
         self.first_draw_index_after_blur = self.draws.len();

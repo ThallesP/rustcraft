@@ -35,6 +35,8 @@ use crate::net::minecraft::world::level::game_type::GameType;
 /// What a frame's HUD reads of the game, which Java reads from its `Minecraft`. `is_hidden` is
 /// Java's `isHidden`, F1's, which the port keeps in `Minecraft.hud_hidden`.
 pub struct HudContext<'a> {
+    /// `Minecraft.font`.
+    pub font: &'a std::rc::Rc<crate::net::minecraft::client::gui::font::Font>,
     pub is_hidden: bool,
     pub player: &'a LocalPlayer,
     pub player_mode: GameType,
@@ -165,7 +167,11 @@ impl Hud {
             .1
             .extract_background(graphics, context.player);
         if context.has_experience && context.player.experience_level > 0 {
-            panic!("the experience level's text needs the font, which isn't ported");
+            ContextualBar::extract_experience_level(
+                graphics,
+                context.font,
+                context.player.experience_level,
+            );
         }
         self.contextual_info_bar
             .1

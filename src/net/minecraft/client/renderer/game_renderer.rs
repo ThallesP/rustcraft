@@ -32,8 +32,12 @@ use crate::com::mojang::renderpearl::api::textures::filter_mode::FilterMode;
 use crate::com::mojang::renderpearl::frontend::shaders::pipeline_builder::PipelineBuilder;
 use crate::net::minecraft::client::camera::{Camera, CameraOptions};
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
+use crate::net::minecraft::client::gui::font::Font;
+use crate::net::minecraft::client::gui::font::font_manager::FontManager;
 use crate::net::minecraft::client::gui::gui_graphics_extractor::GuiGraphicsExtractor;
-use crate::net::minecraft::client::gui::render::gui_renderer::{GuiRenderer, GuiWindow};
+use crate::net::minecraft::client::gui::render::gui_renderer::{
+    GlyphTextures, GuiRenderer, GuiWindow,
+};
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
@@ -66,6 +70,7 @@ use crate::net::minecraft::client::renderer::texture::texture_atlas::{
     AnimationPipelines, TextureAtlas,
 };
 use crate::net::minecraft::client::renderer::texture::texture_manager::TextureManager;
+use crate::net::minecraft::client::renderer::ui_lightmap::UiLightmap;
 use crate::net::minecraft::client::resources::dry_foliage_color_reload_listener::DryFoliageColorReloadListener;
 use crate::net::minecraft::client::resources::foliage_color_reload_listener::FoliageColorReloadListener;
 use crate::net::minecraft::client::resources::grass_color_reload_listener::GrassColorReloadListener;
@@ -215,6 +220,9 @@ pub struct GameRenderer {
     texture_manager: TextureManager,
     gui_render_state: GuiRenderState,
     gui_renderer: GuiRenderer,
+    ui_lightmap: UiLightmap,
+    /// `Minecraft.font`, from the resource reload's `FontManager`.
+    font: Rc<Font>,
 }
 
 impl GameRenderer {
@@ -295,6 +303,11 @@ impl GameRenderer {
         )
         .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
         gui_atlas.upload(device, &sampler_cache, &animation_pipelines, gui);
+        // FontManager's reload, with no font options (Unicode and Japanese variants off).
+        let font = Rc::new(Font::new(
+            Rc::new(FontManager::load(Some(device), &manager, &[])),
+            false,
+        ));
         let mut texture_manager = TextureManager::new();
         texture_manager.register(
             gui_atlas.location().clone(),
@@ -332,7 +345,13 @@ impl GameRenderer {
             texture_manager,
             gui_render_state: GuiRenderState::new(),
             gui_renderer: GuiRenderer::new(device),
+            ui_lightmap: UiLightmap::new(device),
+            font,
         }
+    }
+
+    pub fn font(&self) -> &Rc<Font> {
+        &self.font
     }
 
     /// `Sheets.GUI_SHEET`, the GUI atlas's texture.
@@ -359,6 +378,7 @@ impl GameRenderer {
     pub fn extract_gui(
         &mut self,
         gui_scale_option: i32,
+        text_background_color: i32,
         mouse_x: i32,
         mouse_y: i32,
         extract: impl FnOnce(&mut GuiGraphicsExtractor),
@@ -370,6 +390,7 @@ impl GameRenderer {
         let mut graphics = GuiGraphicsExtractor::new(
             gui_width,
             gui_height,
+            text_background_color,
             &self.gui_atlas,
             &self.texture_manager,
             &mut self.gui_render_state,
@@ -382,12 +403,18 @@ impl GameRenderer {
     /// `render`'s GUI, after the level: `guiRenderer.render()` over the main target.
     pub fn render_gui(&mut self, gui_scale_option: i32) {
         let window = self.gui_window(gui_scale_option);
+        let glyph_textures = GlyphTextures {
+            sampler: Rc::clone(self.sampler_cache.get_clamp_to_edge(FilterMode::NEAREST)),
+            lightmap: self.ui_lightmap.get_texture_view().clone(),
+            lightmap_sampler: Rc::clone(self.sampler_cache.get_clamp_to_edge(FilterMode::LINEAR)),
+        };
         self.gui_renderer.render(
             self.device,
             &mut self.gui_render_state,
             &mut self.pipelines,
             &self.main_render_target,
             window,
+            &glyph_textures,
         );
     }
 

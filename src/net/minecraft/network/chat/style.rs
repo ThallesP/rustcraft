@@ -4,9 +4,9 @@
 //! obfuscated flags (each unset, true or false), its click and hover events, the text it inserts,
 //! and its font. Java tells the `EMPTY` constant apart by reference (`isEmpty`, `applyTo`), and
 //! makes it wherever a style would equal it (`create`, `checkEmptyAfterChange`); here the constant
-//! carries a flag only it and its copies have. The `ChatFormatting` methods (`withColor(ChatFormatting)`,
-//! `applyFormat`, `applyFormats`, `applyLegacyFormat`) come with `ChatFormatting`, and `hashCode`
-//! with its first caller.
+//! carries a flag only it and its copies have. `applyLegacyFormat` is a `§` code's change; the
+//! other `ChatFormatting` methods (`withColor(ChatFormatting)`, `applyFormat`, `applyFormats`) and
+//! `hashCode` come with their first callers.
 
 use std::fmt;
 use std::sync::LazyLock;
@@ -17,6 +17,7 @@ use crate::com::mojang::serialization::codec::{BOOL, CodecExt, STRING};
 use crate::com::mojang::serialization::codecs::record_codec_builder;
 use crate::com::mojang::serialization::map_codec::SharedMapCodec;
 use crate::com::mojang::serialization::map_codec::{MapCodecExt, StaticMapCodec};
+use crate::net::minecraft::chat_formatting::ChatFormatting;
 use crate::net::minecraft::network::chat::click_event::ClickEvent;
 use crate::net::minecraft::network::chat::font_description::FontDescription;
 use crate::net::minecraft::network::chat::hover_event::HoverEvent;
@@ -226,8 +227,59 @@ impl Style {
         Style::check_empty_after_change(new_style, self.shadow_color.is_some(), true)
     }
 
+    /// `withBold(Boolean)`.
+    pub fn with_bold(&self, bold: Option<bool>) -> Style {
+        if self.bold == bold {
+            return self.clone();
+        }
+        let mut new_style = self.clone();
+        new_style.is_empty_constant = false;
+        new_style.bold = bold;
+        Style::check_empty_after_change(new_style, self.bold.is_some(), bold.is_some())
+    }
+
     pub fn without_shadow(&self) -> Style {
         self.with_shadow_color(Style::NO_SHADOW)
+    }
+
+    /// `applyLegacyFormat`: a `§` code's change. A flag sets its flag; a color clears the flags
+    /// and sets the color; reset is `EMPTY`.
+    pub fn apply_legacy_format(&self, format: ChatFormatting) -> Style {
+        let mut color = self.color;
+        let mut bold = self.bold;
+        let mut italic = self.italic;
+        let mut strikethrough = self.strikethrough;
+        let mut underlined = self.underlined;
+        let mut obfuscated = self.obfuscated;
+        match format {
+            ChatFormatting::OBFUSCATED => obfuscated = Some(true),
+            ChatFormatting::BOLD => bold = Some(true),
+            ChatFormatting::STRIKETHROUGH => strikethrough = Some(true),
+            ChatFormatting::UNDERLINE => underlined = Some(true),
+            ChatFormatting::ITALIC => italic = Some(true),
+            ChatFormatting::RESET => return Style::EMPTY,
+            _ => {
+                obfuscated = Some(false);
+                bold = Some(false);
+                strikethrough = Some(false);
+                underlined = Some(false);
+                italic = Some(false);
+                color = TextColor::from_legacy_format(format);
+            }
+        }
+        Style::new(
+            color,
+            self.shadow_color,
+            bold,
+            italic,
+            underlined,
+            strikethrough,
+            obfuscated,
+            self.click_event.clone(),
+            self.hover_event.clone(),
+            self.insertion.clone(),
+            self.font.clone(),
+        )
     }
 
     /// This style's fields where they're set, the other's where they aren't; either one when the

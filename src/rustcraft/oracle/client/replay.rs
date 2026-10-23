@@ -418,12 +418,13 @@ impl FlatLevel {
     }
 
     /// The flat preset with the commands' blocks, in their order, and the entities they summon; a
-    /// `gamerule` places none. Panics on a command it doesn't know or one that isn't strict.
+    /// `gamerule` or `xp` (the player's experience, which only the HUD shows) places none. Panics
+    /// on a command it doesn't know or one that isn't strict.
     pub fn with_setup(commands: &[String]) -> FlatLevel {
         let mut level = FlatLevel::new();
         for command in commands {
             let words: Vec<&str> = command.split(' ').collect();
-            if words.first() == Some(&"gamerule") {
+            if matches!(words.first(), Some(&"gamerule") | Some(&"xp")) {
                 continue;
             }
             if let ["summon", r#type, x, y, z, ..] = words.as_slice() {
@@ -976,6 +977,17 @@ mod tests {
             "walk",
             "b4da2320a6595f98e58b7590d2107891",
             "042b5bbd34696b409bd631458f0d7428",
+        );
+    }
+
+    /// The HUD's scenario: the walk's first ticks with five levels and three points of
+    /// experience, which the HUD draws (its screenshots are compared on the live run).
+    #[test]
+    fn hud_experience() {
+        check_scenario(
+            "hud-experience",
+            "198eee4c45188860255f04a84faa6198",
+            "cedff230a8f1502f8dd438fca8e7e561",
         );
     }
 

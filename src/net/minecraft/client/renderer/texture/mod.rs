@@ -1,4 +1,5 @@
 pub mod atlas;
+pub mod dynamic_atlas_tree;
 pub mod mipmap_generator;
 pub mod mipmap_strategy;
 pub mod missing_texture_atlas_sprite;

@@ -484,7 +484,7 @@ final class RenderSuites {
 
     // The device's answers that the shader path reads: isZZeroToOne, features().shaderDrawParameters() and
     // hintsAndWorkarounds().isExplicitDepthRequired(). The rest are llvmpipe's from the oracle client's log.
-    private static DeviceInfo deviceInfo(final List<Boolean> flags) {
+    static DeviceInfo deviceInfo(final List<Boolean> flags) {
         return new DeviceInfo(
             "llvmpipe (LLVM 21.1.8, 256 bits)", "Mesa", "4.5 (Core Profile) Mesa 26.0.8-1ubuntu0.3", flags.get(0), "OpenGL", 1.0F, null,
             new DeviceFeatures(true, flags.get(1), false, true, true, true, true, true), Set.of(),

@@ -326,6 +326,17 @@ The rest of the frame is checked by its screenshots: the level renderer's sectio
 
 How the GUI draws them, `GuiRenderer`'s draws over the main target, shows in screenshots: the walk's HUD (TESTING's screenshots below; PROGRESS.md has the diffs).
 
+### The font
+
+`FontSuites` loads the vanilla pack's fonts the way `FontManager` does: its private `prepare` (each `font/*.json`'s providers loaded and the references resolved) run on the calling thread, then each font made a `FontSet` with no font options as `apply` makes it (`apply` itself reads `Minecraft.getInstance()`). The pages are on a stand-in device (`RenderSystem`'s device, set by reflection): a proxy whose textures, views, buffers, samplers and encoders are proxies that take uploads and do nothing, and whose buffers map to direct `ByteBuffer`s, so glyphs bake (and lay out) without a GPU. The pack's fonts are those of the client jar and the launcher's asset index, whose directory isn't on the generator's path, so `include/unifont` is the jar's empty one, as it is for the port. Cases, in order, on one font manager, since a glyph's place on its page depends on the glyphs baked before it:
+- `fonts`: the fonts loaded.
+- `glyph`: `[font, codepoint, filterFishy]` → `[advance, bold advance, bold offset, shadow offset]`, then for a glyph on a page `[u0, u1, v0, v1, left, right, up, down, pages]` (floats' bits, and the font's pages so far): for `default`, `alt`, `illageralt` and `uniform`, every codepoint their providers define, in order, then NUL, the space, U+200C, a CJK and an emoji codepoint and U+10FFFF, then a few through the non-fishy source.
+- `width` and `widthText`: `Font.width` of 25 strings (plain, every `§` code but obfuscation, accented, Cyrillic, Greek, CJK, an emoji, tabs and newlines, the empty string), as a string and as a bold `FormattedText`.
+- `prepareText`: `Font.prepareText(String, x, y, color, shadow, background)` of the same strings at places and in colors the GUI uses, with and without a shadow and a background: each renderable it visits, `[kind, left, top, right, bottom, gui pipeline, vertices]`, the vertices as `GlyphRenderState` builds them (flat, full light, unposed) in the pipeline's format (hex), and the text's bounds.
+- `splitLines` (each line's text and style), `plainIndexAtWidth`, `plainTailByWidth` and `findLineBreak` of the strings at 7 widths, and `getWordPosition` both ways from 3 places, stripping spaces or not.
+
+Text on screen is checked by the `hud-experience` scenario's screenshots: the experience level's five draws (four black for its outline, then green) over the bar.
+
 ## 2. Scenarios and tick traces
 
 A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:

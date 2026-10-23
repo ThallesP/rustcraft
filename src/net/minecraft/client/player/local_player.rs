@@ -88,6 +88,8 @@ pub struct LocalPlayer {
     /// How long the eyes have been in water, up to 600 ticks, which the fog and the lightmap
     /// read (`getWaterVision`).
     water_vision_time: i32,
+    /// When the experience last changed, which the HUD's contextual bar reads.
+    pub experience_display_start_tick: i32,
     /// What the tick reads of the game's options (`minecraft.options`), set by `tick`.
     options: Options,
 }
@@ -133,6 +135,7 @@ impl LocalPlayer {
             flash_on_set_health: false,
             last_hurt: 0.0,
             water_vision_time: 0,
+            experience_display_start_tick: i32::MIN,
             options: Options::new(),
         };
         entity::refresh_dimensions(&mut player);
@@ -182,6 +185,29 @@ impl LocalPlayer {
 
     /// `hurtTo(float)`: the health the server says it has, with the hurt animation when it went
     /// down, but the first time.
+    /// `setExperienceValues`, from the server's `set_experience`.
+    pub fn set_experience_values(
+        &mut self,
+        experience_progress: f32,
+        total_exp: i32,
+        experience_level: i32,
+    ) {
+        if experience_progress != self.experience_progress {
+            self.set_experience_display_start_tick_to_tick_count();
+        }
+        self.experience_progress = experience_progress;
+        self.total_experience = total_exp;
+        self.experience_level = experience_level;
+    }
+
+    fn set_experience_display_start_tick_to_tick_count(&mut self) {
+        if self.experience_display_start_tick == i32::MIN {
+            self.experience_display_start_tick = -2147483647;
+        } else {
+            self.experience_display_start_tick = self.tick_count;
+        }
+    }
+
     pub fn hurt_to(&mut self, new_health: f32) {
         if self.flash_on_set_health {
             let dmg = self.living_entity().get_health() - new_health;

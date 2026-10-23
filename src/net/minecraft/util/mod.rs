@@ -6,6 +6,7 @@ pub mod delegate_data_output;
 pub mod easing_type;
 pub mod extra_codecs;
 pub mod file_util;
+pub mod formatted_char_sequence;
 pub mod gson_helper;
 pub mod keyframe;
 pub mod keyframe_track;
@@ -19,6 +20,7 @@ pub mod random;
 pub mod random_source;
 pub mod simple_bit_storage;
 pub mod strict_json_parser;
+pub mod string_decomposer;
 pub mod string_representable;
 pub mod string_util;
 // Java's net/minecraft/util/Util.java.

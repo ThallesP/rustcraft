@@ -1,7 +1,7 @@
 //! net/minecraft/network/chat/TextColor.java
 //!
-//! A text's color: one of the sixteen named ones, or any RGB. `fromLegacyFormat` comes with
-//! `ChatFormatting`. Java's `equals` compares the value only, so a named color equals the same
+//! A text's color: one of the sixteen named ones, or any RGB, and a legacy color code's
+//! (`fromLegacyFormat`). Java's `equals` compares the value only, so a named color equals the same
 //! RGB made with `fromRgb`, and `hashCode` hashes the name too.
 
 use std::fmt;
@@ -12,6 +12,7 @@ use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::lifecycle::Lifecycle;
 use crate::java::lang::integer::Integer;
 use crate::java::lang::string::JavaString;
+use crate::net::minecraft::chat_formatting::ChatFormatting;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TextColor {
@@ -72,6 +73,29 @@ impl TextColor {
         TextColor {
             value: rgb & 0xFFFFFF,
             name: Some(name),
+        }
+    }
+
+    /// `fromLegacyFormat`: a color code's named color, or none for a flag or reset.
+    pub fn from_legacy_format(format: ChatFormatting) -> Option<TextColor> {
+        match format {
+            ChatFormatting::BLACK => Some(TextColor::BLACK),
+            ChatFormatting::DARK_BLUE => Some(TextColor::DARK_BLUE),
+            ChatFormatting::DARK_GREEN => Some(TextColor::DARK_GREEN),
+            ChatFormatting::DARK_AQUA => Some(TextColor::DARK_AQUA),
+            ChatFormatting::DARK_RED => Some(TextColor::DARK_RED),
+            ChatFormatting::DARK_PURPLE => Some(TextColor::DARK_PURPLE),
+            ChatFormatting::GOLD => Some(TextColor::GOLD),
+            ChatFormatting::GRAY => Some(TextColor::GRAY),
+            ChatFormatting::DARK_GRAY => Some(TextColor::DARK_GRAY),
+            ChatFormatting::BLUE => Some(TextColor::BLUE),
+            ChatFormatting::GREEN => Some(TextColor::GREEN),
+            ChatFormatting::AQUA => Some(TextColor::AQUA),
+            ChatFormatting::RED => Some(TextColor::RED),
+            ChatFormatting::LIGHT_PURPLE => Some(TextColor::LIGHT_PURPLE),
+            ChatFormatting::YELLOW => Some(TextColor::YELLOW),
+            ChatFormatting::WHITE => Some(TextColor::WHITE),
+            _ => None,
         }
     }
 

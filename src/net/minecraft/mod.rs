@@ -1,3 +1,4 @@
+pub mod chat_formatting;
 pub mod client;
 pub mod core;
 pub mod locale;

@@ -22,4 +22,5 @@ pub mod shader_manager;
 pub mod sky_renderer;
 pub mod state;
 pub mod texture;
+pub mod ui_lightmap;
 pub mod view_area;

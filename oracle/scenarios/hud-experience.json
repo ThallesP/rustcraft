@@ -1,0 +1,14 @@
+{
+  "world": { "seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival" },
+  "player": { "pos": [0.5, -60.0, 0.5], "y_rot": 0.0, "x_rot": 0.0 },
+  "options": { "window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4 },
+  "setup": [
+    "xp add @s 5 levels",
+    "xp add @s 3 points"
+  ],
+  "steps": [
+    { "screenshot": "spawn" },
+    { "ticks": 10, "keys": ["forward"] },
+    { "screenshot": "after-walk" }
+  ]
+}

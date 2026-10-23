@@ -54,6 +54,9 @@ pub struct Options {
     pub gui_scale: i32,
     /// `vignette()`, which the HUD doesn't draw yet.
     pub vignette: bool,
+    /// `textBackgroundOpacity()` and `backgroundForChatOnly()`, behind the GUI's text.
+    pub text_background_opacity: f64,
+    pub background_for_chat_only: bool,
 }
 
 impl Default for Options {
@@ -101,7 +104,28 @@ impl Options {
             texture_filtering_rgss: false,
             gui_scale: 0,
             vignette: true,
+            text_background_opacity: 0.5,
+            background_for_chat_only: true,
         }
+    }
+
+    /// `getBackgroundOpacity(float)`: the default, unless the background isn't only the chat's.
+    pub fn get_background_opacity(&self, default_opacity: f32) -> f32 {
+        if self.background_for_chat_only {
+            default_opacity
+        } else {
+            self.text_background_opacity as f32
+        }
+    }
+
+    /// `getBackgroundColor(float)`: black at the background's opacity.
+    pub fn get_background_color(&self, default_opacity: f32) -> i32 {
+        crate::net::minecraft::util::argb::ARGB::color_from_float(
+            self.get_background_opacity(default_opacity),
+            0.0,
+            0.0,
+            0.0,
+        )
     }
 
     /// `autoJump().get()`.

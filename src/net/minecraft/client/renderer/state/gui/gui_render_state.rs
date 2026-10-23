@@ -8,12 +8,13 @@
 //! nodes by index. `reset` keeps the last element's bounds, like Java's, so a frame's first
 //! element can go above the first layer.
 //!
-//! Not ported yet: text (`GuiTextRenderState`, which comes with the font), items
-//! (`GuiItemRenderState`), pictures in pictures, the panorama, and the debug rectangles
-//! (`SharedConstants.DEBUG_RENDER_UI_LAYERING_RECTANGLES`, off).
+//! Not ported yet: items (`GuiItemRenderState`), pictures in pictures, the panorama, and the debug
+//! rectangles (`SharedConstants.DEBUG_RENDER_UI_LAYERING_RECTANGLES`, off).
 
 use crate::net::minecraft::client::gui::navigation::screen_rectangle::ScreenRectangle;
 use crate::net::minecraft::client::renderer::state::gui::gui_element_render_state::GuiElementRenderState;
+use crate::net::minecraft::client::renderer::state::gui::gui_text_render_state::GuiTextRenderState;
+use crate::net::minecraft::client::renderer::state::gui::screen_area::ScreenArea;
 use crate::org::joml::vector4f::Vector4f;
 
 pub struct GuiRenderState {
@@ -33,6 +34,7 @@ struct Node {
     up: Option<usize>,
     element_states: Vec<Box<dyn GuiElementRenderState>>,
     glyph_states: Vec<Box<dyn GuiElementRenderState>>,
+    text_states: Vec<GuiTextRenderState>,
 }
 
 /// `GuiRenderState.TraverseRange`.
@@ -104,6 +106,12 @@ impl GuiRenderState {
         }
     }
 
+    pub fn add_text(&mut self, text_state: GuiTextRenderState) {
+        if self.find_appropriate_node(text_state.bounds()) {
+            self.nodes[self.current].text_states.push(text_state);
+        }
+    }
+
     fn find_appropriate_node(&mut self, bounds: Option<ScreenRectangle>) -> bool {
         let Some(bounds) = bounds else {
             return false;
@@ -131,7 +139,11 @@ impl GuiRenderState {
         let mut found = false;
         while !found {
             let states = &self.nodes[node];
-            found = has_intersection(bounds, &states.element_states);
+            found = has_intersection(bounds, &states.element_states)
+                || states.text_states.iter().any(|text| {
+                    text.bounds()
+                        .is_some_and(|existing_bounds| existing_bounds.intersects(bounds))
+                });
             match states.parent {
                 None => break,
                 Some(parent) if !found => node = parent,
@@ -141,6 +153,29 @@ impl GuiRenderState {
         self.current = node;
         if found {
             self.up();
+        }
+    }
+
+    /// `forEachText` with `addGlyphToCurrentLayer`, as `GuiRenderer.prepareText` runs them: each
+    /// text's glyphs, made elements by `glyph`, in the layer the text is in.
+    pub fn prepare_text(
+        &mut self,
+        mut glyph: impl FnMut(
+            &GuiTextRenderState,
+            &crate::net::minecraft::client::gui::font::text_renderable::TextRenderable,
+        ) -> Box<dyn GuiElementRenderState>,
+    ) {
+        for stratum in self.stratum_range(TraverseRange::ALL) {
+            let mut node = Some(self.strata[stratum]);
+            while let Some(index) = node {
+                let mut glyphs = Vec::new();
+                for text in &self.nodes[index].text_states {
+                    text.ensure_prepared()
+                        .visit(&mut |renderable| glyphs.push(glyph(text, renderable)));
+                }
+                self.nodes[index].glyph_states.extend(glyphs);
+                node = self.nodes[index].up;
+            }
         }
     }
 

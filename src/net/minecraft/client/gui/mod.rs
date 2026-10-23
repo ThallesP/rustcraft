@@ -1,4 +1,5 @@
 pub mod contextualbar;
+pub mod font;
 #[allow(clippy::module_inception)]
 pub mod gui;
 pub mod gui_graphics_extractor;
