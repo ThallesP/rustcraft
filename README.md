@@ -99,19 +99,19 @@ Gate 4's physics, in `oracle/scenarios/`: each builds its course on the flat wor
 | `surface-blue-ice` | the same on blue ice (friction 0.989) | identical | |
 | `surface-soul-sand` | the same on soul sand (its 14-sixteenths collision shape and 0.4 speed factor) | identical | |
 | `surface-transitions` | walking and sprint-jumping across packed ice, soul sand, concrete and blue ice in a row | identical | |
-| `block-steps` | walking into a block, jumping up a staircase of whole blocks, dropping two blocks off it | identical | |
-| `stairs` | walking up oak stairs half a block at a time, sprinting up, walking and sneaking back down | identical | identical (`oracle-diff dir --strict` exits 0: the scenario takes no screenshots) |
+| `block-steps` | walking into a block, jumping up a staircase of whole blocks, dropping two blocks off it | identical | trace and packets from the marker identical; two of the server's light updates differ (`--strict` exits 1) |
+| `stairs` | walking up oak stairs half a block at a time, sprinting up, walking and sneaking back down | identical | identical (`oracle-diff dir --strict` exits 0: the scenario takes no screenshots), again with the setup waiting for each command's blocks |
 | `walls-and-corners` | running into a wall (sprint stops), sliding along it at an angle into a corner, pushing into the corner | identical | |
 | `fall` | walking off a ledge onto a slab, off the slab onto soul sand, sprint-jumping on | identical | |
 | `low-ceiling` | jumping into a ceiling two blocks up, standing, walking and sprinting | identical | |
 | `sneak-edge` | sneaking to a ledge and along it without falling, then walking off | identical | |
-| `slabs-and-fences` | stepping up a slab and a double slab, crouching into a gap of one and a half blocks under top slabs (and staying crouched), walking into a fence and failing to jump it | identical | trace and packets from the marker identical; the server grouped the setup's block updates differently, and sent a chunk center after the port had left (`oracle-diff dir --strict` exits 1 on those clientbound packets) |
-| `water` | walking into a pool and sinking, swimming up with jump to the surface and bobbing, sneaking down, sprint-swimming (the swimming pose) down and up, floating, swimming to the edge and jumping out onto the bank | identical | |
-| `water-current` | wading into a stream of flowing water levels and being carried, walking against it, a waterfall pushing down, jumping in it | identical | |
-| `climbing` | climbing a ladder by walking into it, sliding down, holding sneak to stop, climbing with jump, then a vine the same way | identical | |
-| `scaffolding` | climbing scaffolding with jump, standing on its top, sneaking down through it, a bottom scaffolding's frame to step on | identical | |
-| `walls-and-panes` | walking into a low cobblestone wall and failing to jump it, sliding along it into a tall post, walking along glass panes and around a lone pane post, sprint-jumping on | identical | |
-| `falls` | falling 3 blocks (no damage), 5 blocks onto stone and 10 onto hay bales (damage), each landing waiting for the server's answer (`wait_for`) | identical (on vanilla's capture; CI on the port's) | |
+| `slabs-and-fences` | stepping up a slab and a double slab, crouching into a gap of one and a half blocks under top slabs (and staying crouched), walking into a fence and failing to jump it | identical | trace and packets from the marker identical; with the setup waiting for each command's blocks, its block updates now match, but the run ends just after the player crosses into a new chunk, whose `set_chunk_cache_center` and chunks vanilla caught and the port didn't, and a light update differs (`--strict` exits 1) |
+| `water` | walking into a pool and sinking, swimming up with jump to the surface and bobbing, sneaking down, sprint-swimming (the swimming pose) down and up, floating, swimming to the edge and jumping out onto the bank | identical | trace and packets from the marker identical; the clientbound packets differ by the server's own clock (the player's air under water, `set_entity_data` every server tick), so `oracle-diff dir --strict` exits 1 |
+| `water-current` | wading into a stream of flowing water levels and being carried, walking against it, a waterfall pushing down, jumping in it | identical | trace and packets from the marker identical; the clientbound packets differ by the air under water and the server's light updates (`--strict` exits 1) |
+| `climbing` | climbing a ladder by walking into it, sliding down, holding sneak to stop, climbing with jump, then a vine the same way | identical | identical (`oracle-diff dir --strict` exits 0) |
+| `scaffolding` | climbing scaffolding with jump, standing on its top, sneaking down through it, a bottom scaffolding's frame to step on | identical | identical (`oracle-diff dir --strict` exits 0) |
+| `walls-and-panes` | walking into a low cobblestone wall and failing to jump it, sliding along it into a tall post, walking along glass panes and around a lone pane post, sprint-jumping on | identical | identical (`oracle-diff dir --strict` exits 0) |
+| `falls` | falling 3 blocks (no damage), 5 blocks onto stone and 10 onto hay bales (damage), each landing waiting for the server's answer (`wait_for`) | identical (on vanilla's capture; CI on the port's) | trace and packets from the marker identical (CI checks them); the server's answers to the damage differ from run to run, and its light updates (`--strict` exits 1) |
 
 Not covered yet: slime and honey (bouncing and sliding), lava (whose damage comes on the server's clock), a water landing, trapdoors as ladders, and other entities.
 

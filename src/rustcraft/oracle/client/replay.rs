@@ -843,15 +843,19 @@ mod tests {
 
     /// For writing a scenario: `SCENARIO=<name> cargo test --lib replays_a_draft -- --ignored`
     /// replays `oracle/scenarios/<name>.json` on the flat level and writes the trace and packets
-    /// to `target/oracle/<name>-draft/` (TESTING.md). It checks nothing.
+    /// to `target/oracle/<name>-draft/` (TESTING.md). It checks nothing, and without a server its
+    /// steps wait for nothing.
     #[test]
     #[ignore]
     fn replays_a_draft() {
         let name = std::env::var("SCENARIO").expect("SCENARIO names the draft");
-        let scenario = Scenario::load(
+        let mut scenario = Scenario::load(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("oracle/scenarios/{name}.json")),
         )
         .unwrap();
+        for step in &mut scenario.steps {
+            step.wait_for.clear();
+        }
         let flat = FlatLevel::with_setup(&scenario.setup);
         let draft = replay(
             &scenario,
@@ -1036,8 +1040,8 @@ mod tests {
     fn falls() {
         check_scenario(
             "falls",
-            "6d53fa85232d883cfabfde453f923315",
-            "ecbc25ad01fedec758e75c4c4d01a3f1",
+            "2f928d8ecf2e4023ea31ca262fa6b8e6",
+            "71840c6ffe3f52b3f30db9b7ae551a37",
         );
     }
 }

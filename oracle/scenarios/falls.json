@@ -1,13 +1,13 @@
 {
   "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
-  "player": {"pos": [0.5, -42.0, 0.5], "y_rot": 0.0, "x_rot": 0.0},
+  "player": {"pos": [4.5, -42.0, 0.5], "y_rot": 0.0, "x_rot": 0.0},
   "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
   "setup": [
     "gamerule natural_health_regeneration false",
-    "fill -1 -60 -1 1 -43 1 minecraft:stone strict",
-    "fill -1 -60 2 1 -46 4 minecraft:stone strict",
-    "fill -1 -60 5 1 -51 7 minecraft:stone strict",
-    "fill -1 -61 8 1 -61 12 minecraft:hay_block[axis=y] strict"
+    "fill 3 -60 -1 5 -43 1 minecraft:stone strict",
+    "fill 3 -60 2 5 -46 4 minecraft:stone strict",
+    "fill 3 -60 5 5 -51 7 minecraft:stone strict",
+    "fill 3 -61 8 5 -61 12 minecraft:hay_block[axis=y] strict"
   ],
   "steps": [
     {"ticks": 19, "keys": ["forward"]},

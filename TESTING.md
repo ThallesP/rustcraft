@@ -345,7 +345,7 @@ tp @e[type=!minecraft:player] 0 -1000 0
 tp @s <x> <y> <z> <y_rot> <x_rot>
 ```
 
-Then the client waits for chunks to render, plus at least 20 ticks until the player is on the ground. The player is the offline player `rustcraft`.
+On a server, a command that places blocks (`fill`, `setblock`) waits, the client ticking, until the server has sent it at least one more block change (`block_update` or `section_blocks_update`, counted like `wait_for`'s packets) before the next command goes: the server sends a tick's block changes at its end, so each command's come in a tick of their own and are grouped the same way every run. Then the client waits for chunks to render, plus at least 20 ticks until the player is on the ground. The player is the offline player `rustcraft`. A course keeps clear of the spawn point (0.5, -60, 0.5), where the player is when the setup runs: a block filled there hurts it (`inWall`) if a server tick falls before the `tp`.
 
 On a server, the client then sends a marker right before tick 0: a serverbound `minecraft:custom_payload` with the identifier `rustcraft:scenario_start` and no data (payload `18` followed by the identifier's ASCII). A vanilla server ignores it. Packet diffs use it to tell the join phase from the scenario, so a port joining a server must send it at the same point.
 
@@ -374,7 +374,7 @@ What the answer holds isn't the client's, though. Players move on both sides (`M
 
 The offline replay has the server's answers from a capture: at a step's `wait_for`, it takes the capture's clientbound packets after the marker in the order they came, up to the waited-for ones, and applies those that change the player (`set_entity_motion`, `set_health`, `damage_event`), after the tick's line like the live clients. A scenario that waits is only replayed where a capture is, so CI records `falls` with the port's own client, like the walk.
 
-The server's own packets differ from run to run where a scenario's course is built: the server sends a section's block changes once a tick (`section_blocks_update`, or `block_update` for one), so how the setup's commands fall into its ticks decides how they're grouped, and a scenario that ends just after the player crosses into a new chunk may or may not catch the server's `set_chunk_cache_center` before the client leaves. Both show in `oracle-diff`'s clientbound multiset (the live `slabs-and-fences` run's did), not in what the client sends or its trace.
+The server's own packets differed from run to run where a scenario's course was built, before the setup waited for each command's blocks: the server sends a section's block changes once a tick (`section_blocks_update`, or `block_update` for one), so how the setup's commands fell into its ticks decided how they were grouped. A scenario that ends just after the player crosses into a new chunk may or may not catch the server's `set_chunk_cache_center` before the client leaves. Both show in `oracle-diff`'s clientbound multiset (the live `slabs-and-fences` run's did), not in what the client sends or its trace. So do what the server works out on its own clock: the light it sends for changed sections (`light_update`, from its light engine's thread), a player's air under water (`set_entity_data` every server tick its eyes are in water), and the answers to damage (above).
 
 ### Offline replays
 

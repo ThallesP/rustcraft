@@ -42,6 +42,9 @@ use crate::rustcraft::oracle::client::trace_writer::{self, TraceWriter};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     WaitingForLevel,
+    /// Sending the setup commands, the next one's index: one that places blocks waits for the
+    /// server to send them before the next goes.
+    SendingSetup(usize),
     WaitingForPosition,
     WaitingForChunks,
     Settling,
@@ -68,6 +71,10 @@ pub struct OracleGameTest {
     outcome: Rc<Cell<Option<Outcome>>>,
     /// The counts of the packets the current step waits for, as they were when it began.
     waiting_since: HashMap<String, i32>,
+    /// The setup's commands, and the block changes the client had had when the last one that
+    /// places blocks went.
+    setup: Vec<String>,
+    block_updates_before: Option<i32>,
 }
 
 impl OracleGameTest {
@@ -110,6 +117,8 @@ impl OracleGameTest {
                 trace: None,
                 outcome: Rc::clone(&outcome),
                 waiting_since: HashMap::new(),
+                setup: Vec::new(),
+                block_updates_before: None,
             },
             outcome,
         )
@@ -266,6 +275,20 @@ impl OracleGameTest {
         }
     }
 
+    fn places_blocks(command: &str) -> bool {
+        command.starts_with("fill ") || command.starts_with("setblock ")
+    }
+
+    /// The block changes the server has sent so far, one block's or a section's.
+    fn block_updates(minecraft: &Minecraft) -> i32 {
+        minecraft
+            .packet_processor()
+            .arrivals("minecraft:block_update")
+            + minecraft
+                .packet_processor()
+                .arrivals("minecraft:section_blocks_update")
+    }
+
     fn scenario_ticks(&self) -> i32 {
         self.scenario.steps.iter().map(|step| step.ticks).sum()
     }
@@ -320,6 +343,32 @@ impl OracleGameTest {
         options.key_sprint.set_down(held("sprint"));
     }
 
+    /// Sends the setup's commands from `next` on, until one that places blocks: the server sends
+    /// a command's blocks at the end of the tick it ran in, so the next waits for them, and each
+    /// command's blocks come in a tick of their own, grouped the same way every run, like Java's.
+    fn send_setup(&mut self, minecraft: &Minecraft, next: usize) {
+        if let Some(before) = self.block_updates_before {
+            if OracleGameTest::block_updates(minecraft) <= before {
+                return;
+            }
+            self.block_updates_before = None;
+        }
+
+        let connection = minecraft
+            .get_connection()
+            .expect("the player is in a level");
+        for (index, command) in self.setup.iter().enumerate().skip(next) {
+            let before = OracleGameTest::block_updates(minecraft);
+            connection.borrow().send_command(command);
+            if OracleGameTest::places_blocks(command) {
+                self.block_updates_before = Some(before);
+                self.next(Stage::SendingSetup(index + 1));
+                return;
+            }
+        }
+        self.next(Stage::WaitingForPosition);
+    }
+
     /// After the last tick of a step that waits for packets and its trace line: runs the network,
     /// the game not ticking, until each has come since the step began, then handles what the game
     /// thread has queued. Whether they came in time.
@@ -367,7 +416,10 @@ impl TestDriver for OracleGameTest {
         self.ticks_in_stage += 1;
         let waiting = matches!(
             self.stage,
-            Stage::WaitingForLevel | Stage::WaitingForPosition | Stage::WaitingForChunks
+            Stage::WaitingForLevel
+                | Stage::SendingSetup(_)
+                | Stage::WaitingForPosition
+                | Stage::WaitingForChunks
         );
         if waiting && self.ticks_in_stage > OracleGameTest::LOAD_TIMEOUT_TICKS {
             let stage = self.stage;
@@ -396,15 +448,12 @@ impl TestDriver for OracleGameTest {
                 if loaded {
                     // The world itself (seed, flat preset) comes from the server's properties;
                     // commands set the rest.
-                    let connection = minecraft
-                        .get_connection()
-                        .expect("the player is in a level");
-                    for command in OracleGameTest::setup_commands(&self.scenario, "@s") {
-                        connection.borrow().send_command(&command);
-                    }
-                    self.next(Stage::WaitingForPosition);
+                    self.setup = OracleGameTest::setup_commands(&self.scenario, "@s");
+                    self.next(Stage::SendingSetup(0));
+                    self.send_setup(minecraft, 0);
                 }
             }
+            Stage::SendingSetup(next) => self.send_setup(minecraft, next),
             Stage::WaitingForPosition => {
                 if self.is_at_scenario_position(minecraft) {
                     self.next(Stage::WaitingForChunks);

@@ -153,9 +153,15 @@ public final class OracleGameTest implements FabricClientGameTest {
         ));
         context.waitFor(client -> client.level != null && client.player != null && !(client.gui.screen() instanceof LevelLoadingScreen), LOAD_TIMEOUT_TICKS);
 
-        // The world itself (seed, flat preset) comes from the server's properties; commands set the rest.
+        // The world itself (seed, flat preset) comes from the server's properties; commands set the rest. The server sends
+        // a command's blocks at the end of the tick it ran in, so a command that places blocks waits for them before the
+        // next goes: each command's blocks then come in a tick of their own, grouped the same way every run (TESTING.md).
         for (String command : setupCommands(scenario, "@s")) {
+            int blockUpdates = blockUpdates();
             context.runOnClient(client -> client.player.connection.sendCommand(command));
+            if (placesBlocks(command)) {
+                context.waitFor(client -> blockUpdates() > blockUpdates, LOAD_TIMEOUT_TICKS);
+            }
         }
         context.waitFor(client -> isAtScenarioPosition(client, scenario.player()), LOAD_TIMEOUT_TICKS);
         context.waitFor(OracleGameTest::areChunksRendered, LOAD_TIMEOUT_TICKS);
@@ -195,6 +201,15 @@ public final class OracleGameTest implements FabricClientGameTest {
         commands.addAll(scenario.setup());
         commands.add("tp " + player + " " + position(scenario.player()));
         return commands;
+    }
+
+    private static boolean placesBlocks(String command) {
+        return command.startsWith("fill ") || command.startsWith("setblock ");
+    }
+
+    /** The block changes the server has sent the client so far, one block's or a section's. */
+    private static int blockUpdates() {
+        return PacketArrivals.count("minecraft:block_update") + PacketArrivals.count("minecraft:section_blocks_update");
     }
 
     private static void replay(ClientGameTestContext context, Scenario scenario, Path outDir) {
