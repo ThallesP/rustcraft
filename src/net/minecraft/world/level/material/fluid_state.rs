@@ -1,0 +1,106 @@
+//! net/minecraft/world/level/material/FluidState.java
+//!
+//! A fluid state is a `StateHolder` of its fluid in Java. A fluid has at most two properties
+//! (`FlowingFluid.FALLING`, and `LEVEL_FLOWING` for a flowing one), so here a state is its fluid
+//! and their values, `Copy` and compared by value, which is comparing Java's references since a
+//! definition holds one state for each combination. Not ported yet: `Fluid.FLUID_STATE_REGISTRY`'s
+//! ids and the behaviour methods (`getHeight`, `getShape`, ticking), which come with what calls
+//! them.
+
+use crate::net::minecraft::world::level::material::fluids::Fluids;
+
+/// One of a fluid's states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FluidState {
+    fluid: Fluids,
+    falling: bool,
+    // `LEVEL_FLOWING`'s value for a flowing fluid, 0 for the others.
+    level: i32,
+}
+
+impl FluidState {
+    /// `Fluids.EMPTY.defaultFluidState()`.
+    pub const EMPTY: FluidState = FluidState {
+        fluid: Fluids::EMPTY,
+        falling: false,
+        level: 0,
+    };
+
+    pub(crate) const fn new(fluid: Fluids, falling: bool, level: i32) -> FluidState {
+        FluidState {
+            fluid,
+            falling,
+            level,
+        }
+    }
+
+    pub fn get_type(&self) -> Fluids {
+        self.fluid
+    }
+
+    /// `FlowingFluid.FALLING`'s value, which the empty fluid's state doesn't have (`None`).
+    pub fn falling(&self) -> Option<bool> {
+        (!self.fluid.is_empty()).then_some(self.falling)
+    }
+
+    /// `FlowingFluid.LEVEL`'s value, which only a flowing fluid's states have.
+    pub fn level(&self) -> Option<i32> {
+        self.fluid.is_flowing().then_some(self.level)
+    }
+
+    /// `getType().isSource(this)`: a source fluid's states are.
+    pub fn is_source(&self) -> bool {
+        matches!(self.fluid, Fluids::WATER | Fluids::LAVA)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.fluid.is_empty()
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.get_amount() == 8
+    }
+
+    /// 8 for a source, the level for a flowing fluid, 0 for the empty one.
+    pub fn get_amount(&self) -> i32 {
+        match self.fluid {
+            Fluids::EMPTY => 0,
+            Fluids::WATER | Fluids::LAVA => 8,
+            Fluids::FLOWING_WATER | Fluids::FLOWING_LAVA => self.level,
+        }
+    }
+
+    pub fn is_randomly_ticking(&self) -> bool {
+        self.fluid.is_randomly_ticking()
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use serde_json::{Value, json};
+
+    use super::FluidState;
+    use crate::golden::Encode;
+
+    /// `[fluid, values, isEmpty, isRandomlyTicking, isSource, getAmount]`, its values by their
+    /// fields in `BlockStateProperties`, like a block state's.
+    impl Encode for FluidState {
+        fn encode(&self) -> Value {
+            let mut values = Vec::new();
+            if let Some(falling) = self.falling() {
+                values.push(json!(["FALLING", falling]));
+            }
+            if let Some(level) = self.level() {
+                values.push(json!(["LEVEL_FLOWING", level]));
+            }
+            json!([
+                self.get_type().key(),
+                values,
+                self.is_empty(),
+                self.is_randomly_ticking(),
+                self.is_source(),
+                self.get_amount()
+            ])
+        }
+    }
+}

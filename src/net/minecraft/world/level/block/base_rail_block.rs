@@ -7,15 +7,22 @@ use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
+use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct BaseRailBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.BaseRailBlock",
-    &block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(BaseRailBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.BaseRailBlock",
+        &block::CLASS,
+    )
+};
 
 impl BaseRailBlock {
     pub const WATERLOGGED: &'static BooleanProperty = BlockStateProperties::WATERLOGGED;
@@ -26,5 +33,16 @@ impl BaseRailBlock {
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         Block::new_with(properties, class, definition)
+    }
+}
+
+impl BaseRailBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

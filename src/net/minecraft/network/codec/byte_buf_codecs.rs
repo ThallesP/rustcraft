@@ -1,7 +1,6 @@
 //! net/minecraft/network/codec/ByteBufCodecs.java
 //!
 //! Not ported yet:
-//! - `BIT_SET` and `fixedBitSet`, which wait for `java.util.BitSet`;
 //! - the ones made from DataFixerUpper's codecs (`fromCodec`, `fromCodecTrusted` and the
 //!   `fromCodecWithRegistries` ones), and `lenientJson`, which waits for Gson;
 //! - `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
@@ -24,6 +23,7 @@ use crate::com::mojang::authlib::properties::property_map::PropertyMap;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::io::netty::buffer::unpooled;
 use crate::java::util::array_list::ArrayList;
+use crate::java::util::bit_set::BitSet;
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::nbt::compound_tag::CompoundTag;
@@ -164,6 +164,16 @@ static LONG_ARRAY: StaticStreamCodec<ByteBuf, Vec<i64>> = LazyLock::new(|| {
             FriendlyByteBuf::write_long_array_to(output, value)
         },
         FriendlyByteBuf::read_long_array_from,
+    ))
+});
+
+/// A bit set's bytes, as a byte array: the light packets' section masks.
+static BIT_SET: StaticStreamCodec<ByteBuf, BitSet> = LazyLock::new(|| {
+    Box::new(stream_codec::of(
+        |output: &mut ByteBuf, value: &BitSet| {
+            FriendlyByteBuf::write_byte_array_to(output, &value.to_byte_array())
+        },
+        |input: &mut ByteBuf| BitSet::value_of_bytes(&FriendlyByteBuf::read_byte_array_from(input)),
     ))
 });
 
@@ -309,6 +319,7 @@ impl ByteBufCodecs {
     pub const DOUBLE: &'static StaticStreamCodec<ByteBuf, f64> = &DOUBLE;
     pub const BYTE_ARRAY: &'static StaticStreamCodec<ByteBuf, Vec<i8>> = &BYTE_ARRAY;
     pub const LONG_ARRAY: &'static StaticStreamCodec<ByteBuf, Vec<i64>> = &LONG_ARRAY;
+    pub const BIT_SET: &'static StaticStreamCodec<ByteBuf, BitSet> = &BIT_SET;
     pub const STRING_UTF8: &'static StaticStreamCodec<ByteBuf, String> = &STRING_UTF8;
     pub const TAG: &'static StaticStreamCodec<ByteBuf, Tag> = &TAG;
     pub const TRUSTED_TAG: &'static StaticStreamCodec<ByteBuf, Tag> = &TRUSTED_TAG;
@@ -330,6 +341,16 @@ impl ByteBufCodecs {
     pub const MAX_PUBLIC_KEY_LENGTH: i32 = 512;
 
     /// `byteArray(int)`: a length-prefixed array of at most `max_size` bytes.
+    /// `fixedBitSet(size)`: the size over 8 bytes, rounded up.
+    pub fn fixed_bit_set(size: i32) -> impl StreamCodec<Buffer = ByteBuf, Value = BitSet> {
+        stream_codec::of(
+            move |output: &mut ByteBuf, value: &BitSet| {
+                FriendlyByteBuf::write_fixed_bit_set_to(output, value, size)
+            },
+            move |input: &mut ByteBuf| FriendlyByteBuf::read_fixed_bit_set_from(input, size),
+        )
+    }
+
     pub fn byte_array(max_size: i32) -> impl StreamCodec<Buffer = ByteBuf, Value = Vec<i8>> {
         stream_codec::of(
             move |output: &mut ByteBuf, value: &Vec<i8>| {
@@ -849,10 +870,10 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.network.codec.ByteBufCodecs");
-        golden.pending("BIT_SET", "waits for java.util.BitSet");
-        golden.pending(
-            "fixedBitSet(I)Lnet/minecraft/network/codec/StreamCodec;",
-            "waits for java.util.BitSet",
+        golden.check_codec("BIT_SET", || ByteBufCodecs::BIT_SET);
+        golden.check_codec_from(
+            "fixedBitSet(I)Lnet/minecraft/network/codec/StreamCodec;[sizes up to 2^16]",
+            ByteBufCodecs::fixed_bit_set,
         );
         for name in [
             "fromCodec(Lcom/mojang/serialization/Codec;)Lnet/minecraft/network/codec/StreamCodec;",

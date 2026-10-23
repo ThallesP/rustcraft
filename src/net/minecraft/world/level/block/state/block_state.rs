@@ -185,6 +185,10 @@ mod tests {
             state.has_block_entity()
         });
         golden.check(
+            "getFluidState()Lnet/minecraft/world/level/material/FluidState;",
+            |state: BlockState| state.get_fluid_state(),
+        );
+        golden.check(
             &format!("getMapColor{GETTER_AND_POS}Lnet/minecraft/world/level/material/MapColor;"),
             |state: BlockState| state.get_map_color().id,
         );

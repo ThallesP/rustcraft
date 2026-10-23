@@ -29,16 +29,22 @@ use crate::net::minecraft::network::protocol::cookie::clientbound_cookie_request
 use crate::net::minecraft::network::protocol::cookie::cookie_packet_types::CookiePacketTypes;
 use crate::net::minecraft::network::protocol::cookie::serverbound_cookie_response_packet::ServerboundCookieResponsePacket;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
+use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
@@ -393,7 +399,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_BLOCK_UPDATE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_BLOCK_UPDATE),
+                ClientboundBlockUpdatePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_BOSS_EVENT,
@@ -413,7 +419,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_CHUNKS_BIOMES,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_CHUNKS_BIOMES),
+                ClientboundChunksBiomesPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_CLEAR_TITLES,
@@ -513,7 +519,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_FORGET_LEVEL_CHUNK,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_FORGET_LEVEL_CHUNK),
+                ClientboundForgetLevelChunkPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_GAME_EVENT,
@@ -545,7 +551,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_LEVEL_CHUNK_WITH_LIGHT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_LEVEL_CHUNK_WITH_LIGHT),
+                ClientboundLevelChunkWithLightPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_LEVEL_EVENT,
@@ -557,7 +563,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_LIGHT_UPDATE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_LIGHT_UPDATE),
+                ClientboundLightUpdatePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_LOGIN,
@@ -705,7 +711,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SECTION_BLOCKS_UPDATE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SECTION_BLOCKS_UPDATE),
+                ClientboundSectionBlocksUpdatePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SELECT_ADVANCEMENTS_TAB,

@@ -20,6 +20,7 @@
 //! function of the state alone. A function a level is passed to (`getPostProcessPos`,
 //! `isRedstoneConductor`…) leaves the level out where none of vanilla's read it.
 
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use std::sync::Arc;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
@@ -547,6 +548,7 @@ pub struct BlockStateBase {
     spawn_terrain_particles: bool,
     instrument: NoteBlockInstrument,
     replaceable: bool,
+    fluid_state: FluidState,
     is_randomly_ticking: bool,
 }
 
@@ -573,13 +575,15 @@ impl BlockStateBase {
             spawn_terrain_particles: properties.spawn_terrain_particles,
             instrument: properties.instrument,
             replaceable: properties.replaceable,
+            fluid_state: FluidState::EMPTY,
             is_randomly_ticking: false,
         }
     }
 
-    /// `initCache`'s part that's ported: whether the state ticks randomly, which its block's
-    /// class may decide.
-    pub(crate) fn init_cache(&mut self, is_randomly_ticking: bool) {
+    /// `initCache`'s part that's ported: the state's fluid and whether it ticks randomly, which
+    /// its block's class may decide.
+    pub(crate) fn init_cache(&mut self, fluid_state: FluidState, is_randomly_ticking: bool) {
+        self.fluid_state = fluid_state;
         self.is_randomly_ticking = is_randomly_ticking;
     }
 }
@@ -644,6 +648,10 @@ impl BlockState {
 
     pub fn is_randomly_ticking(&self) -> bool {
         self.base().is_randomly_ticking
+    }
+
+    pub fn get_fluid_state(&self) -> FluidState {
+        self.base().fluid_state
     }
 
     pub fn requires_correct_tool_for_drops(&self) -> bool {

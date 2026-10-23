@@ -1,19 +1,25 @@
 //! net/minecraft/network/protocol/game/ClientGamePacketListener.java
 //!
 //! Not ported yet: the handlers of the packets the game protocol has the `Unported` stand-in for
-//! (GameProtocols), which come with their packets (the world data's with the world track), and
-//! its `protocol()`, which comes with `PacketListener`'s.
+//! (GameProtocols), which come with their packets, and its `protocol()`, which comes with
+//! `PacketListener`'s.
 
 use crate::net::minecraft::network::protocol::common::client_common_packet_listener::ClientCommonPacketListener;
+use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
@@ -62,6 +68,17 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
     fn handle_ticking_state(&mut self, packet: &ClientboundTickingStatePacket);
 
     fn handle_ticking_step(&mut self, packet: &ClientboundTickingStepPacket);
+    fn handle_level_chunk_with_light(&mut self, packet: &ClientboundLevelChunkWithLightPacket);
+
+    fn handle_light_update_packet(&mut self, packet: &ClientboundLightUpdatePacket);
+
+    fn handle_forget_level_chunk(&mut self, packet: &ClientboundForgetLevelChunkPacket);
+
+    fn handle_block_update(&mut self, packet: &ClientboundBlockUpdatePacket);
+
+    fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket);
+
+    fn handle_chunks_biomes(&mut self, packet: &ClientboundChunksBiomesPacket);
 }
 
 #[cfg(test)]
@@ -144,5 +161,43 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
 
     fn handle_ticking_step(&mut self, packet: &ClientboundTickingStepPacket) {
         self.record("handleTickingStep", packet);
+    }
+
+    // The world data's packets have no `handle` golden cases (the harness has no
+    // RegistryFriendlyByteBuf generator), so the recorder records their types.
+    fn handle_level_chunk_with_light(&mut self, packet: &ClientboundLevelChunkWithLightPacket) {
+        let r#type =
+            crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
+        self.record("handleLevelChunkWithLight", r#type);
+    }
+
+    fn handle_light_update_packet(&mut self, packet: &ClientboundLightUpdatePacket) {
+        let r#type =
+            crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
+        self.record("handleLightUpdatePacket", r#type);
+    }
+
+    fn handle_forget_level_chunk(&mut self, packet: &ClientboundForgetLevelChunkPacket) {
+        let r#type =
+            crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
+        self.record("handleForgetLevelChunk", r#type);
+    }
+
+    fn handle_block_update(&mut self, packet: &ClientboundBlockUpdatePacket) {
+        let r#type =
+            crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
+        self.record("handleBlockUpdate", r#type);
+    }
+
+    fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket) {
+        let r#type =
+            crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
+        self.record("handleChunkBlocksUpdate", r#type);
+    }
+
+    fn handle_chunks_biomes(&mut self, packet: &ClientboundChunksBiomesPacket) {
+        let r#type =
+            crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
+        self.record("handleChunksBiomes", r#type);
     }
 }

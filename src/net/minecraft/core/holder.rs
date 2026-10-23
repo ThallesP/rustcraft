@@ -9,7 +9,7 @@
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 
 /// An element of a registry, by the key it's registered under.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Holder {
     /// `Holder.Reference`: an element registered under its key.
     Reference(ResourceKey),

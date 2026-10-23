@@ -14,13 +14,18 @@ use crate::net::minecraft::world::level::block::state::properties::integer_prope
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block::vegetation_block::{self, VegetationBlock};
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct SeaPickleBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.SeaPickleBlock",
-    &vegetation_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(SeaPickleBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.SeaPickleBlock",
+        &vegetation_block::CLASS,
+    )
+};
 
 impl SeaPickleBlock {
     pub const PICKLES: &'static IntegerProperty = BlockStateProperties::PICKLES;
@@ -57,5 +62,16 @@ impl SeaPickleBlock {
     /// Out of water.
     pub fn is_dead(state: BlockState) -> bool {
         !state.get_value(SeaPickleBlock::WATERLOGGED)
+    }
+}
+
+impl SeaPickleBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

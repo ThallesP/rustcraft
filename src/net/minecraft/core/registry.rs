@@ -8,6 +8,7 @@
 //! values come with the registries' classes (`DimensionType`, `Biome`, …).
 
 use crate::net::minecraft::core::holder::Holder;
+use crate::net::minecraft::core::id_map::IdMap;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 
 /// A registry's elements, by network id.
@@ -49,5 +50,28 @@ impl Registry {
             Some(id) => id as i32,
             None => panic!("Can't find id for '{key}' in map {}", self.key),
         }
+    }
+}
+
+/// `asHolderIdMap()`: its elements' holders by network id, which a biome container's palette
+/// numbers its biomes with.
+impl IdMap<Holder> for Registry {
+    fn get_id(&self, thing: &Holder) -> i32 {
+        let Holder::Reference(key) = thing;
+        self.by_id
+            .iter()
+            .position(|element| element == key)
+            .map_or(-1, |id| id as i32)
+    }
+
+    fn by_id(&self, id: i32) -> Option<Holder> {
+        usize::try_from(id)
+            .ok()
+            .and_then(|index| self.by_id.get(index))
+            .map(|key| Holder::Reference(key.clone()))
+    }
+
+    fn size(&self) -> i32 {
+        Registry::size(self)
     }
 }

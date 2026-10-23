@@ -1,8 +1,9 @@
 //! net/minecraft/world/level/block/LiquidBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties, its default state, its fluid and
-//! which states tick. Not ported yet: the rest, including `stateCache` and `getFluidState`,
-//! which wait for fluid states.
+//! Only what decides its blocks' states so far: its properties, its default state, its fluid,
+//! which states tick and their fluid states. Not ported yet: the rest. `stateCache`, the fluid
+//! states Java's constructor makes for each level, are made when they're asked for, which is the
+//! same: `FluidState`s are values.
 
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -13,6 +14,7 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct LiquidBlock {
@@ -21,6 +23,7 @@ pub struct LiquidBlock {
 
 pub static CLASS: BlockClass = BlockClass {
     is_randomly_ticking: Some(LiquidBlock::is_randomly_ticking),
+    get_fluid_state: Some(LiquidBlock::get_fluid_state),
     ..BlockClass::new("net.minecraft.world.level.block.LiquidBlock", &block::CLASS)
 };
 
@@ -61,5 +64,19 @@ impl LiquidBlock {
     /// block's, flowing or still, which ticks when it's lava.
     fn is_randomly_ticking(block: &BlockData, _state: BlockState) -> bool {
         block.fields::<LiquidBlock>().fluid.is_randomly_ticking()
+    }
+}
+
+impl LiquidBlock {
+    /// `getFluidState`: the source at level 0, flowing ones from 7 down to 1 at levels 1 to 7, and
+    /// falling at 8 and past it.
+    fn get_fluid_state(block: &BlockData, state: BlockState) -> FluidState {
+        let level = state.get_value(LiquidBlock::LEVEL);
+        let fluid = block.fields::<LiquidBlock>().fluid;
+        match level.min(8) {
+            0 => fluid.get_source(false),
+            8 => fluid.get_flowing(8, true),
+            level => fluid.get_flowing(8 - level, false),
+        }
     }
 }

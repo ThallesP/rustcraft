@@ -1,10 +1,13 @@
 pub mod configuration;
+pub mod data_layer;
 pub mod global_palette;
 pub mod hash_map_palette;
+pub mod level_chunk_section;
 pub mod linear_palette;
 pub mod missing_palette_entry_exception;
 pub mod palette;
 pub mod palette_resize;
 pub mod paletted_container;
+pub mod paletted_container_factory;
 pub mod single_value_palette;
 pub mod strategy;

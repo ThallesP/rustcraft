@@ -21,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -194,6 +195,9 @@ public final class Golden {
     // ArrayList's constructor rejects a negative one.
     private static final Values.Generator SIZES = new Values.Simple(
         List.of(-1, 0, 1, 2, 3, 4, 7, 140, 65536), random -> random.nextInt(7), value -> new JsonPrimitive((Integer)value)
+    );
+    private static final Values.Generator BIT_SET_SIZES = new Values.Simple(
+        List.of(-9, -1, 0, 1, 7, 8, 9, 26, 63, 64, 65, 128, 256, 257, 65536), random -> random.nextInt(300), value -> new JsonPrimitive((Integer)value)
     );
     private static final Values.Generator VEC3S = Values.generator(Vec3.class);
     private static final Values.Generator IDENTIFIERS = Values.generator(Identifier.class);
@@ -667,6 +671,11 @@ public final class Golden {
             .where("readByteArray(I)[B", args -> allocatesLittle(args[0], (Integer)args[1]))
             .where("readByteArray(Lio/netty/buffer/ByteBuf;I)[B", args -> allocatesLittle(args[0], (Integer)args[1]))
             .where("readVarIntArray(I)[I", args -> allocatesLittle(args[0], (Integer)args[1]))
+            // A fixed-size bit set's reader allocates its size over 8 bytes before it reads, and its writer writes that many.
+            .where("readFixedBitSet(I)Ljava/util/BitSet;", args -> (Integer)args[1] <= 1 << 16)
+            .where("readFixedBitSet(Lio/netty/buffer/ByteBuf;I)Ljava/util/BitSet;", args -> (Integer)args[1] <= 1 << 16)
+            .where("writeFixedBitSet(Ljava/util/BitSet;I)V", args -> (Integer)args[2] <= 1 << 16)
+            .where("writeFixedBitSet(Lio/netty/buffer/ByteBuf;Ljava/util/BitSet;I)V", args -> (Integer)args[2] <= 1 << 16)
             // The readers and writers taking a decoder, an encoder or a function get the game's kinds of them, and the
             // readers also read what the writers write.
             .given(READ_OPTIONAL, "VAR_INT", ByteBufCodecs.VAR_INT)
@@ -785,6 +794,12 @@ public final class Golden {
             .codec(
                 "fixedSizeList(I)Lnet/minecraft/network/codec/StreamCodec$CodecOperation;", "BOOL",
                 leading -> ByteBufCodecs.BOOL.apply(ByteBufCodecs.fixedSizeList((Integer)leading[0])), bufferCodec(Codecs.listOf(BOOLEANS), List.class), SIZES
+            )
+            // A fixed-size bit set's bytes are its size over 8, rounded up: sizes around the bytes' bounds and the light
+            // masks' 26, and none big enough to make vanilla allocate much (a size of 2^31 - 1 is 256 MiB).
+            .codec(
+                "fixedBitSet(I)Lnet/minecraft/network/codec/StreamCodec;", "sizes up to 2^16",
+                leading -> ByteBufCodecs.fixedBitSet((Integer)leading[0]), bufferCodec(Values.BIT_SETS, BitSet.class), BIT_SET_SIZES
             )
             .codec(
                 "idMapper(Ljava/util/function/IntFunction;Ljava/util/function/ToIntFunction;)Lnet/minecraft/network/codec/StreamCodec;",
@@ -1179,6 +1194,16 @@ public final class Golden {
                 "valueOf(Ljava/lang/String;)Lnet/minecraft/network/protocol/common/ServerboundResourcePackPacket$Action;",
                 names(ServerboundResourcePackPacket.Action.values())
             ),
+        // The light packets' masks: what the codecs and the client's light code call, and what equals and the readers see.
+        // set(I) gets indexes up to a few words past the set, since a big one makes it allocate that many.
+        new InstanceSuite(
+            BitSet.class, "<init>()V", "<init>(I)V", "valueOf([J)Ljava/util/BitSet;", "valueOf([B)Ljava/util/BitSet;", "toByteArray()[B",
+            "toLongArray()[J", "get(I)Z", "set(I)V", "clear(II)V", "nextSetBit(I)I", "nextClearBit(I)I", "length()I", "isEmpty()Z",
+            "cardinality()I", "equals(Ljava/lang/Object;)Z", "hashCode()I", "toString()Ljava/lang/String;"
+        )
+            .where("<init>(I)V", args -> (Integer)args[0] <= 1 << 16)
+            .where("set(I)V", args -> (Integer)args[1] <= 1 << 10)
+            .where("clear(II)V", args -> (Integer)args[2] <= 1 << 16 || (Integer)args[1] > (Integer)args[2]),
         // What a ServerboundHelloPacket's hashCode and toString use, and what makes an offline player's UUID.
         new InstanceSuite(UUID.class, "hashCode()I", "toString()Ljava/lang/String;", "nameUUIDFromBytes([B)Ljava/util/UUID;")
             .extraInputs("nameUUIDFromBytes([B)Ljava/util/UUID;", offlinePlayerNames())
@@ -1199,7 +1224,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites()).flatMap(List::stream).toList()) {
+        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites()).flatMap(List::stream).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }

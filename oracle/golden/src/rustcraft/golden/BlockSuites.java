@@ -28,6 +28,7 @@ import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 
 /**
@@ -116,6 +117,19 @@ final class BlockSuites {
 
     static JsonElement state(final BlockState state) {
         return new JsonPrimitive(Block.BLOCK_STATE_REGISTRY.getId(state));
+    }
+
+    /**
+     * A fluid state: {@code [fluid, values, isEmpty, isRandomlyTicking, isSource, getAmount]}, its fluid's registered name
+     * and its values like a block state's, {@code [[field, value], …]}.
+     */
+    static JsonElement fluidState(final FluidState state) {
+        JsonArray values = new JsonArray();
+        state.getValues().forEach(value -> values.add(array(property(value.property()), value(value.value()))));
+        return array(
+            new JsonPrimitive(BuiltInRegistries.FLUID.getKey(state.getType()).toString()), values, new JsonPrimitive(state.isEmpty()),
+            new JsonPrimitive(state.isRandomlyTicking()), new JsonPrimitive(state.isSource()), new JsonPrimitive(state.getAmount())
+        );
     }
 
     static JsonElement f32(final float value) {
@@ -525,6 +539,7 @@ final class BlockSuites {
                 writer.result("isRandomlyTicking()Z", args, new JsonPrimitive(state.isRandomlyTicking()), null);
                 writer.result("hasOffsetFunction()Z", args, new JsonPrimitive(state.hasOffsetFunction()), null);
                 writer.result("hasBlockEntity()Z", args, new JsonPrimitive(state.hasBlockEntity()), null);
+                writer.result("getFluidState()Lnet/minecraft/world/level/material/FluidState;", args, fluidState(state.getFluidState()), null);
                 writer.result(
                     "getMapColor" + GETTER_AND_POS + "Lnet/minecraft/world/level/material/MapColor;", args,
                     new JsonPrimitive(state.getMapColor(level, POS).id), null

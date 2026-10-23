@@ -11,5 +11,6 @@ pub mod registries;
 pub mod registry;
 pub mod registry_access;
 pub mod registry_synchronization;
+pub mod section_pos;
 pub mod uuid_util;
 pub mod vec3i;

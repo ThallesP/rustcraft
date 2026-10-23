@@ -8,15 +8,22 @@ use crate::net::minecraft::world::level::block::block::{
 };
 use crate::net::minecraft::world::level::block::pipe_block::PipeBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
+use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct CrossCollisionBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.CrossCollisionBlock",
-    &block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(CrossCollisionBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.CrossCollisionBlock",
+        &block::CLASS,
+    )
+};
 
 impl CrossCollisionBlock {
     pub const NORTH: &'static BooleanProperty = PipeBlock::NORTH;
@@ -31,5 +38,16 @@ impl CrossCollisionBlock {
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         Block::new_with(properties, class, definition)
+    }
+}
+
+impl CrossCollisionBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

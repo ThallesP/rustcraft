@@ -15,13 +15,18 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_definition::StateDefinition;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct MultifaceBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.MultifaceBlock",
-    &block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(MultifaceBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.MultifaceBlock",
+        &block::CLASS,
+    )
+};
 
 impl MultifaceBlock {
     pub const DIRECTIONS: [Direction; 6] = Direction::VALUES;
@@ -85,5 +90,16 @@ impl MultifaceBlock {
             state = state.try_set_value(face_property, false);
         }
         state
+    }
+}
+
+impl MultifaceBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

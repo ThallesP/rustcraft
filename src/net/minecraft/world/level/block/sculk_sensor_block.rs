@@ -16,13 +16,18 @@ use crate::net::minecraft::world::level::block::state::properties::integer_prope
 use crate::net::minecraft::world::level::block::state::properties::sculk_sensor_phase::SculkSensorPhase;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct SculkSensorBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.SculkSensorBlock",
-    &base_entity_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(SculkSensorBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.SculkSensorBlock",
+        &base_entity_block::CLASS,
+    )
+};
 
 impl SculkSensorBlock {
     pub const PHASE: &'static EnumProperty<SculkSensorPhase> =
@@ -65,5 +70,16 @@ impl SculkSensorBlock {
 
     pub fn get_phase(state: BlockState) -> SculkSensorPhase {
         state.get_value(SculkSensorBlock::PHASE)
+    }
+}
+
+impl SculkSensorBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

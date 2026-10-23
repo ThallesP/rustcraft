@@ -29,6 +29,8 @@ use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_definition::{
     Builder, StateDefinition,
 };
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 use crate::net::minecraft::world::level::material::map_color::MapColor;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
@@ -49,6 +51,8 @@ pub struct BlockClass {
     pub entity_block: bool,
     /// `isRandomlyTicking(BlockState)`, if it overrides it.
     pub is_randomly_ticking: Option<fn(&BlockData, BlockState) -> bool>,
+    /// `getFluidState(BlockState)`, if it overrides it.
+    pub get_fluid_state: Option<fn(&BlockData, BlockState) -> FluidState>,
 }
 
 impl BlockClass {
@@ -59,6 +63,7 @@ impl BlockClass {
             parent: Some(parent),
             entity_block: false,
             is_randomly_ticking: None,
+            get_fluid_state: None,
         }
     }
 
@@ -78,6 +83,7 @@ pub static CLASS: BlockClass = BlockClass {
     parent: None,
     entity_block: false,
     is_randomly_ticking: None,
+    get_fluid_state: None,
 };
 
 /// What a Java `Block` object holds: `BlockBehaviour`'s fields, which it derefs to, its state
@@ -149,6 +155,14 @@ impl BlockData {
     /// `BlockBehaviour.defaultMapColor()`: the default state's.
     pub fn default_map_color(&self) -> MapColor {
         (self.properties().map_color_of())(self.default_block_state)
+    }
+
+    /// `BlockBehaviour.getFluidState(BlockState)`, which a class may override: none.
+    pub fn get_fluid_state_of(&self, state: BlockState) -> FluidState {
+        match self.class.find(|class| class.get_fluid_state) {
+            Some(get_fluid_state) => get_fluid_state(self, state),
+            None => Fluids::EMPTY.default_fluid_state(),
+        }
     }
 
     /// `BlockBehaviour.isRandomlyTicking(BlockState)`, which a class may override.

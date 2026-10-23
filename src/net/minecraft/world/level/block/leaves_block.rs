@@ -14,10 +14,13 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct LeavesBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(LeavesBlock::get_fluid_state),
     is_randomly_ticking: Some(LeavesBlock::is_randomly_ticking),
     ..BlockClass::new("net.minecraft.world.level.block.LeavesBlock", &block::CLASS)
 };
@@ -62,5 +65,16 @@ impl LeavesBlock {
 
     fn is_randomly_ticking(_block: &BlockData, state: BlockState) -> bool {
         state.get_value(LeavesBlock::DISTANCE) == 7 && !state.get_value(LeavesBlock::PERSISTENT)
+    }
+}
+
+impl LeavesBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

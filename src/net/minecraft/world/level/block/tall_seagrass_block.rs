@@ -7,15 +7,21 @@ use crate::net::minecraft::world::level::block::block::{
 };
 use crate::net::minecraft::world::level::block::double_plant_block::{self, DoublePlantBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::double_block_half::DoubleBlockHalf;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct TallSeagrassBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.TallSeagrassBlock",
-    &double_plant_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(TallSeagrassBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.TallSeagrassBlock",
+        &double_plant_block::CLASS,
+    )
+};
 
 impl TallSeagrassBlock {
     pub const HALF: &'static EnumProperty<DoubleBlockHalf> = DoublePlantBlock::HALF;
@@ -34,5 +40,12 @@ impl TallSeagrassBlock {
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         DoublePlantBlock::new_with(properties, class, definition)
+    }
+}
+
+impl TallSeagrassBlock {
+    /// `getFluidState`: always still water.
+    fn get_fluid_state(_block: &BlockData, _state: BlockState) -> FluidState {
+        Fluids::WATER.get_source(false)
     }
 }

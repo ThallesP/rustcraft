@@ -11,17 +11,23 @@ use crate::net::minecraft::world::level::block::horizontal_directional_block::{
     self, HorizontalDirectionalBlock,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct BigDripleafStemBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.BigDripleafStemBlock",
-    &horizontal_directional_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(BigDripleafStemBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.BigDripleafStemBlock",
+        &horizontal_directional_block::CLASS,
+    )
+};
 
 impl BigDripleafStemBlock {
     pub const WATERLOGGED: &'static BooleanProperty = BlockStateProperties::WATERLOGGED;
@@ -55,5 +61,16 @@ impl BigDripleafStemBlock {
             BigDripleafStemBlock::WATERLOGGED,
             HorizontalDirectionalBlock::FACING,
         ]);
+    }
+}
+
+impl BigDripleafStemBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

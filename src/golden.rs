@@ -670,6 +670,15 @@ impl Golden {
         }
     }
 
+    /// A field a check takes as its input rather than compares, like the biome registry the
+    /// chunk goldens were decoded with. Panics when vanilla wrote no such field.
+    pub fn input(&self, name: &str) -> Value {
+        match self.entry(name) {
+            Some(Entry::Field(value)) => value.clone(),
+            _ => panic!("{}: no golden value for the field {name}", self.class),
+        }
+    }
+
     pub fn field(&self, name: &str, actual: impl Encode) {
         let Some(Entry::Field(expected)) = self.entry(name) else {
             return self.fail(format!("{name}: no golden value for this field"));

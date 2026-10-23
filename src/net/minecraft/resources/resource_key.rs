@@ -29,7 +29,7 @@ static REGISTRY_STREAM_CODEC: StaticStreamCodec<ByteBuf, ResourceKey> = LazyLock
 
 /// The name of an element of a registry, `minecraft:plains` in `minecraft:worldgen/biome`. A
 /// registry's own key is in the root registry, `minecraft:root`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ResourceKey {
     registry_name: Identifier,
     identifier: Identifier,

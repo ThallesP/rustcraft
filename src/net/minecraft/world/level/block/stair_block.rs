@@ -9,6 +9,7 @@ use crate::net::minecraft::world::level::block::block::{
 };
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
@@ -16,11 +17,15 @@ use crate::net::minecraft::world::level::block::state::properties::half::Half;
 use crate::net::minecraft::world::level::block::state::properties::stairs_shape::StairsShape;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct StairBlock;
 
-pub static CLASS: BlockClass =
-    BlockClass::new("net.minecraft.world.level.block.StairBlock", &block::CLASS);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(StairBlock::get_fluid_state),
+    ..BlockClass::new("net.minecraft.world.level.block.StairBlock", &block::CLASS)
+};
 
 impl StairBlock {
     pub const FACING: &'static EnumProperty<Direction> = HorizontalDirectionalBlock::FACING;
@@ -61,5 +66,16 @@ impl StairBlock {
             StairBlock::SHAPE,
             StairBlock::WATERLOGGED,
         ]);
+    }
+}
+
+impl StairBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

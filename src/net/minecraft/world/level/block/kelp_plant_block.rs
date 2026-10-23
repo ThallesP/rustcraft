@@ -9,13 +9,19 @@ use crate::net::minecraft::world::level::block::growing_plant_body_block::{
     self, GrowingPlantBodyBlock,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct KelpPlantBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.KelpPlantBlock",
-    &growing_plant_body_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(KelpPlantBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.KelpPlantBlock",
+        &growing_plant_body_block::CLASS,
+    )
+};
 
 impl KelpPlantBlock {
     pub fn new(properties: Properties) -> BlockData {
@@ -28,5 +34,12 @@ impl KelpPlantBlock {
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         GrowingPlantBodyBlock::new_with(properties, class, definition)
+    }
+}
+
+impl KelpPlantBlock {
+    /// `getFluidState`: always still water.
+    fn get_fluid_state(_block: &BlockData, _state: BlockState) -> FluidState {
+        Fluids::WATER.get_source(false)
     }
 }

@@ -37,15 +37,21 @@ use crate::net::minecraft::network::packet_listener::PacketListener;
 use crate::net::minecraft::network::protocol::configuration::client_configuration_packet_listener::ClientConfigurationPacketListener;
 use crate::net::minecraft::network::protocol::configuration::configuration_protocols::ConfigurationProtocols;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
+use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_experience_packet::ClientboundSetExperiencePacket;
@@ -469,6 +475,72 @@ impl ClientGamePacketListener for ClientPacketListener {
         for sub_packet in packet.sub_packets() {
             sub_packet.handle(self);
         }
+    }
+
+    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
+    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    fn handle_level_chunk_with_light(&mut self, packet: &ClientboundLevelChunkWithLightPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        let _ = PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        );
+    }
+
+    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
+    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    fn handle_light_update_packet(&mut self, packet: &ClientboundLightUpdatePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        let _ = PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        );
+    }
+
+    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
+    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    fn handle_forget_level_chunk(&mut self, packet: &ClientboundForgetLevelChunkPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        let _ = PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        );
+    }
+
+    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
+    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    fn handle_block_update(&mut self, packet: &ClientboundBlockUpdatePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        let _ = PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        );
+    }
+
+    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
+    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        let _ = PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        );
+    }
+
+    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
+    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    fn handle_chunks_biomes(&mut self, packet: &ClientboundChunksBiomesPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        let _ = PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        );
     }
 
     /// On the Netty thread, like Java's.

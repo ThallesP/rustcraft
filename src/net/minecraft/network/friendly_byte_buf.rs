@@ -5,10 +5,8 @@
 //!   `readLenientJsonWithCodec`, `writeJsonWithCodec`), which wait for DataFixerUpper;
 //! - `readEither` and `writeEither`, which wait for DataFixerUpper's `Either`;
 //! - `readEnumSet` and `writeEnumSet`, whose `Class` argument the golden harness can't generate
-//!   yet, and which need `java.util.BitSet` like the `BitSet` ones (`readBitSet`, `writeBitSet`,
-//!   `readFixedBitSet`, `writeFixedBitSet`);
-//! - `readChunkPos` and `writeChunkPos`, which wait for `ChunkPos`, and `readGlobalPos` and
-//!   `writeGlobalPos`, which wait for `GlobalPos`.
+//!   yet;
+//! - `readGlobalPos` and `writeGlobalPos`, which wait for `GlobalPos`.
 //!
 //! The methods overriding `ByteBuf`'s forward to the buffer it wraps, which it derefs to. Java
 //! throws Netty's `DecoderException` and `EncoderException`, and `NegativeArraySizeException` for
@@ -25,6 +23,7 @@ use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::io::netty::buffer::byte_buf_input_stream::ByteBufInputStream;
 use crate::io::netty::buffer::byte_buf_output_stream::ByteBufOutputStream;
 use crate::java::lang::r#enum::Enum;
+use crate::java::util::bit_set::BitSet;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::nbt::compound_tag::CompoundTag;
@@ -39,6 +38,8 @@ use crate::net::minecraft::network::var_int::VarInt;
 use crate::net::minecraft::network::var_long::VarLong;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 use crate::org::joml::quaternionf::Quaternionf;
 use crate::org::joml::vector3f::Vector3f;
 
@@ -237,6 +238,65 @@ impl FriendlyByteBuf {
         for &l in longs {
             output.write_long(l);
         }
+    }
+
+    pub fn read_chunk_pos(&mut self) -> ChunkPos {
+        ChunkPos::unpack(self.read_long())
+    }
+
+    pub fn write_chunk_pos(&mut self, pos: &ChunkPos) -> &mut FriendlyByteBuf {
+        self.write_long(pos.pack());
+        self
+    }
+
+    pub fn read_chunk_pos_from(input: &mut ByteBuf) -> ChunkPos {
+        ChunkPos::unpack(input.read_long())
+    }
+
+    pub fn write_chunk_pos_to(output: &mut ByteBuf, chunk_pos: &ChunkPos) {
+        output.write_long(chunk_pos.pack());
+    }
+
+    /// `readBitSet()`: its words, as a long array.
+    pub fn read_bit_set(&mut self) -> BitSet {
+        BitSet::value_of_longs(&self.read_long_array())
+    }
+
+    pub fn write_bit_set(&mut self, bit_set: &BitSet) {
+        self.write_long_array(&bit_set.to_long_array());
+    }
+
+    pub fn read_fixed_bit_set(&mut self, size: i32) -> BitSet {
+        FriendlyByteBuf::read_fixed_bit_set_from(&mut self.source, size)
+    }
+
+    pub fn write_fixed_bit_set(&mut self, bit_set: &BitSet, size: i32) {
+        FriendlyByteBuf::write_fixed_bit_set_to(&mut self.source, bit_set, size);
+    }
+
+    /// `readFixedBitSet(ByteBuf, int)`: the size over 8 bytes, rounded up. A buffer that runs out
+    /// panics after the array is made, where Java throws.
+    pub fn read_fixed_bit_set_from(input: &mut ByteBuf, size: i32) -> BitSet {
+        let mut bytes = new_array(Mth::positive_ceil_div_i32(size, 8));
+        input.read_bytes_array(&mut bytes);
+        BitSet::value_of_bytes(&bytes)
+    }
+
+    /// `writeFixedBitSet(ByteBuf, BitSet, int)`: panics on a set with a bit past the size, where
+    /// Java throws `EncoderException`.
+    pub fn write_fixed_bit_set_to(output: &mut ByteBuf, bit_set: &BitSet, size: i32) {
+        if bit_set.length() > size {
+            panic!(
+                "BitSet is larger than expected size ({}>{size})",
+                bit_set.length()
+            );
+        }
+
+        let mut bytes = bit_set.to_byte_array();
+        let length = Mth::positive_ceil_div_i32(size, 8);
+        assert!(length >= 0, "NegativeArraySizeException: {length}");
+        bytes.resize(length as usize, 0);
+        output.write_bytes_array(&bytes);
     }
 
     pub fn read_long_array(&mut self) -> Vec<i64> {
@@ -569,6 +629,7 @@ mod tests {
     use super::FriendlyByteBuf;
     use crate::golden::{Decode, Encode, Golden};
     use crate::io::netty::buffer::byte_buf::ByteBuf;
+    use crate::java::util::bit_set::BitSet;
     use crate::java::util::uuid::UUID;
     use crate::net::minecraft::core::block_pos::BlockPos;
     use crate::net::minecraft::core::direction::Direction;
@@ -629,23 +690,52 @@ mod tests {
                 "vanilla can't generate a Class argument yet, and it waits for java.util.BitSet",
             );
         }
-        for name in [
+        golden.check_method(
             "readBitSet()Ljava/util/BitSet;",
+            |this: &mut FriendlyByteBuf| this.read_bit_set(),
+        );
+        golden.check_method(
             "writeBitSet(Ljava/util/BitSet;)V",
+            |this: &mut FriendlyByteBuf, bit_set: BitSet| this.write_bit_set(&bit_set),
+        );
+        golden.check_method(
             "readFixedBitSet(I)Ljava/util/BitSet;",
+            |this: &mut FriendlyByteBuf, size: i32| this.read_fixed_bit_set(size),
+        );
+        golden.check_mut(
             "readFixedBitSet(Lio/netty/buffer/ByteBuf;I)Ljava/util/BitSet;",
+            |input: &mut ByteBuf, size: &mut i32| {
+                FriendlyByteBuf::read_fixed_bit_set_from(input, *size)
+            },
+        );
+        golden.check_method(
             "writeFixedBitSet(Ljava/util/BitSet;I)V",
+            |this: &mut FriendlyByteBuf, bit_set: BitSet, size: i32| {
+                this.write_fixed_bit_set(&bit_set, size)
+            },
+        );
+        golden.check_mut(
             "writeFixedBitSet(Lio/netty/buffer/ByteBuf;Ljava/util/BitSet;I)V",
-        ] {
-            golden.pending(name, "waits for java.util.BitSet");
-        }
-        for name in [
+            |output: &mut ByteBuf, bit_set: &mut BitSet, size: &mut i32| {
+                FriendlyByteBuf::write_fixed_bit_set_to(output, bit_set, *size)
+            },
+        );
+        golden.check_method(
             "readChunkPos()Lnet/minecraft/world/level/ChunkPos;",
+            |this: &mut FriendlyByteBuf| this.read_chunk_pos(),
+        );
+        golden.check_mut(
             "readChunkPos(Lio/netty/buffer/ByteBuf;)Lnet/minecraft/world/level/ChunkPos;",
+            |input: &mut ByteBuf| FriendlyByteBuf::read_chunk_pos_from(input),
+        );
+        for name in [
             "writeChunkPos(Lnet/minecraft/world/level/ChunkPos;)Lnet/minecraft/network/FriendlyByteBuf;",
             "writeChunkPos(Lio/netty/buffer/ByteBuf;Lnet/minecraft/world/level/ChunkPos;)V",
         ] {
-            golden.pending(name, "waits for ChunkPos");
+            golden.pending(
+                name,
+                "the harness has no ChunkPos generator yet; ClientboundForgetLevelChunkPacket's goldens write chunk positions",
+            );
         }
         for name in [
             "readGlobalPos()Lnet/minecraft/core/GlobalPos;",

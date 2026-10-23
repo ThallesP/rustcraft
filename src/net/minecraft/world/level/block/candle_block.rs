@@ -16,13 +16,18 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct CandleBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.CandleBlock",
-    &abstract_candle_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(CandleBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.CandleBlock",
+        &abstract_candle_block::CLASS,
+    )
+};
 
 impl CandleBlock {
     pub const CANDLES: &'static IntegerProperty = BlockStateProperties::CANDLES;
@@ -68,6 +73,17 @@ impl CandleBlock {
             3 * state.get_value(CandleBlock::CANDLES)
         } else {
             0
+        }
+    }
+}
+
+impl CandleBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
         }
     }
 }

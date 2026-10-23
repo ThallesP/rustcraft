@@ -10,18 +10,24 @@ use crate::net::minecraft::world::level::block::block::{
 };
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct EnderChestBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.EnderChestBlock",
-    &abstract_chest_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(EnderChestBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.EnderChestBlock",
+        &abstract_chest_block::CLASS,
+    )
+};
 
 impl EnderChestBlock {
     pub const FACING: &'static EnumProperty<Direction> = HorizontalDirectionalBlock::FACING;
@@ -53,5 +59,16 @@ impl EnderChestBlock {
 
     pub fn create_block_state_definition(builder: &mut Builder) {
         builder.add(&[EnderChestBlock::FACING, EnderChestBlock::WATERLOGGED]);
+    }
+}
+
+impl EnderChestBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

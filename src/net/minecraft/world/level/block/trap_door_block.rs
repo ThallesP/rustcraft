@@ -11,19 +11,25 @@ use crate::net::minecraft::world::level::block::horizontal_directional_block::{
     self, HorizontalDirectionalBlock,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
 use crate::net::minecraft::world::level::block::state::properties::half::Half;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct TrapDoorBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.TrapDoorBlock",
-    &horizontal_directional_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(TrapDoorBlock::get_fluid_state),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.TrapDoorBlock",
+        &horizontal_directional_block::CLASS,
+    )
+};
 
 impl TrapDoorBlock {
     pub const OPEN: &'static BooleanProperty = BlockStateProperties::OPEN;
@@ -66,5 +72,16 @@ impl TrapDoorBlock {
             TrapDoorBlock::POWERED,
             TrapDoorBlock::WATERLOGGED,
         ]);
+    }
+}
+
+impl TrapDoorBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }

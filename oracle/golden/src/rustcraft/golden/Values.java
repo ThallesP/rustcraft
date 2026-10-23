@@ -12,6 +12,7 @@ import java.lang.reflect.Type;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -263,6 +264,33 @@ final class Values {
         value -> encode(value, UUID.class)
     );
 
+    // Light masks like the server's (a bit per light section: 26 in the overworld, some set, all set, alternating), single
+    // bits around the words' bounds, and random words, up to four of them, sparse now and then. No bit past 255: a
+    // fixed-size set's size goes up to 2^16, and a bigger one would only allocate more.
+    static final Generator BIT_SETS = new JomlValues.Mutable<BitSet>(
+        List.of(
+            new BitSet(), BitSet.valueOf(new long[]{1L}), BitSet.valueOf(new long[]{1L << 63}), BitSet.valueOf(new long[]{0L, 1L}),
+            BitSet.valueOf(new long[]{(1L << 26) - 1}), BitSet.valueOf(new long[]{(1L << 26) - 2}), BitSet.valueOf(new long[]{0x2aaaaaaL}),
+            BitSet.valueOf(new long[]{0x3fffff0L}), BitSet.valueOf(new long[]{0x000000fL}), BitSet.valueOf(new long[]{-1L}),
+            BitSet.valueOf(new long[]{-1L, -1L}), BitSet.valueOf(new long[]{0xff00L}), BitSet.valueOf(new long[]{0L, 0L, 0L, 1L << 63}),
+            BitSet.valueOf(new long[]{1L << 7}), BitSet.valueOf(new long[]{1L << 8})
+        ),
+        random -> {
+            long[] words = new long[random.nextInt(5)];
+            for (int i = 0; i < words.length; i++) {
+                words[i] = switch (random.nextInt(4)) {
+                    case 0 -> random.nextLong();
+                    case 1 -> random.nextLong() & random.nextLong() & random.nextLong();
+                    case 2 -> random.nextLong() & ((1L << 26) - 1);
+                    default -> 0L;
+                };
+            }
+            return BitSet.valueOf(words);
+        },
+        bits -> (BitSet)bits.clone(),
+        bits -> (JsonArray)encode(bits, BitSet.class)
+    );
+
     // Only UTF-8: the game's packets use nothing else.
     private static final Generator CHARSETS = new Simple(
         List.<Object>of(StandardCharsets.UTF_8),
@@ -315,7 +343,8 @@ final class Values {
         Map.entry(UUID.class, UUIDS),
         Map.entry(Charset.class, CHARSETS),
         Map.entry(RandomSource.class, RANDOM_SOURCES),
-        Map.entry(Axis.class, AXES)
+        Map.entry(Axis.class, AXES),
+        Map.entry(BitSet.class, BIT_SETS)
     );
 
     private static final List<Class<?>> BOXES = List.of(
@@ -373,7 +402,7 @@ final class Values {
         }
         if (
             type.isPrimitive() || BOXES.contains(type) || type == String.class || type == UUID.class || type == IntStream.class
-                || type == Optional.class || type == OptionalInt.class
+                || type == Optional.class || type == OptionalInt.class || type == BitSet.class
         ) {
             return true;
         }
@@ -431,6 +460,14 @@ final class Values {
             JsonArray array = new JsonArray();
             array.add(uuid.getMostSignificantBits());
             array.add(uuid.getLeastSignificantBits());
+            return array;
+        }
+        // A BitSet is its words in use (toLongArray), which equals and every reader see.
+        if (type == BitSet.class) {
+            JsonArray array = new JsonArray();
+            for (long word : ((BitSet)value).toLongArray()) {
+                array.add(word);
+            }
             return array;
         }
         // An empty Optional is null, like an argument a method lets be null. The value is encoded by its own class.

@@ -1,4 +1,5 @@
 pub mod bit_random_source;
+pub mod heightmap;
 pub mod legacy_random_source;
 pub mod marsaglia_polar_gaussian;
 pub mod positional_random_factory;

@@ -13,11 +13,15 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct LightBlock;
 
-pub static CLASS: BlockClass =
-    BlockClass::new("net.minecraft.world.level.block.LightBlock", &block::CLASS);
+pub static CLASS: BlockClass = BlockClass {
+    get_fluid_state: Some(LightBlock::get_fluid_state),
+    ..BlockClass::new("net.minecraft.world.level.block.LightBlock", &block::CLASS)
+};
 
 impl LightBlock {
     pub const LEVEL: &'static IntegerProperty = BlockStateProperties::LEVEL;
@@ -54,5 +58,16 @@ impl LightBlock {
     /// `LIGHT_EMISSION`: its level.
     pub fn light_emission(state: BlockState) -> i32 {
         state.get_value(LightBlock::LEVEL)
+    }
+}
+
+impl LightBlock {
+    /// `getFluidState`: still water when it's waterlogged.
+    fn get_fluid_state(_block: &BlockData, state: BlockState) -> FluidState {
+        if state.get_value(BlockStateProperties::WATERLOGGED) {
+            Fluids::WATER.get_source(false)
+        } else {
+            Fluids::EMPTY.default_fluid_state()
+        }
     }
 }
