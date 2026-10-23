@@ -41,6 +41,9 @@ jobs:
       # The live client on a generated world (TESTING.md, "Soak"): teleports through biomes, a village and caves, failing on
       # any panic or unported code in the client's log.
       - run: python3 tools/port_client.py soak --preset normal --accept-eula --seconds-per-stop 5
+      # The game thread stalled for 40 seconds on a live server (TESTING.md, "Stalls"): the connection's own thread answers
+      # the keep-alives meanwhile, like vanilla's Netty thread, so the client stays connected.
+      - run: python3 tools/port_client.py stall --accept-eula
       - run: python3 tools/golden.py
         env:
           RUSTCRAFT_CHUNK_CAPTURE: ${{ github.workspace }}/target/oracle/walk/capture.jsonl

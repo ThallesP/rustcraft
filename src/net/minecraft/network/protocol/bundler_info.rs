@@ -24,7 +24,7 @@ pub trait BundlerInfo<T: ?Sized>: Send + Sync {
 pub const BUNDLE_SIZE_LIMIT: usize = 4096;
 
 /// `BundlerInfo.Bundler`: the packets of the bundle being read.
-pub trait Bundler<T: ?Sized> {
+pub trait Bundler<T: ?Sized>: Send {
     /// Takes the bundle's next packet, and gives back the bundle once `packet` is the delimiter
     /// that ends it.
     fn add_packet(&mut self, packet: Box<dyn Packet<T>>) -> Option<Box<dyn Packet<T>>>;

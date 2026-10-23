@@ -17,11 +17,13 @@
 //!   `rustcraft.oracle.out`;
 //! - `--ping HOST:PORT`, which pings the server the way the server list does
 //!   (`ServerStatusPinger`), prints its status's JSON and the round trip, and exits 0 when the
-//!   pong came, without joining.
+//!   pong came, without joining;
+//! - `--stall SECONDS`, which stalls the game thread that long once the level is ready, and exits
+//!   0 when the connection held (`StallTest`).
 
-use std::cell::{Cell, RefCell};
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::com::mojang::blaze3d::platform::window::Window;
@@ -40,9 +42,10 @@ use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::renderer::game_renderer::GameRenderer;
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
-use crate::net::minecraft::server::network::event_loop_group_holder::EventLoopGroupHolder;
+use crate::net::minecraft::network::packet_processor::lock;
 use crate::rustcraft::oracle::client::oracle_game_test::{OracleGameTest, Outcome};
 use crate::rustcraft::oracle::client::scenario::Scenario;
+use crate::rustcraft::stall_test::StallTest;
 
 /// The client's entry point.
 pub struct Main;
@@ -54,7 +57,7 @@ struct OptionSet {
 
 impl OptionSet {
     /// The options that take a value, which is the next argument.
-    const WITH_ARGUMENT: [&'static str; 11] = [
+    const WITH_ARGUMENT: [&'static str; 12] = [
         "username",
         "uuid",
         "accessToken",
@@ -66,6 +69,7 @@ impl OptionSet {
         "oracleScenario",
         "oracleOut",
         "ping",
+        "stall",
     ];
 
     fn parse(args: &[String]) -> Result<OptionSet, String> {
@@ -188,6 +192,14 @@ impl Main {
             minecraft.set_test_driver(Box::new(driver));
             outcome = Some(driver_outcome);
             server_data.name = "rustcraft oracle".to_string();
+        } else if let Some(seconds) = option_set.value_of("stall") {
+            let Ok(seconds) = seconds.parse::<f64>() else {
+                eprintln!("--stall takes a number of seconds, not {seconds}");
+                return 2;
+            };
+            let (driver, driver_outcome) = StallTest::new(Duration::from_secs_f64(seconds));
+            minecraft.set_test_driver(Box::new(driver));
+            outcome = Some(driver_outcome);
         }
 
         if needs_renderer {
@@ -245,33 +257,34 @@ impl Main {
         Ok(())
     }
 
-    /// `--ping`: what the server list does for one server, on the event loop until the pong comes,
-    /// the connection ends, or 30 seconds (Netty's read timeout) pass.
+    /// `--ping`: what the server list does for one server, ticking the pinger until the pong
+    /// comes, the connection ends, or 30 seconds (Netty's read timeout) pass.
     fn ping(address: &str) -> i32 {
-        let data = Rc::new(RefCell::new(ServerData::new(
+        let data = Arc::new(Mutex::new(ServerData::new(
             "Minecraft Server".to_string(),
             address.to_string(),
             server_data::Type::OTHER,
         )));
         let pinger = ServerStatusPinger::new();
-        let ponged = Rc::new(Cell::new(false));
-        let on_pong = Rc::clone(&ponged);
-        if let Err(error) =
-            pinger.ping_server(Rc::clone(&data), Box::new(move || on_pong.set(true)))
-        {
+        let ponged = Arc::new(AtomicBool::new(false));
+        let on_pong = Arc::clone(&ponged);
+        if let Err(error) = pinger.ping_server(
+            Arc::clone(&data),
+            Box::new(move || on_pong.store(true, Ordering::SeqCst)),
+        ) {
             eprintln!("Can't ping {address}: {error}");
             return 1;
         }
 
         let deadline = Instant::now() + Duration::from_secs(30);
         while pinger.is_pinging() && Instant::now() < deadline {
-            EventLoopGroupHolder::remote().run_until(Instant::now() + Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(50));
             pinger.tick();
         }
         pinger.remove_all();
 
-        let data = data.borrow();
-        match (&data.server_status, ponged.get()) {
+        let data = lock(&data);
+        match (&data.server_status, ponged.load(Ordering::SeqCst)) {
             (Some(status), true) => {
                 println!("{}", status.json());
                 println!("ping: {} ms", data.ping);

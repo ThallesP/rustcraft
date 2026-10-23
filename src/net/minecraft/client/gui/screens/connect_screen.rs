@@ -8,6 +8,7 @@
 //! level's loading screen replaces it.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::client_handshake_packet_listener_impl::ClientHandshakePacketListenerImpl;
@@ -17,14 +18,13 @@ use crate::net::minecraft::client::multiplayer::resolver::server_name_resolver::
 use crate::net::minecraft::client::multiplayer::server_data::ServerData;
 use crate::net::minecraft::network::connection::Connection;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
-use crate::net::minecraft::network::protocol::login::client_login_packet_listener::ClientLoginPacketListener;
 use crate::net::minecraft::network::protocol::login::server_login_packet_listener::ServerLoginPacketListener;
 use crate::net::minecraft::network::protocol::login::serverbound_hello_packet::ServerboundHelloPacket;
 
 /// The screen the game shows while it connects to a server.
 #[derive(Clone)]
 pub struct ConnectScreen {
-    connection: Option<Rc<Connection>>,
+    connection: Option<Arc<Connection>>,
 }
 
 impl ConnectScreen {
@@ -71,15 +71,14 @@ impl ConnectScreen {
                 return;
             }
         };
-        self.connection = Some(Rc::clone(&connection));
+        self.connection = Some(Arc::clone(&connection));
 
-        let listener: std::rc::Rc<std::cell::RefCell<dyn ClientLoginPacketListener>> =
-            ClientHandshakePacketListenerImpl::new(
-                Rc::clone(&connection),
-                Rc::clone(minecraft),
-                Some(server),
-                LevelLoadTracker::new(),
-            );
+        let listener = ClientHandshakePacketListenerImpl::new(
+            Arc::clone(&connection),
+            Rc::clone(minecraft),
+            Some(server),
+            LevelLoadTracker::new(),
+        );
         connection.initiate_serverbound_play_connection(
             &address.get_host_name(),
             address.get_port(),

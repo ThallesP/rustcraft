@@ -34,7 +34,6 @@ use crate::net::minecraft::network::protocol::common::custom::discarded_payload:
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
-use crate::net::minecraft::server::network::event_loop_group_holder::EventLoopGroupHolder;
 use crate::rustcraft::oracle::client::scenario::{self, Scenario};
 use crate::rustcraft::oracle::client::trace_writer::{self, TraceWriter};
 
@@ -390,7 +389,7 @@ impl OracleGameTest {
             if Instant::now() >= deadline {
                 return false;
             }
-            EventLoopGroupHolder::remote().run_until(Instant::now() + Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(5));
         }
         minecraft.packet_processor().process_queued_packets();
         true

@@ -33,6 +33,17 @@ The server's ticks are frozen (`tick freeze`), so no fluid flows into what the s
 each stop has the player standing on a block it built, in a chunk section with no fluid: the
 port's player panics near one, and while falling fast, which isn't what the soak is about.
 
+`stall` joins the port to a fresh flat world, stalls its game thread for 40 seconds once the
+level is ready (`rustcraft --stall`), longer than a server waits for a keep-alive's answer, and
+exits 0 when the client stayed connected through it and the 20 seconds after, which it does when
+its connection's own thread answers the keep-alives meanwhile, like vanilla's Netty thread
+(client log: target/stall/client.log):
+
+    flock /tmp/rustcraft-oracle.lock python3 tools/port_client.py stall --accept-eula
+
+`RUSTCRAFT_BINARY=path` runs that build of the port instead of building the tree's, so a long check
+can run on a build while the tree changes.
+
 Wrap it in `flock /tmp/rustcraft-oracle.lock` on a shared machine: the server and the proxy use
 fixed ports. `--compression-threshold` turns the server's compression on, which captures don't
 show (the proxy records packets inflated) but for the server's `login_compression`. So a run with
@@ -61,9 +72,10 @@ from oracle_client import PROXY_PORT, SERVER_PORT, VERSION_DIR, resolve_scenario
 from vanilla_server import OP_NAME  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-PORT_BINARY = ROOT / "target" / "release" / "rustcraft"
+PORT_BINARY = Path(os.environ.get("RUSTCRAFT_BINARY", ROOT / "target" / "release" / "rustcraft")).resolve()
 
 SOAK_OUT = ROOT / "target" / "soak"
+STALL_OUT = ROOT / "target" / "stall"
 SOAK_VIEW_DISTANCE = 4
 # The soak's stops after the spawn, where the client joins: (name, where, underground). `where` is a console command
 # that finds the place, or an earlier stop and how many chunks east of it, past the chunks the client has around it.
@@ -89,6 +101,12 @@ CLIENT_PROBLEM = re.compile(r"panic|isn't ported|aren't ported")
 # Rust's panic lines name the thread with its id, which changes from run to run.
 THREAD_ID = re.compile(r"^(thread '[^']*') \(\d+\)")
 LONG_LINE = 200
+
+
+def build_port():
+    """Builds the tree's port, unless RUSTCRAFT_BINARY names a build to run."""
+    if "RUSTCRAFT_BINARY" not in os.environ:
+        subprocess.run(["cargo", "build", "--quiet", "--release", "-p", "rustcraft"], cwd=ROOT, check=True)
 
 
 def has_screenshots(scenario):
@@ -126,7 +144,7 @@ def run(scenario, out_dir, server, ping=False):
 
 def capture(scenario, out_dir, accept_eula, compression_threshold, ping=False):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run."""
-    subprocess.run(["cargo", "build", "--quiet", "--release", "-p", "rustcraft"], cwd=ROOT, check=True)
+    build_port()
     subprocess.run(["cargo", "build", "--quiet", "-p", "packet-proxy"], cwd=ROOT, check=True)
     logs = Path(tempfile.mkdtemp(prefix=f"port-{scenario.stem}-"))
     seed = json.loads(scenario.read_text())["world"]["seed"]
@@ -418,7 +436,7 @@ def stop_server(server):
 
 def soak(preset, seed, seconds_per_stop, accept_eula):
     """Tours a fresh world with the port's client, True when it got through without a panic or unported code."""
-    subprocess.run(["cargo", "build", "--quiet", "--release", "-p", "rustcraft"], cwd=ROOT, check=True)
+    build_port()
     logs = Path(tempfile.mkdtemp(prefix="port-soak-"))
     server_log = logs / "server.log"
     SOAK_OUT.mkdir(parents=True, exist_ok=True)
@@ -474,6 +492,45 @@ def soak(preset, seed, seconds_per_stop, accept_eula):
         stop_server(server)
 
     return report(client_log, server_log, gone, visited, skipped, time.monotonic() - started)
+
+
+def stall(seconds, accept_eula):
+    """Stalls the port's game thread on a fresh flat world, True when the client stayed connected through it."""
+    build_port()
+    logs = Path(tempfile.mkdtemp(prefix="port-stall-"))
+    server_log = logs / "server.log"
+    STALL_OUT.mkdir(parents=True, exist_ok=True)
+    client_log = STALL_OUT / "client.log"
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+
+    server_command = [sys.executable, ROOT / "tools" / "vanilla_server.py", "--name", "port-stall", "--port", str(SERVER_PORT)]
+    server_command += ["--accept-eula"] if accept_eula else []
+    print(f"starting the server (log: {server_log})", flush=True)
+    with open(server_log, "w") as log:
+        server = subprocess.Popen(server_command, stdout=log, stderr=subprocess.STDOUT)
+    client = None
+    try:
+        wait_for_line(server_log, "ready on", server)
+        command = [PORT_BINARY, "--quickPlayMultiplayer", f"127.0.0.1:{SERVER_PORT}", "--username", OP_NAME, "--headless"]
+        command += ["--stall", str(seconds)]
+        print(f"joining in the port, which stalls for {seconds} s (log: {client_log})", flush=True)
+        with open(client_log, "w") as log:
+            client = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+        returncode = client.wait(timeout=seconds + 180)
+    finally:
+        stop_process(client, 10)
+        stop_server(server)
+
+    lines = client_log.read_text(errors="replace").splitlines()
+    print("\n".join(shorten(line) for line in lines[-20:]))
+    left = [SERVER_LOG_PREFIX.sub("", line) for line in server_log.read_text(errors="replace").splitlines()
+            if f"{OP_NAME} lost connection" in line]
+    for line in left:
+        print(f"server: {line}")
+    stalled = any(line.startswith("stalled for") for line in lines)
+    ok = returncode == 0 and stalled and not any("Timed out" in line for line in left)
+    print(f"\nstall: {'stayed connected' if ok else 'FAILED'} (exit {returncode})")
+    return ok
 
 
 def shorten(line):
@@ -557,10 +614,17 @@ def main():
     soak_parser.add_argument("--seed", type=int, default=0)
     soak_parser.add_argument("--seconds-per-stop", type=float, default=20, help="how long the player stays at each stop (default: 20)")
     soak_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
+    stall_parser = commands.add_parser("stall", help="stall the port's game thread past a keep-alive's wait, failing if it disconnects")
+    stall_parser.add_argument("--seconds", type=float, default=40, help="how long the game thread stalls (default: 40)")
+    stall_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
     args = parser.parse_args()
 
     if args.command == "soak":
         if not soak(args.preset, args.seed, args.seconds_per_stop, args.accept_eula):
+            raise SystemExit(1)
+        return
+    if args.command == "stall":
+        if not stall(args.seconds, args.accept_eula):
             raise SystemExit(1)
         return
     scenario = resolve_scenario(args.scenario)

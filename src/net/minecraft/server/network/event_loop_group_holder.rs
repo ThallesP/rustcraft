@@ -1,70 +1,44 @@
 //! net/minecraft/server/network/EventLoopGroupHolder.java
 //!
 //! Java's holds a Netty event loop group of its kind of channel (NIO, epoll, kqueue, or the
-//! in-memory one), whose threads run the connections registered with it. The port's connections
-//! run their own event loop (`Connection::run_event_loop`) on the game thread, so the group is
-//! the connections registered with it, and the game runs them between its ticks with
-//! `run_until`. One kind of TCP channel is enough for that: `remote(allowNativeTransport)` is
-//! `remote()`, and the in-memory group comes with the integrated server.
+//! in-memory one), whose threads run the channels registered with it. The port's connections
+//! each run their own event loop (`Connection`), on a thread the group makes, named like the
+//! group's (`Netty Client IO #0`). One kind of TCP channel is enough for that:
+//! `remote(allowNativeTransport)` is `remote()`, and the in-memory group comes with the
+//! integrated server.
 
-use std::cell::RefCell;
-use std::rc::{Rc, Weak};
-use std::time::Instant;
+use std::io;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread::{self, JoinHandle};
 
-use crate::net::minecraft::network::connection::Connection;
+static REMOTE: EventLoopGroupHolder = EventLoopGroupHolder {
+    r#type: "NIO",
+    name_format: "Netty Client IO",
+    threads: AtomicUsize::new(0),
+};
 
-thread_local! {
-    static REMOTE: &'static EventLoopGroupHolder = Box::leak(Box::new(EventLoopGroupHolder {
-        r#type: "NIO",
-        connections: RefCell::new(Vec::new()),
-    }));
-}
-
-/// The connections a kind of channel's event loop runs.
+/// The threads a kind of channel's event loops run on.
 pub struct EventLoopGroupHolder {
     r#type: &'static str,
-    connections: RefCell<Vec<Weak<Connection>>>,
+    name_format: &'static str,
+    threads: AtomicUsize,
 }
 
 impl EventLoopGroupHolder {
     /// The group the game's connections to servers go in.
     pub fn remote() -> &'static EventLoopGroupHolder {
-        REMOTE.with(|remote| *remote)
+        &REMOTE
     }
 
     pub fn r#type(&self) -> &'static str {
         self.r#type
     }
 
-    pub fn register(&self, connection: &Rc<Connection>) {
-        self.connections
-            .borrow_mut()
-            .push(Rc::downgrade(connection));
-    }
-
-    /// Runs every live connection's event loop until `deadline`, and forgets the closed ones.
-    pub fn run_until(&self, deadline: Instant) {
-        self.connections
-            .borrow_mut()
-            .retain(|connection| connection.upgrade().is_some_and(|c| c.is_connected()));
-        let connections: Vec<Rc<Connection>> = self
-            .connections
-            .borrow()
-            .iter()
-            .filter_map(Weak::upgrade)
-            .collect();
-        match connections.as_slice() {
-            [] => {
-                let now = Instant::now();
-                if deadline > now {
-                    std::thread::sleep(deadline - now);
-                }
-            }
-            connections => {
-                for connection in connections {
-                    connection.run_event_loop(deadline);
-                }
-            }
-        }
+    /// Starts an event loop thread of the group, its thread factory's.
+    pub fn new_thread(&self, run: impl FnOnce() + Send + 'static) -> io::Result<JoinHandle<()>> {
+        let index = self.threads.fetch_add(1, Ordering::Relaxed);
+        thread::Builder::new()
+            .name(format!("{} #{index}", self.name_format))
+            .spawn(run)
     }
 }

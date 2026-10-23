@@ -18,10 +18,17 @@
 //!
 //! Java's level is the game's (`minecraft.level`), which the listener makes on login, and the
 //! listener reads it from there. The player's connection, and the game mode's, is this listener.
+//!
+//! Its half on Netty's thread (`NettyHalf`, PORTING.md "The connection's threads") runs the chunk
+//! batches' handlers and `handlePongResponse`, like Java's, with the common ones, and queues
+//! every other packet for the game thread's. Java also runs `handlePlayerCombatEnd`,
+//! `handlePlayerCombatEnter` (both empty), `handleDebugSample` and
+//! `handleLowDiskSpaceWarning` there, whose packets aren't ported yet.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::com::mojang::authlib::game_profile::GameProfile;
 use crate::java::util::bit_set::BitSet;
@@ -29,7 +36,7 @@ use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::chunk_batch_size_calculator::ChunkBatchSizeCalculator;
 use crate::net::minecraft::client::multiplayer::client_common_packet_listener_impl::{
-    ClientCommonPacketListenerImpl, client_common_handlers,
+    self, ClientCommonPacketListenerImpl, client_common_handlers, client_common_netty_handlers,
 };
 use crate::net::minecraft::client::multiplayer::client_configuration_packet_listener_impl::ClientConfigurationPacketListenerImpl;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
@@ -42,10 +49,10 @@ use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::chat::component::Component;
 use crate::net::minecraft::network::chat::formatted_text::FormattedText;
-use crate::net::minecraft::network::connection::Connection;
+use crate::net::minecraft::network::connection::{Connection, NettyListener, SplitListener};
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::packet_listener::PacketListener;
-use crate::net::minecraft::network::protocol::configuration::client_configuration_packet_listener::ClientConfigurationPacketListener;
+use crate::net::minecraft::network::packet_processor::{GameThreadListener, lock};
 use crate::net::minecraft::network::protocol::configuration::configuration_protocols::ConfigurationProtocols;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
@@ -129,13 +136,11 @@ pub struct ClientPacketListener {
     server_chunk_radius: i32,
     server_simulation_distance: i32,
     levels: Vec<ResourceKey>,
-    chunk_batch_size_calculator: ChunkBatchSizeCalculator,
+    shared: Arc<Shared>,
     level_load_tracker: Option<LevelLoadTracker>,
     server_enforces_secure_chat: bool,
     online_mode: bool,
-    closed: bool,
     client_loaded: bool,
-    chunks_in_finished_batches: i32,
     clock_manager: ClientClockManager,
     /// What Java's player's recipe book (`ClientRecipeBook`, not ported) holds of its settings.
     recipe_book_settings: RecipeBookSettings,
@@ -147,7 +152,7 @@ pub struct ClientPacketListener {
 impl ClientPacketListener {
     pub fn new(
         minecraft: Rc<Minecraft>,
-        connection: Rc<Connection>,
+        connection: Arc<Connection>,
         cookie: CommonListenerCookie,
     ) -> Rc<RefCell<ClientPacketListener>> {
         let common = ClientCommonPacketListenerImpl::new(minecraft, connection, &cookie);
@@ -161,13 +166,15 @@ impl ClientPacketListener {
                 server_chunk_radius: 3,
                 server_simulation_distance: 3,
                 levels: Vec::new(),
-                chunk_batch_size_calculator: ChunkBatchSizeCalculator::new(),
+                shared: Arc::new(Shared {
+                    closed: AtomicBool::new(false),
+                    chunk_batch_size_calculator: Mutex::new(ChunkBatchSizeCalculator::new()),
+                    chunks_in_finished_batches: AtomicI32::new(0),
+                }),
                 level_load_tracker: Some(cookie.level_load_tracker),
                 server_enforces_secure_chat: false,
                 online_mode: false,
-                closed: false,
                 client_loaded: false,
-                chunks_in_finished_batches: 0,
                 clock_manager: ClientClockManager::new(),
                 recipe_book_settings: RecipeBookSettings::new(),
                 texts: ServerTexts::default(),
@@ -175,8 +182,8 @@ impl ClientPacketListener {
         })
     }
 
-    pub fn get_connection(&self) -> Rc<Connection> {
-        Rc::clone(&self.common.connection)
+    pub fn get_connection(&self) -> Arc<Connection> {
+        Arc::clone(&self.common.connection)
     }
 
     pub fn get_local_game_profile(&self) -> &GameProfile {
@@ -220,7 +227,7 @@ impl ClientPacketListener {
     }
 
     pub fn close(&mut self) {
-        self.closed = true;
+        self.shared.closed.store(true, Ordering::SeqCst);
         self.clear_level();
     }
 
@@ -269,7 +276,7 @@ impl ClientPacketListener {
         else {
             return;
         };
-        if self.chunks_in_finished_batches > 0 {
+        if self.chunks_in_finished_batches() > 0 {
             callback();
         }
     }
@@ -277,7 +284,9 @@ impl ClientPacketListener {
     /// How many chunks the finished chunk batches had: what the client knows of its chunks until
     /// the world track's chunk packets and storage come.
     pub fn chunks_in_finished_batches(&self) -> i32 {
-        self.chunks_in_finished_batches
+        self.shared
+            .chunks_in_finished_batches
+            .load(Ordering::SeqCst)
     }
 
     /// `handleLevelChunkWithLight`'s body on the game thread, on the level: the chunk goes into
@@ -515,7 +524,7 @@ impl PacketListener for ClientPacketListener {
     }
 
     fn is_accepting_messages(&self) -> bool {
-        self.common.connection.is_connected() && !self.closed
+        self.shared.is_accepting_messages(&self.common.connection)
     }
 
     fn should_handle_message(&self, packet: &dyn std::any::Any) -> bool {
@@ -543,12 +552,107 @@ impl TickablePacketListener for ClientPacketListener {
 
 client_common_handlers!(ClientPacketListener);
 
-/// On the Netty thread, like Java's. Java logs the round trip in the debug screen's ping chart,
-/// which isn't ported, and pings only while that chart shows (`PingDebugMonitor`), so a server
-/// only sends a pong to a client that asked.
+/// On the Netty thread, like Java's (`NettyHalf`): only a bundle's reaches the game thread.
 impl ClientPongPacketListener for ClientPacketListener {
     fn handle_pong_response(&mut self, packet: &ClientboundPongResponsePacket) {
+        self.shared.handle_pong_response(packet);
+    }
+}
+
+/// The fields both of the listener's halves touch, and the handlers Java runs on Netty's thread,
+/// which either half can run: Netty's, or the game thread's for a packet of a bundle.
+struct Shared {
+    closed: AtomicBool,
+    chunk_batch_size_calculator: Mutex<ChunkBatchSizeCalculator>,
+    /// How many chunks the finished chunk batches had (`check_player_section`).
+    chunks_in_finished_batches: AtomicI32,
+}
+
+impl Shared {
+    fn is_accepting_messages(&self, connection: &Connection) -> bool {
+        connection.is_connected() && !self.closed.load(Ordering::SeqCst)
+    }
+
+    fn handle_chunk_batch_start(&self, packet: &ClientboundChunkBatchStartPacket) {
         let _ = packet;
+        lock(&self.chunk_batch_size_calculator).on_batch_start();
+    }
+
+    /// The answer goes out at once, on the thread handling it.
+    fn handle_chunk_batch_finished(
+        &self,
+        connection: &Connection,
+        packet: &ClientboundChunkBatchFinishedPacket,
+    ) {
+        let mut chunk_batch_size_calculator = lock(&self.chunk_batch_size_calculator);
+        chunk_batch_size_calculator.on_batch_finished(packet.batch_size());
+        let chunks = packet.batch_size().max(0);
+        let _ = self.chunks_in_finished_batches.try_update(
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            |finished| Some(finished.saturating_add(chunks)),
+        );
+        connection.send::<dyn ServerGamePacketListener>(ServerboundChunkBatchReceivedPacket::new(
+            chunk_batch_size_calculator.get_desired_chunks_per_tick(),
+        ));
+    }
+
+    /// Java logs the round trip in the debug screen's ping chart, which isn't ported, and pings
+    /// only while that chart shows (`PingDebugMonitor`), so a server only sends a pong to a
+    /// client that asked.
+    fn handle_pong_response(&self, packet: &ClientboundPongResponsePacket) {
+        let _ = packet;
+    }
+}
+
+impl SplitListener<dyn ClientGamePacketListener> for ClientPacketListener {
+    fn netty_listener(
+        &self,
+        this: GameThreadListener<ClientPacketListener>,
+    ) -> Box<dyn NettyListener<dyn ClientGamePacketListener>> {
+        Box::new(NettyHalf {
+            this,
+            common: self.common.netty_half(),
+            shared: Arc::clone(&self.shared),
+        })
+    }
+}
+
+/// What Netty's thread runs of the listener: the handlers Java runs there, and for the others,
+/// up to `ensureRunningOnSameThread`, which queues the packet for the game thread's half, `this`.
+/// A handler ported on the game thread's half comes here too, Java's handler up to that call.
+pub struct NettyHalf {
+    this: GameThreadListener<ClientPacketListener>,
+    common: client_common_packet_listener_impl::NettyHalf<dyn ServerGamePacketListener>,
+    shared: Arc<Shared>,
+}
+
+impl NettyListener<dyn ClientGamePacketListener> for NettyHalf {
+    fn listener(&mut self) -> &mut (dyn ClientGamePacketListener + 'static) {
+        self
+    }
+}
+
+impl PacketListener for NettyHalf {
+    /// The game thread's half hears it, which the connection ticks.
+    fn on_disconnect(&mut self, details: &DisconnectionDetails) {
+        let _ = details;
+    }
+
+    fn is_accepting_messages(&self) -> bool {
+        self.shared.is_accepting_messages(&self.common.connection)
+    }
+
+    fn should_handle_message(&self, packet: &dyn std::any::Any) -> bool {
+        self.common.should_handle_message(packet)
+    }
+}
+
+client_common_netty_handlers!(NettyHalf);
+
+impl ClientPongPacketListener for NettyHalf {
+    fn handle_pong_response(&mut self, packet: &ClientboundPongResponsePacket) {
+        self.shared.handle_pong_response(packet);
     }
 }
 
@@ -713,13 +817,12 @@ impl ClientGamePacketListener for ClientPacketListener {
             server_cookies: self.common.server_cookies.clone(),
             custom_report_details: self.common.custom_report_details.clone(),
         };
-        let connection = Rc::clone(&self.common.connection);
-        let listener: Rc<RefCell<dyn ClientConfigurationPacketListener>> =
-            ClientConfigurationPacketListenerImpl::new(
-                Rc::clone(&minecraft),
-                Rc::clone(&connection),
-                cookie,
-            );
+        let connection = Arc::clone(&self.common.connection);
+        let listener = ClientConfigurationPacketListenerImpl::new(
+            Rc::clone(&minecraft),
+            Arc::clone(&connection),
+            cookie,
+        );
         connection
             .setup_inbound_protocol(Box::new(&***ConfigurationProtocols::CLIENTBOUND), listener);
         connection.send::<dyn ServerGamePacketListener>(ServerboundConfigurationAcknowledgedPacket);
@@ -854,23 +957,15 @@ impl ClientGamePacketListener for ClientPacketListener {
         }
     }
 
-    /// On the Netty thread, like Java's.
+    /// On the Netty thread, like Java's (`NettyHalf`): only a bundle's reaches the game thread.
     fn handle_chunk_batch_start(&mut self, packet: &ClientboundChunkBatchStartPacket) {
-        let _ = packet;
-        self.chunk_batch_size_calculator.on_batch_start();
+        self.shared.handle_chunk_batch_start(packet);
     }
 
-    /// On the Netty thread, like Java's: the answer goes out at once.
+    /// On the Netty thread, like Java's (`NettyHalf`): only a bundle's reaches the game thread.
     fn handle_chunk_batch_finished(&mut self, packet: &ClientboundChunkBatchFinishedPacket) {
-        self.chunk_batch_size_calculator
-            .on_batch_finished(packet.batch_size());
-        self.chunks_in_finished_batches = self
-            .chunks_in_finished_batches
-            .saturating_add(packet.batch_size().max(0));
-        self.send(ServerboundChunkBatchReceivedPacket::new(
-            self.chunk_batch_size_calculator
-                .get_desired_chunks_per_tick(),
-        ));
+        self.shared
+            .handle_chunk_batch_finished(&self.common.connection, packet);
     }
 
     fn handle_change_difficulty(&mut self, packet: &ClientboundChangeDifficultyPacket) {
@@ -1444,5 +1539,172 @@ impl ClientGamePacketListener for ClientPacketListener {
             return;
         }
         self.texts.motd = Some(packet.motd());
+    }
+}
+
+impl ClientGamePacketListener for NettyHalf {
+    fn handle_login(&mut self, packet: &ClientboundLoginPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_move_player(&mut self, packet: &ClientboundPlayerPositionPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_game_event(&mut self, packet: &ClientboundGameEventPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_configuration_start(&mut self, packet: &ClientboundStartConfigurationPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_chunk_batch_start(&mut self, packet: &ClientboundChunkBatchStartPacket) {
+        self.shared.handle_chunk_batch_start(packet);
+    }
+
+    fn handle_chunk_batch_finished(&mut self, packet: &ClientboundChunkBatchFinishedPacket) {
+        self.shared
+            .handle_chunk_batch_finished(&self.common.connection, packet);
+    }
+
+    fn handle_bundle_packet(&mut self, packet: &ClientboundBundlePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_change_difficulty(&mut self, packet: &ClientboundChangeDifficultyPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_initialize_border(&mut self, packet: &ClientboundInitializeBorderPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_player_abilities(&mut self, packet: &ClientboundPlayerAbilitiesPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_chunk_cache_center(&mut self, packet: &ClientboundSetChunkCacheCenterPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_chunk_cache_radius(&mut self, packet: &ClientboundSetChunkCacheRadiusPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_experience(&mut self, packet: &ClientboundSetExperiencePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_health(&mut self, packet: &ClientboundSetHealthPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_held_slot(&mut self, packet: &ClientboundSetHeldSlotPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_simulation_distance(&mut self, packet: &ClientboundSetSimulationDistancePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_ticking_state(&mut self, packet: &ClientboundTickingStatePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_ticking_step(&mut self, packet: &ClientboundTickingStepPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_level_chunk_with_light(&mut self, packet: &ClientboundLevelChunkWithLightPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_light_update_packet(&mut self, packet: &ClientboundLightUpdatePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_forget_level_chunk(&mut self, packet: &ClientboundForgetLevelChunkPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_block_update(&mut self, packet: &ClientboundBlockUpdatePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_chunks_biomes(&mut self, packet: &ClientboundChunksBiomesPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_time(&mut self, packet: &ClientboundSetTimePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_update_attributes(&mut self, packet: &ClientboundUpdateAttributesPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_spawn(&mut self, packet: &ClientboundSetDefaultSpawnPositionPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_entity_data(&mut self, packet: &ClientboundSetEntityDataPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_recipe_book_settings(&mut self, packet: &ClientboundRecipeBookSettingsPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_entity_motion(&mut self, packet: &ClientboundSetEntityMotionPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_hurt_animation(&mut self, packet: &ClientboundHurtAnimationPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_entity_event(&mut self, packet: &ClientboundEntityEventPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_damage_event(&mut self, packet: &ClientboundDamageEventPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_add_entity(&mut self, packet: &ClientboundAddEntityPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_remove_entities(&mut self, packet: &ClientboundRemoveEntitiesPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_system_chat(&mut self, packet: &ClientboundSystemChatPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn set_title_text(&mut self, packet: &ClientboundSetTitleTextPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn set_subtitle_text(&mut self, packet: &ClientboundSetSubtitleTextPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn set_action_bar_text(&mut self, packet: &ClientboundSetActionBarTextPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_tab_list_customisation(&mut self, packet: &ClientboundTabListPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_server_data(&mut self, packet: &ClientboundServerDataPacket) {
+        self.common.on_game_thread(&self.this, packet);
     }
 }

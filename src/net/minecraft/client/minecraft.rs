@@ -13,12 +13,13 @@
 //! The game is shared by its listeners and its player, like Java's, so its state is in cells, and
 //! its back-references are parameters (`LocalPlayer::send_changes`). The screen is one of the few
 //! the port has, without drawing anything: the connect screen, the level's loading screen, or the
-//! disconnected screen, which a headless client stops at. Between frames, Java's Netty threads go
-//! on reading the connection; here the game runs the connections' event loops until the next
-//! frame is due (`EventLoopGroupHolder`), at vanilla's default frame rate limit.
+//! disconnected screen, which a headless client stops at. Frames come at most at vanilla's default
+//! frame rate limit, the game thread sleeping until the next is due, while the connection's own
+//! thread goes on reading it (`Connection`), like Java's Netty threads.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::com::mojang::blaze3d::platform::window::Window;
@@ -43,7 +44,6 @@ use crate::net::minecraft::network::packet_processor::PacketProcessor;
 use crate::net::minecraft::network::protocol::game::serverbound_client_tick_end_packet::ServerboundClientTickEndPacket;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
-use crate::net::minecraft::server::network::event_loop_group_holder::EventLoopGroupHolder;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
@@ -73,7 +73,7 @@ pub trait TestDriver {
 pub struct Minecraft {
     pub options: RefCell<Options>,
     user: User,
-    packet_processor: PacketProcessor,
+    packet_processor: Arc<PacketProcessor>,
     pub player: RefCell<Option<LocalPlayer>>,
     pub level: RefCell<Option<ClientLevel>>,
     pub game_mode: RefCell<Option<Rc<MultiPlayerGameMode>>>,
@@ -104,7 +104,7 @@ impl Minecraft {
         Rc::new(Minecraft {
             options: RefCell::new(options),
             user,
-            packet_processor: PacketProcessor::new(),
+            packet_processor: Arc::new(PacketProcessor::new()),
             player: RefCell::new(None),
             level: RefCell::new(None),
             game_mode: RefCell::new(None),
@@ -128,7 +128,7 @@ impl Minecraft {
         &self.user
     }
 
-    pub fn packet_processor(&self) -> &PacketProcessor {
+    pub fn packet_processor(&self) -> &Arc<PacketProcessor> {
         &self.packet_processor
     }
 
@@ -136,8 +136,8 @@ impl Minecraft {
         *self.test_driver.borrow_mut() = Some(driver);
     }
 
-    /// Frames until the game stops: each runs a tick if one is due, then the network until the
-    /// next frame.
+    /// Frames until the game stops: each runs a tick if one is due, then waits for the next
+    /// frame (`Window.updateDisplay`'s frame rate limit).
     pub fn run(self: &Rc<Minecraft>) {
         let frame = Duration::from_nanos(1_000_000_000 / Minecraft::FRAMERATE_LIMIT);
         let mut next_frame = Instant::now();
@@ -153,7 +153,7 @@ impl Minecraft {
             if next_frame < now {
                 next_frame = now;
             }
-            EventLoopGroupHolder::remote().run_until(next_frame);
+            std::thread::sleep(next_frame - now);
         }
     }
 

@@ -31,6 +31,7 @@ python3 tools/port_client.py capture walk --accept-eula --ping    # and the port
 cargo run -p oracle-diff -- packets vanilla/26.3/oracle/walk-ping/capture.jsonl target/oracle/walk-ping/capture.jsonl
 cargo run -p oracle-diff -- dir vanilla/26.3/oracle/walk target/oracle/walk
 python3 tools/port_client.py soak --preset normal --accept-eula   # the live client on a generated world (below)
+python3 tools/port_client.py stall --accept-eula                  # the game thread stalled 40 s, still connected (below)
 ```
 
 Wrap the ones that start a server, a client or the proxy in `flock /tmp/rustcraft-oracle.lock`: they use fixed ports, and the machine is shared.
@@ -493,10 +494,16 @@ The scenarios' worlds are flat, with few kinds of blocks. `port_client.py soak` 
 
 The soak is about the world, not the player's physics, so it keeps the player clear of what the player's port doesn't do yet: the server's ticks are frozen (`tick freeze`, so no fluid flows into what the soak builds), and at each stop the player stands on a 3 by 3 platform the soak builds at a chunk's middle, in a chunk section emptied of fluids (on the surface, the first section above the ground; underground, deepslate around a small room at -47). The spawn stop is built before the client joins, and the world spawn moved onto it. CI runs it with 5 seconds a stop.
 
+## Stalls: the connection's own thread
+
+`port_client.py stall` joins the port's live client (headless, no proxy) to a fresh flat `vanilla_server.py` world with `rustcraft --stall 40` (`src/rustcraft/stall_test.rs`): once the level is ready, the game thread sleeps 40 seconds in one tick, the way one long frame on a slow machine stalls it, then the client goes on for 20 seconds, still connected, and disconnects. The server sends a keep-alive every 15 seconds and drops a client that hasn't answered the last one when the next is due, so a client whose game thread reads the connection is gone by then (`lost connection: Timed out`); vanilla answers keep-alives on Netty's thread, and so does the port (PORTING.md, "The connection's threads"). It exits 0 when the client exited 0 after the stall and the server logged no timeout. CI runs it.
+
+`RUSTCRAFT_BINARY=path` makes `port_client.py` run that build instead of building the tree's, so a long live check can run on a frozen build while the tree changes.
+
 ## Where outputs go
 
 - Vanilla runs: `vanilla/<version>/oracle/<scenario>/`
 - Port runs: `target/oracle/<scenario>/`
-- The soak's client log: `target/soak/client.log`
+- The soak's client log: `target/soak/client.log`, the stall test's `target/stall/client.log`
 
 `oracle-diff dir A B` compares the trace, the capture and every screenshot that both directories have. Running vanilla twice and diffing the runs (`check-determinism`) checks that the oracle itself is deterministic. It has to be, or no comparison means anything.
