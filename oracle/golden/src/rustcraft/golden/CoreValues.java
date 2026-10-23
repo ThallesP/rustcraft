@@ -20,6 +20,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.ByIdMap;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -81,6 +82,19 @@ final class CoreValues {
     );
 
     // A BlockPos is [x, y, z] like a Vec3i, and so is a MutableBlockPos, whose methods get a fresh one to change.
+    // Chunks around the walk scenario's spawn, at ChunkPyramid's limit and past it, INVALID_CHUNK_POS's, and any ints.
+    static final Values.Generator CHUNK_POS = new Values.Simple(
+        List.<Object>of(
+            ChunkPos.ZERO, new ChunkPos(-1, -1), new ChunkPos(1, -2), new ChunkPos(-3, 3), ChunkPos.unpack(ChunkPos.INVALID_CHUNK_POS),
+            new ChunkPos(2097061, -2097061), new ChunkPos(2097062, 0), new ChunkPos(Integer.MAX_VALUE, Integer.MIN_VALUE),
+            new ChunkPos(Integer.MIN_VALUE, -1)
+        ),
+        random -> random.nextInt(4) == 0
+            ? new ChunkPos(random.nextInt(), random.nextInt())
+            : new ChunkPos(random.nextInt(65) - 32, random.nextInt(65) - 32),
+        value -> Values.encode(value, ChunkPos.class)
+    );
+
     static final Values.Generator BLOCK_POS = new JomlValues.Mutable<>(
         BLOCK_POS_EDGES.stream().map(vec -> new BlockPos(vec.getX(), vec.getY(), vec.getZ())).toList(),
         CoreValues::randomBlockPos,
@@ -274,6 +288,9 @@ final class CoreValues {
         }
         if (type == BlockPos.class) {
             return BLOCK_POS;
+        }
+        if (type == ChunkPos.class) {
+            return CHUNK_POS;
         }
         if (type == BlockPos.MutableBlockPos.class) {
             return MUTABLE_BLOCK_POS;

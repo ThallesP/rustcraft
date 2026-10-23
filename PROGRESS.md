@@ -74,6 +74,12 @@ Left from the shapes: `rotate` and the maps of rotated shapes (`OctahedralGroup`
 
 ## Log
 
+### 2026-10-23 (world): CI records the walk's chunks itself, and ChunkPos has a generator
+
+- 5b94ef0 turned CI red: the chunk goldens read `vanilla/26.3/oracle/walk/capture.jsonl`, which only this machine has, since CI never runs the oracle client. CI now runs `tools/port_client.py capture walk --accept-eula` before `tools/golden.py` (a fresh `vanilla_server.py` with the scenario's seed, `packet-proxy`, and the port joining), and `RUSTCRAFT_CHUNK_CAPTURE` points `LevelChunkSuites` at that capture. Without a capture the generator still fails, so the real chunks are never left out. The port's capture and the oracle's have the same 117 chunks, byte for byte but for the heightmaps' order (the server's `HashMap`'s, which changes from run to run), and the same biome registry: checked by comparing the two captures, and by `tools/golden.py` and `cargo test` passing on the port's capture here as on the oracle's.
+- `ChunkPos` has a generator (`CoreValues.CHUNK_POS`), so `FriendlyByteBuf.writeChunkPos` (both) is checked instead of pending.
+- Evidence: with goldens made from the port's capture, as CI makes them, `cargo test --workspace` passes 288 tests on top of the player track's latest; fmt, clippy and the port check are clean.
+
 ### 2026-10-23 (player): The local player moves like vanilla: the walk trace, all 76 ticks, bit for bit
 
 - Ported, in Java's layout, the local player's movement on a level of blocks:

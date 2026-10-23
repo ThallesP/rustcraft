@@ -26,7 +26,13 @@ jobs:
             !vanilla/*/golden-classes
           key: vanilla-${{ hashFiles('MINECRAFT_VERSION', 'tools/setup_vanilla.py') }}
       - run: python3 tools/setup_vanilla.py --skip-decompile
+      # The chunk goldens decode the chunks a vanilla server sends a client joining the walk scenario's world. CI has no
+      # oracle captures, so it records that server with the port's own client (the chunk bytes are the server's either
+      # way), and the golden harness reads its capture instead of vanilla/<version>/oracle/walk/capture.jsonl.
+      - run: python3 tools/port_client.py capture walk --accept-eula
       - run: python3 tools/golden.py
+        env:
+          RUSTCRAFT_CHUNK_CAPTURE: ${{ github.workspace }}/target/oracle/walk/capture.jsonl
       - run: python3 tools/hotspot_port_check.py
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings

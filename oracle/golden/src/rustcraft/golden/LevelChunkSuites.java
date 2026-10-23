@@ -71,7 +71,10 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * synchronized {@code worldgen/biome} registry, in the order the server sent them.
  */
 final class LevelChunkSuites {
-    private static final Path CAPTURE = Path.of("oracle/walk/capture.jsonl");
+    // The oracle client's capture of the walk scenario, or the one RUSTCRAFT_CHUNK_CAPTURE names: CI has no oracle
+    // captures, so it records the walk's server with the port's own client (tools/port_client.py capture walk). The
+    // chunk bytes are the server's either way: the same 117 chunks, which only differ in their heightmaps' order.
+    private static final Path CAPTURE = Path.of(System.getenv().getOrDefault("RUSTCRAFT_CHUNK_CAPTURE", "oracle/walk/capture.jsonl"));
     // The overworld's (data/minecraft/dimension_type/overworld.json: min_y -64, height 384), which the walk's login names.
     static final int SECTION_COUNT = 384 / 16;
     private static final RegistryAccess BUILT_IN = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
@@ -97,7 +100,10 @@ final class LevelChunkSuites {
                     packets.add(JsonParser.parseString(line).getAsJsonObject());
                 }
             } catch (IOException e) {
-                throw new IllegalStateException("can't read " + CAPTURE.toAbsolutePath() + ": record the walk capture first", e);
+                throw new IllegalStateException(
+                    "can't read " + CAPTURE.toAbsolutePath() + ": record the walk scenario first (oracle_client.py capture walk, or port_client.py "
+                        + "capture walk with RUSTCRAFT_CHUNK_CAPTURE naming its capture.jsonl)", e
+                );
             }
             capture = packets;
         }

@@ -643,6 +643,7 @@ mod tests {
     use crate::net::minecraft::resources::identifier::Identifier;
     use crate::net::minecraft::resources::resource_key::ResourceKey;
     use crate::net::minecraft::world::level::block::rotation::Rotation;
+    use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
     use crate::net::minecraft::world::phys::vec3::Vec3;
     use crate::org::joml::quaternionf::Quaternionf;
     use crate::org::joml::vector3f::Vector3f;
@@ -728,15 +729,16 @@ mod tests {
             "readChunkPos(Lio/netty/buffer/ByteBuf;)Lnet/minecraft/world/level/ChunkPos;",
             |input: &mut ByteBuf| FriendlyByteBuf::read_chunk_pos_from(input),
         );
-        for name in [
+        golden.check_method(
             "writeChunkPos(Lnet/minecraft/world/level/ChunkPos;)Lnet/minecraft/network/FriendlyByteBuf;",
+            |this: &mut FriendlyByteBuf, pos: ChunkPos| this.write_chunk_pos(&pos).clone(),
+        );
+        golden.check_mut(
             "writeChunkPos(Lio/netty/buffer/ByteBuf;Lnet/minecraft/world/level/ChunkPos;)V",
-        ] {
-            golden.pending(
-                name,
-                "the harness has no ChunkPos generator yet; ClientboundForgetLevelChunkPacket's goldens write chunk positions",
-            );
-        }
+            |output: &mut ByteBuf, pos: &mut ChunkPos| {
+                FriendlyByteBuf::write_chunk_pos_to(output, pos)
+            },
+        );
         for name in [
             "readGlobalPos()Lnet/minecraft/core/GlobalPos;",
             "writeGlobalPos(Lnet/minecraft/core/GlobalPos;)V",
