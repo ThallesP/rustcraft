@@ -5,12 +5,15 @@
 //! A record, which `equals` with `Double.compare`: -0.0 isn't 0.0, and NaN is NaN. `valueOf` makes
 //! both zeros the `ZERO` constant, which is 0.0, so a -0.0 read from NBT comes back as 0.0.
 
+use std::fmt;
+
 use crate::java::io::data_input::DataInput;
 use crate::java::io::data_output::DataOutput;
 use crate::java::lang::double::Double;
 use crate::java::lang::number::Number;
 use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
 use crate::net::minecraft::nbt::numeric_tag::NumericTag;
+use crate::net::minecraft::nbt::string_tag_visitor::StringTagVisitor;
 use crate::net::minecraft::nbt::tag::class;
 use crate::net::minecraft::nbt::tag_type::TagType;
 use crate::net::minecraft::util::mth::Mth;
@@ -119,6 +122,15 @@ impl NumericTag for DoubleTag {
 
 class!(DoubleTag, Double);
 
+/// `toString()`: its SNBT (`StringTagVisitor`).
+impl fmt::Display for DoubleTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut visitor = StringTagVisitor::new();
+        visitor.visit_double(self);
+        f.write_str(&visitor.build())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -150,10 +162,9 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.nbt.DoubleTag");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "needs StringTagVisitor's SNBT, which prints floats with Java's Float.toString and Double.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut DoubleTag| {
+            this.to_string()
+        });
         for name in [
             "accept(Lnet/minecraft/nbt/StreamTagVisitor;)Lnet/minecraft/nbt/StreamTagVisitor$ValueResult;",
             "accept(Lnet/minecraft/nbt/TagVisitor;)V",

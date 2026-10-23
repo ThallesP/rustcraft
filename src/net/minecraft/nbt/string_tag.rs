@@ -1,14 +1,19 @@
 //! net/minecraft/nbt/StringTag.java
 //!
-//! Not ported yet: `toString` and `accept`, like every tag's (see `Tag`), and `quoteAndEscape`
-//! and `escapeWithoutQuotes`, which write SNBT and come with it.
+//! Not ported yet: `accept`, like every tag's (see `Tag`). `quoteAndEscape` and
+//! `escapeWithoutQuotes` append to a `String` where Java's overloads append to a `StringBuilder`
+//! (`_into`).
 //!
 //! A record, written in modified UTF-8 (`writeUTF`), whose length Java measures in UTF-16 units.
+
+use std::fmt;
 
 use crate::java::io::data_input::DataInput;
 use crate::java::io::data_output::DataOutput;
 use crate::java::lang::string::JavaString;
 use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
+use crate::net::minecraft::nbt::snbt_grammar;
+use crate::net::minecraft::nbt::string_tag_visitor::StringTagVisitor;
 use crate::net::minecraft::nbt::tag::class;
 use crate::net::minecraft::nbt::tag_type::TagType;
 
@@ -25,6 +30,73 @@ impl StringTag {
     /// The record's constructor, which Java deprecates for `valueOf`.
     pub fn new(value: String) -> StringTag {
         StringTag { value }
+    }
+
+    /// `quoteAndEscape(String)`: the string in the quotes it has fewer of inside (double quotes
+    /// when it has none), escaping backslashes, that quote and control characters.
+    pub fn quote_and_escape(input: &str) -> String {
+        let mut result = String::new();
+        StringTag::quote_and_escape_into(input, &mut result);
+        result
+    }
+
+    /// `quoteAndEscape(String, StringBuilder)`: the first quote mark inside decides which quotes
+    /// it goes in, the other kind.
+    pub fn quote_and_escape_into(input: &str, result: &mut String) {
+        let quote_mark_index = result.len();
+        result.push(' ');
+        let mut quote = None;
+
+        for c in input.chars() {
+            if c == '\\' {
+                result.push_str("\\\\");
+            } else if c != '"' && c != '\'' {
+                match snbt_grammar::escape_control_characters(c) {
+                    Some(escaped) => {
+                        result.push('\\');
+                        result.push_str(&escaped);
+                    }
+                    None => result.push(c),
+                }
+            } else {
+                let quote = *quote.get_or_insert(if c == '"' { '\'' } else { '"' });
+                if quote == c {
+                    result.push('\\');
+                }
+                result.push(c);
+            }
+        }
+
+        let quote = quote.unwrap_or('"');
+        result.replace_range(quote_mark_index..quote_mark_index + 1, &quote.to_string());
+        result.push(quote);
+    }
+
+    /// `escapeWithoutQuotes(String)`: the string with both quotes, backslashes and control
+    /// characters escaped.
+    pub fn escape_without_quotes(input: &str) -> String {
+        let mut result = String::new();
+        StringTag::escape_without_quotes_into(input, &mut result);
+        result
+    }
+
+    /// `escapeWithoutQuotes(String, StringBuilder)`.
+    pub fn escape_without_quotes_into(input: &str, result: &mut String) {
+        for c in input.chars() {
+            match c {
+                '"' | '\'' | '\\' => {
+                    result.push('\\');
+                    result.push(c);
+                }
+                _ => match snbt_grammar::escape_control_characters(c) {
+                    Some(escaped) => {
+                        result.push('\\');
+                        result.push_str(&escaped);
+                    }
+                    None => result.push(c),
+                },
+            }
+        }
     }
 
     /// Skips a string: its length in bytes, then that many bytes, or as many as are left.
@@ -93,6 +165,15 @@ pub(super) fn utf16_length(s: &str) -> i32 {
 
 class!(StringTag, String);
 
+/// `toString()`: its SNBT (`StringTagVisitor`).
+impl fmt::Display for StringTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut visitor = StringTagVisitor::new();
+        visitor.visit_string(self);
+        f.write_str(&visitor.build())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -125,23 +206,31 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.nbt.StringTag");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "needs StringTagVisitor's SNBT, which prints floats with Java's Float.toString and Double.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut StringTag| {
+            this.to_string()
+        });
         for name in [
             "accept(Lnet/minecraft/nbt/StreamTagVisitor;)Lnet/minecraft/nbt/StreamTagVisitor$ValueResult;",
             "accept(Lnet/minecraft/nbt/TagVisitor;)V",
         ] {
             golden.pending(name, "comes with the visitors");
         }
-        for name in [
+        golden.check(
             "quoteAndEscape(Ljava/lang/String;)Ljava/lang/String;",
-            "quoteAndEscape(Ljava/lang/String;Ljava/lang/StringBuilder;)V",
+            |input: String| StringTag::quote_and_escape(&input),
+        );
+        golden.check(
             "escapeWithoutQuotes(Ljava/lang/String;)Ljava/lang/String;",
+            |input: String| StringTag::escape_without_quotes(&input),
+        );
+        for name in [
+            "quoteAndEscape(Ljava/lang/String;Ljava/lang/StringBuilder;)V",
             "escapeWithoutQuotes(Ljava/lang/String;Ljava/lang/StringBuilder;)V",
         ] {
-            golden.pending(name, "comes with SNBT, which writes strings with them");
+            golden.pending(
+                name,
+                "the harness can't generate a StringBuilder; the String overloads append through them",
+            );
         }
         golden.field("TYPE", StringTag::TYPE);
         golden.check("<init>(Ljava/lang/String;)V", StringTag::new);

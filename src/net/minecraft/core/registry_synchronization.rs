@@ -4,6 +4,7 @@
 //! registries are the server's, which packs its registries with DataFixerUpper's codecs, and the
 //! client's side of them comes with the registries.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
@@ -25,8 +26,6 @@ static STREAM_CODEC: StaticStreamCodec<ByteBuf, PackedRegistryEntry> = LazyLock:
 
 /// An element of a registry the server sends: its identifier, and its data as NBT, or none when
 /// the client has the element in a pack both know.
-///
-/// Not ported yet: `toString`, a record's, which prints the tag with `Tag.toString` (SNBT).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackedRegistryEntry {
     id: Identifier,
@@ -59,6 +58,18 @@ impl PackedRegistryEntry {
     }
 }
 
+/// A record's: `PackedRegistryEntry[id=minecraft:plains, data=Optional[{…}]]`, an `Optional`
+/// printing `Optional.empty` for none.
+impl fmt::Display for PackedRegistryEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "PackedRegistryEntry[id={}, data=", self.id)?;
+        match &self.data {
+            Some(data) => write!(f, "Optional[{data}]]"),
+            None => f.write_str("Optional.empty]"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PackedRegistryEntry;
@@ -75,9 +86,9 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.core.RegistrySynchronization$PackedRegistryEntry");
-        golden.pending(
+        golden.check_method(
             "toString()Ljava/lang/String;",
-            "prints the tag with Tag.toString, which needs StringTagVisitor's SNBT",
+            |this: &mut PackedRegistryEntry| this.to_string(),
         );
         golden.check_codec("STREAM_CODEC", || PackedRegistryEntry::STREAM_CODEC);
         golden.check(

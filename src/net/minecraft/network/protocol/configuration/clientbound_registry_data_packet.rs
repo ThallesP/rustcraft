@@ -1,9 +1,9 @@
 //! net/minecraft/network/protocol/configuration/ClientboundRegistryDataPacket.java
 //!
-//! Not ported yet: `hashCode` and `toString`, a record's. Its `hashCode` hashes the registry
-//! key's identity hash, which changes from run to run, and its `toString` prints the entries'
-//! tags with `Tag.toString` (SNBT).
+//! Not ported yet: `hashCode`, a record's, which hashes the registry key's identity hash, which
+//! changes from run to run.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
@@ -77,6 +77,20 @@ impl<L: ClientConfigurationPacketListener + ?Sized> Packet<L> for ClientboundReg
     }
 }
 
+/// A record's: `ClientboundRegistryDataPacket[registry=ResourceKey[…], entries=[…, …]]`, a
+/// list printing its elements between brackets.
+impl fmt::Display for ClientboundRegistryDataPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let entries: Vec<String> = self.entries.iter().map(ToString::to_string).collect();
+        write!(
+            f,
+            "ClientboundRegistryDataPacket[registry={}, entries=[{}]]",
+            self.registry,
+            entries.join(", ")
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ClientboundRegistryDataPacket;
@@ -104,9 +118,9 @@ mod tests {
             "hashCode()I",
             "hashes the registry key's identity hash, which changes from run to run",
         );
-        golden.pending(
+        golden.check_method(
             "toString()Ljava/lang/String;",
-            "prints the entries' tags with Tag.toString, which needs StringTagVisitor's SNBT",
+            |this: &mut ClientboundRegistryDataPacket| this.to_string(),
         );
         golden.check_codec("STREAM_CODEC", || {
             ClientboundRegistryDataPacket::STREAM_CODEC

@@ -1,8 +1,6 @@
 //! net/minecraft/nbt/Tag.java
 //!
-//! Not ported yet: `toString` (`StringTagVisitor`'s SNBT, which prints floats and doubles with
-//! Java's `Float.toString` and `Double.toString`), and `accept` and `acceptAsRoot`, which come
-//! with the visitors.
+//! Not ported yet: `accept` and `acceptAsRoot`, which come with the visitors.
 //!
 //! `Tag` is a sealed interface, which permits a class for each kind of tag, so it's an enum with
 //! a variant holding each class's struct, and `instanceof` is a `match`. The interfaces between it
@@ -13,6 +11,8 @@
 //! Tags are values here: a list or compound owns what it holds, and a getter lends it, where Java
 //! shares the reference. A tag a caller changes after getting it from another tag (Java's
 //! `getCompound(name).get().putInt(…)`) is a question for when a caller does that.
+
+use std::fmt;
 
 use crate::java::io::data_output::DataOutput;
 use crate::java::lang::number::Number;
@@ -32,6 +32,7 @@ use crate::net::minecraft::nbt::long_tag::LongTag;
 use crate::net::minecraft::nbt::numeric_tag::NumericTag;
 use crate::net::minecraft::nbt::short_tag::ShortTag;
 use crate::net::minecraft::nbt::string_tag::StringTag;
+use crate::net::minecraft::nbt::string_tag_visitor::StringTagVisitor;
 use crate::net::minecraft::nbt::tag_type::TagType;
 
 /// A value in NBT, the format the game sends items, block entities and text in.
@@ -302,6 +303,15 @@ macro_rules! class {
 
 pub(super) use class;
 
+/// `toString()`: its SNBT (`StringTagVisitor`).
+impl fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut visitor = StringTagVisitor::new();
+        visitor.visit(self);
+        f.write_str(&visitor.build())
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use serde_json::Value;
@@ -429,10 +439,9 @@ pub(crate) mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.nbt.Tag");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "needs StringTagVisitor's SNBT, which prints floats with Java's Float.toString and Double.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut Tag| {
+            this.to_string()
+        });
         for name in [
             "accept(Lnet/minecraft/nbt/StreamTagVisitor;)Lnet/minecraft/nbt/StreamTagVisitor$ValueResult;",
             "accept(Lnet/minecraft/nbt/TagVisitor;)V",

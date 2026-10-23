@@ -9,6 +9,8 @@
 //! its tags in the order its map iterates them. A key's getters hand out what they find, or the
 //! `…Or` default, for a key that's missing or holds another kind of tag.
 
+use std::fmt;
+
 use std::borrow::Cow;
 
 use crate::java::io::data_input::DataInput;
@@ -27,6 +29,7 @@ use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
 use crate::net::minecraft::nbt::numeric_tag::NumericTag;
 use crate::net::minecraft::nbt::short_tag::ShortTag;
 use crate::net::minecraft::nbt::string_tag::{self, StringTag};
+use crate::net::minecraft::nbt::string_tag_visitor::StringTagVisitor;
 use crate::net::minecraft::nbt::tag::{Tag, class};
 use crate::net::minecraft::nbt::tag_type::TagType;
 use crate::net::minecraft::nbt::tag_types::TagTypes;
@@ -364,6 +367,15 @@ impl CompoundTag {
 
 class!(CompoundTag, Compound);
 
+/// `toString()`: its SNBT (`StringTagVisitor`).
+impl fmt::Display for CompoundTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut visitor = StringTagVisitor::new();
+        visitor.visit_compound(self);
+        f.write_str(&visitor.build())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -421,10 +433,9 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.nbt.CompoundTag");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "needs StringTagVisitor's SNBT, which prints floats with Java's Float.toString and Double.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut CompoundTag| {
+            this.to_string()
+        });
         for name in [
             "accept(Lnet/minecraft/nbt/StreamTagVisitor;)Lnet/minecraft/nbt/StreamTagVisitor$ValueResult;",
             "accept(Lnet/minecraft/nbt/TagVisitor;)V",

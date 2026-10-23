@@ -51,7 +51,7 @@ Every step of the loop updates this table.
 | Math | JOML: the `Matrix4f`, `Vector3f`, `Quaternionf`… methods the client calls | Done | goldens | same bits |
 | Math | Random sources (legacy, Xoroshiro128++, `nextGaussian`) | Done | goldens | same sequences |
 | Core | `Vec3`, `Vec3i`, `BlockPos`, `Direction`, `AABB`, `Identifier`, `PoseStack`, `Transformation`, `ResourceKey`, `Registries` | Done | goldens | |
-| Data | NBT: every tag, `NbtIo`, size accounting | Partial: no SNBT `toString`, no `HashMap` tree bins | goldens | |
+| Data | NBT: every tag, `NbtIo`, size accounting, SNBT `toString` | Partial: no SNBT parsing, no `HashMap` tree bins | goldens | |
 | Data | Text components, DataFixerUpper codecs | Not started | | |
 | Network | Byte layer: VarInt, `FriendlyByteBuf`, stream codecs, frames | Done | goldens | |
 | Network | Compression | Done (zlib, through `flate2`) | unit tests, captures (`check-join walk --compression-threshold 256`) | join phase matches vanilla's with compression on |

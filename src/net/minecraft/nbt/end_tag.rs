@@ -5,8 +5,11 @@
 //! The tag that ends a compound, and what a read of no tag gives. Java's is a singleton,
 //! `INSTANCE`, which the game compares tags with by reference: every `EndTag` here is it.
 
+use std::fmt;
+
 use crate::java::io::data_output::DataOutput;
 use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
+use crate::net::minecraft::nbt::string_tag_visitor::StringTagVisitor;
 use crate::net::minecraft::nbt::tag::class;
 use crate::net::minecraft::nbt::tag_type::TagType;
 
@@ -46,6 +49,15 @@ impl EndTag {
 
 class!(EndTag, End);
 
+/// `toString()`: its SNBT (`StringTagVisitor`).
+impl fmt::Display for EndTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut visitor = StringTagVisitor::new();
+        visitor.visit_end();
+        f.write_str(&visitor.build())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -80,10 +92,9 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.nbt.EndTag");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "needs StringTagVisitor's SNBT, which prints floats with Java's Float.toString and Double.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut EndTag| {
+            this.to_string()
+        });
         for name in [
             "accept(Lnet/minecraft/nbt/StreamTagVisitor;)Lnet/minecraft/nbt/StreamTagVisitor$ValueResult;",
             "accept(Lnet/minecraft/nbt/TagVisitor;)V",

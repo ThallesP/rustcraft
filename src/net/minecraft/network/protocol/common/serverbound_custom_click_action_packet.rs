@@ -1,7 +1,8 @@
 //! net/minecraft/network/protocol/common/ServerboundCustomClickActionPacket.java
 //!
-//! Not ported yet: `toString`, a record's, which prints the tag with `Tag.toString` (SNBT).
+//! A record, its payload an `Optional` tag.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
@@ -80,6 +81,22 @@ impl<L: ServerCommonPacketListener + ?Sized> Packet<L> for ServerboundCustomClic
     }
 }
 
+/// A record's: `ServerboundCustomClickActionPacket[id=…, payload=Optional[…]]`, an `Optional`
+/// printing `Optional.empty` for none.
+impl fmt::Display for ServerboundCustomClickActionPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ServerboundCustomClickActionPacket[id={}, payload=",
+            self.id
+        )?;
+        match &self.payload {
+            Some(payload) => write!(f, "Optional[{payload}]]"),
+            None => f.write_str("Optional.empty]"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ServerboundCustomClickActionPacket;
@@ -103,9 +120,9 @@ mod tests {
         let golden = Golden::load(
             "net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket",
         );
-        golden.pending(
+        golden.check_method(
             "toString()Ljava/lang/String;",
-            "prints the tag with Tag.toString, which needs StringTagVisitor's SNBT",
+            |this: &mut ServerboundCustomClickActionPacket| this.to_string(),
         );
         golden.check_codec("STREAM_CODEC", || {
             ServerboundCustomClickActionPacket::STREAM_CODEC
