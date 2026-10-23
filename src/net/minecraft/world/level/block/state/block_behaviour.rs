@@ -956,6 +956,10 @@ impl BlockGetter for EmptyBlockGetter {
     fn get_block_state(&self, _pos: &BlockPos) -> BlockState {
         crate::net::minecraft::world::level::block::blocks::Blocks::AIR.default_block_state()
     }
+
+    fn get_fluid_state(&self, _pos: &BlockPos) -> FluidState {
+        FluidState::EMPTY
+    }
 }
 
 impl StatePredicate {

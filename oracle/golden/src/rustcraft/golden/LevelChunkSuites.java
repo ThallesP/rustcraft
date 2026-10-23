@@ -84,7 +84,7 @@ final class LevelChunkSuites {
 
     static List<Suite> suites() {
         return List.of(
-            new BlockEntityTypesSuite(), new DataLayerSuite(), new LevelChunkSectionSuite(), new ChunkPacketSuite(), new LightUpdatePacketSuite(),
+            new BlockEntityTypesSuite(), new ChunkPosSuite(), new DataLayerSuite(), new LevelChunkSectionSuite(), new ChunkPacketSuite(), new LightUpdatePacketSuite(),
             new ForgetLevelChunkPacketSuite(), new BlockUpdatePacketSuite(), new SectionBlocksUpdatePacketSuite(), new ChunksBiomesPacketSuite()
         );
     }
@@ -306,6 +306,42 @@ final class LevelChunkSuites {
 
     static FriendlyByteBuf friendly() {
         return new FriendlyByteBuf(Unpooled.buffer());
+    }
+
+    /**
+     * ChunkPos: its constants, ChunkPyramid.MAX_CHUNK_COORDINATE_VALUE (which isValid checks against, and the level's
+     * bounds with it), and isValid, pack and unpack around the limits and at random.
+     */
+    static final class ChunkPosSuite implements Suite {
+        @Override
+        public String name() {
+            return ChunkPos.class.getName();
+        }
+
+        @Override
+        public void write(final GoldenWriter writer) throws IOException {
+            writer.field("INVALID_CHUNK_POS", new JsonPrimitive(ChunkPos.INVALID_CHUNK_POS));
+            writer.field("ZERO", ChunkSuites.array(ChunkPos.ZERO.x(), ChunkPos.ZERO.z()));
+            writer.field("ChunkPyramid.MAX_CHUNK_COORDINATE_VALUE", new JsonPrimitive(net.minecraft.world.level.chunk.status.ChunkPyramid.MAX_CHUNK_COORDINATE_VALUE));
+            int max = net.minecraft.world.level.chunk.status.ChunkPyramid.MAX_CHUNK_COORDINATE_VALUE;
+            Random random = new Random(0xc405);
+            List<Integer> coordinates = new ArrayList<>(List.of(0, 1, -1, max, max + 1, -max, -max - 1, Integer.MAX_VALUE, Integer.MIN_VALUE, 1875066, -1875066));
+            for (int i = 0; i < 20; i++) {
+                coordinates.add(random.nextInt());
+                coordinates.add(random.nextInt(65) - 32);
+            }
+            for (int x : coordinates) {
+                for (int z : coordinates) {
+                    writer.result("isValid(II)Z", ChunkSuites.array(x, z), new JsonPrimitive(ChunkPos.isValid(x, z)), null);
+                    writer.result("pack(II)J", ChunkSuites.array(x, z), new JsonPrimitive(ChunkPos.pack(x, z)), null);
+                }
+            }
+            for (int i = 0; i < 200; i++) {
+                long key = i < 4 ? new long[]{0L, -1L, Long.MIN_VALUE, Long.MAX_VALUE}[i] : random.nextLong();
+                ChunkPos pos = ChunkPos.unpack(key);
+                writer.result("unpack(J)Lnet/minecraft/world/level/ChunkPos;", ChunkSuites.array(key), ChunkSuites.array(pos.x(), pos.z()), null);
+            }
+        }
     }
 
     /** BlockEntityTypes' fields, each {@code [id, key]} in BuiltInRegistries.BLOCK_ENTITY_TYPE, and its size. */

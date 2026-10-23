@@ -1,7 +1,7 @@
 //! net/minecraft/world/level/ChunkPos.java
 //!
 //! Only what the chunk packets and the client's chunk storage use: the record, `pack`, `unpack`,
-//! `containing`, its blocks' bounds and `STREAM_CODEC`. Not ported yet: `CODEC`
+//! `isValid`, `containing`, its blocks' bounds and `STREAM_CODEC`. Not ported yet: `CODEC`
 //! (DataFixerUpper), the regions, `hashCode`'s mixer (`hash`), the iterators and distances.
 
 use std::fmt;
@@ -12,6 +12,11 @@ use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec};
 use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
+use crate::net::minecraft::util::mth::Mth;
+
+/// `ChunkPyramid.MAX_CHUNK_COORDINATE_VALUE`: the last chunk inside the world border's reach,
+/// less a safety margin the generation pyramid's dependencies make (its golden checks it).
+pub const MAX_CHUNK_COORDINATE_VALUE: i32 = 2097061;
 
 static STREAM_CODEC: StaticStreamCodec<ByteBuf, ChunkPos> = LazyLock::new(|| {
     Box::new(stream_codec::of(
@@ -34,6 +39,11 @@ impl ChunkPos {
 
     pub const fn new(x: i32, z: i32) -> ChunkPos {
         ChunkPos { x, z }
+    }
+
+    /// `isValid(x, z)`: within `ChunkPyramid.MAX_CHUNK_COORDINATE_VALUE` of the origin either way.
+    pub fn is_valid(x: i32, z: i32) -> bool {
+        Mth::abs_max_i32(x, z) <= MAX_CHUNK_COORDINATE_VALUE
     }
 
     pub fn x(&self) -> i32 {
@@ -91,8 +101,26 @@ impl fmt::Display for ChunkPos {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::ChunkPos;
-    use crate::golden::encode_fields;
+    use super::{ChunkPos, MAX_CHUNK_COORDINATE_VALUE};
+    use crate::golden::{Golden, encode_fields};
 
     encode_fields!(ChunkPos { x: i32, z: i32 });
+
+    #[test]
+    fn matches_vanilla() {
+        let golden = Golden::load("net.minecraft.world.level.ChunkPos");
+        golden.field("INVALID_CHUNK_POS", ChunkPos::INVALID_CHUNK_POS);
+        golden.field("ZERO", ChunkPos::ZERO);
+        golden.field(
+            "ChunkPyramid.MAX_CHUNK_COORDINATE_VALUE",
+            MAX_CHUNK_COORDINATE_VALUE,
+        );
+        golden.check("isValid(II)Z", ChunkPos::is_valid);
+        golden.check("pack(II)J", ChunkPos::pack_xz);
+        golden.check(
+            "unpack(J)Lnet/minecraft/world/level/ChunkPos;",
+            ChunkPos::unpack,
+        );
+        golden.finish();
+    }
 }

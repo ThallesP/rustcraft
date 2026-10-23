@@ -170,6 +170,8 @@ The game compares blocks and states by reference and numbers them in the order `
 - A packet's `EnumMap` (the heightmaps) is a `BTreeMap` by the enum, which iterates in the constants' order like Java's. A built-in registry the client's registry access holds (`ByteBufCodecs.registry(BLOCK_ENTITY_TYPE)`) is read without the access, from the registry itself: a `BlockEntityType` is its id there, like a `Block`.
 - A record holding arrays (`ClientboundLightUpdatePacketData`'s layers, `ChunkBiomeData`'s buffer) takes them by identity in Java's `equals`, `hashCode` and `toString`, so those aren't ported; the client only reads them.
 
+- The client's level owns its chunks: `ClientLevel` holds a `ClientChunkCache`, whose `Storage` holds each `LevelChunk` in a slot by position modulo its width, and a chunk its sections, so reads go `level.get_block_state(&pos)` → the chunk → the section, borrowed all the way, without Java's references. Java's `Minecraft.level` is the `RefCell<Option<ClientLevel>>` the listener borrows to fill. What a Java level asks a `LevelHeightAccessor` (its dimension type's height) is a `Height` value the level and its chunks keep. `BlockGetter` doesn't extend `LevelHeightAccessor` here, so what only answers blocks (the shapes' `EmptyBlockGetter`) needs no height.
+
 ## Native libraries and the renderer
 
 The game renders through native libraries that LWJGL binds: shaderc compiles its GLSL to SPIR-V, SPIRV-Cross translates that to the GLSL the OpenGL backend hands the driver, and SDL3 opens the window and the GL context. The port calls the very same builds, so the shader text the driver gets is vanilla's, byte for byte.

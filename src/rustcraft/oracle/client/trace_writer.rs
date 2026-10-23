@@ -50,6 +50,7 @@ mod tests {
     use crate::net::minecraft::world::level::border::world_border::WorldBorder;
     use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
     use crate::net::minecraft::world::level::level::Level;
+    use crate::net::minecraft::world::level::material::fluid_state::FluidState;
     use crate::net::minecraft::world::phys::aabb::AABB;
     use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
     use crate::net::minecraft::world::phys::vec3::Vec3;
@@ -74,6 +75,10 @@ mod tests {
                 -61 => Blocks::GRASS_BLOCK.default_block_state(),
                 _ => Blocks::AIR.default_block_state(),
             }
+        }
+
+        fn get_fluid_state(&self, _pos: &BlockPos) -> FluidState {
+            FluidState::EMPTY
         }
     }
 

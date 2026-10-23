@@ -670,6 +670,22 @@ impl Golden {
         }
     }
 
+    /// A method's cases as vanilla recorded them, `(args, result)`, for checks that take vanilla's
+    /// results as their expectations some other way (the chunk storage reads back what vanilla's
+    /// sections hold). Cases that threw are left out, and the method counts as checked.
+    pub fn cases(&self, method: &str) -> Vec<(Vec<Value>, Value)> {
+        match self.entry(method) {
+            Some(Entry::Cases(cases)) => cases
+                .iter()
+                .filter_map(|case| match &case.expected {
+                    Expected::Returns(result) => Some((case.args.clone(), result.clone())),
+                    Expected::Throws(_) => None,
+                })
+                .collect(),
+            _ => panic!("{}: no golden cases for {method}", self.class),
+        }
+    }
+
     /// A field a check takes as its input rather than compares, like the biome registry the
     /// chunk goldens were decoded with. Panics when vanilla wrote no such field.
     pub fn input(&self, name: &str) -> Value {

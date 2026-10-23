@@ -1,4 +1,5 @@
 pub mod bind_group_layouts;
+pub mod block;
 pub mod dynamic_gpu_data;
 pub mod level_renderer;
 pub mod oit;

@@ -50,18 +50,15 @@ impl Heightmap {
     }
 
     /// `setRawData(chunk, type, data)`: the server's longs, which replace these when there are as
-    /// many as the storage holds. Otherwise Java logs a warning and primes the heightmap from the
-    /// chunk's blocks, which isn't ported, so the port panics.
-    pub fn set_raw_data(&mut self, data: &[i64]) {
+    /// many as the storage holds, and whether they did. Otherwise Java logs a warning and primes
+    /// the heightmap from the chunk's blocks, which isn't ported, so the heights stay as they were.
+    pub fn set_raw_data(&mut self, data: &[i64]) -> bool {
         let raw = self.data.get_raw_mut();
         if raw.len() == data.len() {
             raw.copy_from_slice(data);
+            true
         } else {
-            panic!(
-                "Ignoring invalid heightmap data for chunk, size does not match; expected: {}, got: {}",
-                raw.len(),
-                data.len()
-            );
+            false
         }
     }
 

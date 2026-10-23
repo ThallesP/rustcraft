@@ -325,6 +325,7 @@ impl ClientGamePacketListener for ClientPacketListener {
         self.server_chunk_radius = packet.chunk_radius();
         self.server_simulation_distance = packet.simulation_distance();
         let level = ClientLevel::new(
+            &self.registry_access,
             packet.hardcore(),
             spawn_info.is_flat(),
             spawn_info.dimension(),
@@ -477,21 +478,34 @@ impl ClientGamePacketListener for ClientPacketListener {
         }
     }
 
-    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
-    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    /// The chunk goes in the level's chunk storage. Its light isn't kept yet (`applyLightData`
+    /// and `enableChunkLight` queue it for the light engine, which isn't ported), nor are its
+    /// block entities.
     fn handle_level_chunk_with_light(&mut self, packet: &ClientboundLevelChunkWithLightPacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
-        let _ = PacketUtils::ensure_running_on_same_thread(
+        if PacketUtils::ensure_running_on_same_thread(
             packet,
             &self.this,
             minecraft.packet_processor(),
-        );
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level.get_chunk_source_mut().replace_with_packet_data(
+                packet.x(),
+                packet.z(),
+                packet.chunk_data(),
+            );
+        }
     }
 
-    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
-    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    /// Java queues the light for the level's light engine (`applyLightData`), which isn't
+    /// ported, so it's read and kept nowhere yet, which answers nothing.
     fn handle_light_update_packet(&mut self, packet: &ClientboundLightUpdatePacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
+        // Moves the packet to the game thread when it isn't there; nothing else to do yet.
         let _ = PacketUtils::ensure_running_on_same_thread(
             packet,
             &self.this,
@@ -499,48 +513,84 @@ impl ClientGamePacketListener for ClientPacketListener {
         );
     }
 
-    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
-    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    /// The chunk leaves the level's chunk storage. Java also drops the debug subscriptions' data
+    /// for it and queues its light's removal, neither of which is ported.
     fn handle_forget_level_chunk(&mut self, packet: &ClientboundForgetLevelChunkPacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
-        let _ = PacketUtils::ensure_running_on_same_thread(
+        if PacketUtils::ensure_running_on_same_thread(
             packet,
             &self.this,
             minecraft.packet_processor(),
-        );
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level.get_chunk_source_mut().drop(packet.pos());
+        }
     }
 
-    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
-    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
     fn handle_block_update(&mut self, packet: &ClientboundBlockUpdatePacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
-        let _ = PacketUtils::ensure_running_on_same_thread(
+        if PacketUtils::ensure_running_on_same_thread(
             packet,
             &self.this,
             minecraft.packet_processor(),
-        );
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level.set_server_verified_block_state(&packet.get_pos(), packet.get_block_state(), 19);
+        }
     }
 
-    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
-    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    /// Each change, in order. A state the registry doesn't have is null in Java, where setting
+    /// it throws; it's skipped here.
     fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
-        let _ = PacketUtils::ensure_running_on_same_thread(
+        if PacketUtils::ensure_running_on_same_thread(
             packet,
             &self.this,
             minecraft.packet_processor(),
-        );
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            packet.run_updates(&mut |pos, state| {
+                if let Some(state) = state {
+                    level.set_server_verified_block_state(&pos, state, 19);
+                }
+            });
+        }
     }
 
-    /// On the game thread, like Java's. The level's chunk storage isn't ported yet, so the packet
-    /// is read and kept nowhere, which answers nothing, like the `Unported` stand-in did.
+    /// Each chunk's biomes, read into the chunk the level has. Java then tells the tint caches
+    /// and the renderer, which aren't ported.
     fn handle_chunks_biomes(&mut self, packet: &ClientboundChunksBiomesPacket) {
         let minecraft = Rc::clone(&self.common.minecraft);
-        let _ = PacketUtils::ensure_running_on_same_thread(
+        if PacketUtils::ensure_running_on_same_thread(
             packet,
             &self.this,
             minecraft.packet_processor(),
-        );
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            for data in packet.chunk_biome_data() {
+                level.get_chunk_source_mut().replace_biomes(
+                    data.pos().x(),
+                    data.pos().z(),
+                    &mut data.get_read_buffer(),
+                );
+            }
+        }
     }
 
     /// On the Netty thread, like Java's.
@@ -619,9 +669,11 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
-        // Java moves the level's chunk storage (`ClientChunkCache.updateViewCenter`), the world
-        // track's, which isn't ported yet.
-        let _ = packet;
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level
+                .get_chunk_source_mut()
+                .update_view_center(packet.get_x(), packet.get_z());
+        }
     }
 
     fn handle_set_chunk_cache_radius(&mut self, packet: &ClientboundSetChunkCacheRadiusPacket) {
@@ -640,8 +692,11 @@ impl ClientGamePacketListener for ClientPacketListener {
             .options
             .borrow_mut()
             .set_server_render_distance(self.server_chunk_radius);
-        // Java also resizes the level's chunk storage (`ClientChunkCache.updateViewRadius`), the world
-        // track's, which isn't ported yet.
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level
+                .get_chunk_source_mut()
+                .update_view_radius(self.server_chunk_radius);
+        }
     }
 
     fn handle_set_experience(&mut self, packet: &ClientboundSetExperiencePacket) {
