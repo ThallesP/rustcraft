@@ -52,7 +52,7 @@ Every step of the loop updates this table.
 | Math | Random sources (legacy, Xoroshiro128++, `nextGaussian`) | Done | goldens | same sequences |
 | Core | `Vec3`, `Vec3i`, `BlockPos`, `Direction`, `AABB`, `Identifier`, `PoseStack`, `Transformation`, `ResourceKey`, `Registries` | Done | goldens | |
 | Data | NBT: every tag, `NbtIo`, size accounting, SNBT `toString` | Partial: no SNBT parsing, no `HashMap` tree bins | goldens | |
-| Data | Text components, DataFixerUpper codecs | Partial: DataFixerUpper's `DataResult`, `Lifecycle`, `DynamicOps` and `NbtOps` (with the list and record builders); no codecs or components yet | goldens | |
+| Data | Text components, DataFixerUpper codecs | Partial: DataFixerUpper's `DataResult`, `Lifecycle`, `DynamicOps` and `NbtOps` (with the list and record builders), `Codec`, `MapCodec` and the combinators text components reach (lists, either, the maps, fields, optional fields, records of up to 16 fields, dispatch, recursive); no `JsonOps` or components yet | goldens | |
 | Network | Byte layer: VarInt, `FriendlyByteBuf`, stream codecs, frames | Done | goldens | |
 | Network | Compression | Done (zlib, through `flate2`) | unit tests, captures (`check-join walk --compression-threshold 256`) | join phase matches vanilla's with compression on |
 | Network | Encryption, online-mode login | Not started: the port joins offline-mode servers, and leaves one that asks to encrypt | | |

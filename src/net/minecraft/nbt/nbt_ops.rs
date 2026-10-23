@@ -11,9 +11,11 @@
 use std::fmt;
 
 use crate::com::mojang::datafixers::util::pair::Pair;
+use crate::com::mojang::serialization::codec::{BoxedCodec, Codec};
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::dynamic_ops::{self, DynamicOps, OpsValue};
 use crate::com::mojang::serialization::list_builder::{self, ListBuilder};
+use crate::com::mojang::serialization::map_codec::{BoxedMapCodec, MapCodec};
 use crate::com::mojang::serialization::map_like::MapLike;
 use crate::com::mojang::serialization::record_builder::{
     RecordBuilder, StringBuilder, StringBuilderOps,
@@ -111,6 +113,16 @@ impl OpsValue for Tag {
             Tag::IntArray(tag) => out_ops.create_int_list(tag.get_as_int_array()),
             Tag::LongArray(tag) => out_ops.create_long_list(tag.get_as_long_array()),
         }
+    }
+
+    fn boxed_codec<A>(codec: &BoxedCodec<A>) -> &(dyn Codec<Tag, Value = A> + Send + Sync) {
+        codec.nbt()
+    }
+
+    fn boxed_map_codec<A>(
+        codec: &BoxedMapCodec<A>,
+    ) -> &(dyn MapCodec<Tag, Value = A> + Send + Sync) {
+        codec.nbt()
     }
 }
 

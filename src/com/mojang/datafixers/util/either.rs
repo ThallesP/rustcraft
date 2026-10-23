@@ -82,3 +82,44 @@ impl<L: fmt::Display, R: fmt::Display> fmt::Display for Either<L, R> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::Either;
+    use crate::golden::{Decode, Encode, elements};
+
+    /// `["left", value]` or `["right", value]`, as the codec suites record one.
+    impl<L: Encode, R: Encode> Encode for Either<L, R> {
+        fn encode(&self) -> Value {
+            match self {
+                Either::Left(value) => Value::from(vec![Value::from("left"), value.encode()]),
+                Either::Right(value) => Value::from(vec![Value::from("right"), value.encode()]),
+            }
+        }
+
+        fn matches(&self, expected: &Value) -> bool {
+            match (self, expected.as_array().map(Vec::as_slice)) {
+                (Either::Left(value), Some([side, expected])) => {
+                    side == "left" && value.matches(expected)
+                }
+                (Either::Right(value), Some([side, expected])) => {
+                    side == "right" && value.matches(expected)
+                }
+                _ => false,
+            }
+        }
+    }
+
+    impl<L: Decode, R: Decode> Decode for Either<L, R> {
+        fn decode(value: &Value) -> Self {
+            let [side, value] = elements(value);
+            if side == "left" {
+                Either::Left(L::decode(value))
+            } else {
+                Either::Right(R::decode(value))
+            }
+        }
+    }
+}

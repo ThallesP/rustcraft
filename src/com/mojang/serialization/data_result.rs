@@ -419,8 +419,24 @@ impl<R> DataResult<R> {
         !self.is_success()
     }
 
-    // The value or the partial one, and an error's message.
-    fn split(self) -> (Option<R>, Option<String>) {
+    /// The value or the partial one, and the result without it: `()` for the value, the same
+    /// message, partial or not, and the same lifecycle. What `withErrorsFrom` and the list and
+    /// map codecs keep of a result whose value they take.
+    pub(crate) fn split_status(self) -> (Option<R>, DataResult<()>) {
+        let lifecycle = self.lifecycle();
+        let (value, message) = self.split();
+        let status = match message {
+            None => DataResult::success_lifecycle((), lifecycle),
+            Some(message) if value.is_some() => {
+                DataResult::error_partial_lifecycle(|| message, (), lifecycle)
+            }
+            Some(message) => DataResult::error_lifecycle(|| message, lifecycle),
+        };
+        (value, status)
+    }
+
+    /// The value or the partial one, and an error's message.
+    pub(crate) fn split(self) -> (Option<R>, Option<String>) {
         match self {
             DataResult::Success(success) => (Some(success.value), None),
             DataResult::Error(error) => (error.partial_value, Some(error.message)),
@@ -449,9 +465,13 @@ fn apply2_from<R, R2, S>(
     joined(messages, value, lifecycle)
 }
 
-// A success of the value when there are no messages, and otherwise an error of the messages joined
-// in order, with the value as its partial one.
-fn joined<S>(messages: Vec<String>, value: Option<S>, lifecycle: Lifecycle) -> DataResult<S> {
+/// A success of the value when there are no messages, and otherwise an error of the messages joined
+/// in order, with the value as its partial one: what the applicative makes of results combined.
+pub(crate) fn joined<S>(
+    messages: Vec<String>,
+    value: Option<S>,
+    lifecycle: Lifecycle,
+) -> DataResult<S> {
     let mut messages = messages.into_iter();
     match messages.next() {
         None => DataResult::Success(Success {

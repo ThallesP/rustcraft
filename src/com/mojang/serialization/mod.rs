@@ -1,6 +1,14 @@
+pub mod codec;
+pub mod codecs;
 pub mod data_result;
+pub mod decoder;
 pub mod dynamic_ops;
+pub mod encoder;
+pub mod keyable;
 pub mod lifecycle;
 pub mod list_builder;
+pub mod map_codec;
+pub mod map_decoder;
+pub mod map_encoder;
 pub mod map_like;
 pub mod record_builder;

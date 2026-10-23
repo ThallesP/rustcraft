@@ -1254,6 +1254,7 @@ public final class Golden {
         // carries (RegistryValues), the clocks' time, an entity's attributes, the world's spawn and an entity's data.
         new DataResultSuite(),
         new NbtOpsSuite(),
+        new DfuCodecSuite(),
         new RegistryValues.RegistriesSuite(),
         new StaticSuite(Attributes.class),
         InstanceSuite.every(WorldClock.class),

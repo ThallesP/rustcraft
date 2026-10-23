@@ -17,8 +17,10 @@
 use std::fmt;
 
 use crate::com::mojang::datafixers::util::pair::Pair;
+use crate::com::mojang::serialization::codec::{BoxedCodec, Codec};
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::list_builder::ListBuilder;
+use crate::com::mojang::serialization::map_codec::{BoxedMapCodec, MapCodec};
 use crate::com::mojang::serialization::map_like::{self, MapLike};
 use crate::com::mojang::serialization::record_builder::RecordBuilder;
 use crate::java::lang::number::Number;
@@ -29,6 +31,14 @@ use crate::java::lang::number::Number;
 pub trait OpsValue: Clone + PartialEq + fmt::Display + fmt::Debug + 'static {
     /// The value's ops' `convertTo`: the same data written with `out_ops`.
     fn convert_to<U: OpsValue>(out_ops: &dyn DynamicOps<U>, input: &Self) -> U;
+
+    /// A boxed codec's codec for this kind of data.
+    fn boxed_codec<A>(codec: &BoxedCodec<A>) -> &(dyn Codec<Self, Value = A> + Send + Sync);
+
+    /// A boxed map codec's map codec for this kind of data.
+    fn boxed_map_codec<A>(
+        codec: &BoxedMapCodec<A>,
+    ) -> &(dyn MapCodec<Self, Value = A> + Send + Sync);
 }
 
 pub trait DynamicOps<T: OpsValue>: fmt::Display {
