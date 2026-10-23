@@ -1,9 +1,9 @@
 //! net/minecraft/network/protocol/game/ClientboundPlayerPositionPacket.java
 //!
-//! Not ported yet: the record's `toString`, which prints its floats with Java's `Float.toString`,
-//! and its `hashCode`, which hashes the set of relatives, an `EnumSet` whose `hashCode` is its
+//! Not ported yet: the record's `hashCode`, which hashes the set of relatives, an `EnumSet` whose `hashCode` is its
 //! constants' identity hashes added up.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
@@ -87,6 +87,26 @@ impl<L: ClientGamePacketListener + ?Sized> Packet<L> for ClientboundPlayerPositi
     }
 }
 
+/// A record's: `ClientboundPlayerPositionPacket[id=1, change=PositionMoveRotation[…], relatives=[X, Y]]`,
+/// the relatives in their order, an `EnumSet`'s.
+impl fmt::Display for ClientboundPlayerPositionPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut relatives = self.relatives.clone();
+        relatives.sort_by_key(|relative| *relative as u8);
+        let names: Vec<String> = relatives
+            .iter()
+            .map(|relative| format!("{relative:?}"))
+            .collect();
+        write!(
+            f,
+            "ClientboundPlayerPositionPacket[id={}, change={}, relatives=[{}]]",
+            self.id,
+            self.change,
+            names.join(", ")
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ClientboundPlayerPositionPacket;
@@ -137,10 +157,9 @@ mod tests {
             "hashCode()I",
             "hashes its EnumSet, which adds its constants' identity hashes",
         );
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "waits for Java's Float.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut This| {
+            this.to_string()
+        });
         golden.check_method(
             "type()Lnet/minecraft/network/protocol/PacketType;",
             |this: &mut This| Packet::<Listener>::r#type(this).clone(),

@@ -1,7 +1,8 @@
 //! net/minecraft/world/phys/AABB.java
 //!
-//! Not ported yet: `of(BoundingBox)`, which comes with `BoundingBox`, and `toString`, which
-//! needs Java's `Double.toString` (only logs and error messages print it).
+//! Not ported yet: `of(BoundingBox)`, which comes with `BoundingBox`.
+
+use std::fmt;
 
 use crate::java::lang::double::Double;
 use crate::java::lang::math::Math;
@@ -819,6 +820,23 @@ impl Builder {
     }
 }
 
+/// `AABB[minX, minY, minZ] -> [maxX, maxY, maxZ]`, each with Java's `Double.toString`.
+impl fmt::Display for AABB {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let d = Double::to_string;
+        write!(
+            f,
+            "AABB[{}, {}, {}] -> [{}, {}, {}]",
+            d(self.min_x),
+            d(self.min_y),
+            d(self.min_z),
+            d(self.max_x),
+            d(self.max_y),
+            d(self.max_z)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AABB, Builder};
@@ -853,10 +871,9 @@ mod tests {
             "of(Lnet/minecraft/world/level/levelgen/structure/BoundingBox;)Lnet/minecraft/world/phys/AABB;",
             "waits for BoundingBox",
         );
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "needs Java's Double.toString, and only logs and error messages print it",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut AABB| {
+            this.to_string()
+        });
         golden.check("<init>(DDDDDD)V", AABB::new);
         golden.check("<init>(Lnet/minecraft/core/BlockPos;)V", |pos: BlockPos| {
             AABB::from_block_pos(&pos)

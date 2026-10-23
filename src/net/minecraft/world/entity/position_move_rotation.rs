@@ -1,8 +1,7 @@
 //! net/minecraft/world/entity/PositionMoveRotation.java
 //!
 //! Not ported yet: `of(Entity)` and `of(TeleportTransition)`, which come with entities. The
-//! listener makes one from the player's fields until then. The record's `toString`, which prints
-//! floats with Java's `Float.toString`, waits for it.
+//! listener makes one from the player's fields until then.
 
 use std::sync::LazyLock;
 
@@ -14,6 +13,7 @@ use crate::net::minecraft::network::friendly_byte_buf::FriendlyByteBuf;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::relative::Relative;
 use crate::net::minecraft::world::phys::vec3::Vec3;
+use std::fmt;
 
 static STREAM_CODEC: StaticStreamCodec<FriendlyByteBuf, PositionMoveRotation> =
     LazyLock::new(|| {
@@ -191,6 +191,20 @@ impl PartialEq for PositionMoveRotation {
     }
 }
 
+/// A record's: `PositionMoveRotation[position=(0.5, -60.0, 0.5), deltaMovement=(0.0, 0.0, 0.0), yRot=0.0, xRot=0.0]`.
+impl fmt::Display for PositionMoveRotation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PositionMoveRotation[position={}, deltaMovement={}, yRot={}, xRot={}]",
+            self.position,
+            self.delta_movement,
+            Float::to_string(self.y_rot),
+            Float::to_string(self.x_rot)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PositionMoveRotation;
@@ -242,9 +256,9 @@ mod tests {
         golden.check_method("hashCode()I", |this: &mut PositionMoveRotation| {
             this.hash_code()
         });
-        golden.pending(
+        golden.check_method(
             "toString()Ljava/lang/String;",
-            "waits for Java's Float.toString",
+            |this: &mut PositionMoveRotation| this.to_string(),
         );
         golden.pending(
             "of(Lnet/minecraft/world/entity/Entity;)Lnet/minecraft/world/entity/PositionMoveRotation;",

@@ -1,8 +1,8 @@
 //! net/minecraft/world/phys/Vec3.java
 //!
-//! Not ported yet: `CODEC`, which waits for DataFixerUpper's codecs, and `toString`, which needs Java's
-//! `Double.toString` (only logs and error messages print it).
+//! Not ported yet: `CODEC`, which waits for DataFixerUpper's codecs.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
@@ -400,6 +400,19 @@ impl Position for Vec3 {
     }
 }
 
+/// `(x, y, z)`, each with Java's `Double.toString`.
+impl fmt::Display for Vec3 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "({}, {}, {})",
+            Double::to_string(self.x),
+            Double::to_string(self.y),
+            Double::to_string(self.z)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Vec3;
@@ -423,10 +436,9 @@ mod tests {
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
         golden.check_codec("STREAM_CODEC", || Vec3::STREAM_CODEC);
         golden.check_codec("LP_STREAM_CODEC", || Vec3::LP_STREAM_CODEC);
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "needs Java's Double.toString, and only logs and error messages print it",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut Vec3| {
+            this.to_string()
+        });
         golden.field("ZERO", Vec3::ZERO);
         golden.field("X_AXIS", Vec3::X_AXIS);
         golden.field("Y_AXIS", Vec3::Y_AXIS);

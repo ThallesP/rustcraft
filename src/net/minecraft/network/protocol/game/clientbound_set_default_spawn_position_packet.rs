@@ -1,7 +1,6 @@
 //! net/minecraft/network/protocol/game/ClientboundSetDefaultSpawnPositionPacket.java
 //!
-//! Not ported yet: the record's `toString`, which prints the angles with Java's `Float.toString`.
-//! Its `hashCode` hashes the dimension's identity hash, which changes from run to run.
+//! Its record's `hashCode` hashes the dimension's identity hash, which changes from run to run.
 
 use std::sync::LazyLock;
 
@@ -12,6 +11,7 @@ use crate::net::minecraft::network::protocol::game::game_packet_types::GamePacke
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_type::PacketType;
 use crate::net::minecraft::world::level::storage::level_data::RespawnData;
+use std::fmt;
 
 static STREAM_CODEC: StaticStreamCodec<FriendlyByteBuf, ClientboundSetDefaultSpawnPositionPacket> =
     LazyLock::new(|| {
@@ -53,6 +53,17 @@ impl<L: ClientGamePacketListener + ?Sized> Packet<L> for ClientboundSetDefaultSp
     }
 }
 
+/// A record's: `ClientboundSetDefaultSpawnPositionPacket[respawnData=RespawnData[…]]`.
+impl fmt::Display for ClientboundSetDefaultSpawnPositionPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ClientboundSetDefaultSpawnPositionPacket[respawnData={}]",
+            self.respawn_data
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ClientboundSetDefaultSpawnPositionPacket;
@@ -75,10 +86,9 @@ mod tests {
             "net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPacket",
         );
         golden.pending("hashCode()I", "hashes the dimension's identity hash");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "waits for Java's Float.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut This| {
+            this.to_string()
+        });
         golden.check_codec("STREAM_CODEC", || {
             ClientboundSetDefaultSpawnPositionPacket::STREAM_CODEC
         });

@@ -1,6 +1,5 @@
 //! net/minecraft/network/protocol/game/ServerboundChunkBatchReceivedPacket.java
 //!
-//! Not ported yet: the record's `toString`, which prints the float with Java's `Float.toString`.
 
 use std::sync::LazyLock;
 
@@ -11,6 +10,7 @@ use crate::net::minecraft::network::protocol::game::game_packet_types::GamePacke
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::packet::{self, Packet};
 use crate::net::minecraft::network::protocol::packet_type::PacketType;
+use std::fmt;
 
 static STREAM_CODEC: StaticStreamCodec<FriendlyByteBuf, ServerboundChunkBatchReceivedPacket> =
     LazyLock::new(|| {
@@ -76,6 +76,17 @@ impl<L: ServerGamePacketListener + ?Sized> Packet<L> for ServerboundChunkBatchRe
     }
 }
 
+/// A record's: `ServerboundChunkBatchReceivedPacket[desiredChunksPerTick=7.0]`.
+impl fmt::Display for ServerboundChunkBatchReceivedPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ServerboundChunkBatchReceivedPacket[desiredChunksPerTick={}]",
+            Float::to_string(self.desired_chunks_per_tick)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ServerboundChunkBatchReceivedPacket;
@@ -111,9 +122,9 @@ mod tests {
             "hashCode()I",
             |this: &mut ServerboundChunkBatchReceivedPacket| this.hash_code(),
         );
-        golden.pending(
+        golden.check_method(
             "toString()Ljava/lang/String;",
-            "waits for Java's Float.toString",
+            |this: &mut ServerboundChunkBatchReceivedPacket| this.to_string(),
         );
         golden.check_method(
             "type()Lnet/minecraft/network/protocol/PacketType;",

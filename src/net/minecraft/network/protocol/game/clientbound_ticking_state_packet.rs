@@ -1,7 +1,6 @@
 //! net/minecraft/network/protocol/game/ClientboundTickingStatePacket.java
 //!
-//! Not ported yet: `from(TickRateManager)`, which the server sends it with, and `toString`, which
-//! prints the tick rate with Java's `Float.toString`.
+//! Not ported yet: `from(TickRateManager)`, which the server sends it with.
 
 use std::sync::LazyLock;
 
@@ -12,6 +11,7 @@ use crate::net::minecraft::network::protocol::game::client_game_packet_listener:
 use crate::net::minecraft::network::protocol::game::game_packet_types::GamePacketTypes;
 use crate::net::minecraft::network::protocol::packet::{self, Packet};
 use crate::net::minecraft::network::protocol::packet_type::PacketType;
+use std::fmt;
 
 static STREAM_CODEC: StaticStreamCodec<FriendlyByteBuf, ClientboundTickingStatePacket> =
     LazyLock::new(|| {
@@ -88,6 +88,18 @@ impl<L: ClientGamePacketListener + ?Sized> Packet<L> for ClientboundTickingState
     }
 }
 
+/// A record's: `ClientboundTickingStatePacket[tickRate=20.0, isFrozen=false]`.
+impl fmt::Display for ClientboundTickingStatePacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ClientboundTickingStatePacket[tickRate={}, isFrozen={}]",
+            Float::to_string(self.tick_rate),
+            self.is_frozen
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ClientboundTickingStatePacket;
@@ -115,10 +127,9 @@ mod tests {
             "from(Lnet/minecraft/world/TickRateManager;)Lnet/minecraft/network/protocol/game/ClientboundTickingStatePacket;",
             "reads a TickRateManager, which isn't ported",
         );
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "prints the tick rate with Java's Float.toString, which isn't ported",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut This| {
+            this.to_string()
+        });
         golden.check("<init>(FZ)V", ClientboundTickingStatePacket::new);
         golden.check_method("tickRate()F", |this: &mut This| this.tick_rate());
         golden.check_method("isFrozen()Z", |this: &mut This| this.is_frozen());

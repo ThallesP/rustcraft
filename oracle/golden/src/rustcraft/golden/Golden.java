@@ -502,13 +502,15 @@ public final class Golden {
         new PoseStackSuite(),
         new ProjectionSuite(),
         new StaticSuite(Float.class)
-            .only("floatToIntBits(F)I", "hashCode(F)I")
+            .only("floatToIntBits(F)I", "hashCode(F)I", "toString(F)Ljava/lang/String;")
             .extraInputs("floatToIntBits(F)I", floatNaNs())
-            .extraInputs("hashCode(F)I", floatNaNs()),
+            .extraInputs("hashCode(F)I", floatNaNs())
+            .extraInputs("toString(F)Ljava/lang/String;", floatToStringInputs()),
         new StaticSuite(Double.class)
-            .only("doubleToLongBits(D)J", "hashCode(D)I")
+            .only("doubleToLongBits(D)J", "hashCode(D)I", "toString(D)Ljava/lang/String;")
             .extraInputs("doubleToLongBits(D)J", doubleNaNs())
-            .extraInputs("hashCode(D)I", doubleNaNs()),
+            .extraInputs("hashCode(D)I", doubleNaNs())
+            .extraInputs("toString(D)Ljava/lang/String;", doubleToStringInputs()),
         // What IntegerProperty.getValue parses a value's name with, which takes any Unicode decimal digit.
         new StaticSuite(Integer.class).only("parseInt(Ljava/lang/String;)I").extraInputs("parseInt(Ljava/lang/String;)I", intStrings()),
         new StaticSuite(Character.class)
@@ -1303,6 +1305,84 @@ public final class Golden {
                 out.printf("%s: %d lines%n", file.getFileName(), writer.lines());
             }
         }
+    }
+
+    // Where Float.toString's digits and format change: every exponent's smallest and largest significand and the one in
+    // the middle, powers of ten and their neighbours an ulp either side, the thresholds between the plain and scientific
+    // forms (1.0E-3 and 1.0E7), the smallest subnormals (whose decimals come from a tiny significand times 10), whole
+    // numbers, and random bit patterns, half of them in the game's range of magnitudes.
+    private static List<Object[]> floatToStringInputs() {
+        Random random = new Random(37);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int exponent = 0; exponent < 255; exponent++) {
+            for (int significand : new int[]{0, 1, 0x400000, 0x7ffffe, 0x7fffff}) {
+                float value = Float.intBitsToFloat(exponent << 23 | significand);
+                inputs.add(new Object[]{value});
+                inputs.add(new Object[]{-value});
+            }
+        }
+        for (int power = -45; power <= 38; power++) {
+            float value = Float.parseFloat("1.0E" + power);
+            inputs.add(new Object[]{value});
+            inputs.add(new Object[]{Math.nextUp(value)});
+            inputs.add(new Object[]{Math.nextDown(value)});
+        }
+        for (float value : new float[]{1.0E-3F, 9.999999E-4F, 1.0E7F, 9999999.0F, 0.001F, 123456.7F, 0.1F, 0.3F, 2.0E-45F, 3.0E-45F}) {
+            inputs.add(new Object[]{value});
+            inputs.add(new Object[]{Math.nextUp(value)});
+            inputs.add(new Object[]{Math.nextDown(value)});
+        }
+        for (int i = 0; i < 10; i++) {
+            inputs.add(new Object[]{Float.intBitsToFloat(i)});
+        }
+        for (int i = 0; i < 2000; i++) {
+            inputs.add(new Object[]{(float)random.nextInt(2000001) - 1000000});
+        }
+        for (int i = 0; i < 30000; i++) {
+            float value = i % 2 == 0
+                ? Float.intBitsToFloat(random.nextInt())
+                : (random.nextFloat() * 2.0F - 1.0F) * (float)Math.pow(10.0, random.nextInt(14) - 7);
+            inputs.add(new Object[]{value});
+        }
+        return inputs;
+    }
+
+    // The same for Double.toString: its forms change at the same thresholds, and its exponents reach three digits.
+    private static List<Object[]> doubleToStringInputs() {
+        Random random = new Random(41);
+        List<Object[]> inputs = new ArrayList<>();
+        for (int exponent = 0; exponent < 2047; exponent++) {
+            for (long significand : new long[]{0L, 1L, 1L << 51, (1L << 52) - 2, (1L << 52) - 1}) {
+                double value = Double.longBitsToDouble((long)exponent << 52 | significand);
+                inputs.add(new Object[]{value});
+                inputs.add(new Object[]{-value});
+            }
+        }
+        for (int power = -324; power <= 308; power++) {
+            double value = Double.parseDouble("1.0E" + power);
+            inputs.add(new Object[]{value});
+            inputs.add(new Object[]{Math.nextUp(value)});
+            inputs.add(new Object[]{Math.nextDown(value)});
+        }
+        for (double value : new double[]{1.0E-3, 1.0E7, 0.001, 0.1, 0.2, 0.3, 0.30000001192092896, 2.0E-323, 5.0E-324, 1.0E23, 2.0E23}) {
+            inputs.add(new Object[]{value});
+            inputs.add(new Object[]{Math.nextUp(value)});
+            inputs.add(new Object[]{Math.nextDown(value)});
+        }
+        for (int i = 0; i < 10; i++) {
+            inputs.add(new Object[]{Double.longBitsToDouble(i)});
+        }
+        for (int i = 0; i < 2000; i++) {
+            inputs.add(new Object[]{(double)random.nextInt(2000001) - 1000000});
+            inputs.add(new Object[]{(double)random.nextFloat()});
+        }
+        for (int i = 0; i < 30000; i++) {
+            double value = i % 2 == 0
+                ? Double.longBitsToDouble(random.nextLong())
+                : (random.nextDouble() * 2.0 - 1.0) * Math.pow(10.0, random.nextInt(14) - 7);
+            inputs.add(new Object[]{value});
+        }
+        return inputs;
     }
 
     // Buffers holding the bytes, each with the registries, for a codec reading a RegistryFriendlyByteBuf to decode.

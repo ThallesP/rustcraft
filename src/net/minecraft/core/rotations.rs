@@ -1,13 +1,13 @@
 //! net/minecraft/core/Rotations.java
 //!
-//! Not ported yet: `CODEC`, which waits for DataFixerUpper's codecs, and the record's `toString`,
-//! which prints its floats with Java's `Float.toString`.
+//! Not ported yet: `CODEC`, which waits for DataFixerUpper's codecs.
 
 use std::sync::LazyLock;
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::float::Float;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec};
+use std::fmt;
 
 static STREAM_CODEC: StaticStreamCodec<ByteBuf, Rotations> = LazyLock::new(|| {
     Box::new(stream_codec::of(
@@ -80,6 +80,19 @@ impl PartialEq for Rotations {
     }
 }
 
+/// A record's: `Rotations[x=0.0, y=0.0, z=0.0]`.
+impl fmt::Display for Rotations {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Rotations[x={}, y={}, z={}]",
+            Float::to_string(self.x),
+            Float::to_string(self.y),
+            Float::to_string(self.z)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Rotations;
@@ -95,10 +108,9 @@ mod tests {
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.core.Rotations");
         golden.pending("CODEC", "waits for DataFixerUpper's codecs");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "waits for Java's Float.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut Rotations| {
+            this.to_string()
+        });
         golden.check_codec("STREAM_CODEC", || Rotations::STREAM_CODEC);
         golden.check("<init>(FFF)V", Rotations::new);
         golden.check_method("x()F", |this: &mut Rotations| this.x());

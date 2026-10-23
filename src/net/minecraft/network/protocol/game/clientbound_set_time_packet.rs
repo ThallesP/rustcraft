@@ -1,9 +1,9 @@
 //! net/minecraft/network/protocol/game/ClientboundSetTimePacket.java
 //!
-//! Not ported yet: the record's `toString`, which prints the clocks' floats with Java's
-//! `Float.toString`. Its `hashCode` hashes the holders' identity hashes, which change from run to
-//! run.
+//! Its record's `hashCode` hashes the holders' identity hashes, which change from run to run, so
+//! it isn't ported.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use crate::java::util::hash_map::{self, HashMap};
@@ -117,6 +117,33 @@ impl<L: ClientGamePacketListener + ?Sized> Packet<L> for ClientboundSetTimePacke
     }
 }
 
+/// A `HashMap`'s: `{key=value, …}` in its order, each clock's holder as `Holder.Reference` prints
+/// itself, `Reference{key=value}`, its value a `WorldClock[]`.
+impl fmt::Display for ClockUpdates {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("{")?;
+        for (i, (clock, state)) in self.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            let Holder::Reference(key) = clock;
+            write!(f, "Reference{{{key}={}}}={state}", WorldClock)?;
+        }
+        f.write_str("}")
+    }
+}
+
+/// A record's: `ClientboundSetTimePacket[gameTime=49, clockUpdates={…}]`.
+impl fmt::Display for ClientboundSetTimePacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ClientboundSetTimePacket[gameTime={}, clockUpdates={}]",
+            self.game_time, self.clock_updates
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -193,10 +220,9 @@ mod tests {
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.network.protocol.game.ClientboundSetTimePacket");
         golden.pending("hashCode()I", "hashes the holders' identity hashes");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "waits for Java's Float.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut This| {
+            this.to_string()
+        });
         golden.check_codec("STREAM_CODEC", || ClientboundSetTimePacket::STREAM_CODEC);
         golden.check("<init>(JLjava/util/Map;)V", ClientboundSetTimePacket::new);
         golden.check_method("gameTime()J", |this: &mut This| this.game_time());

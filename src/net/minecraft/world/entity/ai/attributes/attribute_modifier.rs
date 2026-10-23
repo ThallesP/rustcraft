@@ -1,8 +1,7 @@
 //! net/minecraft/world/entity/ai/attributes/AttributeModifier.java
 //!
 //! Not ported yet: `MAP_CODEC` and `CODEC`, and `Operation.CODEC`, which wait for DataFixerUpper's
-//! codecs, and the record's `toString`, which prints the amount with Java's `Double.toString`. Its
-//! `hashCode` hashes the operation's identity hash, which changes from run to run.
+//! codecs. Its record's `hashCode` hashes the operation's identity hash, which changes from run to run.
 //!
 //! `id()` lends the identifier, which `AttributeInstance` keys its modifiers by.
 
@@ -145,6 +144,19 @@ impl fmt::Display for Operation {
     }
 }
 
+/// A record's: `AttributeModifier[id=minecraft:sprinting, amount=0.30000001192092896, operation=ADD_MULTIPLIED_TOTAL]`.
+impl fmt::Display for AttributeModifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "AttributeModifier[id={}, amount={}, operation={}]",
+            self.id,
+            Double::to_string(self.amount),
+            self.operation
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AttributeModifier, Operation};
@@ -172,10 +184,9 @@ mod tests {
             golden.pending(name, "waits for DataFixerUpper's codecs");
         }
         golden.pending("hashCode()I", "hashes the operation's identity hash");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "waits for Java's Double.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut This| {
+            this.to_string()
+        });
         golden.check_codec("STREAM_CODEC", || AttributeModifier::STREAM_CODEC);
         golden.check(
             "<init>(Lnet/minecraft/resources/Identifier;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)V",

@@ -1,6 +1,4 @@
 //! net/minecraft/world/clock/ClockNetworkState.java
-//!
-//! Not ported yet: the record's `toString`, which prints its floats with Java's `Float.toString`.
 
 use std::sync::LazyLock;
 
@@ -8,6 +6,7 @@ use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::float::Float;
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
 use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCodec};
+use std::fmt;
 
 static STREAM_CODEC: StaticStreamCodec<ByteBuf, ClockNetworkState> = LazyLock::new(|| {
     Box::new(stream_codec::composite3(
@@ -78,6 +77,19 @@ impl PartialEq for ClockNetworkState {
     }
 }
 
+/// A record's: `ClockNetworkState[totalTicks=6000, partialTick=0.0, rate=0.0]`.
+impl fmt::Display for ClockNetworkState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ClockNetworkState[totalTicks={}, partialTick={}, rate={}]",
+            self.total_ticks,
+            Float::to_string(self.partial_tick),
+            Float::to_string(self.rate)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ClockNetworkState;
@@ -94,10 +106,9 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.world.clock.ClockNetworkState");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "waits for Java's Float.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut This| {
+            this.to_string()
+        });
         golden.check_codec("STREAM_CODEC", || ClockNetworkState::STREAM_CODEC);
         golden.check("<init>(JFF)V", ClockNetworkState::new);
         golden.check_method("totalTicks()J", |this: &mut This| this.total_ticks());

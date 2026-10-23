@@ -1,7 +1,5 @@
 //! net/minecraft/network/protocol/game/ServerboundAcceptTeleportationPacket.java
 //!
-//! Not ported yet: the record's `toString`, which prints the doubles and floats with Java's
-//! `Double.toString` and `Float.toString`.
 
 use std::sync::LazyLock;
 
@@ -14,6 +12,7 @@ use crate::net::minecraft::network::protocol::game::game_packet_types::GamePacke
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_type::PacketType;
+use std::fmt;
 
 static STREAM_CODEC: StaticStreamCodec<FriendlyByteBuf, ServerboundAcceptTeleportationPacket> =
     LazyLock::new(|| {
@@ -133,6 +132,22 @@ impl<L: ServerGamePacketListener + ?Sized> Packet<L> for ServerboundAcceptTelepo
     }
 }
 
+/// A record's: `ServerboundAcceptTeleportationPacket[id=1, x=0.5, y=-60.0, z=0.5, yRot=0.0, xRot=0.0]`.
+impl fmt::Display for ServerboundAcceptTeleportationPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ServerboundAcceptTeleportationPacket[id={}, x={}, y={}, z={}, yRot={}, xRot={}]",
+            self.id,
+            Double::to_string(self.x),
+            Double::to_string(self.y),
+            Double::to_string(self.z),
+            Float::to_string(self.y_rot),
+            Float::to_string(self.x_rot)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ServerboundAcceptTeleportationPacket;
@@ -173,9 +188,9 @@ mod tests {
             |this: &mut This, other: This| *this == other,
         );
         golden.check_method("hashCode()I", |this: &mut This| this.hash_code());
-        golden.pending(
+        golden.check_method(
             "toString()Ljava/lang/String;",
-            "waits for Java's Double.toString and Float.toString",
+            |this: &mut ServerboundAcceptTeleportationPacket| this.to_string(),
         );
         golden.check_method(
             "type()Lnet/minecraft/network/protocol/PacketType;",

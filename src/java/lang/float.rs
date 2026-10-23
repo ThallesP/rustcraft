@@ -1,5 +1,7 @@
 //! java.lang.Float, where it differs from Rust's std: what `equals` and `hashCode` methods use.
 
+use crate::jdk::internal::math::float_to_decimal;
+
 pub struct Float;
 
 impl Float {
@@ -16,6 +18,12 @@ impl Float {
     pub fn hash_code(value: f32) -> i32 {
         Float::float_to_int_bits(value)
     }
+
+    /// `toString(float)`: the shortest decimal that rounds back to the float, in Java's format
+    /// (`1.0`, `0.001`, `1.0E7`, `1.0E-4`, `NaN`).
+    pub fn to_string(value: f32) -> String {
+        float_to_decimal::to_string(value)
+    }
 }
 
 #[cfg(test)]
@@ -28,6 +36,7 @@ mod tests {
         let golden = Golden::load("java.lang.Float");
         golden.check("floatToIntBits(F)I", Float::float_to_int_bits);
         golden.check("hashCode(F)I", Float::hash_code);
+        golden.check("toString(F)Ljava/lang/String;", Float::to_string);
         golden.finish();
     }
 }

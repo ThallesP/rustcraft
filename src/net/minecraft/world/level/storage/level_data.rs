@@ -2,8 +2,7 @@
 //!
 //! Not ported yet: the interface itself (the level's spawn, time, difficulty and whether it's
 //! hardcore), which the world track ports with `ClientLevel`'s level data, and `RespawnData`'s
-//! `MAP_CODEC` and `CODEC`, which wait for DataFixerUpper's codecs, and its record's `toString`,
-//! which prints the angles with Java's `Float.toString`. Its `hashCode` hashes the dimension's
+//! `MAP_CODEC` and `CODEC`, which wait for DataFixerUpper's codecs. Its record's `hashCode` hashes the dimension's
 //! identity hash, which changes from run to run.
 
 use std::sync::LazyLock;
@@ -18,6 +17,7 @@ use crate::net::minecraft::network::codec::stream_codec::{self, StaticStreamCode
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::mth::Mth;
+use std::fmt;
 
 static DEFAULT: LazyLock<RespawnData> = LazyLock::new(|| {
     RespawnData::new(
@@ -105,6 +105,19 @@ impl PartialEq for RespawnData {
     }
 }
 
+/// A record's: `RespawnData[globalPos=ResourceKey[minecraft:dimension / minecraft:overworld] BlockPos{x=0, y=0, z=0}, yaw=0.0, pitch=0.0]`.
+impl fmt::Display for RespawnData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "RespawnData[globalPos={}, yaw={}, pitch={}]",
+            self.global_pos,
+            Float::to_string(self.yaw),
+            Float::to_string(self.pitch)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::RespawnData;
@@ -126,10 +139,9 @@ mod tests {
             golden.pending(name, "waits for DataFixerUpper's codecs");
         }
         golden.pending("hashCode()I", "hashes the dimension's identity hash");
-        golden.pending(
-            "toString()Ljava/lang/String;",
-            "waits for Java's Float.toString",
-        );
+        golden.check_method("toString()Ljava/lang/String;", |this: &mut This| {
+            this.to_string()
+        });
         golden.field("DEFAULT", RespawnData::clone(RespawnData::DEFAULT));
         golden.check_codec("STREAM_CODEC", || RespawnData::STREAM_CODEC);
         golden.check(
