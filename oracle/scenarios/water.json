@@ -1,5 +1,5 @@
 {
-  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival", "tick_rate": 2},
   "player": {"pos": [0.5, -60.0, 1.5], "y_rot": 0.0, "x_rot": 0.0},
   "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
   "setup": [

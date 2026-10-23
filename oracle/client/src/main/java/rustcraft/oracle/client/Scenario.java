@@ -16,7 +16,8 @@ import org.jspecify.annotations.Nullable;
 
 /** The input both clients replay. The format is documented in TESTING.md. */
 public record Scenario(String name, World world, Player player, Options options, List<String> setup, List<Step> steps) {
-    public record World(long seed, String preset, long time, String gameMode) {}
+    /** {@code tickRate} is the server's ticks a second, 0 for its own 20 and an unpaced client (ServerTicks). */
+    public record World(long seed, String preset, long time, String gameMode, float tickRate) {}
 
     public record Player(double x, double y, double z, float yRot, float xRot) {}
 
@@ -63,7 +64,13 @@ public record Scenario(String name, World world, Player player, Options options,
 
         return new Scenario(
             name,
-            new World(world.get("seed").getAsLong(), world.get("preset").getAsString(), world.get("time").getAsLong(), world.get("game_mode").getAsString()),
+            new World(
+                world.get("seed").getAsLong(),
+                world.get("preset").getAsString(),
+                world.get("time").getAsLong(),
+                world.get("game_mode").getAsString(),
+                world.has("tick_rate") ? world.get("tick_rate").getAsFloat() : 0.0F
+            ),
             new Player(pos.get(0).getAsDouble(), pos.get(1).getAsDouble(), pos.get(2).getAsDouble(), player.get("y_rot").getAsFloat(), player.get("x_rot").getAsFloat()),
             new Options(
                 window.get(0).getAsInt(),

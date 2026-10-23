@@ -63,9 +63,14 @@ enum Screen {
     },
 }
 
-/// Something that drives the game from outside, like Fabric's client game tests drive vanilla:
-/// called after every tick (`tools/port_client.py`'s scenarios).
+/// Something that drives the game from outside, like Fabric's client game tests drive vanilla
+/// (`tools/port_client.py`'s scenarios). Fabric runs at most one tick a frame and parks the client
+/// before it, after the frame's queued packets and tasks, for the test to act on it
+/// (`captureTicksPerFrame`, `postRunTasks`): that's `before_tick`. `after_tick` is called as the
+/// tick ends.
 pub trait TestDriver {
+    fn before_tick(&mut self, _minecraft: &Rc<Minecraft>) {}
+
     fn after_tick(&mut self, minecraft: &Rc<Minecraft>);
 }
 
@@ -187,6 +192,7 @@ impl Minecraft {
                 game_renderer.tick_textures();
             }
             for _ in 0..ticks_to_do.min(10) {
+                self.drive(|driver, minecraft| driver.before_tick(minecraft));
                 self.tick();
             }
         }
@@ -267,9 +273,14 @@ impl Minecraft {
             }
         }
 
+        self.drive(|driver, minecraft| driver.after_tick(minecraft));
+    }
+
+    /// Hands the game to the test driver, if there's one.
+    fn drive(self: &Rc<Minecraft>, call: impl FnOnce(&mut dyn TestDriver, &Rc<Minecraft>)) {
         let driver = self.test_driver.borrow_mut().take();
         if let Some(mut driver) = driver {
-            driver.after_tick(self);
+            call(driver.as_mut(), self);
             let mut slot = self.test_driver.borrow_mut();
             if slot.is_none() {
                 *slot = Some(driver);

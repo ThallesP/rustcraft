@@ -1,14 +1,14 @@
 {
   "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
-  "player": {"pos": [0.5, -60.0, 4.5], "y_rot": 0.0, "x_rot": 0.0},
+  "player": {"pos": [0.5, -60.0, 0.5], "y_rot": 0.0, "x_rot": 0.0},
   "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
   "setup": [
-    "fill -2 -60 7 2 -60 7 minecraft:stone_slab[type=bottom,waterlogged=false] strict",
-    "fill -2 -60 8 2 -60 8 minecraft:stone_slab[type=double,waterlogged=false] strict",
-    "fill -2 -59 11 2 -59 12 minecraft:stone_slab[type=top,waterlogged=false] strict",
-    "setblock -2 -60 18 minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=false] strict",
-    "fill -1 -60 18 1 -60 18 minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=true] strict",
-    "setblock 2 -60 18 minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=true] strict"
+    "fill -2 -60 3 2 -60 3 minecraft:stone_slab[type=bottom,waterlogged=false] strict",
+    "fill -2 -60 4 2 -60 4 minecraft:stone_slab[type=double,waterlogged=false] strict",
+    "fill -2 -59 7 2 -59 8 minecraft:stone_slab[type=top,waterlogged=false] strict",
+    "setblock -2 -60 14 minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=false] strict",
+    "fill -1 -60 14 1 -60 14 minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=true] strict",
+    "setblock 2 -60 14 minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=true] strict"
   ],
   "steps": [
     {"ticks": 20, "keys": ["forward"]},

@@ -73,7 +73,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import oracle_client  # noqa: E402
 import vanilla_server  # noqa: E402
-from oracle_client import PROXY_PORT, SERVER_PORT, VERSION_DIR, resolve_scenario, wait_for_line  # noqa: E402
+from oracle_client import (  # noqa: E402
+    FELL_BEHIND, PROXY_PORT, SERVER_PORT, VERSION_DIR, again_if_behind, fell_behind, resolve_scenario, wait_for_line,
+)
 from vanilla_server import OP_NAME  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -143,14 +145,22 @@ def run(scenario, out_dir, server, ping=False):
         result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=600, env=env)
     if result.returncode != 0:
         print("".join(log_path.read_text().splitlines(keepends=True)[-40:]))
+        if fell_behind(scenario_out):
+            raise SystemExit(f"{FELL_BEHIND}: {scenario_out.name}, see {log_path}")
         raise SystemExit(f"the port exited with {result.returncode}, see {log_path}")
     return scenario_out
 
 
 def capture(scenario, out_dir, accept_eula, compression_threshold, ping=False):
-    """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run."""
+    """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run,
+    again if a paced run fell behind the server's ticks."""
     build_port()
     subprocess.run(["cargo", "build", "--quiet", "-p", "packet-proxy"], cwd=ROOT, check=True)
+    return again_if_behind(lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping))
+
+
+def capture_once(scenario, out_dir, accept_eula, compression_threshold, ping=False):
+    """One run of `capture`."""
     logs = Path(tempfile.mkdtemp(prefix=f"port-{scenario.stem}-"))
     seed = json.loads(scenario.read_text())["world"]["seed"]
 

@@ -24,6 +24,8 @@ pub struct World {
     pub preset: String,
     pub time: i64,
     pub game_mode: String,
+    /// The server's ticks a second, 0 for its own 20 and an unpaced client (`ServerTicks`).
+    pub tick_rate: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +129,11 @@ impl Scenario {
                     .as_str()
                     .unwrap_or_default()
                     .to_string(),
+                tick_rate: world
+                    .get("tick_rate")
+                    .map(|value| value.as_f64().ok_or("tick_rate isn't a number"))
+                    .transpose()?
+                    .unwrap_or(0.0) as f32,
             },
             player: Player {
                 x: number(pos[0].clone())?,

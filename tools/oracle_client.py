@@ -38,6 +38,10 @@ SERVER_PORT = 25565
 PROXY_PORT = 25566
 # OracleGameTest prints this when it waits for the server's ready file.
 WAITING_FOR_SERVER = "rustcraft oracle: waiting for the server"
+# What a paced run fails with when one of the scenario's ticks missed its slot (ServerTicks), which the machine's load
+# makes now and then: such a run is no reference, so it's made again, this many times in all at most (TESTING.md).
+FELL_BEHIND = "fell behind the server's ticks"
+PACED_ATTEMPTS = 3
 
 
 def resolve_scenario(name_or_path):
@@ -126,6 +130,8 @@ def finish(scenario, client, scenario_out, ping=False):
     log_path = scenario_out / "client.log"
     if client.wait() != 0:
         print("".join(log_path.read_text().splitlines(keepends=True)[-40:]))
+        if fell_behind(scenario_out):
+            raise SystemExit(f"{FELL_BEHIND}: {scenario_out.name}, see {log_path}")
         raise SystemExit(f"the client exited with {client.returncode}, see {log_path}")
     if ping:
         return scenario_out
@@ -156,7 +162,30 @@ def wait_for_line(log_path, needle, process):
         time.sleep(0.5)
 
 
+def fell_behind(scenario_out):
+    """Whether a paced run failed because the client fell behind the server's ticks."""
+    log = scenario_out / "client.log"
+    return log.exists() and FELL_BEHIND in log.read_text(errors="replace")
+
+
+def again_if_behind(attempt):
+    """Runs `attempt` again while it fails by falling behind the server's ticks, up to PACED_ATTEMPTS times."""
+    for remaining in range(PACED_ATTEMPTS - 1, -1, -1):
+        try:
+            return attempt()
+        except SystemExit as failure:
+            if remaining == 0 or not str(failure).startswith(FELL_BEHIND):
+                raise
+            print(f"{failure}: running it again ({remaining} more at most)")
+
+
 def capture(scenario, out_dir, accept_eula, compression_threshold=None, ping=False):
+    """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run,
+    again if a paced run fell behind the server's ticks."""
+    return again_if_behind(lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping))
+
+
+def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, ping=False):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run.
 
     The client starts first and waits on the title screen: the server starts once it's up, and the client joins as soon

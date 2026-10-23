@@ -6,6 +6,7 @@
     "ChanneledNetworkAddonMixin",
     "ClientBrandRetrieverMixin",
     "MinecraftTickMixin",
+    "MinecraftTickTargetMixin",
     "PacketProcessorMixin"
   ],
   "injectors": {

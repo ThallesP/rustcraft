@@ -1,9 +1,10 @@
 {
-  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival"},
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival", "tick_rate": 2},
   "player": {"pos": [4.5, -42.0, 0.5], "y_rot": 0.0, "x_rot": 0.0},
   "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
   "setup": [
     "gamerule natural_health_regeneration false",
+    "effect give @s minecraft:saturation 1 255 true",
     "fill 3 -60 -1 5 -43 1 minecraft:stone strict",
     "fill 3 -60 2 5 -46 4 minecraft:stone strict",
     "fill 3 -60 5 5 -51 7 minecraft:stone strict",

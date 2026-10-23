@@ -418,13 +418,13 @@ impl FlatLevel {
     }
 
     /// The flat preset with the commands' blocks, in their order, and the entities they summon; a
-    /// `gamerule` or `xp` (the player's experience, which only the HUD shows) places none. Panics
-    /// on a command it doesn't know or one that isn't strict.
+    /// `gamerule`, `xp` (the player's experience, which only the HUD shows) or `effect` places none.
+    /// Panics on a command it doesn't know or one that isn't strict.
     pub fn with_setup(commands: &[String]) -> FlatLevel {
         let mut level = FlatLevel::new();
         for command in commands {
             let words: Vec<&str> = command.split(' ').collect();
-            if matches!(words.first(), Some(&"gamerule") | Some(&"xp")) {
+            if matches!(words.first(), Some(&"gamerule" | &"xp" | &"effect")) {
                 continue;
             }
             if let ["summon", r#type, x, y, z, ..] = words.as_slice() {
@@ -1094,8 +1094,8 @@ mod tests {
     fn slabs_and_fences() {
         check_scenario(
             "slabs-and-fences",
-            "af2df57626f0524ee6916e65a7cf0c22",
-            "e79d419709cf590483b41be6d7b3173d",
+            "18e59ec6f4aad9eced942c580608a795",
+            "11399cf5170d67cc235fddef8ace6ec3",
         );
     }
 

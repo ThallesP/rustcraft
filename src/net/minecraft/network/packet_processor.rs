@@ -9,9 +9,10 @@
 //! the game thread handles packets with is the game thread's (an `Rc`), so other threads name it
 //! with a `GameThreadListener`, which the game thread looks up when it handles the packet.
 //!
-//! It also counts the packets it queues by type (`arrivals`), which Java's doesn't: that's the
-//! oracle client's `PacketProcessorMixin`, which a scenario step's `wait_for` waits on in both
-//! clients (TESTING.md).
+//! It also counts the packets it queues by type (`arrivals`), and keeps when the last of each came
+//! (`last_arrival`), which Java's doesn't: that's the oracle client's `PacketProcessorMixin` and
+//! `PacketArrivals`, which a scenario step's `wait_for` waits on in both clients, and a paced
+//! scenario takes the server's ticks from (TESTING.md).
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -22,6 +23,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, ThreadId};
+use std::time::Instant;
 
 use crate::net::minecraft::network::packet_listener::PacketListener;
 use crate::net::minecraft::network::protocol::packet::Packet;
@@ -33,6 +35,8 @@ pub struct PacketProcessor {
     closed: AtomicBool,
     /// How many packets of each type it has queued, by the type's id.
     arrivals: Mutex<HashMap<String, i32>>,
+    /// When it queued the last of each type.
+    last_arrivals: Mutex<HashMap<String, Instant>>,
 }
 
 impl PacketProcessor {
@@ -43,6 +47,7 @@ impl PacketProcessor {
             running_thread: thread::current().id(),
             closed: AtomicBool::new(false),
             arrivals: Mutex::new(HashMap::new()),
+            last_arrivals: Mutex::new(HashMap::new()),
         }
     }
 
@@ -61,9 +66,9 @@ impl PacketProcessor {
             !self.closed.load(Ordering::Relaxed),
             "RejectedExecutionException: Server already shutting down"
         );
-        *lock(&self.arrivals)
-            .entry(packet.r#type().id().to_string())
-            .or_insert(0) += 1;
+        let packet_type = packet.r#type().id().to_string();
+        lock(&self.last_arrivals).insert(packet_type.clone(), Instant::now());
+        *lock(&self.arrivals).entry(packet_type).or_insert(0) += 1;
 
         lock(&self.packets_to_be_handled).push_back(ListenerAndPacket {
             handle: Box::new(move || {
@@ -94,6 +99,11 @@ impl PacketProcessor {
     /// client's count, for `wait_for`.
     pub fn arrivals(&self, packet_type: &str) -> i32 {
         lock(&self.arrivals).get(packet_type).copied().unwrap_or(0)
+    }
+
+    /// When it queued the last packet of the type, if one has come: `PacketArrivals.lastNanos`.
+    pub fn last_arrival(&self, packet_type: &str) -> Option<Instant> {
+        lock(&self.last_arrivals).get(packet_type).copied()
     }
 
     pub fn close(&self) {

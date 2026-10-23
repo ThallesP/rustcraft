@@ -104,9 +104,10 @@ public final class OracleGameTest implements FabricClientGameTest {
             context.waitTick();
             singleplayer.getConnection().waitForClientboundPackets();
             singleplayer.getConnection().waitForChunksRender();
-            settle(context);
+            ServerTicks ticks = ServerTicks.unpaced(context);
+            settle(context, ticks);
             context.runOnClient(OracleGameTest::restartTextureAnimations);
-            replay(context, scenario, outDir);
+            replay(context, ticks, scenario, outDir);
         }
     }
 
@@ -158,26 +159,38 @@ public final class OracleGameTest implements FabricClientGameTest {
             null
         ));
         context.waitFor(client -> client.level != null && client.player != null && !(client.gui.screen() instanceof LevelLoadingScreen), LOAD_TIMEOUT_TICKS);
+        // Every chunk the client shows is in before the setup changes blocks: the server sends a chunk's light only while
+        // the chunk is at the edge of what the client has (ChunkHolder.broadcastChanges), and a chunk still to come would
+        // come with the setup's blocks and light (TESTING.md).
+        context.waitFor(OracleGameTest::areChunksLoaded, LOAD_TIMEOUT_TICKS);
+        ServerTicks ticks = scenario.world().tickRate() > 0.0F
+            ? ServerTicks.pace(context, scenario.world().tickRate())
+            : ServerTicks.unpaced(context);
 
         // The world itself (seed, flat preset) comes from the server's properties; commands set the rest. The server sends
         // a command's blocks at the end of the tick it ran in, so a command that places blocks waits for them before the
         // next goes: each command's blocks then come in a tick of their own, grouped the same way every run (TESTING.md).
         for (String command : setupCommands(scenario, "@s")) {
+            ticks.awaitSlot();
             int blockUpdates = blockUpdates();
             context.runOnClient(client -> client.player.connection.sendCommand(command));
             if (placesBlocks(command)) {
-                context.waitFor(client -> blockUpdates() > blockUpdates, LOAD_TIMEOUT_TICKS);
+                ticks.waitFor(client -> blockUpdates() > blockUpdates, LOAD_TIMEOUT_TICKS);
             }
         }
-        context.waitFor(client -> isAtScenarioPosition(client, scenario.player()), LOAD_TIMEOUT_TICKS);
-        context.waitFor(OracleGameTest::areChunksRendered, LOAD_TIMEOUT_TICKS);
-        settle(context);
+        ticks.waitFor(client -> isAtScenarioPosition(client, scenario.player()), LOAD_TIMEOUT_TICKS);
+        ticks.waitFor(OracleGameTest::areChunksRendered, LOAD_TIMEOUT_TICKS);
+        settle(context, ticks);
         context.runOnClient(OracleGameTest::restartTextureAnimations);
         // Marks scenario tick 0 in packet captures: the join before it depends on the server's real-time ticking,
         // everything after must match. Sent from the client thread before the first replayed tick, so it goes out first.
+        ticks.awaitSlot();
         context.runOnClient(client -> client.getConnection().send(new ServerboundCustomPayloadPacket(new DiscardedPayload(SCENARIO_START))));
-        replay(context, scenario, outDir);
+        ticks.startScenario();
+        replay(context, ticks, scenario, outDir);
 
+        // Paced, the client leaves at the slot after its last tick, once the server has answered that tick.
+        ticks.awaitSlot();
         context.runOnClient(client -> {
             client.level.disconnect(Component.literal("Scenario finished"));
             client.disconnectWithSavingScreen();
@@ -185,6 +198,7 @@ public final class OracleGameTest implements FabricClientGameTest {
         context.waitFor(client -> client.level == null);
         context.waitTicks(2);
         context.setScreen(TitleScreen::new);
+        ticks.finish();
     }
 
     /**
@@ -219,7 +233,7 @@ public final class OracleGameTest implements FabricClientGameTest {
         return PacketArrivals.count("minecraft:block_update") + PacketArrivals.count("minecraft:section_blocks_update");
     }
 
-    private static void replay(ClientGameTestContext context, Scenario scenario, Path outDir) {
+    private static void replay(ClientGameTestContext context, ServerTicks ticks, Scenario scenario, Path outDir) {
         TestInput input = context.getInput();
         int tick = 0;
         try (TraceWriter trace = new TraceWriter(outDir.resolve("trace.jsonl"))) {
@@ -241,7 +255,7 @@ public final class OracleGameTest implements FabricClientGameTest {
                     }
                     // The line is written as the tick ends (TickTrace), before the packets that come after it.
                     TickTrace.arm(tick++);
-                    context.waitTick();
+                    ticks.tick();
                     trace.write(TickTrace.take());
                     if (i == step.ticks() - 1 && !waitingSince.isEmpty()) {
                         // The server's answer to this tick: once it has come, the client handles what it has queued,
@@ -288,9 +302,9 @@ public final class OracleGameTest implements FabricClientGameTest {
      * Lets the player land and the world finish reacting to the teleport before the first traced tick, then clears
      * the setup's chat feedback and toasts so they don't show up in screenshots.
      */
-    private static void settle(ClientGameTestContext context) {
-        context.waitTicks(SETTLE_TICKS);
-        context.waitFor(client -> client.player.onGround(), LOAD_TIMEOUT_TICKS);
+    private static void settle(ClientGameTestContext context, ServerTicks ticks) {
+        ticks.waitTicks(SETTLE_TICKS);
+        ticks.waitFor(client -> client.player.onGround(), LOAD_TIMEOUT_TICKS);
         context.runOnClient(client -> {
             client.gui.hud.getChat().clearMessages(false);
             client.gui.toastManager().clear();
@@ -379,6 +393,11 @@ public final class OracleGameTest implements FabricClientGameTest {
     }
 
     private static boolean areChunksRendered(Minecraft client) {
+        return areChunksLoaded(client) && client.levelRenderer.hasRenderedAllSections();
+    }
+
+    /** Every chunk within the render distance around the player is in the level. */
+    private static boolean areChunksLoaded(Minecraft client) {
         ClientLevel level = client.level;
         if (level == null || client.player == null) {
             return false;
@@ -393,7 +412,7 @@ public final class OracleGameTest implements FabricClientGameTest {
                 }
             }
         }
-        return client.levelRenderer.hasRenderedAllSections();
+        return true;
     }
 
     private static String position(Scenario.Player player) {
