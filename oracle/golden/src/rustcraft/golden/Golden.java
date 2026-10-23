@@ -113,6 +113,9 @@ import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacke
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
 import net.minecraft.world.Difficulty;
+import net.minecraft.network.protocol.game.ClientboundRecipeBookSettingsPacket;
+import net.minecraft.stats.RecipeBookSettings;
+import net.minecraft.world.inventory.RecipeBookType;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Rotations;
 import net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPacket;
@@ -272,6 +275,7 @@ public final class Golden {
     private static final String HOLDER_IN_RECORD = "hashes a Holder's identity hash, which changes from run to run";
     // An entity data serializer is a lambda, whose hashCode and toString are its identity's.
     private static final String SERIALIZER_IN_RECORD = "hashes and prints a serializer's identity, which changes from run to run";
+    private static final String SETTINGS_IN_RECORD = "compares, hashes or prints RecipeBookSettings by identity";
     private static final String DATA_VALUE_READ =
         "read(Lnet/minecraft/network/RegistryFriendlyByteBuf;I)Lnet/minecraft/network/syncher/SynchedEntityData$DataValue;";
     // The walk's set_time packets: the first, with both clocks (the end's, then the overworld's at 6000 and stopped), and
@@ -1257,6 +1261,15 @@ public final class Golden {
         InstanceSuite.every(GlobalPos.class).exclude("hashCode()I", KEY_IN_RECORD),
         InstanceSuite.every(LevelData.RespawnData.class).exclude("hashCode()I", KEY_IN_RECORD),
         InstanceSuite.every(ClientboundSetDefaultSpawnPositionPacket.class).exclude("hashCode()I", KEY_IN_RECORD),
+        InstanceSuite.every(RecipeBookType.class),
+        InstanceSuite.every(RecipeBookSettings.TypeSettings.class),
+        InstanceSuite.every(RecipeBookSettings.class),
+        // RecipeBookSettings overrides none of equals, hashCode and toString, so the record's compare, hash and print it by
+        // identity.
+        InstanceSuite.every(ClientboundRecipeBookSettingsPacket.class)
+            .exclude("equals(Ljava/lang/Object;)Z", SETTINGS_IN_RECORD)
+            .exclude("hashCode()I", SETTINGS_IN_RECORD)
+            .exclude("toString()Ljava/lang/String;", SETTINGS_IN_RECORD),
         InstanceSuite.every(Rotations.class),
         InstanceSuite.every(Pose.class),
         InstanceSuite.every(SynchedEntityData.DataValue.class)

@@ -16,6 +16,7 @@ pub mod clientbound_light_update_packet_data;
 pub mod clientbound_login_packet;
 pub mod clientbound_player_abilities_packet;
 pub mod clientbound_player_position_packet;
+pub mod clientbound_recipe_book_settings_packet;
 pub mod clientbound_section_blocks_update_packet;
 pub mod clientbound_set_chunk_cache_center_packet;
 pub mod clientbound_set_chunk_cache_radius_packet;

@@ -56,6 +56,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_light_update_pac
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
@@ -84,6 +85,7 @@ use crate::net::minecraft::network::syncher::entity_data_serializer::EntityDataV
 use crate::net::minecraft::network::tickable_packet_listener::TickablePacketListener;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::stats::recipe_book_settings::RecipeBookSettings;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
 use crate::net::minecraft::world::entity::entity::{self, EntityClass};
@@ -110,6 +112,8 @@ pub struct ClientPacketListener {
     client_loaded: bool,
     chunks_in_finished_batches: i32,
     clock_manager: ClientClockManager,
+    /// What Java's player's recipe book (`ClientRecipeBook`, not ported) holds of its settings.
+    recipe_book_settings: RecipeBookSettings,
 }
 
 impl ClientPacketListener {
@@ -137,6 +141,7 @@ impl ClientPacketListener {
                 client_loaded: false,
                 chunks_in_finished_batches: 0,
                 clock_manager: ClientClockManager::new(),
+                recipe_book_settings: RecipeBookSettings::new(),
             })
         })
     }
@@ -165,6 +170,11 @@ impl ClientPacketListener {
 
     pub fn clock_manager_mut(&mut self) -> &mut ClientClockManager {
         &mut self.clock_manager
+    }
+
+    /// The recipe books' settings the server sent, which Java keeps in the player's recipe book.
+    pub fn recipe_book_settings(&self) -> &RecipeBookSettings {
+        &self.recipe_book_settings
     }
 
     pub fn enabled_features(&self) -> &[Identifier] {
@@ -939,5 +949,21 @@ impl ClientGamePacketListener for ClientPacketListener {
                 _ => {}
             }
         }
+    }
+
+    fn handle_recipe_book_settings(&mut self, packet: &ClientboundRecipeBookSettingsPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        // Java sets them on the player's recipe book and rebuilds its collections, which the
+        // recipe book's screen shows (`refreshRecipeBook`); neither is ported.
+        self.recipe_book_settings = packet.book_settings();
     }
 }

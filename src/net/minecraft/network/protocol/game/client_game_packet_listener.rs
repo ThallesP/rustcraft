@@ -19,6 +19,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_light_update_pac
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
@@ -91,6 +92,8 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
     fn handle_set_spawn(&mut self, packet: &ClientboundSetDefaultSpawnPositionPacket);
 
     fn handle_set_entity_data(&mut self, packet: &ClientboundSetEntityDataPacket);
+
+    fn handle_recipe_book_settings(&mut self, packet: &ClientboundRecipeBookSettingsPacket);
 }
 
 #[cfg(test)]
@@ -227,5 +230,9 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
 
     fn handle_set_entity_data(&mut self, packet: &ClientboundSetEntityDataPacket) {
         self.record("handleSetEntityData", packet);
+    }
+
+    fn handle_recipe_book_settings(&mut self, packet: &ClientboundRecipeBookSettingsPacket) {
+        self.record("handleRecipeBookSettings", packet);
     }
 }

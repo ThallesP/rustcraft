@@ -6,6 +6,7 @@ pub mod references;
 pub mod resources;
 pub mod server;
 pub mod shared_constants;
+pub mod stats;
 pub mod tags;
 pub mod util;
 pub mod world;

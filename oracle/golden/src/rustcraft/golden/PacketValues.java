@@ -83,6 +83,9 @@ import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacke
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
 import net.minecraft.world.Difficulty;
+import net.minecraft.network.protocol.game.ClientboundRecipeBookSettingsPacket;
+import net.minecraft.stats.RecipeBookSettings;
+import net.minecraft.world.inventory.RecipeBookType;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Rotations;
@@ -314,6 +317,7 @@ final class PacketValues {
     // An entity's attribute modifiers: the sprinting modifier (an amount of 0.3 as a float), the scenario's marker and any
     // identifiers, and the attributes an update_attributes packet sets.
     static final Values.Generator ATTRIBUTE_OPERATION = new CoreValues.Constants<>(AttributeModifier.Operation.class);
+    static final Values.Generator RECIPE_BOOK_TYPE = new CoreValues.Constants<>(RecipeBookType.class);
     private static final Values.Generator MODIFIERS = RegistryValues.lazy(() -> values(
         AttributeModifier.class, fields -> new AttributeModifier((Identifier)fields[0], (Double)fields[1], (AttributeModifier.Operation)fields[2]),
         List.of(),
@@ -643,6 +647,23 @@ final class PacketValues {
                 fields -> new ClientboundSetDefaultSpawnPositionPacket((LevelData.RespawnData)fields[0]), List.of(), RESPAWN_DATA
             ))
         );
+        // The recipe books' settings, each book's two flags: a class whose private constructor takes them, and whose
+        // fields are read by reflection.
+        PAYLOADS.put(RecipeBookType.class, RECIPE_BOOK_TYPE);
+        Values.Generator typeSettings = values(
+            RecipeBookSettings.TypeSettings.class, fields -> new RecipeBookSettings.TypeSettings((Boolean)fields[0], (Boolean)fields[1]),
+            List.of(), BOOLEANS, BOOLEANS
+        );
+        PAYLOADS.put(RecipeBookSettings.TypeSettings.class, typeSettings);
+        Values.Generator recipeBookSettings = values(
+            RecipeBookSettings.class, PacketValues::recipeBookSettings, List.of("crafting", "furnace", "blastFurnace", "smoker"), typeSettings,
+            typeSettings, typeSettings, typeSettings
+        );
+        PAYLOADS.put(RecipeBookSettings.class, recipeBookSettings);
+        packet(
+            ClientboundRecipeBookSettingsPacket.class, fields -> new ClientboundRecipeBookSettingsPacket((RecipeBookSettings)fields[0]), List.of(),
+            recipeBookSettings
+        );
         PAYLOADS.put(Rotations.class, RegistryValues.ROTATIONS);
         PAYLOADS.put(Pose.class, RegistryValues.POSE);
         PAYLOADS.put(SynchedEntityData.DataValue.class, RegistryValues.DATA_VALUES);
@@ -768,7 +789,13 @@ final class PacketValues {
                 yield array;
             }
             case ProtocolInfo.DetailsProvider provider -> encodeDetails(provider.details());
-            default -> throw new IllegalArgumentException("no encoder for " + value.getClass().getName());
+            // A class a packet holds that isn't a record (RecipeBookSettings) is its fields, like a packet's.
+            default -> {
+                if (!FIELDS.containsKey(value.getClass())) {
+                    throw new IllegalArgumentException("no encoder for " + value.getClass().getName());
+                }
+                yield encodeFields(value);
+            }
         };
     }
 
@@ -1170,6 +1197,20 @@ final class PacketValues {
     @SuppressWarnings("unchecked")
     private static List<SynchedEntityData.DataValue<?>> dataValueList(final Object list) {
         return (List<SynchedEntityData.DataValue<?>>)list;
+    }
+
+    // Settings made with the private constructor taking each book's.
+    private static RecipeBookSettings recipeBookSettings(final Object[] fields) {
+        try {
+            Constructor<RecipeBookSettings> constructor = RecipeBookSettings.class.getDeclaredConstructor(
+                RecipeBookSettings.TypeSettings.class, RecipeBookSettings.TypeSettings.class, RecipeBookSettings.TypeSettings.class,
+                RecipeBookSettings.TypeSettings.class
+            );
+            constructor.setAccessible(true);
+            return constructor.newInstance(fields);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     // The packet its codec makes of the entity and its attributes, through the private constructor it calls, since the

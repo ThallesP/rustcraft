@@ -44,6 +44,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_light_update_pac
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_abilities_packet::ClientboundPlayerAbilitiesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_player_position_packet::ClientboundPlayerPositionPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_recipe_book_settings_packet::ClientboundRecipeBookSettingsPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_section_blocks_update_packet::ClientboundSectionBlocksUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_center_packet::ClientboundSetChunkCacheCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_chunk_cache_radius_packet::ClientboundSetChunkCacheRadiusPacket;
@@ -681,7 +682,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_RECIPE_BOOK_SETTINGS,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_RECIPE_BOOK_SETTINGS),
+                ClientboundRecipeBookSettingsPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_REMOVE_ENTITIES,
