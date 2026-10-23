@@ -101,7 +101,8 @@ final class ModelSuites {
             new NumberSuite(),
             new BakerySuite(),
             new StaticSuite(net.minecraft.util.LightCoordsUtil.class),
-            new MeshSuite()
+            new MeshSuite(),
+            new SectionCompilerSuite()
         );
     }
 
@@ -522,6 +523,273 @@ final class ModelSuites {
             } catch (NoSuchAlgorithmException e) {
                 throw new IllegalStateException(e);
             }
+        }
+    }
+
+    /**
+     * SectionCompiler.compile over RenderSectionRegions made the way RenderRegionCache makes them: the section and its 26
+     * neighbours, each a SectionCopy of the level's section (none for one of only air, one past the level's height, or one
+     * of a chunk the level doesn't have, Java's EmptyLevelChunk), read through the region. "walk" compiles every section
+     * with blocks of the walk capture's chunks (the chunk packet's goldens decode the same chunks), as a level of those
+     * chunks holds them, the camera at the walk's eye; "pattern" compiles the middle of 27 sections of MeshLevel's blocks
+     * (air for its waterlogged states: fluids come with FluidRenderer), translucent ones among them, with the camera in
+     * different places, which decides the order of the translucent
+     * layer's sorted indices. Light is MeshLevel's (seed 0 for the walk), BlockColors are empty, and no block entities or
+     * fluids are in the sections. A region is made without its constructor, which asks a ClientLevel for its lighting,
+     * and answers the level's questions itself. A result is {@code [layers, visibility]}: each rendered layer's {@code
+     * [layer, vertexCount, indexCount, md5 of the vertices, md5 of the sorted indices or null]} in ChunkSectionLayer's
+     * order, and VisGraph's VisibilitySet as a long, bit {@code from + 6 * to} for each pair of faces it connects.
+     */
+    private static final class SectionCompilerSuite implements Suite {
+        private static final double[] WALK_CAMERA = {0.5, -60.0 + 1.62F, 0.5};
+        private static final double[][] PATTERN_CAMERAS = {{8.5, 8.5, 8.5}, {-20.25, 7.0, 3.5}, {30.0, 40.0, -12.0}, {8.0, -3.75, 25.5}};
+        private static final int MIN_SECTION_Y = -4;
+
+        @Override
+        public String name() {
+            return net.minecraft.client.renderer.chunk.SectionCompiler.class.getName();
+        }
+
+        @Override
+        public void write(final GoldenWriter writer) throws IOException {
+            ModelBakery.BakingResult result = BakerySuite.bake();
+            net.minecraft.client.renderer.block.BlockStateModelSet models = new net.minecraft.client.renderer.block.BlockStateModelSet(
+                result.blockStateModels(), result.missingModels().block()
+            );
+            // The walk's chunks by position, their sections as the chunk packet's data fills them.
+            Map<Long, net.minecraft.world.level.chunk.LevelChunkSection[]> chunks = new java.util.LinkedHashMap<>();
+            for (byte[] payload : LevelChunkSuites.payloads("minecraft:level_chunk_with_light")) {
+                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet =
+                    net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket.STREAM_CODEC.decode(LevelChunkSuites.reader(payload));
+                net.minecraft.network.FriendlyByteBuf buffer = packet.chunkData().getReadBuffer();
+                net.minecraft.world.level.chunk.LevelChunkSection[] sections = new net.minecraft.world.level.chunk.LevelChunkSection[LevelChunkSuites.SECTION_COUNT];
+                for (int i = 0; i < sections.length; i++) {
+                    sections[i] = new net.minecraft.world.level.chunk.LevelChunkSection(LevelChunkSuites.factory());
+                    sections[i].read(buffer);
+                }
+                chunks.put(net.minecraft.world.level.ChunkPos.pack(packet.x(), packet.z()), sections);
+            }
+            for (Map.Entry<Long, net.minecraft.world.level.chunk.LevelChunkSection[]> chunk : chunks.entrySet()) {
+                net.minecraft.world.level.ChunkPos pos = net.minecraft.world.level.ChunkPos.unpack(chunk.getKey());
+                for (int index = 0; index < LevelChunkSuites.SECTION_COUNT; index++) {
+                    if (chunk.getValue()[index].hasOnlyAir()) {
+                        continue;
+                    }
+                    int sectionY = MIN_SECTION_Y + index;
+                    net.minecraft.client.renderer.chunk.RenderSectionRegion region = region(0, pos.x(), sectionY, pos.z(), (x, y, z) -> {
+                        net.minecraft.world.level.chunk.LevelChunkSection[] sections = chunks.get(net.minecraft.world.level.ChunkPos.pack(x, z));
+                        int sectionIndex = y - MIN_SECTION_Y;
+                        if (sections == null || sectionIndex < 0 || sectionIndex >= sections.length || sections[sectionIndex].hasOnlyAir()) {
+                            return null;
+                        }
+                        return sections[sectionIndex].getStates().copy();
+                    });
+                    for (boolean ambientOcclusion : new boolean[]{false, true}) {
+                        writer.result(
+                            "walk",
+                            RenderSuites.array(new JsonPrimitive(pos.x()), new JsonPrimitive(sectionY), new JsonPrimitive(pos.z()), new JsonPrimitive(ambientOcclusion)),
+                            compile(models, region, net.minecraft.core.SectionPos.of(pos.x(), sectionY, pos.z()), ambientOcclusion, WALK_CAMERA),
+                            null
+                        );
+                    }
+                }
+            }
+            for (int seed = 0; seed < 8; seed++) {
+                MeshLevel level = new MeshLevel(seed);
+                net.minecraft.client.renderer.chunk.RenderSectionRegion region = region(seed, 0, 0, 0, (x, y, z) -> {
+                    net.minecraft.world.level.chunk.PalettedContainer<BlockState> states = LevelChunkSuites.factory().createForBlockStates();
+                    for (int i = 0; i < 4096; i++) {
+                        int bx = i & 15;
+                        int bz = i >> 4 & 15;
+                        int by = i >> 8;
+                        BlockState state = level.getBlockState(new net.minecraft.core.BlockPos(16 * x + bx, 16 * y + by, 16 * z + bz));
+                        // Fluids come with FluidRenderer: a waterlogged state is left out.
+                        if (state.getFluidState().isEmpty()) {
+                            states.getAndSetUnchecked(bx, by, bz, state);
+                        }
+                    }
+                    return states;
+                });
+                for (double[] camera : PATTERN_CAMERAS) {
+                    for (boolean ambientOcclusion : new boolean[]{false, true}) {
+                        writer.result(
+                            "pattern",
+                            RenderSuites.array(
+                                new JsonPrimitive(seed),
+                                new JsonPrimitive(ambientOcclusion),
+                                new JsonPrimitive(hexDouble(camera[0])),
+                                new JsonPrimitive(hexDouble(camera[1])),
+                                new JsonPrimitive(hexDouble(camera[2]))
+                            ),
+                            compile(models, region, net.minecraft.core.SectionPos.of(0, 0, 0), ambientOcclusion, camera),
+                            null
+                        );
+                    }
+                }
+            }
+        }
+
+        private static String hexDouble(final double value) {
+            return String.format("%016x", Double.doubleToRawLongBits(value));
+        }
+
+        /** A section's block states by its position, or null for none. */
+        private interface SectionStates {
+            net.minecraft.world.level.chunk.@org.jspecify.annotations.Nullable PalettedContainer<BlockState> at(int x, int y, int z);
+        }
+
+        // RenderRegionCache.createRegion, around the section at (x, y, z).
+        private static net.minecraft.client.renderer.chunk.RenderSectionRegion region(
+            final int seed, final int x, final int y, final int z, final SectionStates states
+        ) {
+            net.minecraft.client.renderer.chunk.SectionCopy[] copies = new net.minecraft.client.renderer.chunk.SectionCopy[27];
+            for (int sz = z - 1; sz <= z + 1; sz++) {
+                for (int sy = y - 1; sy <= y + 1; sy++) {
+                    for (int sx = x - 1; sx <= x + 1; sx++) {
+                        int index = net.minecraft.client.renderer.chunk.RenderSectionRegion.index(x - 1, y - 1, z - 1, sx, sy, sz);
+                        copies[index] = copy(states.at(sx, sy, sz));
+                    }
+                }
+            }
+            try {
+                GoldenRegion region = (GoldenRegion)unsafe().allocateInstance(GoldenRegion.class);
+                region.seed = seed;
+                setField(net.minecraft.client.renderer.chunk.RenderSectionRegion.class, region, "minSectionX", x - 1);
+                setField(net.minecraft.client.renderer.chunk.RenderSectionRegion.class, region, "minSectionY", y - 1);
+                setField(net.minecraft.client.renderer.chunk.RenderSectionRegion.class, region, "minSectionZ", z - 1);
+                setField(net.minecraft.client.renderer.chunk.RenderSectionRegion.class, region, "sections", copies);
+                return region;
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        // A SectionCopy of a level's section: its states (a copy already), no block entities, not the debug level's.
+        private static net.minecraft.client.renderer.chunk.SectionCopy copy(
+            final net.minecraft.world.level.chunk.@org.jspecify.annotations.Nullable PalettedContainer<BlockState> states
+        ) {
+            try {
+                net.minecraft.client.renderer.chunk.SectionCopy copy =
+                    (net.minecraft.client.renderer.chunk.SectionCopy)unsafe().allocateInstance(net.minecraft.client.renderer.chunk.SectionCopy.class);
+                setField(net.minecraft.client.renderer.chunk.SectionCopy.class, copy, "blockEntities", Map.of());
+                setField(net.minecraft.client.renderer.chunk.SectionCopy.class, copy, "section", states);
+                setField(net.minecraft.client.renderer.chunk.SectionCopy.class, copy, "debug", false);
+                setField(
+                    net.minecraft.client.renderer.chunk.SectionCopy.class,
+                    copy,
+                    "levelHeightAccessor",
+                    net.minecraft.world.level.LevelHeightAccessor.create(-64, 384)
+                );
+                return copy;
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        private static void setField(final Class<?> owner, final Object object, final String name, final Object value) throws ReflectiveOperationException {
+            Field field = owner.getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(object, value);
+        }
+
+        private static sun.misc.Unsafe unsafe() throws ReflectiveOperationException {
+            Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            return (sun.misc.Unsafe)field.get(null);
+        }
+
+        private static JsonArray compile(
+            final net.minecraft.client.renderer.block.BlockStateModelSet models,
+            final net.minecraft.client.renderer.chunk.RenderSectionRegion region,
+            final net.minecraft.core.SectionPos sectionPos,
+            final boolean ambientOcclusion,
+            final double[] camera
+        ) {
+            net.minecraft.client.renderer.chunk.SectionCompiler compiler = new net.minecraft.client.renderer.chunk.SectionCompiler(
+                ambientOcclusion,
+                true,
+                models,
+                new net.minecraft.client.renderer.block.FluidStateModelSet(Map.of(), null),
+                new net.minecraft.client.color.block.BlockColors()
+            );
+            try (net.minecraft.client.renderer.SectionBufferBuilderPack buffers = new net.minecraft.client.renderer.SectionBufferBuilderPack()) {
+                // SectionRenderDispatcher.RenderSection.createVertexSorting.
+                com.mojang.blaze3d.vertex.VertexSorting sorting = com.mojang.blaze3d.vertex.VertexSorting.byDistance(
+                    (float)(camera[0] - sectionPos.minBlockX()), (float)(camera[1] - sectionPos.minBlockY()), (float)(camera[2] - sectionPos.minBlockZ())
+                );
+                net.minecraft.client.renderer.chunk.SectionCompiler.Results results = compiler.compile(sectionPos, region, sorting, buffers);
+                JsonArray layers = new JsonArray();
+                for (Map.Entry<net.minecraft.client.renderer.chunk.ChunkSectionLayer, com.mojang.blaze3d.vertex.MeshData> entry : results.renderedLayers.entrySet()) {
+                    com.mojang.blaze3d.vertex.MeshData mesh = entry.getValue();
+                    java.nio.ByteBuffer indices = mesh.indexBuffer();
+                    layers.add(RenderSuites.array(
+                        new JsonPrimitive(entry.getKey().name()),
+                        new JsonPrimitive(mesh.drawState().vertexCount()),
+                        new JsonPrimitive(mesh.drawState().indexCount()),
+                        new JsonPrimitive(MeshSuite.md5(bytes(mesh.vertexBuffer()))),
+                        indices == null ? JsonNull.INSTANCE : new JsonPrimitive(MeshSuite.md5(bytes(indices)))
+                    ));
+                }
+                long visibility = 0;
+                for (Direction from : Direction.values()) {
+                    for (Direction to : Direction.values()) {
+                        if (results.visibilitySet.visibilityBetween(from, to)) {
+                            visibility |= 1L << from.ordinal() + 6 * to.ordinal();
+                        }
+                    }
+                }
+                results.release();
+                return RenderSuites.array(layers, new JsonPrimitive(visibility));
+            }
+        }
+
+        private static byte[] bytes(final java.nio.ByteBuffer buffer) {
+            java.nio.ByteBuffer view = buffer.duplicate();
+            byte[] bytes = new byte[view.remaining()];
+            view.get(bytes);
+            return bytes;
+        }
+    }
+
+    /** A region that answers the level's questions itself, MeshLevel's light among them. */
+    static final class GoldenRegion extends net.minecraft.client.renderer.chunk.RenderSectionRegion {
+        int seed;
+
+        // Never called: regions are made without a constructor (SectionCompilerSuite.region).
+        private GoldenRegion() {
+            super(null, 0, 0, 0, null);
+        }
+
+        @Override
+        public int getBrightness(final net.minecraft.world.level.LightLayer layer, final net.minecraft.core.BlockPos pos) {
+            return layer == net.minecraft.world.level.LightLayer.SKY
+                ? Math.floorMod(3 * pos.getX() + 5 * pos.getY() + 7 * pos.getZ() + this.seed, 16)
+                : Math.floorMod(7 * pos.getX() + 11 * pos.getY() + 13 * pos.getZ(), 16);
+        }
+
+        @Override
+        public net.minecraft.world.level.lighting.LevelLightEngine getLightEngine() {
+            return net.minecraft.world.level.lighting.LevelLightEngine.EMPTY;
+        }
+
+        @Override
+        public net.minecraft.world.level.CardinalLighting cardinalLighting() {
+            return net.minecraft.world.level.CardinalLighting.DEFAULT;
+        }
+
+        @Override
+        public int getBlockTint(final net.minecraft.core.BlockPos pos, final net.minecraft.world.level.ColorResolver color) {
+            return -1;
+        }
+
+        @Override
+        public int getHeight() {
+            return 384;
+        }
+
+        @Override
+        public int getMinY() {
+            return -64;
         }
     }
 

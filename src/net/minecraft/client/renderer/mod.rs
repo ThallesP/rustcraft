@@ -8,6 +8,7 @@ pub mod oit;
 pub mod projection;
 pub mod projection_matrix_buffer;
 pub mod render_pipelines;
+pub mod section_buffer_builder_pack;
 pub mod shader_defines;
 pub mod shader_manager;
 pub mod texture;

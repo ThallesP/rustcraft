@@ -332,7 +332,7 @@ impl<'a> ModelBlockRenderer<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use md5::{Digest, Md5};
     use serde_json::{Value, json};
 
@@ -367,7 +367,7 @@ mod tests {
     use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 
     /// `ModelSuites.MeshLevel`: a pattern of whole blocks, light that varies, white tints.
-    struct MeshLevel {
+    pub(crate) struct MeshLevel {
         seed: i32,
         blocks: Vec<Block>,
     }
@@ -400,7 +400,7 @@ mod tests {
     ];
 
     impl MeshLevel {
-        fn new(seed: i32) -> MeshLevel {
+        pub(crate) fn new(seed: i32) -> MeshLevel {
             let blocks = BLOCK_NAMES
                 .iter()
                 .map(|name| {
