@@ -38,7 +38,11 @@ The work runs as parallel tracks. Each has its own git worktree under `../rustcr
 - **net**: the protocol up to and through play, `Connection`, the runner that joins a server. Gate 1.
 - **world**: blocks and block states, chunk data, `ClientLevel` and its chunk storage, light. Feeds the renderer and physics.
 - **render**: the window, renderpearl with its OpenGL backend, resources, the texture atlas, block models, chunk meshing, sky, fog, then HUD and hand. Gates 2 and 3.
-- Later: **player** (input and `LocalPlayer` physics, gate 3's trace and gate 4's physics), **gui** (screens), **perf** (gate 5) and **backends** (Metal, Vulkan).
+- **player**: input, `LocalPlayer` physics and other entities' state. Gate 3's trace and gate 4's physics scenarios.
+- **gui**: the font, the GUI renderer, the HUD and the screens. Gate 3's HUD and gate 4's screens.
+- **perf**: the benchmark both clients run, and making the port faster without changing a result. Gate 5.
+- **audit**: the comparison agent, now and then. Gate 6.
+- Later: **backends** (Metal, Vulkan). Vulkan can be checked against vanilla's Vulkan backend on lavapipe; Metal needs a Mac.
 
 ## Rules
 
