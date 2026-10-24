@@ -18,6 +18,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
+import net.minecraft.client.gui.layouts.FrameLayout;
+import net.minecraft.client.gui.layouts.GridLayout;
+import net.minecraft.client.gui.layouts.Layout;
+import net.minecraft.client.gui.layouts.LayoutElement;
+import net.minecraft.client.gui.layouts.LayoutSettings;
+import net.minecraft.client.gui.layouts.LinearLayout;
+import net.minecraft.client.gui.layouts.SpacerElement;
 import net.minecraft.client.gui.navigation.ScreenDirection;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.render.GuiRenderer;
@@ -49,7 +56,7 @@ final class GuiSuites {
     }
 
     static List<Suite> suites() {
-        return List.of(new ScreenRectangleSuite(), new GuiRenderStateSuite(), new SpriteScalingSuite());
+        return List.of(new ScreenRectangleSuite(), new GuiRenderStateSuite(), new SpriteScalingSuite(), new LayoutSuite());
     }
 
     // ---- Values ----
@@ -332,6 +339,212 @@ final class GuiSuites {
                 );
                 default -> throw new IllegalArgumentException("unknown scaling " + scaling);
             };
+        }
+    }
+
+    /**
+     * The layouts' math: 600 random trees of grids (cells placed by hand, or by a row helper whose shared default
+     * settings may change after its children are added), linear layouts and frames, down to spacers of random sizes,
+     * with random paddings and alignments, arranged and then aligned in a rectangle like a screen places its layout
+     * (FrameLayout.alignInRectangle). A tree is written as the spec both sides build it from (its javadoc below), and
+     * the result is the root's bounds and every spacer's place, in the order they were made.
+     *
+     * <p>A node is {@code ["spacer", w, h]}, {@code ["grid", rowSpacing, columnSpacing, defaults, [[node, row, column,
+     * rows, columns, settings or null], ...]]}, {@code ["rows", columns, defaults, [[node, columnWidth, settings or
+     * null], ...], defaultsAfter or null]}, {@code ["linear", vertical, spacing, [[node, settings or null], ...]]} or
+     * {@code ["frame", minWidth, minHeight, [[node, settings or null], ...]]}; settings are {@code [paddingLeft,
+     * paddingTop, paddingRight, paddingBottom, xAlignment, yAlignment]} (the alignments as floats' bits), applied over
+     * the layout's defaults (a copy, or the defaults themselves for a row helper's child without settings).
+     */
+    private static final class LayoutSuite implements Suite {
+        @Override
+        public String name() {
+            return GridLayout.class.getName();
+        }
+
+        @Override
+        public void write(final GoldenWriter writer) throws IOException {
+            Random random = new Random(20261023L);
+            for (int i = 0; i < 600; i++) {
+                List<SpacerElement> spacers = new ArrayList<>();
+                JsonArray spec = new JsonArray();
+                LayoutElement root = randomLayout(random, 3, spacers, spec);
+                int x = random.nextInt(41) - 20;
+                int y = random.nextInt(41) - 20;
+                int width = random.nextInt(500);
+                int height = random.nextInt(300);
+                float alignX = alignment(random);
+                float alignY = alignment(random);
+                if (root instanceof Layout layout) {
+                    layout.arrangeElements();
+                }
+                FrameLayout.alignInRectangle(root, x, y, width, height, alignX, alignY);
+                JsonArray places = new JsonArray();
+                for (SpacerElement spacer : spacers) {
+                    places.add(RenderSuites.array(new JsonPrimitive(spacer.getX()), new JsonPrimitive(spacer.getY())));
+                }
+                writer.result(
+                    "arrange",
+                    RenderSuites.array(
+                        spec.get(0), new JsonPrimitive(x), new JsonPrimitive(y), new JsonPrimitive(width), new JsonPrimitive(height),
+                        bits(alignX), bits(alignY)
+                    ),
+                    RenderSuites.array(
+                        rectangle(new ScreenRectangle(root.getX(), root.getY(), root.getWidth(), root.getHeight())), places
+                    ),
+                    null
+                );
+            }
+        }
+
+        private static float alignment(final Random random) {
+            return switch (random.nextInt(7)) {
+                case 0 -> 0.0F;
+                case 1 -> 0.25F;
+                case 2 -> 0.5F;
+                case 3 -> 0.75F;
+                case 4 -> 1.0F;
+                default -> random.nextFloat();
+            };
+        }
+
+        /** Random settings over {@code settings}, written into {@code spec}. */
+        private static void randomSettings(final Random random, final LayoutSettings settings, final JsonArray spec) {
+            int left = random.nextInt(12) - 2;
+            int top = random.nextInt(12) - 2;
+            int right = random.nextInt(12) - 2;
+            int bottom = random.nextInt(12) - 2;
+            float alignX = alignment(random);
+            float alignY = alignment(random);
+            settings.padding(left, top, right, bottom).align(alignX, alignY);
+            spec.add(RenderSuites.array(
+                new JsonPrimitive(left), new JsonPrimitive(top), new JsonPrimitive(right), new JsonPrimitive(bottom), bits(alignX), bits(alignY)
+            ));
+        }
+
+        /** Settings for a child: none (the defaults) a third of the time. */
+        private static LayoutSettings childSettings(final Random random, final LayoutSettings copy, final JsonArray spec) {
+            if (random.nextInt(3) == 0) {
+                spec.add(JsonNull.INSTANCE);
+                return null;
+            }
+            randomSettings(random, copy, spec);
+            return copy;
+        }
+
+        private static LayoutElement randomLayout(final Random random, final int depth, final List<SpacerElement> spacers, final JsonArray out) {
+            int kind = depth == 0 ? 0 : random.nextInt(depth == 3 ? 4 : 6);
+            JsonArray node = new JsonArray();
+            out.add(node);
+            switch (kind) {
+                case 1 -> {
+                    node.add("grid");
+                    GridLayout grid = new GridLayout();
+                    int rowSpacing = random.nextInt(6);
+                    int columnSpacing = random.nextInt(6);
+                    grid.rowSpacing(rowSpacing).columnSpacing(columnSpacing);
+                    node.add(rowSpacing);
+                    node.add(columnSpacing);
+                    randomSettings(random, grid.defaultCellSetting(), node);
+                    JsonArray children = new JsonArray();
+                    int count = 1 + random.nextInt(6);
+                    for (int i = 0; i < count; i++) {
+                        JsonArray child = new JsonArray();
+                        LayoutElement element = randomLayout(random, depth - 1, spacers, child);
+                        int row = random.nextInt(3);
+                        int column = random.nextInt(3);
+                        int rows = 1 + random.nextInt(2);
+                        int columns = 1 + random.nextInt(2);
+                        child.add(row);
+                        child.add(column);
+                        child.add(rows);
+                        child.add(columns);
+                        LayoutSettings settings = childSettings(random, grid.newCellSettings(), child);
+                        grid.addChild(element, row, column, rows, columns, settings != null ? settings : grid.newCellSettings());
+                        children.add(child);
+                    }
+                    node.add(children);
+                    return grid;
+                }
+                case 2 -> {
+                    node.add("rows");
+                    GridLayout grid = new GridLayout();
+                    int columns = 1 + random.nextInt(3);
+                    node.add(columns);
+                    randomSettings(random, grid.defaultCellSetting(), node);
+                    GridLayout.RowHelper helper = grid.createRowHelper(columns);
+                    JsonArray children = new JsonArray();
+                    int count = 1 + random.nextInt(6);
+                    for (int i = 0; i < count; i++) {
+                        JsonArray child = new JsonArray();
+                        LayoutElement element = randomLayout(random, depth - 1, spacers, child);
+                        int columnWidth = 1 + random.nextInt(columns);
+                        child.add(columnWidth);
+                        LayoutSettings settings = childSettings(random, grid.newCellSettings(), child);
+                        if (settings != null) {
+                            helper.addChild(element, columnWidth, settings);
+                        } else {
+                            helper.addChild(element, columnWidth);
+                        }
+                        children.add(child);
+                    }
+                    node.add(children);
+                    if (random.nextInt(4) == 0) {
+                        randomSettings(random, grid.defaultCellSetting(), node);
+                    } else {
+                        node.add(JsonNull.INSTANCE);
+                    }
+                    return grid;
+                }
+                case 3 -> {
+                    node.add("linear");
+                    boolean vertical = random.nextBoolean();
+                    int spacing = random.nextInt(6);
+                    LinearLayout linear = (vertical ? LinearLayout.vertical() : LinearLayout.horizontal()).spacing(spacing);
+                    node.add(vertical);
+                    node.add(spacing);
+                    JsonArray children = new JsonArray();
+                    int count = 1 + random.nextInt(5);
+                    for (int i = 0; i < count; i++) {
+                        JsonArray child = new JsonArray();
+                        LayoutElement element = randomLayout(random, depth - 1, spacers, child);
+                        LayoutSettings settings = childSettings(random, linear.newCellSettings(), child);
+                        linear.addChild(element, settings != null ? settings : linear.newCellSettings());
+                        children.add(child);
+                    }
+                    node.add(children);
+                    return linear;
+                }
+                case 4, 5 -> {
+                    node.add("frame");
+                    int minWidth = random.nextInt(3) == 0 ? random.nextInt(200) : 0;
+                    int minHeight = random.nextInt(3) == 0 ? random.nextInt(120) : 0;
+                    FrameLayout frame = new FrameLayout(minWidth, minHeight);
+                    node.add(minWidth);
+                    node.add(minHeight);
+                    JsonArray children = new JsonArray();
+                    int count = 1 + random.nextInt(4);
+                    for (int i = 0; i < count; i++) {
+                        JsonArray child = new JsonArray();
+                        LayoutElement element = randomLayout(random, depth - 1, spacers, child);
+                        LayoutSettings settings = childSettings(random, frame.newChildLayoutSettings(), child);
+                        frame.addChild(element, settings != null ? settings : frame.newChildLayoutSettings());
+                        children.add(child);
+                    }
+                    node.add(children);
+                    return frame;
+                }
+                default -> {
+                    node.add("spacer");
+                    int width = random.nextInt(4) == 0 ? 0 : random.nextInt(210);
+                    int height = random.nextInt(4) == 0 ? 0 : random.nextInt(30);
+                    node.add(width);
+                    node.add(height);
+                    SpacerElement spacer = new SpacerElement(width, height);
+                    spacers.add(spacer);
+                    return spacer;
+                }
+            }
         }
     }
 }

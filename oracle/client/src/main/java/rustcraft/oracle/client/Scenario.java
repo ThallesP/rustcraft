@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
@@ -25,12 +26,34 @@ public record Scenario(String name, World world, Player player, Options options,
     public record Options(int width, int height, int fov, int guiScale, int renderDistance, boolean hideGui) {}
 
     /**
-     * Either a screenshot, or {@code ticks} ticks with {@code keys} held and an optional fixed {@code look}, and the
-     * clientbound packet types to wait for after its last tick ({@code waitFor}, TESTING.md).
+     * Either a screenshot, a key pressed and released ({@code key}), characters typed ({@code type}), the cursor moved
+     * to a place in the window ({@code cursor}) or a command sent ({@code command}, without its slash) between two
+     * ticks, or {@code ticks} ticks with {@code keys} held and an optional fixed {@code look}, and the clientbound packet
+     * types to wait for after its last tick, or after the input ({@code waitFor}, TESTING.md).
      */
-    public record Step(int ticks, Set<String> keys, float @Nullable [] look, @Nullable String screenshot, List<String> waitFor) {}
+    public record Step(
+        int ticks,
+        Set<String> keys,
+        float @Nullable [] look,
+        @Nullable String screenshot,
+        List<String> waitFor,
+        @Nullable String key,
+        @Nullable String type,
+        double @Nullable [] cursor,
+        @Nullable String command
+    ) {}
 
     public static final Set<String> KEYS = Set.of("forward", "back", "left", "right", "jump", "sneak", "sprint", "attack", "use");
+
+    /** The keys a {@code key} step presses, by their SDL scancodes (InputConstants' KEY_ constants). */
+    public static final Map<String, Integer> PRESSABLE_KEYS = Map.of(
+        "escape", 41,
+        "enter", 40,
+        "t", 23,
+        "slash", 56,
+        "tab", 43,
+        "backspace", 42
+    );
 
     public static Scenario load(Path path) {
         JsonObject root;
@@ -87,7 +110,32 @@ public record Scenario(String name, World world, Player player, Options options,
 
     private static Step parseStep(JsonObject step) {
         if (step.has("screenshot")) {
-            return new Step(0, Set.of(), null, step.get("screenshot").getAsString(), List.of());
+            return new Step(0, Set.of(), null, step.get("screenshot").getAsString(), List.of(), null, null, null, null);
+        }
+        // Packets that must each have come since the step began: after its last tick, or after its input.
+        List<String> waitFor = new ArrayList<>();
+        if (step.has("wait_for")) {
+            for (JsonElement packet : step.getAsJsonArray("wait_for")) {
+                waitFor.add(packet.getAsString());
+            }
+        }
+
+        if (step.has("key")) {
+            String key = step.get("key").getAsString();
+            if (!PRESSABLE_KEYS.containsKey(key)) {
+                throw new IllegalArgumentException("unknown key '" + key + "', expected one of " + PRESSABLE_KEYS.keySet());
+            }
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), key, null, null, null);
+        }
+        if (step.has("type")) {
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, step.get("type").getAsString(), null, null);
+        }
+        if (step.has("cursor")) {
+            JsonArray cursor = step.getAsJsonArray("cursor");
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, new double[]{cursor.get(0).getAsDouble(), cursor.get(1).getAsDouble()}, null);
+        }
+        if (step.has("command")) {
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, step.get("command").getAsString());
         }
 
         Set<String> keys = new LinkedHashSet<>();
@@ -107,18 +155,10 @@ public record Scenario(String name, World world, Player player, Options options,
             look = new float[]{rotation.get(0).getAsFloat(), rotation.get(1).getAsFloat()};
         }
 
-        // Packets that must each have come since the step began before its last tick's trace line (TESTING.md).
-        List<String> waitFor = new ArrayList<>();
-        if (step.has("wait_for")) {
-            for (JsonElement packet : step.getAsJsonArray("wait_for")) {
-                waitFor.add(packet.getAsString());
-            }
-        }
-
         int ticks = step.get("ticks").getAsInt();
         if (!waitFor.isEmpty() && ticks < 1) {
             throw new IllegalArgumentException("a step that waits for packets needs a tick");
         }
-        return new Step(ticks, Set.copyOf(keys), look, null, List.copyOf(waitFor));
+        return new Step(ticks, Set.copyOf(keys), look, null, List.copyOf(waitFor), null, null, null, null);
     }
 }

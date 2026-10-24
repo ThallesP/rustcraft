@@ -1,7 +1,7 @@
 //! net/minecraft/client/Minecraft.java
 //!
-//! Not ported yet: nearly all of it: sound, the integrated server, resources, the GUI and its
-//! screens, input, telemetry and the profiler. What's here is the game loop's timing and what a
+//! Not ported yet: nearly all of it: sound, the integrated server, resources, telemetry and the
+//! profiler, and most of the input's bindings. What's here is the game loop's timing and what a
 //! tick does with a connection to a server: run the packets queued for the game thread, then up
 //! to 10 ticks, each ticking the connection (the game mode's, or the connect screen's before
 //! there's a level), the game renderer, the player on its level, what the player sends, the
@@ -12,17 +12,20 @@
 //! window. The renderer is made on demand (`init_renderer`): a headless client that takes no
 //! screenshots runs without one.
 //!
-//! The game is shared by its listeners and its player, like Java's, so its state is in cells, and
-//! its back-references are parameters (`LocalPlayer::send_changes`). The screen is one of the few
-//! the port has, without drawing anything: the connect screen, the level's loading screen, or the
-//! disconnected screen, which a headless client stops at. Frames come at most at the options'
-//! frame rate limit (`FramerateLimiter`, none at 260), the game thread sleeping until the next is
-//! due, while the connection's own thread goes on reading it (`Connection`), like Java's Netty
-//! threads. The surface's present mode follows `enableVsync` from the start. The benchmark times
-//! each frame, the end of its GL calls, each tick and each frame's light updates (`bench`).
+//! The game is shared by its listeners, its player and its screens, like Java's, so its state is in
+//! cells, it keeps a weak reference to itself (`this`) for the screens it makes, and its other
+//! back-references are parameters (`LocalPlayer::send_changes`). The screen (`Gui.screen`, Java's
+//! `gui.screen()`) is the gui's, taken out of the gui's cell while it handles input, ticks or
+//! draws, so it can reach the game; a screen replaced while it's handling something is told it was
+//! removed (`removed`) once it's done. A client with no window stops at the disconnected screen.
+//! Frames come at most at the options' frame rate limit (`FramerateLimiter`, none at 260), the
+//! game thread sleeping until the next is due, while the connection's own thread goes on reading
+//! it (`Connection`), like Java's Netty threads. The surface's present mode follows `enableVsync`
+//! from the start. The benchmark times each frame, the end of its GL calls, each tick and each
+//! frame's light updates (`bench`).
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::cell::{Cell, OnceCell, RefCell};
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use crate::com::mojang::blaze3d::platform::window::Window;
@@ -30,9 +33,18 @@ use crate::com::mojang::renderpearl::api::device::gpu_surface::{GpuSurface, Pres
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::delta_tracker::Timer;
 use crate::net::minecraft::client::framerate_limiter::FramerateLimiter;
+use crate::net::minecraft::client::gui::font::Font;
+use crate::net::minecraft::client::gui::font::font_manager::FontManager;
 use crate::net::minecraft::client::gui::gui::Gui;
 use crate::net::minecraft::client::gui::hud::HudContext;
-use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
+use crate::net::minecraft::client::gui::screens::disconnected_screen::DisconnectedScreen;
+use crate::net::minecraft::client::gui::screens::level_loading_screen::LevelLoadingScreen;
+use crate::net::minecraft::client::gui::screens::screen::{self, ScreenRef};
+use crate::net::minecraft::client::input::character_event::CharacterEvent;
+use crate::net::minecraft::client::input::key_event::KeyEvent;
+use crate::net::minecraft::client::input::mouse_button_event::MouseButtonEvent;
+use crate::net::minecraft::client::input::mouse_button_info::MouseButtonInfo;
+use crate::net::minecraft::client::input_type::{self, InputType};
 use crate::net::minecraft::client::keyboard_handler::{KeyAction, KeyboardHandler};
 use crate::net::minecraft::client::mouse_handler::MouseHandler;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
@@ -63,19 +75,9 @@ use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::flowing_fluid;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::lwjgl::sdl::sdl_events::{SDLEvents, SdlEvent};
+use crate::org::lwjgl::sdl::sdl_keyboard::SDLKeyboard;
 use crate::org::lwjgl::sdl::sdl_mouse::SDLMouse;
 use crate::rustcraft::bench;
-
-/// The screen shown, of the ones the port has.
-enum Screen {
-    None,
-    Connect(ConnectScreen),
-    LevelLoading,
-    Disconnected {
-        title: String,
-        details: DisconnectionDetails,
-    },
-}
 
 /// Something that drives the game from outside, like Fabric's client game tests drive vanilla
 /// (`tools/port_client.py`'s scenarios). Fabric runs at most one tick a frame and parks the client
@@ -90,6 +92,8 @@ pub trait TestDriver {
 
 /// The client.
 pub struct Minecraft {
+    /// The game itself, for the screens it makes, which keep it.
+    this: Weak<Minecraft>,
     pub options: RefCell<Options>,
     user: User,
     packet_processor: Arc<PacketProcessor>,
@@ -97,7 +101,8 @@ pub struct Minecraft {
     pub level: RefCell<Option<ClientLevel>>,
     pub game_mode: RefCell<Option<Rc<MultiPlayerGameMode>>>,
     camera_entity: Cell<Option<i32>>,
-    screen: RefCell<Screen>,
+    /// Screens replaced while they were handling something, told so when they're done.
+    removed_screens: RefCell<Vec<ScreenRef>>,
     delta_tracker: RefCell<Timer>,
     running: Cell<bool>,
     pause: Cell<bool>,
@@ -108,7 +113,7 @@ pub struct Minecraft {
     window: RefCell<Option<(Window, Box<dyn GpuSurface>)>>,
     /// `gui.hud.isHidden()`: F1.
     pub hud_hidden: Cell<bool>,
-    mouse_handler: RefCell<MouseHandler>,
+    pub mouse_handler: RefCell<MouseHandler>,
     pub gui: RefCell<Gui>,
     /// `downloadedPackSource`: the server's resource packs.
     pub downloaded_pack_source: RefCell<DownloadedPackSource>,
@@ -118,13 +123,21 @@ pub struct Minecraft {
     sound_manager: Box<dyn SoundManager>,
     /// `getBlockColors()`, which leaves' particles take their colour from.
     block_colors: BlockColors,
+    /// The window's size in pixels (`getWindow().getWidth()`), the renderer's when there's one.
+    window_size: Cell<(i32, i32)>,
+    /// `font`, for a client without a renderer: the fonts laid out without pages on a device.
+    headless_font: OnceCell<Rc<Font>>,
+    /// `missTime`.
+    miss_time: Cell<i32>,
 }
 
 impl Minecraft {
     pub fn new(user: User, options: Options) -> Rc<Minecraft> {
         // A new game's fluids keep no shapes yet (`FlowingFluid.shapes`, a JVM's in Java).
         flowing_fluid::clear_shapes();
-        Rc::new(Minecraft {
+        input_type::set_last_input_type(InputType::NONE);
+        Rc::new_cyclic(|this| Minecraft {
+            this: this.clone(),
             options: RefCell::new(options),
             user,
             packet_processor: Arc::new(PacketProcessor::new()),
@@ -132,7 +145,7 @@ impl Minecraft {
             level: RefCell::new(None),
             game_mode: RefCell::new(None),
             camera_entity: Cell::new(None),
-            screen: RefCell::new(Screen::None),
+            removed_screens: RefCell::new(Vec::new()),
             // Java's starts at 0, so the first frame runs its 10 ticks at once.
             delta_tracker: RefCell::new(Timer::new(20.0, 0)),
             running: Cell::new(true),
@@ -148,7 +161,144 @@ impl Minecraft {
             particle_engine: RefCell::new(Box::new(NoParticles)),
             sound_manager: Box::new(NoSound),
             block_colors: BlockColors::create_default(),
+            window_size: Cell::new((854, 480)),
+            headless_font: OnceCell::new(),
+            miss_time: Cell::new(0),
         })
+    }
+
+    /// The game as its screens hold it.
+    pub fn rc(&self) -> Rc<Minecraft> {
+        self.this.upgrade().expect("the game is alive")
+    }
+
+    /// `font`: the game renderer's, or one laid out without a device for a client that has none.
+    pub fn font(&self) -> Rc<Font> {
+        if let Some(game_renderer) = self.game_renderer.borrow().as_ref() {
+            return Rc::clone(game_renderer.font());
+        }
+        Rc::clone(self.headless_font.get_or_init(|| {
+            let resources = GameRenderer::client_resources();
+            Rc::new(Font::new(
+                Rc::new(FontManager::load(None, &resources, &[])),
+                false,
+            ))
+        }))
+    }
+
+    /// The window's size in pixels.
+    pub fn window_size(&self) -> (i32, i32) {
+        self.window_size.get()
+    }
+
+    /// `getWindow().getGuiScaledWidth()` and `getGuiScaledHeight()`, for the options' GUI scale.
+    pub fn gui_scaled_size(&self) -> (i32, i32) {
+        let (width, height) = self.window_size.get();
+        let scale = Window::calculate_scale(width, height, self.options.borrow().gui_scale, false);
+        Window::gui_scaled_size(width, height, scale)
+    }
+
+    /// `gui.screen()`.
+    pub fn screen(&self) -> Option<ScreenRef> {
+        self.gui.borrow().screen.clone()
+    }
+
+    /// `gui.setScreen`: the screen shown (none goes back to the game), the last one removed and the new one added and made at the window's
+    /// GUI size, the mouse released for it or grabbed for the game.
+    pub fn set_screen(&self, screen: Option<ScreenRef>) {
+        let old = self.gui.borrow_mut().screen.take();
+        match old {
+            Some(old) => {
+                let removed = match old.try_borrow_mut() {
+                    Ok(mut old) => {
+                        old.screen_mut().clear_focus();
+                        old.removed();
+                        true
+                    }
+                    Err(_) => false,
+                };
+                // One handling what replaced it is told when it's done.
+                if !removed {
+                    self.removed_screens.borrow_mut().push(old);
+                }
+            }
+            None => input_type::set_last_input_type(InputType::NONE),
+        }
+
+        // The title screen, when there's no level, isn't ported yet; a dead player's death screen
+        // isn't either.
+        self.gui.borrow_mut().screen = screen.clone();
+        if let Some(screen) = &screen {
+            screen.borrow_mut().added();
+        }
+        // The text input manager's: typed text comes while a screen is up (Java starts it when an
+        // edit box gets the focus).
+        if let Some((window, _)) = self.window.borrow().as_ref() {
+            if screen.is_some() {
+                SDLKeyboard::SDL_StartTextInput(window.handle());
+            } else {
+                SDLKeyboard::SDL_StopTextInput(window.handle());
+            }
+        }
+        match screen {
+            Some(screen) => {
+                self.release_mouse();
+                self.options.borrow_mut().release_all_keys();
+                let (width, height) = self.gui_scaled_size();
+                screen::init(&mut *screen.borrow_mut(), width, height);
+            }
+            None => self.grab_mouse(),
+        }
+        self.mouse_handler.borrow_mut().resync_mouse_position();
+    }
+
+    /// The screens replaced while they were handling something, told now that they're done.
+    fn finish_removed_screens(&self) {
+        let removed: Vec<ScreenRef> = self.removed_screens.borrow_mut().drain(..).collect();
+        for screen in removed {
+            let mut screen = screen.borrow_mut();
+            screen.screen_mut().clear_focus();
+            screen.removed();
+        }
+    }
+
+    /// Runs `handle` on the screen, when there's one, and then tells a screen it replaced so.
+    pub fn with_screen<R>(
+        &self,
+        handle: impl FnOnce(&mut dyn screen::ScreenClass) -> R,
+    ) -> Option<R> {
+        let screen = self.screen()?;
+        let result = handle(&mut *screen.borrow_mut());
+        self.finish_removed_screens();
+        Some(result)
+    }
+
+    /// `mouseHandler.grabMouse()`: the window's mouse grabbed for turning, the screen gone.
+    pub fn grab_mouse(&self) {
+        if self.mouse_handler.borrow().is_mouse_grabbed() {
+            return;
+        }
+        let window_size = self.window_size.get();
+        self.mouse_handler.borrow_mut().grab_mouse(window_size);
+        if let Some((window, _)) = self.window.borrow().as_ref() {
+            SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), true);
+        }
+        if self.screen().is_some() {
+            self.set_screen(None);
+        }
+        self.miss_time.set(10000);
+    }
+
+    /// `mouseHandler.releaseMouse()`.
+    pub fn release_mouse(&self) {
+        if !self.mouse_handler.borrow().is_mouse_grabbed() {
+            return;
+        }
+        let window_size = self.window_size.get();
+        self.mouse_handler.borrow_mut().release_mouse(window_size);
+        if let Some((window, _)) = self.window.borrow().as_ref() {
+            SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), false);
+        }
     }
 
     pub fn get_user(&self) -> &User {
@@ -170,9 +320,7 @@ impl Minecraft {
         while self.running.get() {
             let frame = bench::now();
             self.run_tick(true);
-            self.mouse_handler
-                .borrow_mut()
-                .handle_accumulated_movement(self);
+            self.handle_accumulated_movement();
             self.render_frame();
             self.poll_events();
             let framerate_limit = self.options.borrow().framerate_limit;
@@ -249,7 +397,14 @@ impl Minecraft {
         }
 
         self.gui.borrow_mut().tick(self.pause.get());
-        self.tick_screen();
+        // `gui.tick()`'s screen tick, outside the gui's cell.
+        self.with_screen(|screen| screen.tick());
+        if self.screen().is_some() {
+            self.miss_time.set(10000);
+        }
+        if self.screen().is_none() && self.miss_time.get() > 0 {
+            self.miss_time.set(self.miss_time.get() - 1);
+        }
 
         if self.level.borrow().is_some() {
             if !self.pause.get() {
@@ -389,17 +544,6 @@ impl Minecraft {
         }
     }
 
-    /// `gui.tick()`'s screen tick: the connect screen ticks its connection.
-    fn tick_screen(&self) {
-        let connect_screen = match &*self.screen.borrow() {
-            Screen::Connect(connect_screen) => Some(connect_screen.clone()),
-            _ => None,
-        };
-        if let Some(connect_screen) = connect_screen {
-            connect_screen.tick();
-        }
-    }
-
     /// The client's listener of the game protocol, once the player is in a level:
     /// `player.connection`.
     pub fn get_connection(&self) -> Option<Rc<RefCell<ClientPacketListener>>> {
@@ -432,6 +576,8 @@ impl Minecraft {
         game_renderer: GameRenderer,
         window: Option<(Window, Box<dyn GpuSurface>)>,
     ) {
+        let target = game_renderer.main_render_target();
+        self.window_size.set((target.width, target.height));
         *self.game_renderer.borrow_mut() = Some(game_renderer);
         // `renderFrame`'s first configuration of the surface: the present mode vsync picks.
         if let Some((_, surface)) = &window {
@@ -483,24 +629,29 @@ impl Minecraft {
             eye_y,
             &CameraEntityState::of(player.as_ref()),
         );
-        self.render_gui(game_renderer, level, player.as_ref());
+        self.render_gui(game_renderer, level, player.as_ref(), partial_ticks);
         true
     }
 
-    /// The frame's GUI: `Gui.extractRenderState` (the HUD, with the level and its player), then
-    /// `GameRenderer.render`'s `guiRenderer.render()`. The mouse is grabbed in a level, which only
-    /// screens read, so its scaled position is the window's corner until screens come.
+    /// The frame's GUI: `Gui.extractRenderState` (the HUD, with the level and its player, then the
+    /// screen at the mouse's scaled position), then `GameRenderer.render`'s `guiRenderer.render()`.
     fn render_gui(
         &self,
         game_renderer: &mut GameRenderer,
         level: &ClientLevel,
         player: Option<&LocalPlayer>,
+        partial_ticks: f32,
     ) {
         let gui_scale = self.options.borrow().gui_scale;
         let game_mode = self.game_mode.borrow().clone();
         let font = std::rc::Rc::clone(game_renderer.font());
+        let level_loading = self.screen().is_some_and(|screen| {
+            screen
+                .try_borrow()
+                .is_ok_and(|screen| screen.as_any().is::<LevelLoadingScreen>())
+        });
         let hud_context = match (player, game_mode.as_ref()) {
-            (Some(player), Some(game_mode)) => Some(HudContext {
+            (Some(player), Some(game_mode)) if !level_loading => Some(HudContext {
                 font: &font,
                 is_hidden: self.hud_hidden.get(),
                 player,
@@ -511,12 +662,104 @@ impl Minecraft {
             }),
             _ => None,
         };
-        let mut gui = self.gui.borrow_mut();
+        let (mouse_x, mouse_y) = self.scaled_mouse_position();
+        let screen = self.screen();
         let text_background_color = self.options.borrow().get_background_color(0.0);
-        game_renderer.extract_gui(gui_scale, text_background_color, 0, 0, |graphics| {
-            gui.extract_render_state(graphics, hud_context.as_ref());
-        });
+        game_renderer.extract_gui(
+            gui_scale,
+            text_background_color,
+            mouse_x,
+            mouse_y,
+            |graphics| {
+                self.gui
+                    .borrow_mut()
+                    .extract_render_state(graphics, hud_context.as_ref());
+                if let Some(screen) = &screen {
+                    screen::extract_render_state_with_tooltip_and_subtitles(
+                        &mut *screen.borrow_mut(),
+                        graphics,
+                        mouse_x,
+                        mouse_y,
+                        partial_ticks,
+                    );
+                }
+            },
+        );
+        self.finish_removed_screens();
         game_renderer.render_gui(gui_scale);
+    }
+
+    /// The mouse's place in the GUI's scaled coordinates, as `Gui.extractRenderState` reads it.
+    pub fn scaled_mouse_position(&self) -> (i32, i32) {
+        let window_size = self.window_size.get();
+        let gui_size = self.gui_scaled_size();
+        let mouse_handler = self.mouse_handler.borrow();
+        (
+            mouse_handler.get_scaled_x_pos(window_size, gui_size) as i32,
+            mouse_handler.get_scaled_y_pos(window_size, gui_size) as i32,
+        )
+    }
+
+    /// `MouseHandler.handleAccumulatedMovement`: the mouse moved over the screen, or turning the
+    /// player while grabbed.
+    fn handle_accumulated_movement(&self) {
+        let window_size = self.window_size.get();
+        let gui_size = self.gui_scaled_size();
+        let moved = self.mouse_handler.borrow().has_accumulated_movement();
+        if moved && self.screen().is_some() {
+            let (x, y) = {
+                let mouse_handler = self.mouse_handler.borrow();
+                (
+                    mouse_handler.get_scaled_x_pos(window_size, gui_size),
+                    mouse_handler.get_scaled_y_pos(window_size, gui_size),
+                )
+            };
+            self.with_screen(|screen| screen.mouse_moved(x, y));
+        }
+        self.mouse_handler
+            .borrow_mut()
+            .handle_accumulated_movement(self);
+    }
+
+    /// A key as the window or a scenario gives it (`KeyboardHandler.keyPress`).
+    pub fn key_press(&self, event: &KeyEvent, action: KeyAction) {
+        KeyboardHandler::key_press(self, event, action);
+    }
+
+    /// A character typed (`KeyboardHandler.charTyped`): the screen's.
+    pub fn char_typed(&self, event: &CharacterEvent) {
+        self.with_screen(|screen| screen.char_typed(event));
+    }
+
+    /// `MouseHandler.onMove` at a place in the window.
+    pub fn mouse_moved_to(&self, x: f64, y: f64) {
+        self.mouse_handler.borrow_mut().on_move_to(x, y);
+    }
+
+    /// `MouseHandler.onButton`: a click or a release over the screen.
+    pub fn mouse_button(&self, button: i32, pressed: bool) {
+        if self.screen().is_none() {
+            if pressed && !self.mouse_handler.borrow().is_mouse_grabbed() {
+                self.grab_mouse();
+            }
+            return;
+        }
+        input_type::set_last_input_type(InputType::MOUSE);
+        let window_size = self.window_size.get();
+        let gui_size = self.gui_scaled_size();
+        let (x, y) = {
+            let mouse_handler = self.mouse_handler.borrow();
+            (
+                mouse_handler.get_scaled_x_pos(window_size, gui_size),
+                mouse_handler.get_scaled_y_pos(window_size, gui_size),
+            )
+        };
+        let event = MouseButtonEvent::new(x, y, MouseButtonInfo::new(button, 0));
+        if pressed {
+            self.with_screen(|screen| screen.mouse_clicked(&event, false));
+        } else {
+            self.with_screen(|screen| screen.mouse_released(&event));
+        }
     }
 
     /// What the level's environment attributes read of it, with the listener's clocks.
@@ -570,64 +813,104 @@ impl Minecraft {
     }
 
     /// `RenderSystem.pollEvents`, with the window's input: the keyboard's and the mouse's
-    /// (`KeyboardHandler`, `MouseHandler`), a click grabbing the mouse, and closing the window.
+    /// (`KeyboardHandler`, `MouseHandler`), text typed, losing the focus, and closing the window.
     fn poll_events(&self) {
-        let mut window = self.window.borrow_mut();
-        let Some((window, _)) = window.as_mut() else {
-            return;
-        };
-        let mut event = SdlEvent::default();
-        while SDLEvents::SDL_PollEvent(&mut event) {
+        let mut events = Vec::new();
+        {
+            let window = self.window.borrow();
+            if window.is_none() {
+                return;
+            }
+            let mut event = SdlEvent::default();
+            while SDLEvents::SDL_PollEvent(&mut event) {
+                // The text's SDL's until the next poll.
+                let text = (event.event_type == SDLEvents::SDL_EVENT_TEXT_INPUT)
+                    .then(|| event.text_input());
+                events.push((std::mem::take(&mut event), text));
+            }
+        }
+        for (event, text) in events {
             match event.event_type {
                 SDLEvents::SDL_EVENT_QUIT | SDLEvents::SDL_EVENT_WINDOW_CLOSE_REQUESTED => {
                     self.stop();
                 }
                 SDLEvents::SDL_EVENT_KEY_DOWN | SDLEvents::SDL_EVENT_KEY_UP => {
-                    let down = event.event_type == SDLEvents::SDL_EVENT_KEY_DOWN;
-                    let action = KeyboardHandler::key_press(
-                        self,
+                    let action = if event.event_type == SDLEvents::SDL_EVENT_KEY_UP {
+                        KeyAction::RELEASE
+                    } else if event.key_repeat() {
+                        KeyAction::REPEAT
+                    } else {
+                        KeyAction::PRESS
+                    };
+                    let key_event = KeyEvent::new(
                         event.key_scancode(),
-                        down,
-                        event.key_repeat(),
+                        event.key_keycode(),
+                        event.key_modifiers(),
                     );
-                    if action == KeyAction::ReleaseMouse {
-                        self.mouse_handler.borrow_mut().set_mouse_grabbed(false);
-                        SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), false);
+                    self.key_press(&key_event, action);
+                }
+                SDLEvents::SDL_EVENT_TEXT_INPUT => {
+                    for c in text.unwrap_or_default().chars() {
+                        self.char_typed(&CharacterEvent::new(c as i32));
                     }
                 }
                 SDLEvents::SDL_EVENT_MOUSE_MOTION => {
-                    let (x, y) = event.motion_relative();
-                    self.mouse_handler
-                        .borrow_mut()
-                        .on_move(f64::from(x), f64::from(y));
+                    let (x, y) = event.motion_position();
+                    let (x_relative, y_relative) = event.motion_relative();
+                    self.mouse_handler.borrow_mut().on_move(
+                        f64::from(x),
+                        f64::from(y),
+                        f64::from(x_relative),
+                        f64::from(y_relative),
+                    );
                 }
-                SDLEvents::SDL_EVENT_MOUSE_BUTTON_DOWN => {
-                    if !self.mouse_handler.borrow().is_mouse_grabbed() {
-                        self.mouse_handler.borrow_mut().set_mouse_grabbed(true);
-                        SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), true);
-                    }
+                SDLEvents::SDL_EVENT_MOUSE_BUTTON_DOWN | SDLEvents::SDL_EVENT_MOUSE_BUTTON_UP => {
+                    let pressed = event.event_type == SDLEvents::SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    self.mouse_button(i32::from(event.mouse_button()), pressed);
                 }
                 SDLEvents::SDL_EVENT_WINDOW_RESIZED => {
                     let (width, height) = event.window_data();
-                    window.on_resize(width, height);
+                    if let Some((window, _)) = self.window.borrow_mut().as_mut() {
+                        window.on_resize(width, height);
+                    }
                 }
                 SDLEvents::SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => {
                     // framebufferSizeChanged: the surface follows the window's pixels when it
-                    // blits, and the GUI's scale and the main target follow its size each frame.
+                    // blits, and the GUI's scale, the main target and the screen follow its size
+                    // each frame.
                     let (width, height) = event.window_data();
-                    window.on_framebuffer_resize(width, height);
+                    if let Some((window, _)) = self.window.borrow_mut().as_mut() {
+                        window.on_framebuffer_resize(width, height);
+                    }
                 }
                 SDLEvents::SDL_EVENT_WINDOW_FOCUS_LOST => {
-                    self.mouse_handler.borrow_mut().set_mouse_grabbed(false);
-                    SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), false);
+                    self.release_mouse();
                 }
                 _ => {}
             }
         }
     }
 
+    /// `resizeGui`, when the window's size changed: the GUI's size follows it, and the screen is
+    /// placed again (`screen.resize`).
+    fn follow_window_size(&self) {
+        let size = self
+            .window
+            .borrow()
+            .as_ref()
+            .map(|(window, _)| (window.get_width(), window.get_height()));
+        if let Some(size) = size
+            && size != self.window_size.get()
+        {
+            self.window_size.set(size);
+            let (width, height) = self.gui_scaled_size();
+            self.with_screen(|screen| screen::resize(screen, width, height));
+        }
+    }
+
     /// `renderFrame`'s render: a frame of the level, presented to the window if there's one.
     fn render_frame(&self) {
+        self.follow_window_size();
         let partial_ticks = self
             .delta_tracker
             .borrow()
@@ -649,19 +932,20 @@ impl Minecraft {
         }
     }
 
-    pub fn set_connect_screen(&self, screen: ConnectScreen) {
-        if matches!(*self.screen.borrow(), Screen::None) {
-            *self.screen.borrow_mut() = Screen::Connect(screen);
-        }
-    }
-
+    /// `setScreenAndShow(new LevelLoadingScreen(…))`.
     pub fn show_level_loading(&self) {
-        *self.screen.borrow_mut() = Screen::LevelLoading;
+        let screen = LevelLoadingScreen::new(&self.rc());
+        self.set_screen(Some(Rc::new(RefCell::new(screen))));
     }
 
     /// Whether the level's loading screen is up, which closes once the level is ready.
     pub fn is_level_loading(&self) -> bool {
-        matches!(*self.screen.borrow(), Screen::LevelLoading)
+        let loading_screen = self.screen().is_some_and(|screen| {
+            screen
+                .try_borrow()
+                .is_ok_and(|screen| screen.as_any().is::<LevelLoadingScreen>())
+        });
+        loading_screen
             && self
                 .get_connection()
                 .is_some_and(|connection| !connection.borrow().has_client_loaded())
@@ -671,19 +955,17 @@ impl Minecraft {
     /// to stops there.
     pub fn show_disconnected(&self, title: &str, details: &DisconnectionDetails) {
         eprintln!("{title}: {}", details.reason_text());
-        *self.screen.borrow_mut() = Screen::Disconnected {
-            title: title.to_string(),
-            details: details.clone(),
-        };
+        let screen = DisconnectedScreen::new(&self.rc(), title, details.clone());
+        self.set_screen(Some(Rc::new(RefCell::new(screen))));
         self.stop();
     }
 
     /// Why the game was disconnected, if it was.
     pub fn disconnection(&self) -> Option<(String, DisconnectionDetails)> {
-        match &*self.screen.borrow() {
-            Screen::Disconnected { title, details } => Some((title.clone(), details.clone())),
-            _ => None,
-        }
+        let screen = self.screen()?;
+        let screen = screen.try_borrow().ok()?;
+        let disconnected = screen.as_any().downcast_ref::<DisconnectedScreen>()?;
+        Some((disconnected.title_key.clone(), disconnected.details.clone()))
     }
 
     /// `disconnect(Screen, boolean)`, going to the disconnected screen. The listener being closed
@@ -710,6 +992,18 @@ impl Minecraft {
         *self.level.borrow_mut() = None;
         *self.player.borrow_mut() = None;
         self.camera_entity.set(None);
-        *self.screen.borrow_mut() = Screen::None;
+        let old = self.gui.borrow_mut().screen.take();
+        if let Some(old) = old {
+            let removed = match old.try_borrow_mut() {
+                Ok(mut screen) => {
+                    screen.removed();
+                    true
+                }
+                Err(_) => false,
+            };
+            if !removed {
+                self.removed_screens.borrow_mut().push(old);
+            }
+        }
     }
 }

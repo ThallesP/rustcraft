@@ -362,9 +362,10 @@ How the first-person hand draws the arm (`FirstPersonHandsAndItemsRenderer`'s po
 - `ScreenRectangle`: `intersection`, `intersects`, `encompasses` and `overlaps` of each of 307 rectangles (the walk's HUD's own, the empty one, the int limits, and random ones of the GUI's sizes, tiny, large and negative) with another, a neighbour touching or overlapping it by a pixel, and itself; `containsPoint` around it; `getBorder` each way; and `transformMaxBounds` and `transformAxisAligned` under the GUI's poses (pixel and fractional translations, its scales, quarter turns, combined). A rectangle is `[x, y, width, height]`, a pose `Matrix3x2f`'s six floats' bits.
 - `GuiRenderState`: 400 programs of two frames over one state, the second after `reset()` (which keeps the last element's bounds, so a frame's first element can go up a layer). A frame adds fills, blits and tiled blits (`ColoredRectangleRenderState`, `BlitRenderState`, `TiledBlitRenderState`, with the GUI's pipelines and no texture) of random rectangles under random poses and scissors, between `nextStratum` and `up`, then sorts the layers with `GuiRenderer.ELEMENT_SORT_COMPARATOR` (read by reflection) and lists the elements in `forEachElement`'s order. A frame is `[ops, order, bounds, vertices]`: the ops as the port builds the same elements from them, the order as indexes of the elements, each element's bounds, and its vertices as a `BufferBuilder` of its pipeline's format writes them (hex). The port runs the ops from vanilla's file and has to give the same frames.
 - `GuiSpriteScaling`: every sprite the GUI atlas loads with `SpriteResourceLoader.create(Set.of(GuiMetadataSection.TYPE))`, and its `gui` section's scaling (`["stretch"]`, `["tile", w, h]`, `["nine_slice", w, h, [left, top, right, bottom], stretchInner]`, or null without one).
+- `GridLayout` (the layouts' math): 600 random trees of `GridLayout`s (cells placed by hand with spans, or by a `RowHelper`, whose shared default settings change after its children are added a quarter of the time), `LinearLayout`s and `FrameLayout`s (with minimum sizes) down to `SpacerElement`s of random sizes, each child with random paddings (some negative) and alignments (the quarters and random floats) over its layout's defaults, or the defaults themselves; arranged (`arrangeElements`), then placed in a random rectangle by `FrameLayout.alignInRectangle` like a screen places its layout. A tree is the spec both sides build it from (the suite's javadoc has the format), and the result is the root's bounds and every spacer's place, in the order they were made.
 - `SpriteLoader`'s `stitch` also lays out the GUI atlas (`minecraft:gui`, without mipmaps, like `AtlasManager`).
 
-How the GUI draws them, `GuiRenderer`'s draws over the main target, shows in screenshots: the walk's HUD (TESTING's screenshots below; PROGRESS.md has the diffs).
+How the GUI draws them, `GuiRenderer`'s draws over the main target, shows in screenshots: the walk's HUD (TESTING's screenshots below; PROGRESS.md has the diffs). Screens, which scenarios open with their input steps (below), show in theirs.
 
 ### The font
 
@@ -395,9 +396,16 @@ A scenario, `oracle/scenarios/<name>.json`, is the input both clients replay:
 }
 ```
 
-- `keys` are held for every tick of the step: `forward`, `back`, `left`, `right`, `jump`, `sneak`, `sprint`, `attack`, `use`.
+- `keys` are held for every tick of the step: `forward`, `back`, `left`, `right`, `jump`, `sneak`, `sprint`, `attack`, `use`. A key held while a screen is up goes to the screen, as a person's would, so it holds nothing down.
 - `look` sets `[y_rot, x_rot]` in degrees at the start of every tick of the step.
 - `screenshot` captures the current frame as `<name>.png` without advancing the game.
+- Input between two ticks, which the game handles as it comes, without a tick (Fabric's `TestInput.pressKey` would wait for one, which the trace doesn't have):
+  - `{"key": "escape"}` presses and releases a key (`holdKey` then `releaseKey`: `KeyboardHandler.keyPress` with its SDL scancode and SDL's keycode for it): `escape`, `enter`, `t`, `slash`, `tab`, `backspace`;
+  - `{"type": "/list"}` types characters (`typeChars`: `KeyboardHandler.charTyped` with each UTF-16 unit);
+  - `{"cursor": [x, y]}` moves the mouse to a place in the window's pixels (`setCursorPos`: `MouseHandler.onMove`). Opening a screen releases the mouse, which Java puts where the X server's pointer is (`resyncMousePosition`), so a scenario puts it somewhere after a screen opens before a screenshot shows the screen;
+  - `{"command": "tellraw @s …"}` sends a command, without its slash, like the setup's (`connection.sendCommand`).
+
+  An input step's `wait_for` waits for its answer right after it: the client not ticking, the network running, until each type has been queued more often than before the input; then the client handles what it has queued, before the next tick. A chat line's age, and so how faded it is at a tick, is then the same every run.
 - `hide_gui`, optional, is vanilla's F1 (`Hud.toggle`) for the whole run: no HUD, hand or crosshair, so the screenshots are the level alone. Both clients set it before joining (`walk-no-gui` is the walk with it).
 - `wait_for`, optional, lists clientbound packet types (`"minecraft:set_health"`) the server sends in answer to the step's last tick, like the damage of a landing that tick. After that tick and its trace line, the client doesn't tick until each type has been queued for its game thread more often than when the step began; then it handles everything queued, which it would have at its next frame anyway, and goes on. Below, "The server's answers".
 - `tick_rate`, optional in `world`, paces the run on a server: the server is slowed down to that many ticks a second (`tick rate`), and both clients tick in step with it, one tick between each two of the server's. Below, "Paced scenarios".

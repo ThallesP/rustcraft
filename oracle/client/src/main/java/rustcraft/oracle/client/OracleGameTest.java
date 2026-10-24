@@ -244,6 +244,35 @@ public final class OracleGameTest implements FabricClientGameTest {
                     OracleScreenshot.take(context, outDir.resolve("screenshots").resolve(step.screenshot() + ".png"));
                     continue;
                 }
+                // An input step's answer, waited for right after it, before the next tick (TESTING.md).
+                Map<String, Integer> answerSince = new HashMap<>();
+                for (String packet : step.waitFor()) {
+                    answerSince.put(packet, PacketArrivals.count(packet));
+                }
+                // Input between two ticks, handled by the game as it comes (KeyboardHandler.keyPress and charTyped,
+                // MouseHandler.onMove), without a tick: TestInput.pressKey would wait for one, which the trace doesn't
+                // have.
+                boolean isInput = true;
+                if (step.key() != null) {
+                    int key = Scenario.PRESSABLE_KEYS.get(step.key());
+                    input.holdKey(key);
+                    input.releaseKey(key);
+                } else if (step.type() != null) {
+                    input.typeChars(step.type());
+                } else if (step.cursor() != null) {
+                    input.setCursorPos(step.cursor()[0], step.cursor()[1]);
+                } else if (step.command() != null) {
+                    context.runOnClient(client -> client.player.connection.sendCommand(step.command()));
+                } else {
+                    isInput = false;
+                }
+                if (isInput) {
+                    if (!answerSince.isEmpty()) {
+                        waitForPackets(answerSince);
+                        context.runOnClient(client -> client.packetProcessor().processQueuedPackets());
+                    }
+                    continue;
+                }
 
                 Map<String, Integer> waitingSince = new HashMap<>();
                 for (String packet : step.waitFor()) {

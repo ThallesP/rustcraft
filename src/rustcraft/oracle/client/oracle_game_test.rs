@@ -13,14 +13,16 @@
 //! step's `wait_for` is waited on like Java waits: after the step's last tick and its line, the
 //! network runs without the game ticking until the packets have come, then the client handles
 //! what's queued, before the next tick. A paced scenario's ticks each wait for their slot first
-//! (`ServerTicks`). A screenshot step renders a frame at a partial tick of 1 and reads it back like
-//! `OracleScreenshot.take`, into
-//! `<out>/<scenario>/screenshots/<name>.png`, when the client has a renderer (the runner makes one
-//! for a scenario with screenshots). The port has no screens, so waiting for the level's loading
-//! screen to close is waiting for the level to be ready, which closes it in vanilla too; "chunks
-//! rendered" is every chunk the server sends being in the level with its light and, with a
-//! renderer, every visible section compiled (`levelRenderer.hasRenderedAllSections()`), and the
-//! settling ends with the camera at rest too.
+//! (`ServerTicks`). Between ticks, the steps that come there run in order as each tick ends: a
+//! screenshot renders a frame at a partial tick of 1 and reads it back like
+//! `OracleScreenshot.take`, into `<out>/<scenario>/screenshots/<name>.png`, when the client has a
+//! renderer (the runner makes one for a scenario with screenshots); a key is pressed and released
+//! through the keyboard handler, characters typed, the cursor moved and commands sent, as Fabric's
+//! test input does them, each waiting for its `wait_for` right after it. Keys held while a screen
+//! is up go to the screen, like Java's, so they hold nothing down. "Chunks rendered" is every chunk
+//! the server sends being in the level with its light and, with a renderer, every visible section
+//! compiled (`levelRenderer.hasRenderedAllSections()`), and the settling ends with the camera at
+//! rest too.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -29,6 +31,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::net::minecraft::client::input::character_event::CharacterEvent;
+use crate::net::minecraft::client::input::key_event::KeyEvent;
+use crate::net::minecraft::client::keyboard_handler::KeyAction;
 use crate::net::minecraft::client::minecraft::{Minecraft, TestDriver};
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::renderer::game_renderer::RenderOptions;
@@ -315,47 +320,123 @@ impl OracleGameTest {
         scenario.steps.iter().any(|step| step.screenshot.is_some())
     }
 
-    /// The screenshot steps that come after `ticks` of the scenario's ticks and before the next.
-    fn screenshots_after(&self, ticks: i32) -> Vec<String> {
+    /// The steps that come after `ticks` of the scenario's ticks and before the next: screenshots
+    /// and input.
+    fn steps_after(&self, ticks: i32) -> Vec<scenario::Step> {
         let mut elapsed = 0;
-        let mut names = Vec::new();
+        let mut steps = Vec::new();
         for step in &self.scenario.steps {
-            match &step.screenshot {
-                Some(name) if elapsed == ticks => names.push(name.clone()),
-                _ => elapsed += step.ticks,
+            if step.screenshot.is_some() || step.is_input() {
+                if elapsed == ticks {
+                    steps.push(step.clone());
+                }
+            } else {
+                elapsed += step.ticks;
             }
         }
-        names
+        steps
     }
 
-    /// `OracleScreenshot.take` for each screenshot due after `ticks` ticks: a frame at a partial
-    /// tick of 1, read back.
-    fn take_screenshots(&mut self, minecraft: &Minecraft, ticks: i32) {
-        for name in self.screenshots_after(ticks) {
-            if !minecraft.render_level(1.0) {
-                continue;
+    /// The steps due after `ticks` ticks, in order: screenshots (`OracleScreenshot.take`, a frame
+    /// at a partial tick of 1, read back), and input as Fabric's test input gives it, each waiting
+    /// for its answer right after it.
+    fn run_steps_between_ticks(&mut self, minecraft: &Minecraft, ticks: i32) {
+        for step in self.steps_after(ticks) {
+            let answer_since: HashMap<String, i32> = step
+                .wait_for
+                .iter()
+                .map(|packet| {
+                    (
+                        packet.clone(),
+                        minecraft.packet_processor().arrivals(packet),
+                    )
+                })
+                .collect();
+            if let Some(key) = &step.key {
+                let scancode = Scenario::PRESSABLE_KEYS
+                    .iter()
+                    .find(|(name, _)| name == key)
+                    .map(|(_, scancode)| *scancode)
+                    .expect("a key the scenario checked");
+                let event = KeyEvent::of_scancode(scancode);
+                minecraft.key_press(&event, KeyAction::PRESS);
+                minecraft.key_press(&event, KeyAction::RELEASE);
             }
-            let image = minecraft
-                .game_renderer
-                .borrow()
-                .as_ref()
-                .map(|game_renderer| game_renderer.take_screenshot());
-            let Some(image) = image else {
-                continue;
-            };
-            let path = self.out_dir.join("screenshots").join(format!("{name}.png"));
-            let written = std::fs::create_dir_all(path.parent().expect("a directory"))
-                .map_err(|error| error.to_string())
-                .and_then(|()| {
-                    image
-                        .write_to_file(&path)
-                        .map_err(|error| error.to_string())
-                });
-            if let Err(error) = written {
-                self.fail(minecraft, format!("{}: {error}", path.display()));
+            if let Some(text) = &step.r#type {
+                // String.chars(): UTF-16 units.
+                for unit in text.encode_utf16() {
+                    minecraft.char_typed(&CharacterEvent::new(i32::from(unit)));
+                }
+            }
+            if let Some([x, y]) = step.cursor {
+                minecraft.mouse_moved_to(x, y);
+            }
+            if let Some(command) = &step.command
+                && let Some(connection) = minecraft.get_connection()
+            {
+                connection.borrow().send_command(command);
+            }
+            if step.is_input()
+                && !answer_since.is_empty()
+                && !OracleGameTest::wait_for_answer(minecraft, &answer_since)
+            {
+                self.fail(
+                    minecraft,
+                    format!("timed out waiting for {:?}", step.wait_for),
+                );
                 return;
             }
+            if let Some(name) = &step.screenshot {
+                self.take_screenshot(minecraft, name);
+                if self.stage == Stage::Done {
+                    return;
+                }
+            }
         }
+    }
+
+    fn take_screenshot(&mut self, minecraft: &Minecraft, name: &str) {
+        if !minecraft.render_level(1.0) {
+            return;
+        }
+        let image = minecraft
+            .game_renderer
+            .borrow()
+            .as_ref()
+            .map(|game_renderer| game_renderer.take_screenshot());
+        let Some(image) = image else {
+            return;
+        };
+        let path = self.out_dir.join("screenshots").join(format!("{name}.png"));
+        let written = std::fs::create_dir_all(path.parent().expect("a directory"))
+            .map_err(|error| error.to_string())
+            .and_then(|()| {
+                image
+                    .write_to_file(&path)
+                    .map_err(|error| error.to_string())
+            });
+        if let Err(error) = written {
+            self.fail(minecraft, format!("{}: {error}", path.display()));
+        }
+    }
+
+    /// Waits, the game not ticking, until each packet has been queued more often than `since`
+    /// says, then handles what's queued. Whether they came in time.
+    fn wait_for_answer(minecraft: &Minecraft, since: &HashMap<String, i32>) -> bool {
+        let deadline = Instant::now() + OracleGameTest::WAIT_FOR_TIMEOUT;
+        let arrived = || {
+            since
+                .iter()
+                .all(|(packet, before)| minecraft.packet_processor().arrivals(packet) > *before)
+        };
+        while !arrived() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        minecraft.packet_processor().process_queued_packets();
+        true
     }
 
     fn places_blocks(command: &str) -> bool {
@@ -405,7 +486,12 @@ impl OracleGameTest {
                 .collect();
         }
         let (step, _) = self.step_of(tick);
-        OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &step.keys);
+        let screen_shown = minecraft.screen().is_some();
+        OracleGameTest::hold_only(
+            &mut minecraft.options.borrow_mut(),
+            &step.keys,
+            screen_shown,
+        );
         if let Some([y_rot, x_rot]) = step.look
             && let Some(player) = minecraft.player.borrow_mut().as_mut()
         {
@@ -414,9 +500,10 @@ impl OracleGameTest {
         }
     }
 
-    /// `holdOnly`: the keys named held, the others released.
-    pub fn hold_only(options: &mut Options, keys: &[String]) {
-        let held = |name: &str| keys.iter().any(|key| key == name);
+    /// `holdOnly`: the keys named held, the others released. A key pressed while a screen is up
+    /// goes to the screen, which holds nothing down.
+    pub fn hold_only(options: &mut Options, keys: &[String], screen_shown: bool) {
+        let held = |name: &str| !screen_shown && keys.iter().any(|key| key == name);
         options.key_up.set_down(held("forward"));
         options.key_down.set_down(held("back"));
         options.key_left.set_down(held("left"));
@@ -498,20 +585,7 @@ impl OracleGameTest {
             return true;
         }
 
-        let deadline = Instant::now() + OracleGameTest::WAIT_FOR_TIMEOUT;
-        let arrived = || {
-            self.waiting_since
-                .iter()
-                .all(|(packet, before)| minecraft.packet_processor().arrivals(packet) > *before)
-        };
-        while !arrived() {
-            if Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        minecraft.packet_processor().process_queued_packets();
-        true
+        OracleGameTest::wait_for_answer(minecraft, &self.waiting_since)
     }
 
     /// The player's trace line after the scenario's tick, with the level's other entities.
@@ -656,7 +730,7 @@ impl TestDriver for OracleGameTest {
                         server_ticks.start_scenario();
                     }
                     self.next(Stage::Replaying);
-                    self.take_screenshots(minecraft, 0);
+                    self.run_steps_between_ticks(minecraft, 0);
                     if self.stage == Stage::Done {
                         return;
                     }
@@ -669,7 +743,7 @@ impl TestDriver for OracleGameTest {
                     return;
                 }
                 Stage::Leaving => {
-                    OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &[]);
+                    OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &[], false);
                     if let Some(Err(error)) = self.trace.take().map(TraceWriter::close) {
                         self.fail(minecraft, format!("writing the trace: {error}"));
                         return;
@@ -760,7 +834,7 @@ impl TestDriver for OracleGameTest {
                     return;
                 }
                 self.replayed_ticks += 1;
-                self.take_screenshots(minecraft, self.replayed_ticks);
+                self.run_steps_between_ticks(minecraft, self.replayed_ticks);
                 if self.stage == Stage::Done {
                     return;
                 }

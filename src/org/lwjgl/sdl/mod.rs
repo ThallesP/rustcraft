@@ -5,5 +5,6 @@ pub mod sdl_error;
 pub mod sdl_events;
 pub mod sdl_hints;
 pub mod sdl_init;
+pub mod sdl_keyboard;
 pub mod sdl_mouse;
 pub mod sdl_video;

@@ -48,22 +48,50 @@ pub struct Options {
     pub hide_gui: bool,
 }
 
-/// Either a screenshot, or `ticks` ticks with `keys` held and an optional fixed `look`, and
-/// optionally clientbound packets to wait for after its last tick (`wait_for`, TESTING.md).
-#[derive(Clone, Debug)]
+/// Either a screenshot, a key pressed and released (`key`), characters typed (`type`), the
+/// cursor moved to a place in the window (`cursor`) or a command sent (`command`, without its
+/// slash) between two ticks, or `ticks` ticks with `keys` held and an optional fixed `look`, and
+/// optionally clientbound packets to wait for after its last tick, or after its input
+/// (`wait_for`, TESTING.md).
+#[derive(Clone, Debug, Default)]
 pub struct Step {
     pub ticks: i32,
     pub keys: Vec<String>,
     pub look: Option<[f32; 2]>,
     pub screenshot: Option<String>,
     /// Clientbound packet types (`minecraft:set_health`) that must each have come since the step
-    /// began before its last tick's trace line, which comes after the client has handled them.
+    /// began before its last tick's trace line, or, for input, before the next tick; the client
+    /// handles them then.
     pub wait_for: Vec<String>,
+    pub key: Option<String>,
+    pub r#type: Option<String>,
+    pub cursor: Option<[f64; 2]>,
+    pub command: Option<String>,
+}
+
+impl Step {
+    /// Whether it's input between two ticks (a key, characters, the cursor or a command).
+    pub fn is_input(&self) -> bool {
+        self.key.is_some()
+            || self.r#type.is_some()
+            || self.cursor.is_some()
+            || self.command.is_some()
+    }
 }
 
 impl Scenario {
     pub const KEYS: [&'static str; 9] = [
         "forward", "back", "left", "right", "jump", "sneak", "sprint", "attack", "use",
+    ];
+
+    /// The keys a `key` step presses, by their SDL scancodes (`InputConstants`' `KEY_` constants).
+    pub const PRESSABLE_KEYS: [(&'static str, i32); 6] = [
+        ("escape", 41),
+        ("enter", 40),
+        ("t", 23),
+        ("slash", 56),
+        ("tab", 43),
+        ("backspace", 42),
     ];
 
     pub fn load(path: &Path) -> Result<Scenario, String> {
@@ -162,11 +190,66 @@ impl Scenario {
     fn parse_step(step: &Value) -> Result<Step, String> {
         if let Some(screenshot) = step.get("screenshot") {
             return Ok(Step {
-                ticks: 0,
-                keys: Vec::new(),
-                look: None,
                 screenshot: Some(screenshot.as_str().unwrap_or_default().to_string()),
-                wait_for: Vec::new(),
+                ..Step::default()
+            });
+        }
+        let mut wait_for = Vec::new();
+        for packet in step
+            .get("wait_for")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            wait_for.push(
+                packet
+                    .as_str()
+                    .ok_or("a wait_for packet isn't a string")?
+                    .to_string(),
+            );
+        }
+
+        if let Some(key) = step.get("key") {
+            let key = key.as_str().unwrap_or_default();
+            if !Scenario::PRESSABLE_KEYS
+                .iter()
+                .any(|(name, _)| *name == key)
+            {
+                return Err(format!("unknown key '{key}'"));
+            }
+            return Ok(Step {
+                key: Some(key.to_string()),
+                wait_for: wait_for.clone(),
+                ..Step::default()
+            });
+        }
+        if let Some(text) = step.get("type") {
+            return Ok(Step {
+                r#type: Some(text.as_str().ok_or("type isn't a string")?.to_string()),
+                wait_for: wait_for.clone(),
+                ..Step::default()
+            });
+        }
+        if let Some(cursor) = step.get("cursor").and_then(Value::as_array) {
+            return Ok(Step {
+                cursor: Some([
+                    cursor[0].as_f64().unwrap_or_default(),
+                    cursor[1].as_f64().unwrap_or_default(),
+                ]),
+                wait_for: wait_for.clone(),
+                ..Step::default()
+            });
+        }
+        if let Some(command) = step.get("command") {
+            return Ok(Step {
+                command: Some(
+                    command
+                        .as_str()
+                        .ok_or("command isn't a string")?
+                        .to_string(),
+                ),
+                wait_for: wait_for.clone(),
+                ..Step::default()
             });
         }
 
@@ -196,21 +279,6 @@ impl Scenario {
             ]
         });
 
-        let mut wait_for = Vec::new();
-        for packet in step
-            .get("wait_for")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            wait_for.push(
-                packet
-                    .as_str()
-                    .ok_or("a wait_for packet isn't a string")?
-                    .to_string(),
-            );
-        }
-
         let ticks = step
             .get("ticks")
             .and_then(Value::as_i64)
@@ -222,8 +290,8 @@ impl Scenario {
             ticks,
             keys,
             look,
-            screenshot: None,
             wait_for,
+            ..Step::default()
         })
     }
 }

@@ -192,6 +192,16 @@ impl Font {
         self.splitter.plain_head_by_width(str, width, &Style::EMPTY)
     }
 
+    /// `split(FormattedText, int)`: the text's lines at the width, each in its visual order.
+    pub fn split(&self, text: &impl FormattedText, width: i32) -> Vec<FormattedCharSequence> {
+        let language = Language::get_instance();
+        self.splitter
+            .split_lines_text(text, width, &Style::EMPTY)
+            .iter()
+            .map(|line| language.get_visual_order(line))
+            .collect()
+    }
+
     pub fn is_bidirectional(&self) -> bool {
         Language::get_instance().is_default_right_to_left()
     }

@@ -289,19 +289,7 @@ impl GameRenderer {
     /// (`options.mipmapLevels()` of 4, filtering that isn't anisotropic) and block models.
     pub fn new(device: &'static dyn GpuDevice, width: i32, height: i32) -> GameRenderer {
         let mut pipelines = Pipelines::new(device);
-        let vanilla = VanillaPackResources::create_client_pack(
-            &VanillaPackResources::vanilla_jar_root(),
-            std::path::Path::new("no-asset-index"),
-        );
-        let layers = vanilla
-            .resource_layers()
-            .iter()
-            .map(|layer| layer.clone() as Rc<dyn PackResources>)
-            .collect();
-        let manager = Rc::new(MultiPackResourceManager::new(
-            PackType::CLIENT_RESOURCES,
-            layers,
-        ));
+        let manager = Rc::new(GameRenderer::client_resources());
         // The resource reload's colormaps, which the biomes' tints read.
         GrassColorReloadListener::apply(GrassColorReloadListener::prepare(&*manager));
         FoliageColorReloadListener::apply(FoliageColorReloadListener::prepare(&*manager));
@@ -447,6 +435,20 @@ impl GameRenderer {
         }
     }
 
+    /// The client's resources: the vanilla pack's layers, without the launcher's asset index.
+    pub fn client_resources() -> MultiPackResourceManager {
+        let vanilla = VanillaPackResources::create_client_pack(
+            &VanillaPackResources::vanilla_jar_root(),
+            std::path::Path::new("no-asset-index"),
+        );
+        let layers = vanilla
+            .resource_layers()
+            .iter()
+            .map(|layer| layer.clone() as Rc<dyn PackResources>)
+            .collect();
+        MultiPackResourceManager::new(PackType::CLIENT_RESOURCES, layers)
+    }
+
     pub fn font(&self) -> &Rc<Font> {
         &self.font
     }
@@ -505,10 +507,13 @@ impl GameRenderer {
             gui_height,
             text_background_color,
             &self.gui_atlas,
-            &self.texture_manager,
+            &mut self.texture_manager,
+            self.device,
+            &self.sampler_cache,
             &mut self.gui_render_state,
             mouse_x,
             mouse_y,
+            Rc::clone(&self.font),
         );
         extract(&mut graphics);
     }

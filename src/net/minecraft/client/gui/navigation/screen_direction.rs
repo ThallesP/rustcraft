@@ -1,6 +1,6 @@
 //! net/minecraft/client/gui/navigation/ScreenDirection.java
 //!
-//! `coordinateValueComparator()`, a fastutil `IntComparator`, comes with focus navigation.
+//! `coordinateValueComparator()`, a fastutil `IntComparator`, is `compare_coordinates`.
 
 use crate::net::minecraft::client::gui::navigation::screen_axis::ScreenAxis;
 
@@ -49,5 +49,16 @@ impl ScreenDirection {
 
     pub fn is_before(self, a: i32, b: i32) -> bool {
         if self.is_positive() { a < b } else { b < a }
+    }
+
+    /// `coordinateValueComparator()`: coordinates in the direction's order.
+    pub fn compare_coordinates(self, k1: i32, k2: i32) -> std::cmp::Ordering {
+        if k1 == k2 {
+            std::cmp::Ordering::Equal
+        } else if self.is_before(k1, k2) {
+            std::cmp::Ordering::Less
+        } else {
+            std::cmp::Ordering::Greater
+        }
     }
 }

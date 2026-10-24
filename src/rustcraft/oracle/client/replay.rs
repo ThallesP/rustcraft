@@ -69,6 +69,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_entity_motio
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::game_protocols::{self, GameProtocols};
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
+use crate::net::minecraft::network::protocol::game::serverbound_chat_command_packet::ServerboundChatCommandPacket;
 use crate::net::minecraft::network::protocol::game::serverbound_client_tick_end_packet::ServerboundClientTickEndPacket;
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendlyByteBuf;
@@ -687,10 +688,17 @@ pub fn replay(
     // The next of the server's answers not yet taken.
     let mut answered = 0;
     for step in &scenario.steps {
-        if step.screenshot.is_some() {
+        // The replay opens no screens: a command is sent as it is, and other input does nothing
+        // to the player, which holds for the scenarios replayed (none holds keys over a screen).
+        if let Some(command) = &step.command {
+            packets.push(encode(Box::new(ServerboundChatCommandPacket::new(
+                command.clone(),
+            ))));
+        }
+        if step.screenshot.is_some() || step.is_input() {
             continue;
         }
-        OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &step.keys);
+        OracleGameTest::hold_only(&mut minecraft.options.borrow_mut(), &step.keys, false);
         for tick_of_step in 0..step.ticks {
             if let Some([y_rot, x_rot]) = step.look {
                 player.set_y_rot(y_rot);

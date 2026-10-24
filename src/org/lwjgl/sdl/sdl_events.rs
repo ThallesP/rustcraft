@@ -1,8 +1,8 @@
 //! org/lwjgl/sdl/SDLEvents.java (LWJGL 3.4.3)
 //!
-//! Only polling, the event types the window loop reads, and the keyboard's, the mouse's, the
-//! mouse buttons' and the window's fields (`SDL_KeyboardEvent`, `SDL_MouseMotionEvent`,
-//! `SDL_MouseButtonEvent`, `SDL_WindowEvent`).
+//! Only polling, the event types the window loop reads, and the keyboard's, the text input's, the
+//! mouse's, the mouse buttons' and the window's fields (`SDL_KeyboardEvent`, `SDL_TextInputEvent`,
+//! `SDL_MouseMotionEvent`, `SDL_MouseButtonEvent`, `SDL_WindowEvent`).
 
 use crate::org::lwjgl::system::shared_library_loader;
 
@@ -29,6 +29,36 @@ impl SdlEvent {
     /// `SDL_KeyboardEvent.scancode`.
     pub fn key_scancode(&self) -> i32 {
         i32::from_ne_bytes(self.bytes(24))
+    }
+
+    /// `SDL_KeyboardEvent.key`: the keycode in the keyboard's layout.
+    pub fn key_keycode(&self) -> i32 {
+        i32::from_ne_bytes(self.bytes(28))
+    }
+
+    /// `SDL_KeyboardEvent.mod`: the modifiers held.
+    pub fn key_modifiers(&self) -> i32 {
+        i32::from(u16::from_ne_bytes(self.bytes(32)))
+    }
+
+    /// `SDL_TextInputEvent.text`: the UTF-8 text typed, which SDL keeps until the next poll.
+    pub fn text_input(&self) -> String {
+        let pointer = usize::from_ne_bytes(self.bytes(24)) as *const std::ffi::c_char;
+        if pointer.is_null() {
+            return String::new();
+        }
+        // SAFETY: SDL's null-terminated text, alive until the next SDL_PollEvent.
+        unsafe { std::ffi::CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// `SDL_MouseMotionEvent.x` and `y`: the mouse in the window.
+    pub fn motion_position(&self) -> (f32, f32) {
+        (
+            f32::from_ne_bytes(self.bytes(28)),
+            f32::from_ne_bytes(self.bytes(32)),
+        )
     }
 
     /// `SDL_KeyboardEvent.repeat`.
@@ -78,8 +108,10 @@ impl SDLEvents {
     pub const SDL_EVENT_WINDOW_CLOSE_REQUESTED: u32 = 0x210;
     pub const SDL_EVENT_KEY_DOWN: u32 = 0x300;
     pub const SDL_EVENT_KEY_UP: u32 = 0x301;
+    pub const SDL_EVENT_TEXT_INPUT: u32 = 0x303;
     pub const SDL_EVENT_MOUSE_MOTION: u32 = 0x400;
     pub const SDL_EVENT_MOUSE_BUTTON_DOWN: u32 = 0x401;
+    pub const SDL_EVENT_MOUSE_BUTTON_UP: u32 = 0x402;
 
     pub fn SDL_PollEvent(event: &mut SdlEvent) -> bool {
         // SAFETY: the event is SDL_Event's size, which SDL writes into.

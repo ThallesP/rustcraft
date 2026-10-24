@@ -4,6 +4,7 @@ pub mod click_event;
 pub mod component;
 pub mod component_contents;
 pub mod component_serialization;
+pub mod component_utils;
 pub mod contents;
 pub mod font_description;
 pub mod formatted_text;

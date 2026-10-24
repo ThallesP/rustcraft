@@ -1,20 +1,23 @@
 //! net/minecraft/client/gui/Gui.java
 //!
-//! The HUD and, later, the screen over it, the overlay and the toasts. The port's screens are
-//! still `Minecraft`'s stand-ins (the connect screen, the level's loading, the disconnected
-//! screen), which draw nothing; the ones that draw come with their ports (the pause menu, chat,
-//! the inventory). `GuiRenderState` is the game renderer's (`GameRenderState.guiRenderState`), which
-//! the extract borrows through its `GuiGraphicsExtractor`.
+//! The HUD, the screen over it, and later the overlay and the toasts. The screen is the game's
+//! (`Minecraft::set_screen`, Java's `setScreen`), which ticks and draws it after the HUD, outside
+//! this cell, since a screen reaches the game. `GuiRenderState` is the game renderer's
+//! (`GameRenderState.guiRenderState`), which the extract borrows through its
+//! `GuiGraphicsExtractor`.
 //!
 //! Not ported yet: the chat listener, the toasts, the splash manager, the screens' narration and
 //! the saving indicator's text (a singleplayer server's).
 
 use crate::net::minecraft::client::gui::gui_graphics_extractor::GuiGraphicsExtractor;
 use crate::net::minecraft::client::gui::hud::{Hud, HudContext};
+use crate::net::minecraft::client::gui::screens::screen::ScreenRef;
 
 #[derive(Default)]
 pub struct Gui {
     pub hud: Hud,
+    /// `screen`.
+    pub screen: Option<ScreenRef>,
 }
 
 impl Gui {

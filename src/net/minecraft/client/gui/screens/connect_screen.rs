@@ -1,15 +1,19 @@
 //! net/minecraft/client/gui/screens/ConnectScreen.java
 //!
-//! Not ported yet: the screen itself (its status text, the cancel button), aborting, the
+//! Not ported yet: what the screen draws (its status text, the cancel button), aborting, the
 //! downloaded pack source's server control, transfers, and the connector thread: Java resolves
 //! and connects on a thread of its own while the screen shows, and the port does it on the
-//! game's, before the first tick, since there's nothing to draw meanwhile. What's left is how a
-//! connection to a server starts, and the screen's tick, which ticks the connection until the
-//! level's loading screen replaces it.
+//! game's, before the screen shows. What's here is how a connection to a server starts, and the
+//! screen's tick, which ticks the connection until the level's loading screen replaces it.
 
+use std::any::Any;
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::net::minecraft::client::gui::gui_graphics_extractor::GuiGraphicsExtractor;
+use crate::net::minecraft::client::gui::screens::disconnected_screen::DisconnectedScreen;
+use crate::net::minecraft::client::gui::screens::screen::{Screen, ScreenClass};
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::client_handshake_packet_listener_impl::ClientHandshakePacketListenerImpl;
 use crate::net::minecraft::client::multiplayer::level_load_tracker::LevelLoadTracker;
@@ -25,8 +29,8 @@ use crate::net::minecraft::network::protocol::login::server_login_packet_listene
 use crate::net::minecraft::network::protocol::login::serverbound_hello_packet::ServerboundHelloPacket;
 
 /// The screen the game shows while it connects to a server.
-#[derive(Clone)]
 pub struct ConnectScreen {
+    screen: Screen,
     connection: Option<Arc<Connection>>,
 }
 
@@ -48,9 +52,21 @@ impl ConnectScreen {
         host_and_port: &ServerAddress,
         data: ServerData,
     ) {
-        let mut screen = ConnectScreen { connection: None };
+        let mut screen = ConnectScreen {
+            screen: Screen::new(
+                minecraft,
+                Component::translatable("connect.connecting").into(),
+            ),
+            connection: None,
+        };
         screen.connect(minecraft, host_and_port, data);
-        minecraft.set_connect_screen(screen);
+        // A connection that failed at once has shown the disconnected screen already.
+        let failed = minecraft
+            .screen()
+            .is_some_and(|screen| screen.borrow().as_any().is::<DisconnectedScreen>());
+        if !failed {
+            minecraft.set_screen(Some(Rc::new(RefCell::new(screen))));
+        }
     }
 
     fn connect(
@@ -108,8 +124,23 @@ impl ConnectScreen {
             user.get_profile_id(),
         ));
     }
+}
 
-    pub fn tick(&self) {
+impl ScreenClass for ConnectScreen {
+    fn screen(&self) -> &Screen {
+        &self.screen
+    }
+
+    fn screen_mut(&mut self) -> &mut Screen {
+        &mut self.screen
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    /// `tick`: the connection's, until it ends.
+    fn tick(&mut self) {
         if let Some(connection) = &self.connection {
             if connection.is_connected() {
                 connection.tick();
@@ -117,5 +148,19 @@ impl ConnectScreen {
                 connection.handle_disconnection();
             }
         }
+    }
+
+    fn should_close_on_esc(&self) -> bool {
+        false
+    }
+
+    /// What it draws isn't ported.
+    fn extract_background(
+        &mut self,
+        _graphics: &mut GuiGraphicsExtractor,
+        _x: i32,
+        _y: i32,
+        _a: f32,
+    ) {
     }
 }

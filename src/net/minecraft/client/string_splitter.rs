@@ -2,14 +2,16 @@
 //!
 //! Widths of text and where to cut it, by a width for each codepoint in its style (the font's
 //! advances). Positions are UTF-16 indexes, as Java's strings count, and the strings a method
-//! hands back are cut at them. Splitting a `FormattedText` into lines (`splitLines(FormattedText,
-//! …)`, `headByWidth`, with `ComponentCollector` and the line components) comes with the chat,
-//! which wraps its messages with it.
+//! hands back are cut at them. A `FormattedText` split into lines (`splitLines(FormattedText, …)`)
+//! gives each line as a `Composite` of styled strings, Java's `ComponentCollector` result of
+//! `LineComponent`s and `FormattedText.of`s, and so is `headByWidth`'s. Not ported yet:
+//! `componentStyleAtWidth` and `formattedIndexByWidth`.
 
 // Java's negated comparisons are kept as they are: they differ from the plain ones for NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
-use crate::net::minecraft::network::chat::formatted_text::FormattedText;
+use crate::net::minecraft::client::component_collector::ComponentCollector;
+use crate::net::minecraft::network::chat::formatted_text::{Composite, FormattedText, OfStyled};
 use crate::net::minecraft::network::chat::style::Style;
 use crate::net::minecraft::util::formatted_char_sequence::FormattedCharSequence;
 use crate::net::minecraft::util::string_decomposer::StringDecomposer;
@@ -237,6 +239,211 @@ impl StringSplitter {
             },
         );
         result
+    }
+}
+
+impl StringSplitter {
+    /// `splitLines(FormattedText, int, Style)`: the lines.
+    pub fn split_lines_text(
+        &self,
+        input: &impl FormattedText,
+        max_width: i32,
+        initial_style: &Style,
+    ) -> Vec<Composite> {
+        let mut result = Vec::new();
+        self.split_lines_text_with(input, max_width, initial_style, &mut |text, _| {
+            result.push(text);
+        });
+        result
+    }
+
+    /// `splitLines(FormattedText, int, Style, BiConsumer)`: each line, and whether it's the rest of
+    /// one wrapped (not after a newline). The pieces are the text's styled pieces; a line breaks at
+    /// the last space that fits (which it drops, like a newline), or where nothing more fits.
+    pub fn split_lines_text_with(
+        &self,
+        input: &impl FormattedText,
+        max_width: i32,
+        initial_style: &Style,
+        output: &mut dyn FnMut(Composite, bool),
+    ) {
+        let mut part_list = Vec::new();
+        input.visit_styled::<()>(
+            &mut |style, contents| {
+                if !contents.is_empty() {
+                    part_list.push(OfStyled(contents.to_string(), style.clone()));
+                }
+                None
+            },
+            initial_style,
+        );
+        let mut parts = FlatComponents::new(part_list);
+        let mut should_restart = true;
+        let mut force_new_line = false;
+        let mut is_wrapped = false;
+        while should_restart {
+            should_restart = false;
+            let mut finder = LineBreakFinder::new(max_width as f32);
+            for part in &parts.parts {
+                let units = units(&part.0);
+                let end_of_text = StringDecomposer::iterate_formatted_from(
+                    &units,
+                    0,
+                    &part.1,
+                    initial_style,
+                    &mut |position, style, codepoint| {
+                        finder.accept(self, position, style, codepoint)
+                    },
+                );
+                if !end_of_text {
+                    let line_break = finder.get_split_position();
+                    let line_break_style = finder.line_break_style.clone();
+                    let first_tail_char = parts.char_at(line_break);
+                    let is_new_line = first_tail_char == u16::from(b'\n');
+                    let skip_next_char = is_new_line || first_tail_char == u16::from(b' ');
+                    force_new_line = is_new_line;
+                    let result = parts.split_at(
+                        line_break,
+                        if skip_next_char { 1 } else { 0 },
+                        &line_break_style,
+                    );
+                    output(result, is_wrapped);
+                    is_wrapped = !is_new_line;
+                    should_restart = true;
+                    break;
+                }
+                finder.offset += units.len() as i32;
+            }
+        }
+
+        match parts.get_remainder() {
+            Some(last_line) => output(last_line, is_wrapped),
+            None if force_new_line => output(Composite::EMPTY, false),
+            None => {}
+        }
+    }
+}
+
+impl StringSplitter {
+    /// `headByWidth(FormattedText, int, Style)`: the pieces that fit, the last one cut where the
+    /// width runs out; the text's pieces whole when it all fits (Java's `orElse(contents)`).
+    pub fn head_by_width_text(
+        &self,
+        contents: &impl FormattedText,
+        max_width: i32,
+        initial_style: &Style,
+    ) -> Composite {
+        let mut sink = WidthLimitedCharSink::new(max_width as f32);
+        let mut collector = ComponentCollector::new();
+        let clipped = contents.visit_styled(
+            &mut |style, piece| {
+                sink.position = 0;
+                let units = units(piece);
+                let fits =
+                    StringDecomposer::iterate_formatted(&units, style, &mut |position, s, c| {
+                        sink.accept(self, position, s, c)
+                    });
+                if !fits {
+                    let partial = &units[..sink.position as usize];
+                    if !partial.is_empty() {
+                        collector
+                            .append(OfStyled(String::from_utf16_lossy(partial), style.clone()));
+                    }
+                    Some(collector.get_result_or_empty())
+                } else {
+                    if !piece.is_empty() {
+                        collector.append(OfStyled(piece.to_string(), style.clone()));
+                    }
+                    None
+                }
+            },
+            initial_style,
+        );
+        clipped.unwrap_or_else(|| {
+            let mut whole = Vec::new();
+            contents.visit_styled::<()>(
+                &mut |style, piece| {
+                    whole.push(OfStyled(piece.to_string(), style.clone()));
+                    None
+                },
+                initial_style,
+            );
+            Composite(whole)
+        })
+    }
+}
+
+/// `StringSplitter.FlatComponents`: the pieces left to split, and their text joined (UTF-16).
+struct FlatComponents {
+    parts: Vec<OfStyled>,
+    flat_parts: Vec<u16>,
+}
+
+impl FlatComponents {
+    fn new(parts: Vec<OfStyled>) -> FlatComponents {
+        let flat_parts = parts
+            .iter()
+            .flat_map(|part| part.0.encode_utf16())
+            .collect();
+        FlatComponents { parts, flat_parts }
+    }
+
+    fn char_at(&self, position: i32) -> u16 {
+        self.flat_parts[position as usize]
+    }
+
+    /// `splitAt`: the pieces before `skip_position` as a line, `skip_size` units dropped, and the
+    /// piece the split falls in left in `split_style`.
+    fn split_at(&mut self, skip_position: i32, skip_size: i32, split_style: &Style) -> Composite {
+        let mut result = ComponentCollector::new();
+        let mut position = skip_position;
+        let mut in_skip = false;
+        let index = 0;
+        while index < self.parts.len() {
+            let contents = units(&self.parts[index].0);
+            let contents_size = contents.len() as i32;
+            if !in_skip {
+                if position > contents_size {
+                    result.append(self.parts.remove(index));
+                    position -= contents_size;
+                    continue;
+                }
+                let before_split = &contents[..position as usize];
+                if !before_split.is_empty() {
+                    result.append(OfStyled(
+                        String::from_utf16_lossy(before_split),
+                        self.parts[index].1.clone(),
+                    ));
+                }
+                position += skip_size;
+                in_skip = true;
+            }
+            if in_skip {
+                if position <= contents_size {
+                    let after_split = &contents[position as usize..];
+                    if after_split.is_empty() {
+                        self.parts.remove(index);
+                    } else {
+                        self.parts[index] =
+                            OfStyled(String::from_utf16_lossy(after_split), split_style.clone());
+                    }
+                    break;
+                }
+                self.parts.remove(index);
+                position -= contents_size;
+            }
+        }
+        self.flat_parts = self.flat_parts[(skip_position + skip_size) as usize..].to_vec();
+        result.get_result_or_empty()
+    }
+
+    /// `getRemainder`: the pieces left as the last line, none when there are none.
+    fn get_remainder(&mut self) -> Option<Composite> {
+        let mut result = ComponentCollector::new();
+        for part in self.parts.drain(..) {
+            result.append(part);
+        }
+        result.get_result()
     }
 }
 

@@ -7,7 +7,8 @@
 //! The player's model parts are their masks combined (`PlayerModelPart`, all seven by default),
 //! and the text filter is the user's profanity filter flag, off for an offline user. The
 //! movement keys (as `KeyMapping`s held down or not), `autoJump` and `sprintWindow` are here for
-//! the player, and `framerateLimit` and `enableVsync` for the game loop.
+//! the player, and `framerateLimit` and `enableVsync` for the game loop. What the screens read is
+//! here with its default: `menuBackgroundBlurriness`.
 
 use crate::net::minecraft::client::key_mapping::KeyMapping;
 use crate::net::minecraft::server::level::client_information::ClientInformation;
@@ -61,6 +62,8 @@ pub struct Options {
     pub framerate_limit: i32,
     /// `enableVsync()`: frames wait for the display's refresh (the surface's present mode).
     pub enable_vsync: bool,
+    /// `menuBackgroundBlurriness()`: the menu blur's radius, 0 to 10.
+    pub menu_background_blurriness: i32,
 }
 
 impl Default for Options {
@@ -112,6 +115,27 @@ impl Options {
             background_for_chat_only: true,
             framerate_limit: 120,
             enable_vsync: true,
+            menu_background_blurriness: 5,
+        }
+    }
+
+    /// `getMenuBackgroundBlurriness`.
+    pub fn get_menu_background_blurriness(&self) -> i32 {
+        self.menu_background_blurriness
+    }
+
+    /// `KeyMapping.releaseAll()`.
+    pub fn release_all_keys(&mut self) {
+        for mapping in [
+            &mut self.key_up,
+            &mut self.key_left,
+            &mut self.key_down,
+            &mut self.key_right,
+            &mut self.key_jump,
+            &mut self.key_shift,
+            &mut self.key_sprint,
+        ] {
+            mapping.release();
         }
     }
 

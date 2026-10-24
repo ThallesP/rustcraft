@@ -251,6 +251,11 @@ impl Style {
         Style::check_empty_after_change(new_style, had_font, has_font)
     }
 
+    /// `withColor(ChatFormatting)`.
+    pub fn with_color_formatting(&self, color: ChatFormatting) -> Style {
+        self.with_color(TextColor::from_legacy_format(color))
+    }
+
     pub fn without_shadow(&self) -> Style {
         self.with_shadow_color(Style::NO_SHADOW)
     }

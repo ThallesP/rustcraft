@@ -6,20 +6,33 @@
 //! the texture manager from its `Minecraft`, a back-reference; here they're its fields, borrowed
 //! from what owns them for the extract.
 //!
-//! Not ported yet: word-wrapped text (`textWithWordWrap`, with `StringSplitter`'s `FormattedText`
-//! lines), items and their decorations, maps, the picture in picture states (entities, skins,
-//! books, banners, the profiler chart), tooltips, the active text collectors and the hovered
-//! text's effects, the cursor and the preedit overlay.
+//! Tooltips are deferred to the end of the screen's extract (`extractDeferredElements`), a stratum
+//! above it, and the text collectors (`textRenderer`) draw a widget's text.
+//!
+//! Not ported yet: items and their decorations, maps, the picture in picture states (entities,
+//! skins, books, banners, the profiler chart), tooltip images, the hovered text's effects (the
+//! style under the mouse, its hover tooltip and the clickable text's cursor), the cursor and the
+//! preedit overlay.
 
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::com::mojang::blaze3d::systems::sampler_cache::SamplerCache;
+use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::render_pipeline::RenderPipeline;
 use crate::com::mojang::renderpearl::api::textures::gpu_sampler::GpuSampler;
 use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
+use crate::net::minecraft::client::gui::active_text_collector::{ActiveTextCollector, Parameters};
 use crate::net::minecraft::client::gui::font::Font;
 use crate::net::minecraft::client::gui::navigation::screen_rectangle::ScreenRectangle;
 use crate::net::minecraft::client::gui::render::texture_setup::TextureSetup;
+use crate::net::minecraft::client::gui::screens::inventory::tooltip::client_tooltip_component::{
+    self, ClientTooltipComponent,
+};
+use crate::net::minecraft::client::gui::screens::inventory::tooltip::client_tooltip_positioner::ClientTooltipPositioner;
+use crate::net::minecraft::client::gui::screens::inventory::tooltip::default_tooltip_positioner::DefaultTooltipPositioner;
+use crate::net::minecraft::client::gui::screens::inventory::tooltip::tooltip_render_util::TooltipRenderUtil;
+use crate::net::minecraft::client::gui::text_alignment::TextAlignment;
 use crate::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
 use crate::net::minecraft::client::renderer::state::gui::blit_render_state::BlitRenderState;
 use crate::net::minecraft::client::renderer::state::gui::colored_rectangle_render_state::ColoredRectangleRenderState;
@@ -34,6 +47,7 @@ use crate::net::minecraft::client::resources::metadata::gui::gui_sprite_scaling:
     GuiSpriteScaling, NineSlice,
 };
 use crate::net::minecraft::locale::language::Language;
+use crate::net::minecraft::network::chat::component::Component;
 use crate::net::minecraft::network::chat::formatted_text::{FormattedText, Of};
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::util::argb::ARGB;
@@ -48,10 +62,56 @@ pub struct GuiGraphicsExtractor<'a> {
     pose: Matrix3x2fStack,
     scissor_stack: ScissorStack,
     gui_sprites: &'a TextureAtlas,
-    texture_manager: &'a TextureManager,
+    /// `minecraft.getTextureManager()`, which loads a texture a blit names the first time, on the
+    /// device with the sampler cache's samplers.
+    texture_manager: &'a mut TextureManager,
+    device: &'a dyn GpuDevice,
+    sampler_cache: &'a SamplerCache,
     gui_render_state: &'a mut GuiRenderState,
     mouse_x: i32,
     mouse_y: i32,
+    /// `minecraft.font`.
+    font: Rc<Font>,
+    deferred_tooltip: Option<DeferredTooltip>,
+}
+
+/// `deferredTooltip`: the tooltip `setTooltipForNextFrame` asked for, drawn by
+/// `extractDeferredElements` (Java's lambda over `tooltip`'s arguments).
+struct DeferredTooltip {
+    font: Rc<Font>,
+    lines: Vec<Box<dyn ClientTooltipComponent>>,
+    xo: i32,
+    yo: i32,
+    positioner: Box<dyn ClientTooltipPositioner>,
+    style: Option<Identifier>,
+    extra_space_after_first_line: bool,
+}
+
+/// `GuiGraphicsExtractor.HoveredTextEffects`.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoveredTextEffects {
+    NONE,
+    TOOLTIP_ONLY,
+    TOOLTIP_AND_CURSOR,
+}
+
+impl HoveredTextEffects {
+    pub fn allow_tooltip(self) -> bool {
+        self != HoveredTextEffects::NONE
+    }
+
+    pub fn allow_cursor_changes(self) -> bool {
+        self == HoveredTextEffects::TOOLTIP_AND_CURSOR
+    }
+
+    pub fn not_clickable(can_tooltip: bool) -> HoveredTextEffects {
+        if can_tooltip {
+            HoveredTextEffects::TOOLTIP_ONLY
+        } else {
+            HoveredTextEffects::NONE
+        }
+    }
 }
 
 impl<'a> GuiGraphicsExtractor<'a> {
@@ -63,10 +123,13 @@ impl<'a> GuiGraphicsExtractor<'a> {
         gui_height: i32,
         text_background_color: i32,
         gui_sprites: &'a TextureAtlas,
-        texture_manager: &'a TextureManager,
+        texture_manager: &'a mut TextureManager,
+        device: &'a dyn GpuDevice,
+        sampler_cache: &'a SamplerCache,
         gui_render_state: &'a mut GuiRenderState,
         mouse_x: i32,
         mouse_y: i32,
+        font: Rc<Font>,
     ) -> GuiGraphicsExtractor<'a> {
         GuiGraphicsExtractor {
             gui_width,
@@ -76,10 +139,27 @@ impl<'a> GuiGraphicsExtractor<'a> {
             scissor_stack: ScissorStack::new(ScreenRectangle::new(0, 0, gui_width, gui_height)),
             gui_sprites,
             texture_manager,
+            device,
+            sampler_cache,
             gui_render_state,
             mouse_x,
             mouse_y,
+            font,
+            deferred_tooltip: None,
         }
+    }
+
+    /// `minecraft.font`.
+    pub fn font(&self) -> &Rc<Font> {
+        &self.font
+    }
+
+    /// `getTexture`: the texture at `location`, loaded the first time.
+    fn get_texture(&mut self, location: &Identifier) -> (GpuTextureView, Rc<dyn GpuSampler>) {
+        let (view, sampler) =
+            self.texture_manager
+                .get_or_load_texture(self.device, self.sampler_cache, location);
+        (view.clone(), Rc::clone(sampler))
     }
 
     pub fn gui_width(&self) -> i32 {
@@ -109,6 +189,9 @@ impl<'a> GuiGraphicsExtractor<'a> {
     pub fn blur_before_this_stratum(&mut self) {
         self.gui_render_state.blur_before_this_stratum();
     }
+
+    /// `requestCursor`: the window's cursor shapes aren't ported, so it asks nothing.
+    pub fn request_cursor(&mut self) {}
 
     pub fn enable_scissor(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
         let rectangle =
@@ -319,6 +402,26 @@ impl<'a> GuiGraphicsExtractor<'a> {
         let to_render = Language::get_instance().get_visual_order(text);
         let width = font.width_sequence(&to_render);
         self.text_sequence(font, &to_render, x - width / 2, y, color, true);
+    }
+
+    /// `textWithWordWrap`: the text's lines at the width, one under another; where the next line
+    /// would go.
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_with_word_wrap(
+        &mut self,
+        font: &Rc<Font>,
+        string: &impl FormattedText,
+        x: i32,
+        mut y: i32,
+        width: i32,
+        col: i32,
+        drop_shadow: bool,
+    ) -> i32 {
+        for line in font.split(string, width) {
+            self.text_sequence(font, &line, x, y, col, drop_shadow);
+            y += 9;
+        }
+        y
     }
 
     /// `textWithBackdrop`: the text over the options' background, the text's alpha applied.
@@ -1047,10 +1150,10 @@ impl<'a> GuiGraphicsExtractor<'a> {
     ) {
         if width > 0 && height > 0 {
             if tile_width > 0 && tile_height > 0 {
-                let (texture, sampler) = self.texture_manager.get_texture(sprite.atlas_location());
+                let (texture, sampler) = self.get_texture(sprite.atlas_location());
                 let state = TiledBlitRenderState::new(
                     Arc::clone(render_pipeline),
-                    TextureSetup::single_texture(texture.clone(), Rc::clone(sampler)),
+                    TextureSetup::single_texture(texture, sampler),
                     *self.pose,
                     tile_width,
                     tile_height,
@@ -1089,8 +1192,7 @@ impl<'a> GuiGraphicsExtractor<'a> {
         v1: f32,
         color: i32,
     ) {
-        let (texture, sampler) = self.texture_manager.get_texture(location);
-        let (texture, sampler) = (texture.clone(), Rc::clone(sampler));
+        let (texture, sampler) = self.get_texture(location);
         self.inner_blit(
             render_pipeline,
             texture,
@@ -1148,6 +1250,230 @@ fn get_sprite_scaling(sprite: &TextureAtlasSprite) -> GuiSpriteScaling {
         .get_gui_metadata()
         .unwrap_or(GuiMetadataSection::DEFAULT)
         .scaling
+}
+impl<'a> GuiGraphicsExtractor<'a> {
+    /// `setTooltipForNextFrame(Font, List<FormattedCharSequence>, Optional, ClientTooltipPositioner,
+    /// int, int, boolean, Identifier)`: a widget's tooltip, kept unless one is there already or
+    /// `replace_existing`. Tooltip images aren't ported.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_tooltip_for_next_frame_positioned(
+        &mut self,
+        font: &Rc<Font>,
+        tooltip: Vec<FormattedCharSequence>,
+        positioner: Box<dyn ClientTooltipPositioner>,
+        xo: i32,
+        yo: i32,
+        replace_existing: bool,
+        style: Option<Identifier>,
+    ) {
+        let components = tooltip
+            .into_iter()
+            .map(client_tooltip_component::create)
+            .collect();
+        self.set_tooltip_for_next_frame_internal(
+            font,
+            components,
+            xo,
+            yo,
+            positioner,
+            style,
+            replace_existing,
+            false,
+        );
+    }
+
+    /// `setTooltipForNextFrame(Font, List<? extends FormattedCharSequence>, int, int)`: by the
+    /// default positioner.
+    pub fn set_tooltip_for_next_frame_lines(
+        &mut self,
+        font: &Rc<Font>,
+        lines: Vec<FormattedCharSequence>,
+        xo: i32,
+        yo: i32,
+    ) {
+        self.set_tooltip_for_next_frame_positioned(
+            font,
+            lines,
+            Box::new(DefaultTooltipPositioner),
+            xo,
+            yo,
+            false,
+            None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn set_tooltip_for_next_frame_internal(
+        &mut self,
+        font: &Rc<Font>,
+        lines: Vec<Box<dyn ClientTooltipComponent>>,
+        xo: i32,
+        yo: i32,
+        positioner: Box<dyn ClientTooltipPositioner>,
+        style: Option<Identifier>,
+        replace_existing: bool,
+        extra_space_after_first_line: bool,
+    ) {
+        if !lines.is_empty() && (self.deferred_tooltip.is_none() || replace_existing) {
+            self.deferred_tooltip = Some(DeferredTooltip {
+                font: Rc::clone(font),
+                lines,
+                xo,
+                yo,
+                positioner,
+                style,
+                extra_space_after_first_line,
+            });
+        }
+    }
+
+    /// `tooltip`: the lines over the tooltip's background where the positioner puts them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tooltip(
+        &mut self,
+        font: &Rc<Font>,
+        lines: &[Box<dyn ClientTooltipComponent>],
+        xo: i32,
+        yo: i32,
+        positioner: &dyn ClientTooltipPositioner,
+        style: Option<&Identifier>,
+        extra_space_after_first_line: bool,
+    ) {
+        let mut text_width = 0;
+        let mut temp_height = if extra_space_after_first_line && lines.len() != 1 {
+            0
+        } else {
+            -2
+        };
+        for line in lines {
+            text_width = text_width.max(line.get_width(font));
+            temp_height += line.get_height(font);
+        }
+        let (w, h) = (text_width, temp_height);
+        let (x, y) = positioner.position_tooltip(self.gui_width(), self.gui_height(), xo, yo, w, h);
+        self.pose.push_matrix();
+        TooltipRenderUtil::extract_tooltip_background(self, x, y, w, h, style);
+        let mut local_y = y;
+        for (i, line) in lines.iter().enumerate() {
+            line.extract_text(self, font, x, local_y);
+            local_y += line.get_height(font)
+                + if extra_space_after_first_line && i == 0 {
+                    2
+                } else {
+                    0
+                };
+        }
+        local_y = y;
+        for (i, line) in lines.iter().enumerate() {
+            line.extract_image(font, x, local_y, w, h, self);
+            local_y += line.get_height(font)
+                + if extra_space_after_first_line && i == 0 {
+                    2
+                } else {
+                    0
+                };
+        }
+        self.pose.pop_matrix();
+    }
+
+    /// `extractDeferredElements`: the tooltip asked for, a stratum above the rest. The hovered
+    /// text's effects and the preedit overlay aren't ported.
+    pub fn extract_deferred_elements(&mut self, _mouse_x: i32, _mouse_y: i32, _a: f32) {
+        if let Some(tooltip) = self.deferred_tooltip.take() {
+            self.next_stratum();
+            self.tooltip(
+                &tooltip.font,
+                &tooltip.lines,
+                tooltip.xo,
+                tooltip.yo,
+                &*tooltip.positioner,
+                tooltip.style.as_ref(),
+                tooltip.extra_space_after_first_line,
+            );
+        }
+    }
+
+    fn create_default_text_parameters(&self, opacity: f32) -> Parameters {
+        Parameters {
+            pose: *self.pose,
+            opacity,
+            scissor: self.scissor_stack.peek(),
+        }
+    }
+
+    /// `textRendererForWidget`: text at the widget's alpha.
+    pub fn text_renderer_for_widget(
+        &mut self,
+        alpha: f32,
+        hovered_text_effects: HoveredTextEffects,
+    ) -> RenderingTextCollector<'_, 'a> {
+        let parameters = self.create_default_text_parameters(alpha);
+        RenderingTextCollector {
+            graphics: self,
+            default_parameters: parameters,
+            hovered_text_effects,
+        }
+    }
+
+    /// `textRenderer(HoveredTextEffects)`.
+    pub fn text_renderer(
+        &mut self,
+        hovered_text_effects: HoveredTextEffects,
+    ) -> RenderingTextCollector<'_, 'a> {
+        self.text_renderer_for_widget(1.0, hovered_text_effects)
+    }
+}
+
+/// `GuiGraphicsExtractor.RenderingTextCollector`: draws the text it's given. The style under the
+/// mouse isn't looked for yet (the hovered text's effects), so the effects only decide whether the
+/// text keeps its empty areas (`includeEmpty`).
+pub struct RenderingTextCollector<'g, 'a> {
+    graphics: &'g mut GuiGraphicsExtractor<'a>,
+    default_parameters: Parameters,
+    hovered_text_effects: HoveredTextEffects,
+}
+
+impl ActiveTextCollector for RenderingTextCollector<'_, '_> {
+    fn font_width(&self, message: &Component) -> i32 {
+        self.graphics.font.width_text(message)
+    }
+
+    fn default_parameters(&self) -> Parameters {
+        self.default_parameters
+    }
+
+    fn set_default_parameters(&mut self, new_parameters: Parameters) {
+        self.default_parameters = new_parameters;
+    }
+
+    fn accept(
+        &mut self,
+        alignment: TextAlignment,
+        anchor_x: i32,
+        y: i32,
+        parameters: &Parameters,
+        text: &FormattedCharSequence,
+    ) {
+        let needs_full_style_scan = self.hovered_text_effects.allow_cursor_changes()
+            || self.hovered_text_effects.allow_tooltip();
+        let font = Rc::clone(&self.graphics.font);
+        let left_x = alignment.calculate_left_text(anchor_x, &font, text);
+        let render_state = GuiTextRenderState::new(
+            font,
+            text.clone(),
+            parameters.pose,
+            left_x,
+            y,
+            ARGB::white_f32(parameters.opacity),
+            0,
+            true,
+            needs_full_style_scan,
+            parameters.scissor,
+        );
+        if ARGB::as8_bit_channel(parameters.opacity) != 0 {
+            self.graphics.gui_render_state.add_text(render_state);
+        }
+    }
 }
 
 /// `GuiGraphicsExtractor.ScissorStack`.
