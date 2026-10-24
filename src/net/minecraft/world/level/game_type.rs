@@ -2,7 +2,8 @@
 //!
 //! Not ported yet: `CODEC` and `LEGACY_ID_CODEC`, which wait for DataFixerUpper's codecs, the
 //! display names, which wait for text components, `updatePlayerAbilities`, which comes with
-//! `Abilities`, and `byName`, which comes with `StringRepresentable`'s codec.
+//! `Abilities`. `byName` is the codec's lookup by serialized name (`StringRepresentable`'s
+//! `EnumCodec.byName`), written out.
 
 use std::sync::LazyLock;
 
@@ -68,6 +69,13 @@ impl GameType {
 
     pub fn get_id(&self) -> i32 {
         *self as i32
+    }
+
+    /// `byName(String, GameType)` with no default: the mode whose serialized name it is.
+    pub fn by_name(name: &str) -> Option<GameType> {
+        GameType::VALUES
+            .into_iter()
+            .find(|game_type| game_type.get_serialized_name() == name)
     }
 
     pub fn get_name(&self) -> &'static str {

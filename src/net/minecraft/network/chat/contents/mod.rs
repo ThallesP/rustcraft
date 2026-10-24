@@ -1,4 +1,10 @@
+pub mod data;
 pub mod keybind_contents;
 pub mod keybind_resolver;
+pub mod nbt_contents;
+pub mod object_contents;
+pub mod objects;
 pub mod plain_text_contents;
+pub mod score_contents;
+pub mod selector_contents;
 pub mod translatable_contents;

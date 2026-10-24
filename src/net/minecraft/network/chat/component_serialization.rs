@@ -9,6 +9,7 @@
 //! The stream codecs read the component as NBT (`ByteBufCodecs.fromCodec…`), over the buffer's
 //! registries for the game protocol's. `flatRestrictedCodec` comes with its first caller.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use crate::com::mojang::datafixers::util::either::Either;
@@ -21,8 +22,8 @@ use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::dynamic_ops::{DynamicOps, OpsValue};
 use crate::com::mojang::serialization::encoder::Valued;
 use crate::com::mojang::serialization::keyable::Keyable;
-use crate::com::mojang::serialization::map_codec::MapCodecExt;
 use crate::com::mojang::serialization::map_codec::SharedMapCodec;
+use crate::com::mojang::serialization::map_codec::{BoxedMapCodec, MapCodecExt};
 use crate::com::mojang::serialization::map_decoder::MapDecoder;
 use crate::com::mojang::serialization::map_encoder::MapEncoder;
 use crate::com::mojang::serialization::map_like::MapLike;
@@ -160,22 +161,22 @@ impl ComponentSerialization {
         content_types.put("object".to_owned(), ContentType::Object);
     }
 
-    /// `createLegacyComponentMatcher`, of the contents: by type when there's one, else fuzzily
-    /// (`StrictEither`), or by type for an ops that compresses maps.
-    fn create_legacy_component_matcher(
-        types: &LateBoundIdMapper<String, ContentType>,
+    /// `createLegacyComponentMatcher`: a value by its type when there's one, else fuzzily
+    /// (`StrictEither`), or by type for an ops that compresses maps. Java takes the codecs by type
+    /// and the value's codec; here the type is a `LegacyType`, which knows both.
+    pub fn create_legacy_component_matcher<L: LegacyType>(
+        types: &LateBoundIdMapper<String, L>,
         type_field_name: &'static str,
-    ) -> impl MapCodecExt<Value = ComponentContents> + Clone + Send + Sync + 'static {
+    ) -> impl MapCodecExt<Value = L::Value> + Clone + Send + Sync + 'static {
         let compact_codec = FuzzyCodec {
             codecs: types.values(),
         };
-        let (by_id, by_value) = (types.values(), types.values());
-        let ids: Vec<(String, ContentType)> = by_id
+        let ids: Vec<(String, L)> = types
+            .values()
             .iter()
             .map(|value| (types.get_id(value).expect("a value has its id"), *value))
             .collect();
         let ids_back = ids.clone();
-        let _ = by_value;
         let discriminator_codec = ExtraCodecs::id_resolver_codec(
             STRING,
             move |id: &String| {
@@ -183,7 +184,7 @@ impl ComponentSerialization {
                     .find(|(key, _)| key == id)
                     .map(|(_, value)| *value)
             },
-            move |value: &ContentType| {
+            move |value: &L| {
                 ids_back
                     .iter()
                     .find(|(_, candidate)| candidate == value)
@@ -191,9 +192,7 @@ impl ComponentSerialization {
             },
         )
         .field_of(type_field_name)
-        .dispatch_map(ComponentContents::codec, |content_type: &ContentType| {
-            content_type.codec()
-        });
+        .dispatch_map(L::of, |r#type: &L| r#type.codec());
         let contents_codec = StrictEither {
             type_field_name,
             typed: discriminator_codec.clone(),
@@ -203,18 +202,42 @@ impl ComponentSerialization {
     }
 }
 
-/// `FuzzyCodec`: the first of the codecs that reads the map; written with the value's own.
-#[derive(Clone)]
-struct FuzzyCodec {
-    codecs: Vec<ContentType>,
+/// What a legacy matcher reads values by (Java's `MapCodec` of each type, and `codecGetter`): the
+/// contents' types, the NBT contents' data sources' and the objects'.
+pub trait LegacyType: Copy + PartialEq + fmt::Display + Send + Sync + 'static {
+    type Value: 'static;
+
+    /// The type's map codec.
+    fn codec(self) -> BoxedMapCodec<Self::Value>;
+
+    /// The type of a value, whose codec writes it.
+    fn of(value: &Self::Value) -> Self;
 }
 
-impl Valued for FuzzyCodec {
+impl LegacyType for ContentType {
     type Value = ComponentContents;
+
+    fn codec(self) -> BoxedMapCodec<ComponentContents> {
+        ContentType::codec(self)
+    }
+
+    fn of(value: &ComponentContents) -> ContentType {
+        value.codec()
+    }
+}
+
+/// `FuzzyCodec`: the first of the codecs that reads the map; written with the value's own.
+#[derive(Clone)]
+struct FuzzyCodec<L> {
+    codecs: Vec<L>,
+}
+
+impl<L: LegacyType> Valued for FuzzyCodec<L> {
+    type Value = L::Value;
 }
 
 /// Each codec's keys, without repeats.
-impl<T: OpsValue> Keyable<T> for FuzzyCodec {
+impl<T: OpsValue, L: LegacyType> Keyable<T> for FuzzyCodec<L> {
     fn keys(&self, ops: &dyn DynamicOps<T>) -> Vec<T> {
         let mut keys: Vec<T> = Vec::new();
         for codec in &self.codecs {
@@ -228,12 +251,8 @@ impl<T: OpsValue> Keyable<T> for FuzzyCodec {
     }
 }
 
-impl<T: OpsValue> MapDecoder<T> for FuzzyCodec {
-    fn decode(
-        &self,
-        ops: &dyn DynamicOps<T>,
-        input: &dyn MapLike<T>,
-    ) -> DataResult<ComponentContents> {
+impl<T: OpsValue, L: LegacyType> MapDecoder<T> for FuzzyCodec<L> {
+    fn decode(&self, ops: &dyn DynamicOps<T>, input: &dyn MapLike<T>) -> DataResult<L::Value> {
         for codec in &self.codecs {
             let result = codec.codec().decode(ops, input);
             if result.result().is_some() {
@@ -244,14 +263,9 @@ impl<T: OpsValue> MapDecoder<T> for FuzzyCodec {
     }
 }
 
-impl<T: OpsValue> MapEncoder<T> for FuzzyCodec {
-    fn encode(
-        &self,
-        input: &ComponentContents,
-        ops: &dyn DynamicOps<T>,
-        prefix: &mut dyn RecordBuilder<T>,
-    ) {
-        input.codec().codec().encode(input, ops, prefix);
+impl<T: OpsValue, L: LegacyType> MapEncoder<T> for FuzzyCodec<L> {
+    fn encode(&self, input: &L::Value, ops: &dyn DynamicOps<T>, prefix: &mut dyn RecordBuilder<T>) {
+        L::of(input).codec().encode(input, ops, prefix);
     }
 }
 
@@ -310,6 +324,7 @@ pub(crate) mod tests {
     use super::ComponentSerialization;
     use crate::com::google::gson::gson_builder::GsonBuilder;
     use crate::com::google::gson::json_element::JsonElement;
+    use crate::com::mojang::datafixers::util::either::Either;
     use crate::com::mojang::serialization::data_result::tests::encode_result;
     use crate::com::mojang::serialization::decoder::Decoder;
     use crate::com::mojang::serialization::encoder::Encoder;
@@ -317,13 +332,27 @@ pub(crate) mod tests {
     use crate::golden::{Decode, Encode, Golden};
     use crate::java::lang::number::tests::{decode_boxed, encode_boxed};
     use crate::java::util::uuid::UUID;
+    use crate::net::minecraft::commands::arguments::selector::entity_selector::EntitySelector;
+    use crate::net::minecraft::core::component::data_component_patch::DataComponentPatch;
     use crate::net::minecraft::nbt::nbt_ops::NbtOps;
+    use crate::net::minecraft::nbt::string_tag::StringTag;
     use crate::net::minecraft::nbt::tag::Tag;
     use crate::net::minecraft::network::chat::click_event::ClickEvent;
     use crate::net::minecraft::network::chat::component::Component;
     use crate::net::minecraft::network::chat::component_contents::ComponentContents;
+    use crate::net::minecraft::network::chat::contents::data::block_data_source::BlockDataSource;
+    use crate::net::minecraft::network::chat::contents::data::data_source::DataSource;
+    use crate::net::minecraft::network::chat::contents::data::entity_data_source::EntityDataSource;
+    use crate::net::minecraft::network::chat::contents::data::storage_data_source::StorageDataSource;
     use crate::net::minecraft::network::chat::contents::keybind_contents::KeybindContents;
+    use crate::net::minecraft::network::chat::contents::nbt_contents::NbtContents;
+    use crate::net::minecraft::network::chat::contents::object_contents::ObjectContents;
+    use crate::net::minecraft::network::chat::contents::objects::atlas_sprite::AtlasSprite;
+    use crate::net::minecraft::network::chat::contents::objects::object_info::ObjectInfo;
+    use crate::net::minecraft::network::chat::contents::objects::player_sprite::PlayerSprite;
     use crate::net::minecraft::network::chat::contents::plain_text_contents::PlainTextContents;
+    use crate::net::minecraft::network::chat::contents::score_contents::ScoreContents;
+    use crate::net::minecraft::network::chat::contents::selector_contents::SelectorContents;
     use crate::net::minecraft::network::chat::contents::translatable_contents::{
         TranslatableContents, TranslationArgument,
     };
@@ -334,7 +363,11 @@ pub(crate) mod tests {
     use crate::net::minecraft::network::chat::style::Style;
     use crate::net::minecraft::network::chat::text_color::TextColor;
     use crate::net::minecraft::resources::identifier::Identifier;
+    use crate::net::minecraft::util::compilable_string::CompilableString;
     use crate::net::minecraft::world::entity::entity_types;
+    use crate::net::minecraft::world::item::component::resolvable_profile::ResolvableProfile;
+    use crate::net::minecraft::world::item::item::Item;
+    use crate::net::minecraft::world::item::item_stack_template::ItemStackTemplate;
 
     /// A component as the suites give and record one: its spec (ComponentSuite).
     impl Decode for Component {
@@ -373,8 +406,85 @@ pub(crate) mod tests {
                 spec[2].as_str().map(str::to_owned),
                 spec[3].as_array().unwrap().iter().map(argument).collect(),
             )),
+            "score" => {
+                let name = spec[1].as_array().unwrap();
+                let name = if name[0] == "left" {
+                    Either::Left(compilable_selector(&string(&name[1])))
+                } else {
+                    Either::Right(string(&name[1]))
+                };
+                ComponentContents::Score(ScoreContents::new(name, string(&spec[2])))
+            }
+            "selector" => ComponentContents::Selector(SelectorContents::new(
+                compilable_selector(&string(&spec[1])),
+                Option::<Value>::decode(&spec[2]).map(|separator| component(&separator)),
+            )),
+            "nbt" => {
+                let source = spec[5].as_array().unwrap();
+                let data_source = match source[0].as_str().unwrap() {
+                    "entity" => DataSource::Entity(EntityDataSource {
+                        selector: compilable_selector(&string(&source[1])),
+                    }),
+                    "block" => DataSource::Block(BlockDataSource {
+                        coordinates: BlockDataSource::block_pos_codec()
+                            .parse(
+                                &NbtOps::INSTANCE,
+                                &Tag::String(StringTag::value_of(string(&source[1]))),
+                            )
+                            .get_or_throw(),
+                    }),
+                    _ => DataSource::Storage(StorageDataSource {
+                        id: Identifier::parse(&string(&source[1])),
+                    }),
+                };
+                ComponentContents::Nbt(NbtContents::new(
+                    NbtContents::nbt_path_codec()
+                        .parse(
+                            &NbtOps::INSTANCE,
+                            &Tag::String(StringTag::value_of(string(&spec[1]))),
+                        )
+                        .get_or_throw(),
+                    spec[2].as_bool().unwrap(),
+                    spec[3].as_bool().unwrap(),
+                    Option::<Value>::decode(&spec[4]).map(|separator| component(&separator)),
+                    data_source,
+                ))
+            }
+            "object" => {
+                let info = spec[1].as_array().unwrap();
+                let info = if info[0] == "atlas" {
+                    ObjectInfo::Atlas(AtlasSprite::new(
+                        Identifier::parse(&string(&info[1])),
+                        Identifier::parse(&string(&info[2])),
+                    ))
+                } else {
+                    let profile = ResolvableProfile::CODEC
+                        .parse(&NbtOps::INSTANCE, &Tag::decode(&info[2]))
+                        .get_or_throw();
+                    assert_eq!(
+                        matches!(profile, ResolvableProfile::Static { .. }),
+                        info[1] == "static",
+                        "the profile decodes to the other kind"
+                    );
+                    ObjectInfo::Player(PlayerSprite::new(profile, info[3].as_bool().unwrap()))
+                };
+                ComponentContents::Object(ObjectContents::new(
+                    info,
+                    Option::<Value>::decode(&spec[2]).map(|fallback| component(&fallback)),
+                ))
+            }
             _ => ComponentContents::Keybind(KeybindContents::new(string(&spec[1]))),
         }
+    }
+
+    // A selector the suite made, which parses.
+    fn compilable_selector(source: &str) -> CompilableString<EntitySelector> {
+        EntitySelector::COMPILABLE_CODEC
+            .parse(
+                &NbtOps::INSTANCE,
+                &Tag::String(StringTag::value_of(source.to_owned())),
+            )
+            .get_or_throw()
     }
 
     fn argument(spec: &Value) -> TranslationArgument {
@@ -422,6 +532,21 @@ pub(crate) mod tests {
             if hover[0] == "show_text" {
                 HoverEvent::ShowText {
                     value: component(&hover[1]),
+                }
+            } else if hover[0] == "show_item" {
+                HoverEvent::ShowItem {
+                    item: ItemStackTemplate::new(
+                        Item::CODEC
+                            .parse(
+                                &NbtOps::INSTANCE,
+                                &Tag::String(StringTag::value_of(string(&hover[1]))),
+                            )
+                            .get_or_throw(),
+                        hover[2].as_i64().unwrap() as i32,
+                        DataComponentPatch::CODEC
+                            .parse(&NbtOps::INSTANCE, &Tag::decode(&hover[3]))
+                            .get_or_throw(),
+                    ),
                 }
             } else {
                 HoverEvent::ShowEntity {
@@ -509,6 +634,58 @@ pub(crate) mod tests {
             ComponentContents::Keybind(keybind) => {
                 Box::new(("keybind".to_owned(), keybind.get_name().to_owned()))
             }
+            ComponentContents::Score(score) => {
+                let name = match score.name() {
+                    Either::Left(selector) => ("left".to_owned(), selector.source().to_owned()),
+                    Either::Right(name) => ("right".to_owned(), name.clone()),
+                };
+                Box::new(("score".to_owned(), name, score.objective().to_owned()))
+            }
+            ComponentContents::Selector(selector) => Box::new((
+                "selector".to_owned(),
+                selector.selector().source().to_owned(),
+                selector.separator().map(spec),
+            )),
+            ComponentContents::Nbt(nbt) => {
+                let source = match nbt.data_source() {
+                    DataSource::Entity(entity) => {
+                        ("entity".to_owned(), entity.selector.source().to_owned())
+                    }
+                    DataSource::Block(block) => {
+                        ("block".to_owned(), block.coordinates.source().to_owned())
+                    }
+                    DataSource::Storage(storage) => ("storage".to_owned(), storage.id.to_string()),
+                };
+                Box::new((
+                    "nbt".to_owned(),
+                    nbt.nbt_path().source().to_owned(),
+                    nbt.interpreting(),
+                    nbt.plain(),
+                    nbt.separator().map(spec),
+                    source,
+                ))
+            }
+            ComponentContents::Object(object) => {
+                let info: Box<dyn Encode> = match object.contents() {
+                    ObjectInfo::Atlas(atlas) => Box::new((
+                        "atlas".to_owned(),
+                        atlas.atlas().to_string(),
+                        atlas.sprite().to_string(),
+                    )),
+                    ObjectInfo::Player(player) => Box::new((
+                        "player".to_owned(),
+                        match player.player() {
+                            ResolvableProfile::Static { .. } => "static".to_owned(),
+                            ResolvableProfile::Dynamic { .. } => "dynamic".to_owned(),
+                        },
+                        ResolvableProfile::CODEC
+                            .encode_start(&NbtOps::INSTANCE, player.player())
+                            .get_or_throw(),
+                        player.hat(),
+                    )),
+                };
+                Box::new(("object".to_owned(), info, object.fallback().map(spec)))
+            }
         }
     }
 
@@ -560,6 +737,18 @@ pub(crate) mod tests {
                     HoverEvent::ShowText { value } => {
                         Box::new(("show_text".to_owned(), spec(value)))
                     }
+                    HoverEvent::ShowItem { item } => Box::new((
+                        "show_item".to_owned(),
+                        item.item()
+                            .unwrap_key()
+                            .expect("a reference has its key")
+                            .identifier()
+                            .to_string(),
+                        item.count(),
+                        DataComponentPatch::CODEC
+                            .encode_start(&NbtOps::INSTANCE, item.components())
+                            .get_or_throw(),
+                    )),
                     HoverEvent::ShowEntity { entity } => Box::new((
                         "show_entity".to_owned(),
                         entity_types::REGISTRY.get_key(entity.r#type).to_string(),
@@ -581,6 +770,8 @@ pub(crate) mod tests {
                     atlas_id.to_string(),
                     sprite_id.to_string(),
                 )),
+                // The suite sets no style's font to a player's head.
+                FontDescription::PlayerSprite { .. } => panic!("a player sprite font in a style"),
             }
         });
         Box::new((

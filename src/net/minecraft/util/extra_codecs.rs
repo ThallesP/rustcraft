@@ -6,7 +6,8 @@
 //! `catchDecoderException`, `UNTRUSTED_URI`, `CHAT_STRING`, `NBT` (`converter(NbtOps.INSTANCE)`, which
 //! reads any data as the tag it converts to), `nonEmptyList`, `orCompressed` of map codecs (the
 //! normal one, since no ops the game's codecs reach compresses), `idResolverCodec` of a codec of
-//! ids, and `LateBoundIdMapper`. The rest comes with its callers.
+//! ids, `LateBoundIdMapper`, and the profiles' `PROPERTY_MAP`, `PLAYER_NAME` and
+//! `STORED_GAME_PROFILE`. The rest comes with its callers.
 //!
 //! `converter` is `Codec.PASSTHROUGH` mapped through `Dynamic.convert`, which leaves the value as
 //! it is when the ops is the one it converts to, and otherwise converts it with its ops'
@@ -14,23 +15,31 @@
 
 use std::sync::LazyLock;
 
+use crate::com::google::common::collect::immutable_multimap::ImmutableMultimap;
+use crate::com::mojang::authlib::game_profile::GameProfile;
+use crate::com::mojang::authlib::properties::property::Property;
+use crate::com::mojang::authlib::properties::property_map::PropertyMap;
 use crate::com::mojang::datafixers::util::either::Either;
 use crate::com::mojang::datafixers::util::pair::Pair;
 use crate::com::mojang::serialization::codec::{
-    CodecExt, FLOAT, INT, STRING, StaticCodec, Validate, Xmap,
+    self, CodecExt, FLOAT, INT, STRING, SharedCodec, StaticCodec, Validate, Xmap,
 };
 use crate::com::mojang::serialization::codecs::either_codec::EitherCodec;
+use crate::com::mojang::serialization::codecs::record_codec_builder;
+use crate::com::mojang::serialization::codecs::unbounded_map_codec::UnboundedMapCodec;
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::decoder::Decoder;
 use crate::com::mojang::serialization::dynamic_ops::{DynamicOps, OpsKind, OpsValue};
 use crate::com::mojang::serialization::encoder::{Encoder, Valued};
 use crate::com::mojang::serialization::keyable::Keyable;
 use crate::com::mojang::serialization::lifecycle::Lifecycle;
+use crate::com::mojang::serialization::map_codec::{MapCodecExt, StaticMapCodec};
 use crate::com::mojang::serialization::map_decoder::MapDecoder;
 use crate::com::mojang::serialization::map_encoder::MapEncoder;
 use crate::com::mojang::serialization::map_like::MapLike;
 use crate::com::mojang::serialization::record_builder::RecordBuilder;
 use crate::java::net::uri::URI;
+use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::nbt::nbt_ops::NbtOps;
 use crate::net::minecraft::nbt::tag::Tag;
 use crate::net::minecraft::util::argb::ARGB;
@@ -180,7 +189,106 @@ fn int_range_with_message(
     .boxed()
 }
 
+// `PROPERTY`: a profile's property, its name, value and optional signature size-limited.
+static PROPERTY: StaticCodec<Property> = LazyLock::new(|| {
+    record_codec_builder::create(
+        (
+            codec::size_limited_string(64)
+                .field_of("name")
+                .for_getter(|property: &Property| property.name().to_owned()),
+            codec::size_limited_string(32767)
+                .field_of("value")
+                .for_getter(|property: &Property| property.value().to_owned()),
+            codec::size_limited_string(1024)
+                .optional_field_of("signature")
+                .for_getter(|property: &Property| property.signature().map(str::to_owned)),
+        ),
+        Property::from_signature,
+    )
+    .boxed()
+});
+
+// A map of names to lists of values (at most 16 names), or a list of at most 16 properties.
+static PROPERTY_MAP: StaticCodec<PropertyMap> = LazyLock::new(|| {
+    EitherCodec::new(
+        UnboundedMapCodec::new(STRING, STRING.list_of()).validate(
+            |map: Vec<(String, Vec<String>)>| {
+                if map.len() > 16 {
+                    let size = map.len();
+                    DataResult::error(|| {
+                        format!("Cannot have more than 16 properties, but was {size}")
+                    })
+                } else {
+                    DataResult::success(map)
+                }
+            },
+        ),
+        PROPERTY.shared().list_of_sized(0, 16),
+    )
+    .xmap(
+        |map_list_either| {
+            let mut result = ImmutableMultimap::builder();
+            match map_list_either {
+                Either::Left(map) => {
+                    for (name, properties) in map {
+                        for property in properties {
+                            result.put(name.clone(), Property::new(name.clone(), property));
+                        }
+                    }
+                }
+                Either::Right(properties) => {
+                    for property in properties {
+                        result.put(property.name().to_owned(), property);
+                    }
+                }
+            }
+            PropertyMap::new(result.build())
+        },
+        |property_map: &PropertyMap| Either::Right(property_map.values().cloned().collect()),
+    )
+    .boxed()
+});
+
+static PLAYER_NAME: StaticCodec<String> = LazyLock::new(|| {
+    codec::string(0, 16)
+        .validate(|name: String| {
+            if StringUtil::is_valid_player_name(&name) {
+                DataResult::success(name)
+            } else {
+                DataResult::error(|| {
+                    format!("Player name contained disallowed characters: '{name}'")
+                })
+            }
+        })
+        .boxed()
+});
+
+// `gameProfileCodec(UUIDUtil.CODEC)`.
+static STORED_GAME_PROFILE: StaticMapCodec<GameProfile> = LazyLock::new(|| {
+    record_codec_builder::map_codec(
+        (
+            UUIDUtil::CODEC
+                .shared()
+                .field_of("id")
+                .for_getter(|profile: &GameProfile| profile.id()),
+            PLAYER_NAME
+                .shared()
+                .field_of("name")
+                .for_getter(|profile: &GameProfile| profile.name().to_owned()),
+            PROPERTY_MAP
+                .shared()
+                .optional_field_of_default("properties", PropertyMap::EMPTY)
+                .for_getter(|profile: &GameProfile| profile.properties().clone()),
+        ),
+        GameProfile::from_properties,
+    )
+    .boxed()
+});
+
 impl ExtraCodecs {
+    pub const PROPERTY_MAP: &'static StaticCodec<PropertyMap> = &PROPERTY_MAP;
+    pub const PLAYER_NAME: &'static StaticCodec<String> = &PLAYER_NAME;
+    pub const STORED_GAME_PROFILE: &'static StaticMapCodec<GameProfile> = &STORED_GAME_PROFILE;
     pub const VECTOR3F: &'static StaticCodec<Vector3f> = &VECTOR3F;
     pub const VECTOR4F: &'static StaticCodec<Vector4f> = &VECTOR4F;
     pub const RGB_COLOR_CODEC: &'static StaticCodec<i32> = &RGB_COLOR_CODEC;

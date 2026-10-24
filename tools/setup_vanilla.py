@@ -40,9 +40,10 @@ MAVEN_CENTRAL = "https://repo1.maven.org/maven2/"
 # Libraries the port translates like the game's own classes, from their published sources.
 # Gson's JsonReader and JsonWriter read and write text components' JSON (LenientJsonParser, the status).
 SOURCE_LIBRARIES = {"org.joml:joml", "io.netty:netty-buffer", "com.google.guava:guava", "com.google.code.gson:gson"}
-# Ones it translates that publish no sources, so they're decompiled like the game: authlib, and DataFixerUpper, whose
-# codecs read and write text components and the vanilla pack's JSON.
-DECOMPILED_LIBRARIES = {"com.mojang:authlib", "com.mojang:datafixerupper"}
+# Ones it translates that publish no sources, so they're decompiled like the game: authlib, DataFixerUpper, whose
+# codecs read and write text components and the vanilla pack's JSON, and Brigadier, whose reader parses the selectors
+# and NBT paths text components hold.
+DECOMPILED_LIBRARIES = {"com.mojang:authlib", "com.mojang:datafixerupper", "com.mojang:brigadier"}
 
 
 # Adoptium's API answers 403 to urllib's default User-Agent.

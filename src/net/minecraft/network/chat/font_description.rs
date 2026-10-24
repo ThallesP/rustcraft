@@ -1,8 +1,8 @@
 //! net/minecraft/network/chat/FontDescription.java
 //!
-//! Which font a text is drawn in: a font resource, or a sprite drawn as a glyph. Java's interface
-//! of three records is an enum of them. `PlayerSprite`, which holds a `ResolvableProfile`, isn't
-//! ported yet; only `Resource` has a codec in Java too.
+//! Which font a text is drawn in: a font resource, or a sprite drawn as a glyph (an atlas's, or a
+//! player's head). Java's interface of three records is an enum of them; only `Resource` has a
+//! codec in Java too.
 
 use std::fmt;
 use std::sync::LazyLock;
@@ -11,12 +11,17 @@ use crate::com::mojang::serialization::codec::SharedCodec;
 use crate::com::mojang::serialization::codec::{CodecExt, StaticCodec};
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::net::minecraft::resources::identifier::Identifier;
+use crate::net::minecraft::world::item::component::resolvable_profile::ResolvableProfile;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FontDescription {
     AtlasSprite {
         atlas_id: Identifier,
         sprite_id: Identifier,
+    },
+    PlayerSprite {
+        profile: Box<ResolvableProfile>,
+        hat: bool,
     },
     Resource {
         id: Identifier,
@@ -59,6 +64,9 @@ impl fmt::Display for FontDescription {
                 atlas_id,
                 sprite_id,
             } => write!(f, "AtlasSprite[atlasId={atlas_id}, spriteId={sprite_id}]"),
+            FontDescription::PlayerSprite { profile, hat } => {
+                write!(f, "PlayerSprite[profile={profile}, hat={hat}]")
+            }
             FontDescription::Resource { id } => write!(f, "Resource[id={id}]"),
         }
     }

@@ -238,6 +238,19 @@ impl Style {
         Style::check_empty_after_change(new_style, self.bold.is_some(), bold.is_some())
     }
 
+    /// `withFont(FontDescription)`.
+    pub fn with_font(&self, font: Option<FontDescription>) -> Style {
+        if self.font == font {
+            return self.clone();
+        }
+        let had_font = self.font.is_some();
+        let has_font = font.is_some();
+        let mut new_style = self.clone();
+        new_style.is_empty_constant = false;
+        new_style.font = font;
+        Style::check_empty_after_change(new_style, had_font, has_font)
+    }
+
     pub fn without_shadow(&self) -> Style {
         self.with_shadow_color(Style::NO_SHADOW)
     }

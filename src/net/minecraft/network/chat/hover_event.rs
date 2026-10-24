@@ -1,9 +1,8 @@
 //! net/minecraft/network/chat/HoverEvent.java
 //!
 //! What hovering over a text shows. Java's interface of records is an enum of them, and `CODEC`
-//! dispatches on the action under `"action"`. Not ported yet: `ShowItem`, which holds an
-//! `ItemStackTemplate` (items and their data components); its action's codec fails to decode
-//! (`map_codec::unported`). `EntityTooltipInfo.getTooltipLines` comes with tooltips, and its
+//! dispatches on the action under `"action"`. `ShowItem` holds an `ItemStackTemplate`, whose
+//! components are kept as data. `EntityTooltipInfo.getTooltipLines` comes with tooltips, and its
 //! `toString` is `Object`'s, an identity hash, which `ShowEntity`'s prints a stand-in for.
 
 use std::fmt;
@@ -15,9 +14,7 @@ use crate::com::mojang::serialization::codecs::record_codec_builder;
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::lifecycle::Lifecycle;
 use crate::com::mojang::serialization::map_codec::SharedMapCodec;
-use crate::com::mojang::serialization::map_codec::{
-    self, BoxedMapCodec, MapCodecExt, StaticMapCodec,
-};
+use crate::com::mojang::serialization::map_codec::{BoxedMapCodec, MapCodecExt, StaticMapCodec};
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::network::chat::component::Component;
@@ -27,10 +24,12 @@ use crate::net::minecraft::util::extra_codecs::ExtraCodecs;
 use crate::net::minecraft::util::string_representable::{self, StringRepresentable};
 use crate::net::minecraft::world::entity::entity_type::EntityType;
 use crate::net::minecraft::world::entity::entity_types;
+use crate::net::minecraft::world::item::item_stack_template::ItemStackTemplate;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum HoverEvent {
     ShowText { value: Component },
+    ShowItem { item: ItemStackTemplate },
     ShowEntity { entity: EntityTooltipInfo },
 }
 
@@ -125,7 +124,7 @@ impl Action {
     pub fn codec(self) -> BoxedMapCodec<HoverEvent> {
         match self {
             Action::SHOW_TEXT => SHOW_TEXT_CODEC.shared(),
-            Action::SHOW_ITEM => map_codec::unported("HoverEvent.ShowItem").boxed(),
+            Action::SHOW_ITEM => SHOW_ITEM_CODEC.shared(),
             Action::SHOW_ENTITY => SHOW_ENTITY_CODEC.clone(),
         }
     }
@@ -143,6 +142,20 @@ impl fmt::Display for Action {
         write!(f, "<action {}>", self.get_serialized_name())
     }
 }
+
+// `ItemStackTemplate.MAP_CODEC.xmap(ShowItem::new, ShowItem::item)`.
+static SHOW_ITEM_CODEC: StaticMapCodec<HoverEvent> = LazyLock::new(|| {
+    ItemStackTemplate::MAP_CODEC
+        .shared()
+        .xmap(
+            |item| HoverEvent::ShowItem { item },
+            |event: &HoverEvent| match event {
+                HoverEvent::ShowItem { item } => item.clone(),
+                other => panic!("ClassCastException: {other}"),
+            },
+        )
+        .boxed()
+});
 
 static SHOW_TEXT_CODEC: StaticMapCodec<HoverEvent> = LazyLock::new(|| {
     record_codec_builder::map_codec(
@@ -174,6 +187,7 @@ impl HoverEvent {
     pub fn action(&self) -> Action {
         match self {
             HoverEvent::ShowText { .. } => Action::SHOW_TEXT,
+            HoverEvent::ShowItem { .. } => Action::SHOW_ITEM,
             HoverEvent::ShowEntity { .. } => Action::SHOW_ENTITY,
         }
     }
@@ -184,6 +198,7 @@ impl fmt::Display for HoverEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HoverEvent::ShowText { value } => write!(f, "ShowText[value={value}]"),
+            HoverEvent::ShowItem { item } => write!(f, "ShowItem[item={item}]"),
             HoverEvent::ShowEntity { .. } => f.write_str(
                 "ShowEntity[entity=net.minecraft.network.chat.HoverEvent$EntityTooltipInfo]",
             ),

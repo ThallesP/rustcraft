@@ -4,8 +4,8 @@
 //! the client reads, `MutableComponent`, shared by reference; here a `Component` is a shared
 //! `MutableComponent` (an `Arc`, which derefs to it), and the static factories make the mutable
 //! one, which `into()` shares. `getVisualOrderText` comes with the font renderer, `toFlatList` and
-//! `contains` with their callers, and the factories of contents not ported yet (`nbt`, `score`,
-//! `selector`, `object`) with them.
+//! `contains` with their callers, and the factories of the contents a server resolves (`nbt`,
+//! `score`, `selector`, `object`) with theirs.
 //!
 //! `visit` and `visit_styled` (`FormattedText`'s) hand each piece of text to a consumer in order,
 //! the contents' then each sibling's, the styled one with each piece's style: the component's own

@@ -1,3 +1,4 @@
+pub mod advancements;
 pub mod chat_formatting;
 pub mod client;
 pub mod commands;

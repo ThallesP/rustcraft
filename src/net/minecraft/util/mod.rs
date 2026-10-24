@@ -1,6 +1,7 @@
 pub mod argb;
 pub mod bit_storage;
 pub mod by_id_map;
+pub mod compilable_string;
 pub mod crude_incremental_int_identity_hash_bi_map;
 pub mod delegate_data_output;
 pub mod easing_type;

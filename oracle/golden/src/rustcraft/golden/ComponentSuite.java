@@ -29,31 +29,57 @@ import net.minecraft.network.chat.Style;
 import net.minecraft.network.chat.TextColor;
 import net.minecraft.network.chat.contents.KeybindContents;
 import net.minecraft.network.chat.contents.PlainTextContents;
+import net.minecraft.network.chat.contents.NbtContents;
+import net.minecraft.network.chat.contents.ObjectContents;
+import net.minecraft.network.chat.contents.data.BlockDataSource;
+import net.minecraft.network.chat.contents.data.DataSource;
+import net.minecraft.network.chat.contents.data.EntityDataSource;
+import net.minecraft.network.chat.contents.data.StorageDataSource;
+import net.minecraft.network.chat.contents.ScoreContents;
+import net.minecraft.network.chat.contents.objects.AtlasSprite;
+import net.minecraft.network.chat.contents.objects.PlayerSprite;
+import net.minecraft.world.item.component.ResolvableProfile;
+import net.minecraft.world.item.ItemStackTemplate;
+import net.minecraft.core.component.DataComponentPatch;
+import net.minecraft.network.chat.contents.SelectorContents;
 import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.resources.Identifier;
+import com.mojang.datafixers.util.Either;
+import net.minecraft.commands.arguments.selector.EntitySelector;
+import net.minecraft.util.CompilableString;
 
 /**
  * Text components: {@code ComponentSerialization.CODEC} on NBT, both ways, and each component's {@code toString} and
  * {@code getString}. A component is given and recorded as a spec both sides build it from: {@code [contents, style,
- * [sibling, …]]}, its contents {@code ["text", text]}, {@code ["translatable", key, fallback or null, [argument, …]]}
- * or {@code ["keybind", name]}, an argument {@code ["string", s]}, {@code ["number", box, value]}, {@code ["boolean",
- * b]} or {@code ["component", spec]}, and its style null for {@code Style.EMPTY} itself, else {@code [color,
- * shadowColor, bold, italic, underlined, strikethrough, obfuscated, clickEvent, hoverEvent, insertion, font]}, each
- * null when unset: a color {@code ["named", name]} or {@code ["rgb", value]}, a click event {@code [action, field,
- * …]}, a hover event {@code ["show_text", spec]}, a font {@code ["resource", id]} or {@code ["atlas_sprite", atlas,
- * sprite]}.
+ * [sibling, …]]}, its contents {@code ["text", text]}, {@code ["translatable", key, fallback or null, [argument, …]]},
+ * {@code ["keybind", name]}, {@code ["score", name, objective]} with the name {@code ["left", selector]} or
+ * {@code ["right", name]}, {@code ["selector", selector, separator spec or null]}, {@code ["nbt", path, interpret,
+ * plain, separator spec or null, source]} with the source {@code ["entity", selector]}, {@code ["block",
+ * coordinates]} or {@code ["storage", id]}, or {@code ["object", info, fallback spec or null]} with the info
+ * {@code ["atlas", atlas, sprite]} or {@code ["player", "static" or "dynamic", the profile's tag, hat]}; an argument
+ * {@code ["string", s]}, {@code ["number", box, value]}, {@code ["boolean", b]} or {@code ["component", spec]}; and its
+ * style null for {@code Style.EMPTY} itself, else {@code [color, shadowColor, bold, italic, underlined, strikethrough,
+ * obfuscated, clickEvent, hoverEvent, insertion, font]}, each null when unset: a color {@code ["named", name]} or
+ * {@code ["rgb", value]}, a click event {@code [action, field, …]}, a hover event {@code ["show_text", spec]} or
+ * {@code ["show_item", id, count, the component patch's tag]}, a font {@code ["resource", id]} or
+ * {@code ["atlas_sprite", atlas, sprite]}.
  *
  * <p>Components are random trees up to 4 deep of literals (empty ones, any strings), translations (keys en_us has,
  * with and without its formats' arguments, and unknown keys, with fallbacks now and then, and arguments of every kind
  * a server sends) and key bindings, styled with every field, the click events a server may send and one it may not
- * ({@code open_file}), shown text, and the atlas fonts no codec writes. Decoded are their encodings, the encodings with
- * one tag inside replaced or removed, and hand-made tags: plain strings, lists of components, compounds with a
- * {@code type}, an empty {@code extra}, links of other schemes and none, colors out of range, named colors that aren't, and any tags. Contents, click
- * and hover events and fonts the port doesn't have yet (scores, selectors, NBT, objects, dialogs, items,
- * entities, player sprites) aren't made.
+ * ({@code open_file}), shown text, and the atlas fonts no codec writes. Then 500 more trees whose contents may be
+ * scores (their names selectors that parse and that don't), selectors (with separators), NBT (paths, each data source,
+ * the flags) and objects (atlas sprites, players' heads), some showing an item on hover, apart from the first batch,
+ * which the packets' generator shares; a tree holding a player's head has no {@code toString} case, since Java prints
+ * the profile by identity, nor one showing an item with components, a patch printing its values by their classes, which
+ * the port keeps as data. Decoded are their encodings, the encodings with one tag inside replaced or removed, and
+ * hand-made tags: plain strings, lists of components, compounds with a {@code type}, an empty {@code extra}, links of
+ * other schemes and none, colors out of range, named colors that aren't, entity tooltips, scores, selectors, NBT,
+ * objects and items shown on hover, valid and not, and any tags. Dialogs aren't made.
  */
 final class ComponentSuite implements Suite {
     private static final int COMPONENTS = 1500;
+    private static final int RICH_COMPONENTS = 500;
     private static final List<String> KEYS = List.of(
         "chat.type.text", "chat.type.announcement", "multiplayer.disconnect.kicked", "multiplayer.player.joined", "death.attack.fall",
         "book.pageIndicator", "commands.advancement.criterionNotFound", "gui.done", "key.jump", "translation.test.args",
@@ -66,6 +92,27 @@ final class ComponentSuite implements Suite {
         "https://minecraft.net", "http://example.com/a?b=c#d", "HTTPS://Example.COM:8080/%20x", "https://[::1]/", "ftp://not.allowed/", "mailto:a@b"
     );
     private static final List<String> COLORS = List.of("black", "dark_blue", "gold", "white", "red", "light_purple");
+    // Selectors and names a score or selector component holds, which parse; and ones that don't, for hand-made tags.
+    private static final List<String> SELECTORS = List.of(
+        "@p", "@a", "@s", "@e[type=pig,limit=2]", "@a[scores={kills=1..}]", "Steve", "f81d4fae-7dec-11d0-a765-00a0c91e6bf6", "@n[nbt={a:1b}]",
+        "@e[x=1,dx=2,sort=nearest]"
+    );
+    // NBT paths and block coordinates, which parse, and ones that don't.
+    private static final List<String> PATHS = List.of("a", "a.b", "a[0]", "a[]", "a[-1].b", "a[{b:1}]", "{a:1b}", "a{b:\"c\"}", "\"quoted key\".x", "'s'[0]", "Inventory[{Slot:0b}].id");
+    private static final List<String> BAD_PATHS = List.of("", "a.", ".a", "a b", "a[x]", "a]{", "a..b", "a{", "a[{]", "x.{a:1}", "a[0", "\"unclosed");
+    private static final List<String> COORDINATES = List.of("~ ~ ~", "1 2 3", "^ ^ ^1", "~1 ~-2 ~0.5", "-5 64 7", "^1.5 ^ ^");
+    private static final List<String> BAD_COORDINATES = List.of("1 2", "1 ^ 2", "x y z", "1.5 2 3", "~ ~", "^ ~ ^", "", "1 2 3 4");
+    // Items a hover event shows, and patches that decode in Java (the port keeps their values as data, and so reads
+    // values Java's codecs reject too, which no case makes).
+    private static final List<String> ITEMS = List.of("minecraft:stone", "diamond_sword", "minecraft:written_book", "player_head", "minecraft:potion");
+    private static final List<String> PATCHES = List.of(
+        "{}", "{\"minecraft:damage\":5}", "{\"!minecraft:lore\":{}}", "{\"minecraft:custom_name\":\"Name\"}",
+        "{\"minecraft:max_stack_size\":16,\"!minecraft:enchantments\":{}}", "{\"minecraft:enchantment_glint_override\":true}",
+        "{\"minecraft:custom_data\":{\"a\":1}}"
+    );
+    private static final List<String> BAD_SELECTORS = List.of(
+        "", "@x", "@e[", "@e[type=nope]", "@s[limit=1]", "seventeen_letters", "@e]", "@p trailing", "\"unclosed", "@e[nbt={]", "*"
+    );
 
     @Override
     public String name() {
@@ -92,6 +139,27 @@ final class ComponentSuite implements Suite {
                 }
             });
         }
+        // Components holding every kind of contents a server can send, apart so the batch above (which the packets'
+        // generator shares) stays as it was.
+        for (int i = 0; i < RICH_COMPONENTS; i++) {
+            Component component = randomRichComponent(random, 0);
+            JsonArray args = new JsonArray();
+            args.add(spec(component));
+            // A player's profile prints by identity (ResolvableProfile has no toString of its own).
+            // A patch prints its values by their classes, which the port keeps as data.
+            if (!component.toString().contains("ResolvableProfile$") && !component.toString().matches("(?s).*components=\\{[^}].*")) {
+                writer.result("toString", args, new JsonPrimitive(component.toString()), null);
+            }
+            writer.result("getString", args, new JsonPrimitive(component.getString()), null);
+            DataResult<Tag> encoded = codec.encodeStart(NbtOps.INSTANCE, component);
+            writer.result("encode", args, DfuValues.result(encoded, NbtValues::encodeTag), null);
+            encoded.resultOrPartial().ifPresent(tag -> {
+                inputs.add(tag);
+                if (random.nextInt(3) == 0) {
+                    inputs.add(mutate(tag, random));
+                }
+            });
+        }
         inputs.addAll(handMade());
         for (int i = 0; i < 100; i++) {
             inputs.add((Tag)NbtValues.TAGS.random(random));
@@ -100,11 +168,12 @@ final class ComponentSuite implements Suite {
         for (Tag input : inputs) {
             JsonArray args = new JsonArray();
             args.add(NbtValues.encodeTag(input));
-            // A translation's argument that's a compound holding an end throws: JavaOps can't make a map with a null.
+            // A translation's argument that's a compound holding an end throws: JavaOps can't make a map with a null. So
+            // does an NBT path ending in [ (StringIndexOutOfBoundsException, the reader peeking past the end).
             try {
                 DataResult<Pair<Component, Tag>> decoded = codec.decode(NbtOps.INSTANCE, input);
                 writer.result("decode", args, DfuValues.result(decoded, pair -> DfuValues.pair(pair, ComponentSuite::spec, NbtValues::encodeTag)), null);
-            } catch (NullPointerException e) {
+            } catch (NullPointerException | StringIndexOutOfBoundsException e) {
                 writer.threw("decode", args, e, null);
             }
         }
@@ -190,8 +259,7 @@ final class ComponentSuite implements Suite {
         list.add(bold);
         tags.add(list);
         tags.add(new ListTag());
-        // The types the port has, and one there isn't; the contents not ported yet (score, selector, nbt, object) aren't
-        // made at all.
+        // The types the port has, and one there isn't.
         for (String type : List.of("text", "translatable", "keybind", "bogus")) {
             CompoundTag typed = new CompoundTag();
             typed.putString("type", type);
@@ -245,6 +313,151 @@ final class ComponentSuite implements Suite {
         both.putString("text", "t");
         both.putString("translate", "gui.done");
         tags.add(both);
+        // Scores and selectors, as a server sends them unresolved: names that are selectors and ones that aren't,
+        // selectors that don't parse, separators, missing and mistyped fields, and the type named or not.
+        for (int i = 0; i < SELECTORS.size() + BAD_SELECTORS.size(); i++) {
+            String selector = i < SELECTORS.size() ? SELECTORS.get(i) : BAD_SELECTORS.get(i - SELECTORS.size());
+            CompoundTag score = new CompoundTag();
+            CompoundTag inner = new CompoundTag();
+            inner.putString("name", selector);
+            if (i % 4 != 3) {
+                inner.putString("objective", "obj" + i);
+            }
+            score.put("score", inner);
+            if (i % 3 == 0) {
+                score.putString("type", "score");
+            }
+            tags.add(score);
+            CompoundTag selectorTag = new CompoundTag();
+            selectorTag.putString("selector", selector);
+            if (i % 2 == 0) {
+                CompoundTag separator = new CompoundTag();
+                separator.putString("text", ", ");
+                selectorTag.put("separator", separator);
+            } else if (i % 5 == 0) {
+                selectorTag.putInt("separator", 3);
+            }
+            if (i % 3 == 1) {
+                selectorTag.putString("type", "selector");
+            }
+            tags.add(selectorTag);
+        }
+        CompoundTag scoreNotCompound = new CompoundTag();
+        scoreNotCompound.putString("score", "@p");
+        tags.add(scoreNotCompound);
+        CompoundTag selectorNotString = new CompoundTag();
+        selectorNotString.putInt("selector", 1);
+        tags.add(selectorNotString);
+        // Items shown on hover: each item, counts in range and out, patches that decode and that don't (unknown and
+        // transient types, a removal that isn't a map, a type both set and removed), air and unknown items.
+        List<String> items = new ArrayList<>(ITEMS);
+        items.addAll(List.of("minecraft:air", "nope", "Bad Item", ""));
+        List<String> patches = new ArrayList<>(PATCHES);
+        patches.addAll(List.of(
+            "{\"minecraft:nope\":1}", "{\"minecraft:creative_slot_lock\":{}}", "{\"!minecraft:damage\":1}", "{\"Bad Key\":1}",
+            "{\"minecraft:damage\":5,\"!minecraft:damage\":{}}", "{\"!minecraft:damage\":{},\"minecraft:damage\":7}", "{\"!\":{}}",
+            "{\"custom:thing\":1}"
+        ));
+        for (int i = 0; i < items.size() * patches.size(); i++) {
+            CompoundTag shown = new CompoundTag();
+            shown.putString("text", "item");
+            CompoundTag hover = new CompoundTag();
+            hover.putString("action", "show_item");
+            hover.putString("id", items.get(i % items.size()));
+            switch (i % 5) {
+                case 0 -> hover.putInt("count", 1 + i % 99);
+                case 1 -> hover.putInt("count", List.of(0, 100, -1, 99).get(i / 5 % 4));
+                case 2 -> hover.putString("count", "x");
+                default -> {
+                }
+            }
+            if (i % 3 != 2) {
+                try {
+                    hover.put("components", net.minecraft.nbt.TagParser.parseCompoundFully(patches.get(i / items.size() % patches.size())));
+                } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+                    throw new IllegalStateException(e);
+                }
+            } else if (i % 7 == 0) {
+                hover.putString("components", "{}");
+            }
+            shown.put("hover_event", hover);
+            tags.add(shown);
+        }
+        // NBT: paths and coordinates that parse and that don't, each source, the flags (both on, mistyped), separators,
+        // the source named by type or not, and no source.
+        List<String> allPaths = new ArrayList<>(PATHS);
+        allPaths.addAll(BAD_PATHS);
+        allPaths.add("a[");
+        for (int i = 0; i < allPaths.size() * 3; i++) {
+            CompoundTag nbt = new CompoundTag();
+            nbt.putString("nbt", allPaths.get(i % allPaths.size()));
+            switch (i % 4) {
+                case 0 -> nbt.putString("entity", i % 8 == 0 ? BAD_SELECTORS.get(i / 8 % BAD_SELECTORS.size()) : SELECTORS.get(i % SELECTORS.size()));
+                case 1 -> {
+                    List<String> coordinates = i % 3 == 0 ? BAD_COORDINATES : COORDINATES;
+                    nbt.putString("block", coordinates.get(i % coordinates.size()));
+                }
+                case 2 -> nbt.putString("storage", List.of("minecraft:store", "Bad Id", "x").get(i % 3));
+                default -> {
+                }
+            }
+            if (i % 5 == 0) {
+                nbt.putBoolean("interpret", true);
+            }
+            if (i % 7 == 0) {
+                nbt.putBoolean("plain", true);
+            }
+            if (i % 11 == 0) {
+                nbt.putString("interpret", "yes");
+            }
+            if (i % 6 == 0) {
+                CompoundTag separator = new CompoundTag();
+                separator.putString("text", "; ");
+                nbt.put("separator", separator);
+            } else if (i % 13 == 0) {
+                nbt.putInt("separator", 1);
+            }
+            if (i % 9 == 0) {
+                nbt.putString("source", List.of("entity", "block", "storage", "bogus").get(i / 9 % 4));
+            }
+            if (i % 10 == 0) {
+                nbt.putString("type", "nbt");
+            }
+            tags.add(nbt);
+        }
+        // Objects: sprites of atlases, players' heads by name, id, properties and skin, and ones that don't read.
+        for (int i = 0; i < 40; i++) {
+            CompoundTag object = new CompoundTag();
+            if (i % 2 == 0) {
+                object.putString("sprite", List.of("stone", "item/apple", "Bad Sprite", "custom:thing").get(i / 2 % 4));
+                if (i % 3 == 0) {
+                    object.putString("atlas", List.of("minecraft:items", "blocks", "not an id").get(i % 9 / 3));
+                }
+            } else {
+                object.put("player", profileTag(new Random(i)));
+                if (i % 3 == 0) {
+                    object.putBoolean("hat", false);
+                } else if (i % 7 == 0) {
+                    object.putString("hat", "no");
+                }
+            }
+            if (i % 4 == 1) {
+                object.putString("object", List.of("atlas", "player", "bogus").get(i % 3));
+            }
+            if (i % 5 == 0) {
+                object.putString("type", "object");
+            }
+            if (i % 6 == 0) {
+                CompoundTag fallback = new CompoundTag();
+                fallback.putString("text", "fb");
+                object.put("fallback", fallback);
+            }
+            tags.add(object);
+        }
+        CompoundTag scoreTyped = new CompoundTag();
+        scoreTyped.putString("type", "score");
+        scoreTyped.putString("selector", "@p");
+        tags.add(scoreTyped);
         CompoundTag fallbackNotString = new CompoundTag();
         fallbackNotString.putString("translate", "unknown.key");
         fallbackNotString.put("fallback", IntTag.valueOf(3));
@@ -313,6 +526,129 @@ final class ComponentSuite implements Suite {
             }
         }
         return component;
+    }
+
+    // A component whose contents may also be a score or a selector, with siblings of any kind.
+    private static MutableComponent randomRichComponent(final Random random, final int depth) {
+        MutableComponent component = switch (random.nextInt(8)) {
+            case 7 -> {
+                String path = PATHS.get(random.nextInt(PATHS.size()));
+                CompilableString<net.minecraft.commands.arguments.NbtPathArgument.NbtPath> nbtPath =
+                    NbtContents.NBT_PATH_CODEC.parse(NbtOps.INSTANCE, StringTag.valueOf(path)).getOrThrow();
+                DataSource source = switch (random.nextInt(3)) {
+                    case 0 -> new EntityDataSource(EntitySelector.COMPILABLE_CODEC.parse(NbtOps.INSTANCE, StringTag.valueOf(SELECTORS.get(random.nextInt(SELECTORS.size())))).getOrThrow());
+                    case 1 -> new BlockDataSource(BlockDataSource.BLOCK_POS_CODEC.parse(NbtOps.INSTANCE, StringTag.valueOf(COORDINATES.get(random.nextInt(COORDINATES.size())))).getOrThrow());
+                    default -> new StorageDataSource(Identifier.parse(random.nextBoolean() ? "minecraft:store" : "custom:data/x"));
+                };
+                boolean interpreting = random.nextInt(3) == 0;
+                boolean plain = !interpreting && random.nextInt(3) == 0;
+                Optional<Component> separator = depth < 3 && random.nextBoolean() ? Optional.of(randomComponent(random, depth + 1)) : Optional.empty();
+                yield MutableComponent.create(new NbtContents(nbtPath, interpreting, plain, separator, source));
+            }
+            case 5 -> {
+                List<String> sprites = List.of("stone", "item/apple", "custom:thing", "block/oak_log");
+                Identifier sprite = Identifier.parse(sprites.get(random.nextInt(sprites.size())));
+                AtlasSprite info = random.nextBoolean()
+                    ? new AtlasSprite(AtlasSprite.DEFAULT_ATLAS, sprite)
+                    : new AtlasSprite(Identifier.parse(random.nextBoolean() ? "minecraft:items" : "custom:atlas"), sprite);
+                Optional<Component> fallback = depth < 3 && random.nextBoolean() ? Optional.of(randomComponent(random, depth + 1)) : Optional.empty();
+                yield MutableComponent.create(new ObjectContents(info, fallback));
+            }
+            case 6 -> {
+                ResolvableProfile profile = switch (random.nextInt(4)) {
+                    case 0 -> ResolvableProfile.createUnresolved("Steve");
+                    case 1 -> ResolvableProfile.createUnresolved(new java.util.UUID(random.nextLong(), random.nextLong()));
+                    case 2 -> ResolvableProfile.createResolved(new com.mojang.authlib.GameProfile(new java.util.UUID(random.nextLong(), random.nextLong()), "Alex"));
+                    default -> ResolvableProfile.CODEC.parse(NbtOps.INSTANCE, profileTag(random)).result().orElse(ResolvableProfile.createUnresolved("x"));
+                };
+                Optional<Component> fallback = random.nextBoolean() ? Optional.of(Component.literal("[head]")) : Optional.empty();
+                yield MutableComponent.create(new ObjectContents(new PlayerSprite(profile, random.nextBoolean()), fallback));
+            }
+            case 0 -> {
+                String name = random.nextBoolean() ? SELECTORS.get(random.nextInt(SELECTORS.size())) : BAD_SELECTORS.get(random.nextInt(BAD_SELECTORS.size()));
+                Either<CompilableString<EntitySelector>, String> either = EntitySelector.COMPILABLE_CODEC.parse(NbtOps.INSTANCE, StringTag.valueOf(name))
+                    .result()
+                    .<Either<CompilableString<EntitySelector>, String>>map(Either::left)
+                    .orElseGet(() -> Either.right(name));
+                yield MutableComponent.create(new ScoreContents(either, TEXTS.get(random.nextInt(TEXTS.size()))));
+            }
+            case 1 -> {
+                String source = SELECTORS.get(random.nextInt(SELECTORS.size()));
+                CompilableString<EntitySelector> selector = EntitySelector.COMPILABLE_CODEC.parse(NbtOps.INSTANCE, StringTag.valueOf(source)).getOrThrow();
+                Optional<Component> separator = depth < 3 && random.nextBoolean() ? Optional.of(randomComponent(random, depth + 1)) : Optional.empty();
+                yield MutableComponent.create(new SelectorContents(selector, separator));
+            }
+            default -> randomComponent(random, Math.max(depth, 2));
+        };
+        if (random.nextInt(3) == 0) {
+            component.setStyle(randomStyle(random, depth));
+        }
+        if (random.nextInt(5) == 0) {
+            CompoundTag item = new CompoundTag();
+            item.putString("id", ITEMS.get(random.nextInt(ITEMS.size())));
+            if (random.nextBoolean()) {
+                item.putInt("count", 1 + random.nextInt(99));
+            }
+            if (random.nextBoolean()) {
+                try {
+                    item.put("components", net.minecraft.nbt.TagParser.parseCompoundFully(PATCHES.get(random.nextInt(PATCHES.size()))));
+                } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            ItemStackTemplate template = ItemStackTemplate.MAP_CODEC.codec().parse(NbtOps.INSTANCE, item).getOrThrow();
+            component.setStyle(component.getStyle().withHoverEvent(new HoverEvent.ShowItem(template)));
+        }
+        if (depth < 2) {
+            for (int i = random.nextInt(3); i > 0; i--) {
+                component.append(randomRichComponent(random, depth + 1));
+            }
+        }
+        return component;
+    }
+
+    // A profile as a server writes one: a name, an id, properties, a skin patch.
+    private static Tag profileTag(final Random random) {
+        CompoundTag profile = new CompoundTag();
+        if (random.nextBoolean()) {
+            profile.putString("name", List.of("Steve", "Alex", "bad name", "", "seventeen_letters", "é").get(random.nextInt(6)));
+        }
+        if (random.nextBoolean()) {
+            profile.putIntArray("id", new int[]{random.nextInt(), random.nextInt(), random.nextInt(), random.nextInt()});
+        }
+        switch (random.nextInt(4)) {
+            case 0 -> {
+                ListTag properties = new ListTag();
+                CompoundTag property = new CompoundTag();
+                property.putString("name", "textures");
+                property.putString("value", "e30=");
+                if (random.nextBoolean()) {
+                    property.putString("signature", "c2ln");
+                }
+                properties.add(property);
+                profile.put("properties", properties);
+            }
+            case 1 -> {
+                CompoundTag properties = new CompoundTag();
+                ListTag values = new ListTag();
+                values.add(StringTag.valueOf("a"));
+                values.add(StringTag.valueOf("b"));
+                properties.put("textures", values);
+                profile.put("properties", properties);
+            }
+            default -> {
+            }
+        }
+        if (random.nextInt(3) == 0) {
+            profile.putString("texture", "minecraft:entity/player/wide/steve");
+        }
+        if (random.nextInt(3) == 0) {
+            profile.putString("model", List.of("slim", "wide", "fat").get(random.nextInt(3)));
+        }
+        if (random.nextInt(5) == 0) {
+            profile.putString("cape", "custom:cape");
+        }
+        return random.nextInt(6) == 0 ? StringTag.valueOf("Steve") : profile;
     }
 
     private static Object randomArgument(final Random random, final int depth) {
@@ -430,6 +766,68 @@ final class ComponentSuite implements Suite {
                 spec.add("keybind");
                 spec.add(keybind.getName());
             }
+            case ScoreContents score -> {
+                spec.add("score");
+                JsonArray name = new JsonArray();
+                score.name().ifLeft(selector -> {
+                    name.add("left");
+                    name.add(selector.source());
+                }).ifRight(text -> {
+                    name.add("right");
+                    name.add(text);
+                });
+                spec.add(name);
+                spec.add(score.objective());
+            }
+            case SelectorContents selector -> {
+                spec.add("selector");
+                spec.add(selector.selector().source());
+                spec.add(selector.separator().map(ComponentSuite::spec).orElse(JsonNull.INSTANCE));
+            }
+            case NbtContents nbt -> {
+                spec.add("nbt");
+                spec.add(nbt.nbtPath().source());
+                spec.add(nbt.interpreting());
+                spec.add(nbt.plain());
+                spec.add(nbt.separator().map(ComponentSuite::spec).orElse(JsonNull.INSTANCE));
+                JsonArray source = new JsonArray();
+                switch (nbt.dataSource()) {
+                    case EntityDataSource entity -> {
+                        source.add("entity");
+                        source.add(entity.selector().source());
+                    }
+                    case BlockDataSource block -> {
+                        source.add("block");
+                        source.add(block.coordinates().source());
+                    }
+                    case StorageDataSource storage -> {
+                        source.add("storage");
+                        source.add(storage.id().toString());
+                    }
+                    default -> throw new IllegalArgumentException("source " + nbt.dataSource());
+                }
+                spec.add(source);
+            }
+            case ObjectContents object -> {
+                spec.add("object");
+                JsonArray info = new JsonArray();
+                switch (object.contents()) {
+                    case AtlasSprite atlas -> {
+                        info.add("atlas");
+                        info.add(atlas.atlas().toString());
+                        info.add(atlas.sprite().toString());
+                    }
+                    case PlayerSprite player -> {
+                        info.add("player");
+                        info.add(player.player() instanceof ResolvableProfile.Static ? "static" : "dynamic");
+                        info.add(NbtValues.encodeTag(ResolvableProfile.CODEC.encodeStart(NbtOps.INSTANCE, player.player()).getOrThrow()));
+                        info.add(player.hat());
+                    }
+                    default -> throw new IllegalArgumentException("object " + object);
+                }
+                spec.add(info);
+                spec.add(object.fallback().map(ComponentSuite::spec).orElse(JsonNull.INSTANCE));
+            }
             default -> throw new IllegalArgumentException("contents " + contents);
         }
         return spec;
@@ -486,6 +884,13 @@ final class ComponentSuite implements Suite {
             JsonArray hoverSpec = new JsonArray();
             hoverSpec.add("show_text");
             hoverSpec.add(spec(value));
+            spec.add(hoverSpec);
+        } else if (hover instanceof HoverEvent.ShowItem(ItemStackTemplate item)) {
+            JsonArray hoverSpec = new JsonArray();
+            hoverSpec.add("show_item");
+            hoverSpec.add(item.item().getRegisteredName());
+            hoverSpec.add(item.count());
+            hoverSpec.add(NbtValues.encodeTag(DataComponentPatch.CODEC.encodeStart(NbtOps.INSTANCE, item.components()).getOrThrow()));
             spec.add(hoverSpec);
         } else if (hover instanceof HoverEvent.ShowEntity(HoverEvent.EntityTooltipInfo entity)) {
             JsonArray hoverSpec = new JsonArray();

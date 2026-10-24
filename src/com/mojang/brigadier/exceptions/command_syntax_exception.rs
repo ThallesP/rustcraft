@@ -43,6 +43,20 @@ impl CommandSyntaxException {
         }
     }
 
+    /// Java's four-argument constructor as `MinMaxBounds` calls it, with another's input, which
+    /// may be null.
+    pub fn with_raw(
+        message: Arc<dyn Message>,
+        input: Option<String>,
+        cursor: i32,
+    ) -> CommandSyntaxException {
+        CommandSyntaxException {
+            message,
+            input,
+            cursor,
+        }
+    }
+
     /// The message's text, then where the input went wrong:
     /// `… at position 4: @e[x<--[HERE]`.
     pub fn get_message(&self) -> String {

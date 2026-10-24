@@ -1,8 +1,9 @@
 //! net/minecraft/resources/Identifier.java
 //!
-//! Not ported yet: `ERROR_INVALID`, `read(StringReader)` and
-//! `readNonEmpty`, which wait for brigadier; `withPath(UnaryOperator)`, which the golden harness
-//! can't generate an argument for; and `resolveAgainst(Path)`, which comes with resource loading.
+//! Not ported yet: `withPath(UnaryOperator)`, which the golden harness can't generate an argument
+//! for, and `resolveAgainst(Path)`, which comes with resource loading. `read(StringReader)` and
+//! `readNonEmpty` are `read_from` and `read_non_empty`; the harness has no `StringReader` generator,
+//! so the selector suite, whose options read identifiers, checks them.
 //!
 //! Java throws `IdentifierException` for an invalid namespace or path, which is a panic here. Its
 //! message goes through commons-lang's `escapeJava`, which `read` returns in its error as Java's
@@ -12,14 +13,24 @@
 use std::fmt;
 use std::sync::LazyLock;
 
+use crate::com::mojang::brigadier::exceptions::command_syntax_exception::CommandSyntaxException;
+use crate::com::mojang::brigadier::exceptions::simple_command_exception_type::SimpleCommandExceptionType;
+use crate::com::mojang::brigadier::string_reader::StringReader;
 use crate::com::mojang::serialization::codec::{CodecExt, STRING, StaticCodec};
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::java::lang::object::HashCode;
 use crate::java::lang::string::JavaString;
+use crate::net::minecraft::network::chat::component::Component;
 use crate::net::minecraft::network::codec::byte_buf_codecs::ByteBufCodecs;
 use crate::net::minecraft::network::codec::stream_codec::{StaticStreamCodec, StreamCodec};
 use crate::org::apache::commons::lang3::string_escape_utils::StringEscapeUtils;
+
+static ERROR_INVALID: LazyLock<SimpleCommandExceptionType> = LazyLock::new(|| {
+    SimpleCommandExceptionType::new(Component::from(Component::translatable(
+        "argument.id.invalid",
+    )))
+});
 
 /// A namespaced name, `namespace:path`, like `minecraft:block/stone`. Every one that exists is
 /// valid, so its parts are ASCII.
@@ -216,6 +227,38 @@ impl Identifier {
         format!("{prefix}.{}.{suffix}", self.to_language_key())
     }
 
+    // What a command reads of an identifier: as far as its characters go.
+    fn read_greedy(reader: &mut StringReader) -> String {
+        let start = reader.get_cursor();
+        while reader.can_read() && Identifier::is_allowed_in_identifier(reader.peek()) {
+            reader.skip();
+        }
+        reader.substring(start, reader.get_cursor())
+    }
+
+    /// `read(StringReader)`: the identifier at the reader's cursor, which an invalid one rewinds.
+    pub fn read_from(reader: &mut StringReader) -> Result<Identifier, CommandSyntaxException> {
+        let start = reader.get_cursor();
+        let raw = Identifier::read_greedy(reader);
+        Identifier::try_parse(&raw).ok_or_else(|| {
+            reader.set_cursor(start);
+            ERROR_INVALID.create_with_context(reader)
+        })
+    }
+
+    /// `readNonEmpty(StringReader)`: the same, failing on nothing too.
+    pub fn read_non_empty(reader: &mut StringReader) -> Result<Identifier, CommandSyntaxException> {
+        let start = reader.get_cursor();
+        let raw = Identifier::read_greedy(reader);
+        if raw.is_empty() {
+            return Err(ERROR_INVALID.create_with_context(reader));
+        }
+        Identifier::try_parse(&raw).ok_or_else(|| {
+            reader.set_cursor(start);
+            ERROR_INVALID.create_with_context(reader)
+        })
+    }
+
     /// What a command reads as part of an identifier: a path's characters and the separator.
     pub fn is_allowed_in_identifier(c: u16) -> bool {
         u8::try_from(c).is_ok_and(|c| {
@@ -343,18 +386,21 @@ mod tests {
             "an instance suite can't encode a codec: DfuCodecSuite checks it, as `Identifier.CODEC`",
         );
         golden.check_codec("STREAM_CODEC", || Identifier::STREAM_CODEC);
-        golden.pending("ERROR_INVALID", "waits for brigadier");
+        golden.pending(
+            "ERROR_INVALID",
+            "an exception type isn't a value the harness compares: the selector suite checks its message",
+        );
         golden.pending(
             "read(Ljava/lang/String;)Lcom/mojang/serialization/DataResult;",
             "waits for DataFixerUpper's DataResult",
         );
         golden.pending(
             "read(Lcom/mojang/brigadier/StringReader;)Lnet/minecraft/resources/Identifier;",
-            "waits for brigadier",
+            "no generator for StringReader: the selector suite's options read identifiers",
         );
         golden.pending(
             "readNonEmpty(Lcom/mojang/brigadier/StringReader;)Lnet/minecraft/resources/Identifier;",
-            "waits for brigadier",
+            "no generator for StringReader, and no caller yet",
         );
         golden.pending(
             "withPath(Ljava/util/function/UnaryOperator;)Lnet/minecraft/resources/Identifier;",

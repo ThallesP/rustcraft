@@ -762,6 +762,35 @@ fn check_range<N: Copy>(
     }
 }
 
+/// `Codec.string(int, int)`: `STRING`, its length in UTF-16 units checked both ways.
+pub fn string(min_size: i32, max_size: i32) -> BoxedCodec<String> {
+    STRING
+        .validate(move |value: String| {
+            let length = value.encode_utf16().count() as i64;
+            if length < i64::from(min_size) {
+                DataResult::error(|| {
+                    format!(
+                        "String \"{value}\" is too short: {length}, expected range [{min_size}-{max_size}]"
+                    )
+                })
+            } else if length > i64::from(max_size) {
+                DataResult::error(|| {
+                    format!(
+                        "String \"{value}\" is too long: {length}, expected range [{min_size}-{max_size}]"
+                    )
+                })
+            } else {
+                DataResult::success(value)
+            }
+        })
+        .boxed()
+}
+
+/// `Codec.sizeLimitedString(int)`.
+pub fn size_limited_string(max_size: i32) -> BoxedCodec<String> {
+    string(0, max_size)
+}
+
 /// `Codec.intRange`: `INT` checked both ways.
 pub fn int_range(min_inclusive: i32, max_inclusive: i32) -> BoxedCodec<i32> {
     let checker = move |value: i32| {

@@ -261,11 +261,13 @@ impl FontManager {
     }
 
     /// `CachedFontProvider.getGlyphSource`: a resource font, or the missing font for the sprite
-    /// fonts, which aren't ported.
+    /// fonts (an atlas's, a player's head), which aren't ported.
     pub fn glyph_source(&self, description: &FontDescription, non_fishy_only: bool) -> GlyphSource {
         let font_set = match description {
             FontDescription::Resource { id } => self.get_font_set_raw(id),
-            FontDescription::AtlasSprite { .. } => Rc::clone(&self.missing_font_set),
+            FontDescription::AtlasSprite { .. } | FontDescription::PlayerSprite { .. } => {
+                Rc::clone(&self.missing_font_set)
+            }
         };
         GlyphSource {
             font_set,
