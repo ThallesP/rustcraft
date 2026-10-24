@@ -1,7 +1,9 @@
 //! net/minecraft/world/level/block/FaceAttachedHorizontalDirectionalBlock.java
 //!
-//! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
+//! Its blocks' states are its parent's, and `getConnectedDirection` is ported. Not ported yet: the
+//! rest of its behaviour.
 
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -9,9 +11,11 @@ use crate::net::minecraft::world::level::block::horizontal_directional_block::{
     self, HorizontalDirectionalBlock,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::attach_face::AttachFace;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
+use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 
 pub struct FaceAttachedHorizontalDirectionalBlock;
 
@@ -29,5 +33,15 @@ impl FaceAttachedHorizontalDirectionalBlock {
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         HorizontalDirectionalBlock::new_with(properties, class, definition)
+    }
+
+    /// `getConnectedDirection`: the way from it to what it's attached to's opposite: up on a
+    /// floor, down on a ceiling, its facing on a wall.
+    pub fn get_connected_direction(state: BlockState) -> Direction {
+        match state.get_value(FaceAttachedHorizontalDirectionalBlock::FACE) {
+            AttachFace::CEILING => Direction::DOWN,
+            AttachFace::FLOOR => Direction::UP,
+            AttachFace::WALL => state.get_value(HorizontalDirectionalBlock::FACING),
+        }
     }
 }

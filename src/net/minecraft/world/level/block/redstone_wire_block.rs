@@ -1,13 +1,19 @@
 //! net/minecraft/world/level/block/RedstoneWireBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
 //!
-//! Of its behaviour, its shape (a dot, with lines toward its sides and up the ones it climbs) is
-//! ported.
+//! Of its behaviour, its shape (a dot, with lines toward its sides and up the ones it climbs), and
+//! its specks (`animateTick`) are ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::direction::Plane;
+use crate::net::minecraft::core::particles::dust_particle_options::DustParticleOptions;
+use crate::net::minecraft::util::argb::ARGB;
+use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -23,6 +29,7 @@ use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use std::sync::LazyLock;
 
 pub struct RedstoneWireBlock {
     /// `shapes`, by state index.
@@ -30,6 +37,7 @@ pub struct RedstoneWireBlock {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(RedstoneWireBlock::animate_tick),
     get_shape: Some(RedstoneWireBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.RedstoneWireBlock",
@@ -132,3 +140,126 @@ impl RedstoneWireBlock {
         block.fields::<RedstoneWireBlock>().shapes[state.index() as usize].clone()
     }
 }
+
+impl RedstoneWireBlock {
+    /// `animateTick`: while powered, specks of its colour along each side's connection.
+    fn animate_tick(
+        _block: &BlockData,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        let power = state.get_value(RedstoneWireBlock::POWER);
+        if power != 0 {
+            let color = COLORS[power as usize];
+            for horizontal in Plane::HORIZONTAL.iterator() {
+                let property = match horizontal {
+                    Direction::NORTH => RedstoneWireBlock::NORTH,
+                    Direction::EAST => RedstoneWireBlock::EAST,
+                    Direction::SOUTH => RedstoneWireBlock::SOUTH,
+                    _ => RedstoneWireBlock::WEST,
+                };
+                match state.get_value(property) {
+                    RedstoneSide::UP => {
+                        RedstoneWireBlock::spawn_particles_along_line(
+                            level,
+                            random,
+                            pos,
+                            color,
+                            horizontal,
+                            Direction::UP,
+                            -0.5,
+                            0.5,
+                        );
+                        RedstoneWireBlock::spawn_particles_along_line(
+                            level,
+                            random,
+                            pos,
+                            color,
+                            Direction::DOWN,
+                            horizontal,
+                            0.0,
+                            0.5,
+                        );
+                    }
+                    RedstoneSide::SIDE => {
+                        RedstoneWireBlock::spawn_particles_along_line(
+                            level,
+                            random,
+                            pos,
+                            color,
+                            Direction::DOWN,
+                            horizontal,
+                            0.0,
+                            0.5,
+                        );
+                    }
+                    RedstoneSide::NONE => {
+                        RedstoneWireBlock::spawn_particles_along_line(
+                            level,
+                            random,
+                            pos,
+                            color,
+                            Direction::DOWN,
+                            horizontal,
+                            0.0,
+                            0.3,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_particles_along_line(
+        level: &LevelWithEffects<'_>,
+        random: &mut dyn RandomSource,
+        pos: &BlockPos,
+        color: i32,
+        side: Direction,
+        along: Direction,
+        from: f32,
+        to: f32,
+    ) {
+        let span = to - from;
+        if random.next_float() < 0.2 * span {
+            let side_of_block = 0.4375_f32;
+            let position_on_line = from + span * random.next_float();
+            let x = 0.5
+                + f64::from(side_of_block * side.get_step_x() as f32)
+                + f64::from(position_on_line * along.get_step_x() as f32);
+            let y = 0.5
+                + f64::from(side_of_block * side.get_step_y() as f32)
+                + f64::from(position_on_line * along.get_step_y() as f32);
+            let z = 0.5
+                + f64::from(side_of_block * side.get_step_z() as f32)
+                + f64::from(position_on_line * along.get_step_z() as f32);
+            level.add_particle(
+                DustParticleOptions::new(color, 1.0),
+                f64::from(pos.get_x()) + x,
+                f64::from(pos.get_y()) + y,
+                f64::from(pos.get_z()) + z,
+                0.0,
+                0.0,
+                0.0,
+            );
+        }
+    }
+}
+
+/// `COLORS`: the wire's colour at each power.
+static COLORS: LazyLock<[i32; 16]> = LazyLock::new(|| {
+    let mut list = [0; 16];
+    for (i, color) in list.iter_mut().enumerate() {
+        let power = i as f32 / 15.0;
+        let red = power * 0.6 + if power > 0.0 { 0.4 } else { 0.3 };
+        let green = Mth::clamp_f32(power * power * 0.7 - 0.5, 0.0, 1.0);
+        let blue = Mth::clamp_f32(power * power * 0.6 - 0.7, 0.0, 1.0);
+        *color = ARGB::color_from_float(1.0, red, green, blue);
+    }
+    list
+});
+
+impl RedstoneWireBlock {}

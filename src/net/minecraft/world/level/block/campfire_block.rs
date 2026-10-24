@@ -1,12 +1,18 @@
 //! net/minecraft/world/level/block/CampfireBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour, and its constructor's `spawnParticles` and `fireDamage`.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
 //!
-//! Of its behaviour, `getFluidState` and its shape are ported.
+//! Of its behaviour, `getFluidState` and its shape, and its particles and sounds (`animateTick`)
+//! are ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
+use crate::net::minecraft::sounds::sound_events::SoundEvents;
+use crate::net::minecraft::sounds::sound_source::SoundSource;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
@@ -28,7 +34,15 @@ use std::sync::LazyLock;
 
 pub struct CampfireBlock;
 
+/// What its constructor takes: whether it throws lava sparks, and how much its fire hurts.
+#[derive(Clone, Copy, Debug)]
+pub struct CampfireBlockFields {
+    pub spawn_particles: bool,
+    pub fire_damage: i32,
+}
+
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(CampfireBlock::animate_tick),
     get_shape: Some(CampfireBlock::get_shape),
     get_fluid_state: Some(CampfireBlock::get_fluid_state),
     ..BlockClass::new(
@@ -43,11 +57,16 @@ impl CampfireBlock {
     pub const WATERLOGGED: &'static BooleanProperty = BlockStateProperties::WATERLOGGED;
     pub const FACING: &'static EnumProperty<Direction> = BlockStateProperties::HORIZONTAL_FACING;
 
-    pub fn new(properties: Properties) -> BlockData {
+    /// `CampfireBlock(spawnParticles, fireDamage, properties)`.
+    pub fn new(spawn_particles: bool, fire_damage: i32, properties: Properties) -> BlockData {
         CampfireBlock::new_with(
             properties,
             &CLASS,
             CampfireBlock::create_block_state_definition,
+            CampfireBlockFields {
+                spawn_particles,
+                fire_damage,
+            },
         )
     }
 
@@ -55,8 +74,10 @@ impl CampfireBlock {
         properties: Properties,
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
+        fields: CampfireBlockFields,
     ) -> BlockData {
         let mut block = BaseEntityBlock::new_with(properties, class, definition);
+        block.set_fields(fields);
         block.register_default_state(
             block
                 .get_state_definition()
@@ -101,5 +122,54 @@ impl CampfireBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl CampfireBlock {
+    /// `animateTick`: while lit, its crackle now and then, and, if it makes them (`spawnParticles`), sparks of lava.
+    fn animate_tick(
+        block: &BlockData,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        if state.get_value(CampfireBlock::LIT) {
+            if random.next_int_bounded(10) == 0 {
+                let volume = 0.5 + random.next_float();
+                let pitch = random.next_float() * 0.7 + 0.6;
+                level.play_local_sound(
+                    f64::from(pos.get_x()) + 0.5,
+                    f64::from(pos.get_y()) + 0.5,
+                    f64::from(pos.get_z()) + 0.5,
+                    SoundEvents::CAMPFIRE_CRACKLE,
+                    SoundSource::BLOCKS,
+                    volume,
+                    pitch,
+                    false,
+                );
+            }
+
+            if block.fields::<CampfireBlockFields>().spawn_particles
+                && random.next_int_bounded(5) == 0
+            {
+                // Java's loop draws its bound again each time round.
+                let mut i = 0;
+                while i < random.next_int_bounded(1) + 1 {
+                    let xd = f64::from(random.next_float() / 2.0);
+                    let zd = f64::from(random.next_float() / 2.0);
+                    level.add_particle(
+                        ParticleTypes::LAVA,
+                        f64::from(pos.get_x()) + 0.5,
+                        f64::from(pos.get_y()) + 0.5,
+                        f64::from(pos.get_z()) + 0.5,
+                        xd,
+                        5.0E-5,
+                        zd,
+                    );
+                    i += 1;
+                }
+            }
+        }
     }
 }

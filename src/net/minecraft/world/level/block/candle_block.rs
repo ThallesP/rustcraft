@@ -1,9 +1,12 @@
 //! net/minecraft/world/level/block/CandleBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
 //!
 //! Of its behaviour, `getFluidState` and its shape (by how many candles) are ported.
+//!
+//! For its parent's `animateTick`, its wicks (`getParticleOffsets`, by how many candles) are
+//! ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::abstract_candle_block::{
@@ -25,6 +28,7 @@ use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use crate::net::minecraft::world::phys::vec3::Vec3;
 use std::sync::LazyLock;
 
 pub struct CandleBlock;
@@ -116,4 +120,26 @@ impl CandleBlock {
     ) -> VoxelShape {
         SHAPES[(state.get_value(CandleBlock::CANDLES) - 1) as usize].clone()
     }
+}
+
+/// `PARTICLE_OFFSETS`: where each wick is, by how many candles there are.
+static PARTICLE_OFFSETS: LazyLock<[Vec<Vec3>; 4]> = LazyLock::new(|| {
+    let s = 0.0625;
+    let at = |x: f64, y: f64, z: f64| Vec3::new(x, y, z).scale(s);
+    [
+        vec![at(8.0, 8.0, 8.0)],
+        vec![at(6.0, 7.0, 8.0), at(10.0, 8.0, 7.0)],
+        vec![at(8.0, 5.0, 10.0), at(6.0, 7.0, 8.0), at(9.0, 8.0, 7.0)],
+        vec![
+            at(7.0, 5.0, 9.0),
+            at(10.0, 7.0, 9.0),
+            at(6.0, 7.0, 6.0),
+            at(9.0, 8.0, 6.0),
+        ],
+    ]
+});
+
+/// `getParticleOffsets`: the wicks of its candles.
+pub(crate) fn particle_offsets(state: BlockState) -> &'static [Vec3] {
+    &PARTICLE_OFFSETS[(state.get_value(CandleBlock::CANDLES) - 1) as usize]
 }

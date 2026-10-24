@@ -1,12 +1,17 @@
 //! net/minecraft/world/level/block/WallTorchBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour, and its constructor's `flameParticle`.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
 //!
-//! Of its behaviour, its shape (leaning from the wall it faces from) is ported.
+//! Of its behaviour, its shape (leaning from the wall it faces from), and its smoke and flame
+//! (`animateTick`) are ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::particles::particle_type::ParticleType;
+use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
@@ -27,6 +32,7 @@ use std::sync::LazyLock;
 pub struct WallTorchBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(WallTorchBlock::animate_tick),
     get_shape: Some(WallTorchBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.WallTorchBlock",
@@ -37,11 +43,12 @@ pub static CLASS: BlockClass = BlockClass {
 impl WallTorchBlock {
     pub const FACING: &'static EnumProperty<Direction> = HorizontalDirectionalBlock::FACING;
 
-    pub fn new(properties: Properties) -> BlockData {
+    pub fn new(flame_particle: ParticleType, properties: Properties) -> BlockData {
         WallTorchBlock::new_with(
             properties,
             &CLASS,
             WallTorchBlock::create_block_state_definition,
+            flame_particle,
         )
     }
 
@@ -49,8 +56,9 @@ impl WallTorchBlock {
         properties: Properties,
         class: &'static BlockClass,
         definition: CreateBlockStateDefinition,
+        flame_particle: ParticleType,
     ) -> BlockData {
-        let mut block = TorchBlock::new_with(properties, class, definition);
+        let mut block = TorchBlock::new_with(properties, class, definition, flame_particle);
         block.register_default_state(
             block
                 .get_state_definition()
@@ -82,5 +90,36 @@ impl WallTorchBlock {
     /// The static `getShape(BlockState)`, which redstone wall torches answer too.
     pub fn get_shape_of(state: BlockState) -> VoxelShape {
         Shapes::get(&SHAPES, state.get_value(WallTorchBlock::FACING)).clone()
+    }
+}
+
+impl WallTorchBlock {
+    /// `animateTick`: smoke and its flame (`flameParticle`) at its tip, off the wall.
+    fn animate_tick(
+        block: &BlockData,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        _random: &mut dyn RandomSource,
+    ) {
+        let direction = state.get_value(WallTorchBlock::FACING);
+        let x = f64::from(pos.get_x()) + 0.5;
+        let y = f64::from(pos.get_y()) + 0.7;
+        let z = f64::from(pos.get_z()) + 0.5;
+        let h = 0.22;
+        let r = 0.27;
+        let opposite = direction.get_opposite();
+        let px = x + r * f64::from(opposite.get_step_x());
+        let pz = z + r * f64::from(opposite.get_step_z());
+        level.add_particle(ParticleTypes::SMOKE, px, y + h, pz, 0.0, 0.0, 0.0);
+        level.add_particle(
+            *block.fields::<ParticleType>(),
+            px,
+            y + h,
+            pz,
+            0.0,
+            0.0,
+            0.0,
+        );
     }
 }

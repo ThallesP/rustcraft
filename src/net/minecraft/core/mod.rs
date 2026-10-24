@@ -11,6 +11,7 @@ pub mod holder;
 pub mod holder_set;
 pub mod id_map;
 pub mod id_mapper;
+pub mod particles;
 pub mod position;
 pub mod quart_pos;
 pub mod registries;

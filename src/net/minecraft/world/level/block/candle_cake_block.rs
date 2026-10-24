@@ -1,9 +1,11 @@
 //! net/minecraft/world/level/block/CandleCakeBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour, and its constructor's `block`.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour, and its constructor's `block`.
 //!
 //! Of its behaviour, its shape (a candle on a cake) is ported.
+//!
+//! For its parent's `animateTick`, its candle's wick (`getParticleOffsets`) is ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::abstract_candle_block::{
@@ -22,6 +24,7 @@ use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use crate::net::minecraft::world::phys::vec3::Vec3;
 use std::sync::LazyLock;
 
 pub struct CandleCakeBlock;
@@ -83,3 +86,10 @@ impl CandleCakeBlock {
         SHAPE.clone()
     }
 }
+
+/// `PARTICLE_OFFSETS`: its candle's wick.
+pub(crate) const PARTICLE_OFFSETS: &[Vec3] = &[Vec3 {
+    x: 8.0 * 0.0625,
+    y: 16.0 * 0.0625,
+    z: 8.0 * 0.0625,
+}];

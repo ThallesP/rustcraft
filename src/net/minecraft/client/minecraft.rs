@@ -5,7 +5,9 @@
 //! tick does with a connection to a server: run the packets queued for the game thread, then up
 //! to 10 ticks, each ticking the connection (the game mode's, or the connect screen's before
 //! there's a level), the game renderer, the player on its level, what the player sends, the
-//! level's own tick, and ending with `client_tick_end`; then the frame's update of the level's light (`renderFrame`'s
+//! level's own tick and its animations (`animateTick`, whose particles and sounds go to the
+//! particle engine and sound manager, which drop them until theirs are ported), and ending with
+//! `client_tick_end`; then the frame's update of the level's light (`renderFrame`'s
 //! `level.update()`) and, with a renderer, a frame of the level, offscreen or presented to the
 //! window. The renderer is made on demand (`init_renderer`): a headless client that takes no
 //! screenshots runs without one.
@@ -25,6 +27,7 @@ use std::sync::Arc;
 
 use crate::com::mojang::blaze3d::platform::window::Window;
 use crate::com::mojang::renderpearl::api::device::gpu_surface::{GpuSurface, PresentMode};
+use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::delta_tracker::Timer;
 use crate::net::minecraft::client::framerate_limiter::FramerateLimiter;
 use crate::net::minecraft::client::gui::gui::Gui;
@@ -33,13 +36,16 @@ use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
 use crate::net::minecraft::client::keyboard_handler::{KeyAction, KeyboardHandler};
 use crate::net::minecraft::client::mouse_handler::MouseHandler;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
+use crate::net::minecraft::client::multiplayer::client_level::LevelEffects;
 use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
 use crate::net::minecraft::client::multiplayer::multi_player_game_mode::MultiPlayerGameMode;
 use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::particle::particle_engine::{NoParticles, ParticleEngine};
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
 use crate::net::minecraft::client::renderer::game_renderer::{CameraEntityState, GameRenderer};
 use crate::net::minecraft::client::resources::server::downloaded_pack_source::DownloadedPackSource;
+use crate::net::minecraft::client::sounds::sound_manager::{NoSound, SoundManager};
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
@@ -49,9 +55,13 @@ use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::util::Util;
+use crate::net::minecraft::world::attribute::attribute_type::Value;
+use crate::net::minecraft::world::attribute::environment_attribute_layer::LayerLevel;
 use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
+use crate::net::minecraft::world::attribute::environment_attributes::EnvironmentAttributes;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::flowing_fluid;
+use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::lwjgl::sdl::sdl_events::{SDLEvents, SdlEvent};
 use crate::org::lwjgl::sdl::sdl_mouse::SDLMouse;
 use crate::rustcraft::bench;
@@ -102,6 +112,12 @@ pub struct Minecraft {
     pub gui: RefCell<Gui>,
     /// `downloadedPackSource`: the server's resource packs.
     pub downloaded_pack_source: RefCell<DownloadedPackSource>,
+    /// `particleEngine`: what the level's particles are handed to, the render track's to come.
+    pub particle_engine: RefCell<Box<dyn ParticleEngine>>,
+    /// `getSoundManager()`: what the level's sounds are handed to; sound isn't ported.
+    sound_manager: Box<dyn SoundManager>,
+    /// `getBlockColors()`, which leaves' particles take their colour from.
+    block_colors: BlockColors,
 }
 
 impl Minecraft {
@@ -129,6 +145,9 @@ impl Minecraft {
             mouse_handler: RefCell::new(MouseHandler::new()),
             gui: RefCell::new(Gui::new()),
             downloaded_pack_source: RefCell::new(DownloadedPackSource::new()),
+            particle_engine: RefCell::new(Box::new(NoParticles)),
+            sound_manager: Box::new(NoSound),
+            block_colors: BlockColors::create_default(),
         })
     }
 
@@ -275,12 +294,21 @@ impl Minecraft {
                     self.options.borrow_mut().joined_first_server = true;
                 }
 
-                // `level.tick`, with the listener's clocks.
+                // `level.tick`, with the listener's clocks, the sky's darkening first
+                // (`updateSkyBrightness`) from the environment attributes.
+                let sky_light_level = self.sky_light_level();
                 if let (Some(level), Some(connection)) =
                     (self.level.borrow_mut().as_mut(), self.get_connection())
                 {
+                    level.update_sky_brightness(sky_light_level);
                     level.tick(connection.borrow_mut().clock_manager_mut());
                 }
+            }
+
+            // `level.animateTick` around the player; `isLevelRunningNormally()`'s tick rate
+            // isn't ported, so it always runs.
+            if !self.pause.get() {
+                self.animate_tick();
             }
 
             if let Some(connection) = self.get_connection()
@@ -293,6 +321,60 @@ impl Minecraft {
         }
 
         self.drive(|driver, minecraft| driver.after_tick(minecraft));
+    }
+
+    /// The environment attributes' `SKY_LIGHT_LEVEL` for the level (`getDimensionValue`), its
+    /// default before the game renderer has made them, or without one.
+    fn sky_light_level(&self) -> f32 {
+        let attribute = &EnvironmentAttributes::SKY_LIGHT_LEVEL;
+        let level = self.level.borrow();
+        let game_renderer = self.game_renderer.borrow();
+        match (
+            level.as_ref(),
+            game_renderer
+                .as_ref()
+                .and_then(GameRenderer::environment_attributes),
+        ) {
+            (Some(level), Some(system)) => {
+                system.get_dimension_value(attribute, &self.level_environment(level))
+            }
+            _ => {
+                f32::from_attribute_value(EnvironmentAttributes::info(attribute.id()).default_value)
+            }
+        }
+    }
+
+    /// `level.animateTick(player.getBlockX(), player.getBlockY(), player.getBlockZ())`, its
+    /// particles and sounds handed to the game's particle engine and sound manager, near the
+    /// camera: the game renderer's, or the player's eyes for a headless client, which has none.
+    /// Java's marker particles show for a barrier or light block held in creative; items aren't
+    /// ported, so there's none.
+    fn animate_tick(&self) {
+        let level = self.level.borrow();
+        let player = self.player.borrow();
+        let (Some(level), Some(player)) = (level.as_ref(), player.as_ref()) else {
+            return;
+        };
+        let game_renderer = self.game_renderer.borrow();
+        let environment = self.level_environment(level);
+        let particle_engine = self.particle_engine.borrow();
+        let effects = LevelEffects {
+            particle_engine: particle_engine.as_ref(),
+            sound_manager: self.sound_manager.as_ref(),
+            camera_position: game_renderer.as_ref().map_or_else(
+                || Vec3::new(player.get_x(), player.get_eye_y(), player.get_z()),
+                |game_renderer| game_renderer.main_camera().position(),
+            ),
+            particles: self.options.borrow().particles(),
+            player: Some(player.get_id()),
+            environment: game_renderer
+                .as_ref()
+                .and_then(GameRenderer::environment_attributes)
+                .map(|system| (system, &environment as &dyn LayerLevel)),
+            block_colors: &self.block_colors,
+        };
+        let pos = player.block_position();
+        level.animate_tick(pos.get_x(), pos.get_y(), pos.get_z(), None, &effects);
     }
 
     /// Hands the game to the test driver, if there's one.

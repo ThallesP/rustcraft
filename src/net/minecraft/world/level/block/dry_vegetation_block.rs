@@ -1,13 +1,16 @@
 //! net/minecraft/world/level/block/DryVegetationBlock.java
 //!
-//! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
+//! Its blocks' states are its parent's. Not ported yet: the rest of its behaviour.
 //!
-//! Of its behaviour, its shape is ported.
+//! Of its behaviour, its shape, and its sound (`animateTick`) are ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::sounds::ambient_desert_block_sounds_player::AmbientDesertBlockSoundsPlayer;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::vegetation_block::{self, VegetationBlock};
@@ -19,6 +22,7 @@ use std::sync::LazyLock;
 pub struct DryVegetationBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(DryVegetationBlock::animate_tick),
     get_shape: Some(DryVegetationBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.DryVegetationBlock",
@@ -51,5 +55,18 @@ impl DryVegetationBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl DryVegetationBlock {
+    /// `animateTick`: a dead bush's sound now and then (`AmbientDesertBlockSoundsPlayer`).
+    fn animate_tick(
+        _block: &BlockData,
+        _state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        AmbientDesertBlockSoundsPlayer::play_ambient_dead_bush_sounds(level, pos, random);
     }
 }

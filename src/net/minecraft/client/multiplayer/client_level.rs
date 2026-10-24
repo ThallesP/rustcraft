@@ -30,10 +30,16 @@
 //!
 //! The game time is what the server last sent, and each tick adds one and ticks the listener's
 //! clocks (`tickTime`, the clocks a parameter, Java's `clockManager()`). The tick also steps the
-//! world border's move and the sky's flash; the rest of `tick` isn't ported: the sky's darkening
-//! (`updateSkyBrightness`, from the environment attributes the game renderer holds), the rain's
-//! particles and sounds (`tickWeatherEffects`, which needs a biome's precipitation at a block),
-//! block breaking progress, the End's flashes and the explosions. The weather is the levels the
+//! world border's move and the sky's flash, after the sky's darkening (`updateSkyBrightness`, its
+//! `SKY_LIGHT_LEVEL` a parameter, from the environment attributes the game renderer holds); the
+//! rest of `tick` isn't ported: the rain's particles and sounds (`tickWeatherEffects`), block
+//! breaking progress, the End's flashes and the explosions.
+//!
+//! Each tick the game animates it (`animateTick`): blocks near the player picked with the level's
+//! random (`Level.random`), each block's and fluid's `animateTick`, and the drips under fluids,
+//! their particles and sounds handed to what the game holds (`LevelEffects`, read by the blocks
+//! through `LevelWithEffects`). Not ported: the biomes' ambient particles (`AMBIENT_PARTICLES`,
+//! whose type the environment attributes haven't got), which only the nether's biomes have. The weather is the levels the
 //! server's game events set (`setRainLevel`, `setThunderLevel`), each with the last tick's, which
 //! the server steps by sending them every tick they change. `setRespawnData` keeps the spawn as it
 //! came, where Java moves one outside the world border to the heightmap's top at the border's
@@ -42,20 +48,32 @@
 //! Its dimension type is the synchronized registry's value of the holder the login named
 //! (`dimensionType()`), which gives its height, sky light, cardinal lighting and fast lava.
 
+use std::cell::{RefCell, RefMut};
 use std::collections::VecDeque;
 use std::fmt;
+use std::ops::Deref;
 use std::rc::Rc;
 
 use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
+use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::color::block::block_tint_cache::BlockTintCache;
 use crate::net::minecraft::client::multiplayer::client_chunk_cache::ClientChunkCache;
 use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::particle::particle_engine::ParticleEngine;
 use crate::net::minecraft::client::renderer::biome_colors;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
 use crate::net::minecraft::client::renderer::extract::level_extractor::LevelExtractor;
+use crate::net::minecraft::client::resources::sounds::entity_bound_sound_instance::EntityBoundSoundInstance;
+use crate::net::minecraft::client::resources::sounds::simple_sound_instance::SimpleSoundInstance;
+use crate::net::minecraft::client::sounds::sound_manager::{SoundInstance, SoundManager};
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::block_pos::MutableBlockPos;
 use crate::net::minecraft::core::cursor3d::Cursor3D;
+use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::holder::Holder;
+use crate::net::minecraft::core::particles::block_particle_option::BlockParticleOption;
+use crate::net::minecraft::core::particles::particle_options::ParticleOptions;
+use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
 use crate::net::minecraft::core::quart_pos::QuartPos;
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::core::registry::Registry;
@@ -63,13 +81,25 @@ use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::server::level::particle_status::ParticleStatus;
+use crate::net::minecraft::sounds::sound_event::SoundEvent;
+use crate::net::minecraft::sounds::sound_source::SoundSource;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::util::random_source::{self, RandomSource};
+use crate::net::minecraft::world::attribute::attribute_type::Value;
+use crate::net::minecraft::world::attribute::environment_attribute::EnvironmentAttribute;
+use crate::net::minecraft::world::attribute::environment_attribute_layer::LayerLevel;
+use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
+use crate::net::minecraft::world::attribute::environment_attributes::EnvironmentAttributes;
 use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
 use crate::net::minecraft::world::level::biome::biome::Biome;
+use crate::net::minecraft::world::level::biome::biome::Precipitation;
 use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
 use crate::net::minecraft::world::level::biome::biome_resolver::BiomeResolver;
 use crate::net::minecraft::world::level::biome::biomes::Biomes;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::entity::block_entity::BlockEntity;
 use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
@@ -88,12 +118,16 @@ use crate::net::minecraft::world::level::entity::entity_lookup::EntityLookup;
 use crate::net::minecraft::world::level::entity::entity_tick_list::EntityTickList;
 use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::level::level_height_accessor::{Height, LevelHeightAccessor};
+use crate::net::minecraft::world::level::levelgen::heightmap::Types;
+use crate::net::minecraft::world::level::levelgen::legacy_random_source::LegacyRandomSource;
+use crate::net::minecraft::world::level::levelgen::random_support::RandomSupport;
 use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
 use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::storage::level_data::RespawnData;
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use crate::net::minecraft::world::phys::vec3::Vec3;
 
 /// The level the player is in, as the client knows it.
 pub struct ClientLevel {
@@ -117,6 +151,11 @@ pub struct ClientLevel {
     o_thunder_level: f32,
     thunder_level: f32,
     sky_flash_time: i32,
+    /// `Level.skyDarken`: how far the sky's light is down, by the time of day and the weather.
+    sky_darken: i32,
+    /// `Level.random`, which `animateTick`'s positions, the particles' and sounds' choices and
+    /// some blocks draw from.
+    random: RefCell<LegacyRandomSource>,
     respawn_data: RespawnData,
     light_update_queue: VecDeque<LightUpdate>,
     biomes: Registry,
@@ -132,6 +171,276 @@ pub struct ClientLevel {
 
 /// A light update queued for the level, Java's `Runnable`.
 pub type LightUpdate = Box<dyn FnOnce(&mut ClientLevel)>;
+
+/// What the level's particles and sounds reach of the game, which Java's level reads from its
+/// `minecraft`: the particle engine and the sound manager they're handed to, the camera they're
+/// near, the options' particles, the player a sound follows, the environment attributes (which
+/// the game renderer holds here) and the block colours leaves' particles take.
+pub struct LevelEffects<'a> {
+    /// `minecraft.particleEngine`.
+    pub particle_engine: &'a dyn ParticleEngine,
+    /// `minecraft.getSoundManager()`.
+    pub sound_manager: &'a dyn SoundManager,
+    /// `minecraft.gameRenderer.mainCamera().position()`.
+    pub camera_position: Vec3,
+    /// `minecraft.options.particles()`.
+    pub particles: ParticleStatus,
+    /// `minecraft.player`'s id, which `playPlayerSound` binds its sound to.
+    pub player: Option<i32>,
+    /// `environmentAttributes()`, read with the level as the layers see it; none before the game
+    /// renderer has made them, which reads every attribute's default.
+    pub environment: Option<(&'a EnvironmentAttributeSystem, &'a dyn LayerLevel)>,
+    /// `Minecraft.getInstance().getBlockColors()`.
+    pub block_colors: &'a BlockColors,
+}
+
+/// The level as a block's `animateTick` reads it, Java's `Level` argument: the `ClientLevel`,
+/// which it derefs to, and what its particles and sounds reach of the game.
+pub struct LevelWithEffects<'a> {
+    level: &'a ClientLevel,
+    effects: &'a LevelEffects<'a>,
+}
+
+impl Deref for LevelWithEffects<'_> {
+    type Target = ClientLevel;
+
+    fn deref(&self) -> &ClientLevel {
+        self.level
+    }
+}
+
+impl<'a> LevelWithEffects<'a> {
+    pub fn new(level: &'a ClientLevel, effects: &'a LevelEffects<'a>) -> LevelWithEffects<'a> {
+        LevelWithEffects { level, effects }
+    }
+
+    /// `addParticle(ParticleOptions, double…)`: shown however far if its type overrides the
+    /// limiter.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_particle(
+        &self,
+        particle: impl Into<ParticleOptions>,
+        x: f64,
+        y: f64,
+        z: f64,
+        xd: f64,
+        yd: f64,
+        zd: f64,
+    ) {
+        let particle = particle.into();
+        let override_limiter = particle.get_type().get_override_limiter();
+        self.do_add_particle(&particle, override_limiter, false, x, y, z, xd, yd, zd);
+    }
+
+    /// `addParticle(ParticleOptions, boolean, boolean, double…)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_particle_limited(
+        &self,
+        particle: impl Into<ParticleOptions>,
+        override_limiter: bool,
+        always_show: bool,
+        x: f64,
+        y: f64,
+        z: f64,
+        xd: f64,
+        yd: f64,
+        zd: f64,
+    ) {
+        let particle = particle.into();
+        let override_limiter = particle.get_type().get_override_limiter() || override_limiter;
+        self.do_add_particle(
+            &particle,
+            override_limiter,
+            always_show,
+            x,
+            y,
+            z,
+            xd,
+            yd,
+            zd,
+        );
+    }
+
+    /// `addAlwaysVisibleParticle(ParticleOptions, double…)`: shown now and then even with the
+    /// fewest particles.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_always_visible_particle(
+        &self,
+        particle: impl Into<ParticleOptions>,
+        x: f64,
+        y: f64,
+        z: f64,
+        xd: f64,
+        yd: f64,
+        zd: f64,
+    ) {
+        self.do_add_particle(&particle.into(), false, true, x, y, z, xd, yd, zd);
+    }
+
+    /// `doAddParticle`: to the particle engine, unless it's more than 32 blocks from the camera or
+    /// the options' particles (with chance) leave it out, either of which overriding the limiter
+    /// skips.
+    #[allow(clippy::too_many_arguments)]
+    fn do_add_particle(
+        &self,
+        particle: &ParticleOptions,
+        override_limiter: bool,
+        always_show_particles: bool,
+        x: f64,
+        y: f64,
+        z: f64,
+        xd: f64,
+        yd: f64,
+        zd: f64,
+    ) {
+        let particle_level = self.calculate_particle_level(always_show_particles);
+        // Not past 32 blocks, as Java's negated test reads it (a NaN distance isn't).
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        let near = !(self.effects.camera_position.distance_to_sqr_xyz(x, y, z) > 1024.0);
+        if override_limiter || (near && particle_level != ParticleStatus::MINIMAL) {
+            self.effects
+                .particle_engine
+                .create_particle(particle, x, y, z, xd, yd, zd);
+        }
+    }
+
+    /// `calculateParticleLevel`: the options' particles, one in ten of the fewest made fewer for
+    /// a particle always shown, and one in three of fewer made the fewest.
+    fn calculate_particle_level(&self, always_show_particles: bool) -> ParticleStatus {
+        let mut particle_level = self.effects.particles;
+        if always_show_particles
+            && particle_level == ParticleStatus::MINIMAL
+            && self.level.random.borrow_mut().next_int_bounded(10) == 0
+        {
+            particle_level = ParticleStatus::DECREASED;
+        }
+
+        if particle_level == ParticleStatus::DECREASED
+            && self.level.random.borrow_mut().next_int_bounded(3) == 0
+        {
+            particle_level = ParticleStatus::MINIMAL;
+        }
+
+        particle_level
+    }
+
+    /// `playLocalSound(double, double, double, …)`: a sound at the position, seeded from the
+    /// level's random.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_local_sound(
+        &self,
+        x: f64,
+        y: f64,
+        z: f64,
+        sound: SoundEvent,
+        source: SoundSource,
+        volume: f32,
+        pitch: f32,
+        distance_delay: bool,
+    ) {
+        let seed = self.level.random.borrow_mut().next_long();
+        self.play_sound(x, y, z, sound, source, volume, pitch, distance_delay, seed);
+    }
+
+    /// `Level.playLocalSound(BlockPos, …)`: at the block's middle.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_local_sound_at(
+        &self,
+        pos: &BlockPos,
+        sound: SoundEvent,
+        source: SoundSource,
+        volume: f32,
+        pitch: f32,
+        distance_delay: bool,
+    ) {
+        self.play_local_sound(
+            f64::from(pos.get_x()) + 0.5,
+            f64::from(pos.get_y()) + 0.5,
+            f64::from(pos.get_z()) + 0.5,
+            sound,
+            source,
+            volume,
+            pitch,
+            distance_delay,
+        );
+    }
+
+    /// `playPlayerSound`: a sound following the player, if there's one.
+    pub fn play_player_sound(
+        &self,
+        sound: SoundEvent,
+        source: SoundSource,
+        volume: f32,
+        pitch: f32,
+    ) {
+        if let Some(player) = self.effects.player {
+            let seed = self.level.random.borrow_mut().next_long();
+            self.effects
+                .sound_manager
+                .play(SoundInstance::EntityBound(EntityBoundSoundInstance {
+                    sound,
+                    source,
+                    volume,
+                    pitch,
+                    entity: player,
+                    seed,
+                }));
+        }
+    }
+
+    /// `playSound`: now, or after the time sound takes to come from more than 10 blocks away.
+    #[allow(clippy::too_many_arguments)]
+    fn play_sound(
+        &self,
+        x: f64,
+        y: f64,
+        z: f64,
+        sound: SoundEvent,
+        source: SoundSource,
+        volume: f32,
+        pitch: f32,
+        distance_delay: bool,
+        seed: i64,
+    ) {
+        let distance_to_sqr = self.effects.camera_position.distance_to_sqr_xyz(x, y, z);
+        let instance = SoundInstance::Simple(SimpleSoundInstance::new(
+            sound, source, volume, pitch, seed, x, y, z,
+        ));
+        if distance_delay && distance_to_sqr > 100.0 {
+            let delay_in_seconds = distance_to_sqr.sqrt() / 40.0;
+            self.effects
+                .sound_manager
+                .play_delayed(instance, (delay_in_seconds * 20.0) as i32);
+        } else {
+            self.effects.sound_manager.play(instance);
+        }
+    }
+
+    /// `environmentAttributes().getValue(attribute, BlockPos)`: at the block's middle.
+    pub fn get_environment_value<V: Value>(
+        &self,
+        attribute: &EnvironmentAttribute<V>,
+        pos: &BlockPos,
+    ) -> V {
+        match self.effects.environment {
+            Some((system, layer_level)) => {
+                system.get_value(attribute, &Vec3::at_center_of(pos), None, layer_level)
+            }
+            None => {
+                V::from_attribute_value(EnvironmentAttributes::info(attribute.id()).default_value)
+            }
+        }
+    }
+
+    /// `getClientLeafTintColor`: the block's first tint in the level, -1 for an untinted one.
+    pub fn get_client_leaf_tint_color(&self, pos: &BlockPos) -> i32 {
+        let state = self.level.get_block_state(pos);
+        match self.effects.block_colors.get_tint_source(state, 0) {
+            Some(tint_source) => tint_source.color_in_world(state, self.level, pos),
+            None => -1,
+        }
+    }
+}
 
 impl ClientLevel {
     /// Panics on registries without the dimension type's value, or without biomes.
@@ -184,6 +493,10 @@ impl ClientLevel {
             o_thunder_level: 0.0,
             thunder_level: 0.0,
             sky_flash_time: 0,
+            sky_darken: 0,
+            random: RefCell::new(LegacyRandomSource::new(
+                RandomSupport::generate_unique_seed(),
+            )),
             respawn_data: RespawnData::clone(RespawnData::DEFAULT),
             light_update_queue: VecDeque::new(),
             biomes,
@@ -303,6 +616,294 @@ impl ClientLevel {
 
     pub fn set_sky_flash_time(&mut self, sky_flash_time: i32) {
         self.sky_flash_time = sky_flash_time;
+    }
+
+    /// `Level.getRandom()`, borrowed: let it go before anything else draws from it.
+    pub fn get_random(&self) -> RefMut<'_, LegacyRandomSource> {
+        self.random.borrow_mut()
+    }
+
+    /// `updateSkyBrightness()`, with the environment attributes' `SKY_LIGHT_LEVEL`, which the game
+    /// renderer holds.
+    pub fn update_sky_brightness(&mut self, sky_light_level: f32) {
+        self.sky_darken = (15.0 - sky_light_level) as i32;
+    }
+
+    /// `Level.getSkyDarken()`.
+    pub fn get_sky_darken(&self) -> i32 {
+        self.sky_darken
+    }
+
+    /// `LevelReader.getMaxLocalRawBrightness(BlockPos)`: the block's light, the sky's darkened.
+    pub fn get_max_local_raw_brightness(&self, pos: &BlockPos) -> i32 {
+        if pos.get_x() >= -30000000
+            && pos.get_z() >= -30000000
+            && pos.get_x() < 30000000
+            && pos.get_z() < 30000000
+        {
+            self.get_raw_brightness(pos, self.sky_darken)
+        } else {
+            15
+        }
+    }
+
+    /// `Level.getHeight(Heightmap.Types, int, int)`: the first free block above the column's
+    /// heightmap, the bottom where the level has no chunk (Java's empty chunk), and above the sea
+    /// past the world's edge.
+    pub fn get_height_at(&self, r#type: Types, x: i32, z: i32) -> i32 {
+        if (-30000000..30000000).contains(&x) && (-30000000..30000000).contains(&z) {
+            match self.chunk_source.get_chunk(
+                SectionPos::block_to_section_coord(x),
+                SectionPos::block_to_section_coord(z),
+            ) {
+                Some(chunk) => chunk
+                    .get_heightmap(r#type)
+                    .expect("a full chunk keeps its heightmaps")
+                    .get_first_available(x & 15, z & 15),
+                None => LevelHeightAccessor::get_min_y(self),
+            }
+        } else {
+            self.sea_level + 1
+        }
+    }
+
+    /// `LevelReader.getHeightmapPos`: the column's first free block above its heightmap.
+    pub fn get_heightmap_pos(&self, r#type: Types, pos: &BlockPos) -> BlockPos {
+        BlockPos::new(
+            pos.get_x(),
+            self.get_height_at(r#type, pos.get_x(), pos.get_z()),
+            pos.get_z(),
+        )
+    }
+
+    /// `getPrecipitationAt`: none where the level has no chunk, the biome's otherwise.
+    pub fn get_precipitation_at(&self, pos: &BlockPos) -> Precipitation {
+        if self
+            .chunk_source
+            .get_chunk(
+                SectionPos::block_to_section_coord(pos.get_x()),
+                SectionPos::block_to_section_coord(pos.get_z()),
+            )
+            .is_none()
+        {
+            return Precipitation::NONE;
+        }
+
+        self.biome_value(&self.get_biome(pos))
+            .get_precipitation_at(pos, self.sea_level)
+    }
+
+    /// `Level.isRainingAt`: raining, open to the sky with nothing above that stops rain, in a
+    /// biome where it rains there.
+    pub fn is_raining_at(&self, pos: &BlockPos) -> bool {
+        if !self.is_raining() {
+            return false;
+        }
+        if !self.can_see_sky(pos) {
+            return false;
+        }
+        if self.get_heightmap_pos(Types::MOTION_BLOCKING, pos).get_y() > pos.get_y() {
+            return false;
+        }
+        self.biome_value(&self.get_biome(pos))
+            .get_precipitation_at(pos, self.sea_level)
+            == Precipitation::RAIN
+    }
+
+    /// `animateTick(int, int, int)`, each tick around the player: 667 times a block within 16 of
+    /// the position, then one within 32, each animated (`doAnimateTick`). The animations' random
+    /// source is a new one each tick (`RandomSource.createThreadLocalInstance()`). Java's marker
+    /// particles show for a barrier or light block held in creative (`getMarkerParticleTarget`),
+    /// which the caller decides, items not being ported.
+    pub fn animate_tick(
+        &self,
+        xt: i32,
+        yt: i32,
+        zt: i32,
+        marker_particle_target: Option<Block>,
+        effects: &LevelEffects<'_>,
+    ) {
+        let mut animate_random = random_source::create_thread_local_instance();
+        let mut pos = MutableBlockPos::new();
+
+        for _ in 0..667 {
+            self.do_animate_tick(
+                xt,
+                yt,
+                zt,
+                16,
+                animate_random.as_mut(),
+                marker_particle_target,
+                &mut pos,
+                effects,
+            );
+            self.do_animate_tick(
+                xt,
+                yt,
+                zt,
+                32,
+                animate_random.as_mut(),
+                marker_particle_target,
+                &mut pos,
+                effects,
+            );
+        }
+    }
+
+    /// `doAnimateTick`: a block within `r` of the position, picked with the level's random, its
+    /// block's and fluid's `animateTick`, a fluid's drip below it, and the marker particle. The
+    /// biomes' ambient particles (`AMBIENT_PARTICLES`, the nether's spores and ash) aren't
+    /// ported: their attribute's type isn't, so a nether block's draws from the level's random
+    /// are missing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn do_animate_tick(
+        &self,
+        xt: i32,
+        yt: i32,
+        zt: i32,
+        r: i32,
+        animate_random: &mut dyn RandomSource,
+        marker_particle_target: Option<Block>,
+        pos: &mut MutableBlockPos,
+        effects: &LevelEffects<'_>,
+    ) {
+        let (x, y, z) = {
+            let mut random = self.random.borrow_mut();
+            let x = xt
+                .wrapping_add(random.next_int_bounded(r))
+                .wrapping_sub(random.next_int_bounded(r));
+            let y = yt
+                .wrapping_add(random.next_int_bounded(r))
+                .wrapping_sub(random.next_int_bounded(r));
+            let z = zt
+                .wrapping_add(random.next_int_bounded(r))
+                .wrapping_sub(random.next_int_bounded(r));
+            (x, y, z)
+        };
+        pos.set_xyz(x, y, z);
+        let block_pos = pos.immutable();
+        let level = LevelWithEffects::new(self, effects);
+        let state = self.get_block_state(&block_pos);
+        state
+            .get_block()
+            .animate_tick(state, &level, &block_pos, animate_random);
+        let fluid_state = self.get_fluid_state(&block_pos);
+        if !fluid_state.is_empty() {
+            fluid_state.animate_tick(&level, &block_pos, animate_random);
+            let drip_particle = fluid_state.get_drip_particle();
+            if let Some(drip_particle) = drip_particle
+                && self.random.borrow_mut().next_int_bounded(10) == 0
+            {
+                let has_watertight_bottom = state.is_face_sturdy(self, &block_pos, Direction::DOWN);
+                let below = block_pos.below();
+                self.try_spawn_drip_particles(
+                    &level,
+                    &below,
+                    self.get_block_state(&below),
+                    drip_particle,
+                    has_watertight_bottom,
+                );
+            }
+        }
+
+        if marker_particle_target == Some(state.get_block()) {
+            level.add_particle(
+                BlockParticleOption::new(ParticleTypes::BLOCK_MARKER, state),
+                f64::from(x) + 0.5,
+                f64::from(y) + 0.5,
+                f64::from(z) + 0.5,
+                0.0,
+                0.0,
+                0.0,
+            );
+        }
+    }
+
+    fn try_spawn_drip_particles(
+        &self,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        state: BlockState,
+        drip_particle: ParticleOptions,
+        is_top_solid: bool,
+    ) {
+        if state.get_fluid_state().is_empty() {
+            let collision_shape = state.get_collision_shape(self, pos);
+            let top_side_height = collision_shape.max(Axis::Y);
+            if top_side_height < 1.0 {
+                if is_top_solid {
+                    self.spawn_fluid_particle(
+                        level,
+                        f64::from(pos.get_x()),
+                        f64::from(pos.get_x() + 1),
+                        f64::from(pos.get_z()),
+                        f64::from(pos.get_z() + 1),
+                        f64::from(pos.get_y() + 1) - 0.05,
+                        drip_particle,
+                    );
+                }
+            } else if !state.is_tag(BlockTags::IMPERMEABLE) {
+                let bottom_side_height = collision_shape.min(Axis::Y);
+                if bottom_side_height > 0.0 {
+                    self.spawn_particle(
+                        level,
+                        pos,
+                        drip_particle,
+                        &collision_shape,
+                        f64::from(pos.get_y()) + bottom_side_height - 0.05,
+                    );
+                } else {
+                    let below = pos.below();
+                    let below_state = self.get_block_state(&below);
+                    let below_shape = below_state.get_collision_shape(self, &below);
+                    let below_top_side_height = below_shape.max(Axis::Y);
+                    if below_top_side_height < 1.0 && below_state.get_fluid_state().is_empty() {
+                        self.spawn_particle(
+                            level,
+                            pos,
+                            drip_particle,
+                            &collision_shape,
+                            f64::from(pos.get_y()) - 0.05,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn spawn_particle(
+        &self,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        drip_particle: ParticleOptions,
+        drip_shape: &VoxelShape,
+        height: f64,
+    ) {
+        self.spawn_fluid_particle(
+            level,
+            f64::from(pos.get_x()) + drip_shape.min(Axis::X),
+            f64::from(pos.get_x()) + drip_shape.max(Axis::X),
+            f64::from(pos.get_z()) + drip_shape.min(Axis::Z),
+            f64::from(pos.get_z()) + drip_shape.max(Axis::Z),
+            height,
+            drip_particle,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_fluid_particle(
+        &self,
+        level: &LevelWithEffects<'_>,
+        x1: f64,
+        x2: f64,
+        z1: f64,
+        z2: f64,
+        y: f64,
+        drip_particle: ParticleOptions,
+    ) {
+        let x = Mth::lerp_f64(self.random.borrow_mut().next_double(), x1, x2);
+        let z = Mth::lerp_f64(self.random.borrow_mut().next_double(), z1, z2);
+        level.add_particle(drip_particle, x, y, z, 0.0, 0.0, 0.0);
     }
 
     /// `tickEntities()` for the entities besides the player, in the tick list's order:
@@ -821,9 +1422,27 @@ impl fmt::Debug for ClientLevel {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use serde_json::Value;
 
-    use super::ClientLevel;
+    use super::{ClientLevel, LevelEffects};
+    use crate::net::minecraft::client::color::block::block_colors::BlockColors;
+    use crate::net::minecraft::client::particle::particle_engine::ParticleEngine;
+    use crate::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
+    use crate::net::minecraft::client::sounds::sound_manager::{SoundInstance, SoundManager};
+    use crate::net::minecraft::core::block_pos::MutableBlockPos;
+    use crate::net::minecraft::core::particles::particle_options::ParticleOptions;
+    use crate::net::minecraft::server::level::particle_status::ParticleStatus;
+    use crate::net::minecraft::util::random_source::RandomSource;
+    use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
+    use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
+    use crate::net::minecraft::world::level::block::block::Block;
+    use crate::net::minecraft::world::level::levelgen::legacy_random_source::LegacyRandomSource;
+    use crate::net::minecraft::world::level::levelgen::single_threaded_random_source::SingleThreadedRandomSource;
+    use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
+    use crate::net::minecraft::world::level::block_and_light_getter::BlockAndLightGetter;
+    use crate::net::minecraft::world::phys::vec3::Vec3;
     use crate::golden::{Decode, Encode, Golden, unhex};
     use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
     use crate::net::minecraft::core::registry_access::{self, RegistryAccess};
@@ -933,7 +1552,221 @@ mod tests {
             }
         }
         ticks_match_vanilla(&golden, &registries);
+        animate_tick_matches_vanilla(&golden, &registries, &packets);
         golden.finish();
+    }
+
+    /// What `animateTick` hands the particle engine and the sound manager, as the golden writes it.
+    #[derive(Default)]
+    struct Recorder {
+        events: RefCell<Vec<Value>>,
+    }
+
+    impl ParticleEngine for Recorder {
+        fn create_particle(
+            &self,
+            options: &ParticleOptions,
+            x: f64,
+            y: f64,
+            z: f64,
+            xd: f64,
+            yd: f64,
+            zd: f64,
+        ) {
+            let fields = match options {
+                ParticleOptions::Simple(_) => Value::Null,
+                ParticleOptions::Block(block) => Value::from(block.get_state().id()),
+                ParticleOptions::Color(color) => Value::from(color.color()),
+                ParticleOptions::Dust(dust) => {
+                    Value::from(vec![Value::from(dust.color()), dust.get_scale().encode()])
+                }
+                ParticleOptions::DustColorTransition(dust) => {
+                    let (from, to) = dust.colors();
+                    Value::from(vec![
+                        Value::from(from),
+                        Value::from(to),
+                        dust.get_scale().encode(),
+                    ])
+                }
+            };
+            self.events.borrow_mut().push(Value::from(vec![
+                Value::from("particle"),
+                Value::from(options.get_type().key()),
+                fields,
+                x.encode(),
+                y.encode(),
+                z.encode(),
+                xd.encode(),
+                yd.encode(),
+                zd.encode(),
+            ]));
+        }
+    }
+
+    impl Recorder {
+        fn sound(&self, sound: SoundInstance, delay: i32) {
+            let event = match sound {
+                SoundInstance::Simple(sound) => Value::from(vec![
+                    Value::from("sound"),
+                    Value::from(sound.sound.location().to_string()),
+                    Value::from(sound.source.get_name()),
+                    sound.volume.encode(),
+                    sound.pitch.encode(),
+                    sound.x.encode(),
+                    sound.y.encode(),
+                    sound.z.encode(),
+                    Value::from(LegacyRandomSource::new(sound.seed).next_long()),
+                    Value::from(delay),
+                ]),
+                SoundInstance::EntityBound(sound) => Value::from(vec![
+                    Value::from("entitySound"),
+                    Value::from(sound.sound.location().to_string()),
+                    Value::from(sound.source.get_name()),
+                    sound.volume.encode(),
+                    sound.pitch.encode(),
+                    Value::from(sound.entity),
+                    Value::from(LegacyRandomSource::new(sound.seed).next_long()),
+                    Value::from(delay),
+                ]),
+            };
+            self.events.borrow_mut().push(event);
+        }
+    }
+
+    impl SoundManager for Recorder {
+        fn play(&self, sound: SoundInstance) {
+            self.sound(sound, -1);
+        }
+
+        fn play_delayed(&self, sound: SoundInstance, delay: i32) {
+            self.sound(sound, delay);
+        }
+    }
+
+    /// Runs the queued light updates and the light engine's until neither has anything left.
+    fn settle(level: &mut ClientLevel) {
+        while level.has_light_updates() || level.get_light_engine().has_light_work() {
+            level.update();
+        }
+    }
+
+    /// `animateTick`: the walk's chunks with the course of animated blocks set on them, and each
+    /// program's 667 pairs of `doAnimateTick` from the seeded randoms, near its camera, with its
+    /// options' particles, its sky's darkening, time and weather: every particle and sound the
+    /// blocks and fluids make, in order, and the randoms' next longs after.
+    fn animate_tick_matches_vanilla(
+        golden: &Golden,
+        registries: &RegistryAccess,
+        packets: &[ClientboundLevelChunkWithLightPacket],
+    ) {
+        let mut level = level_in(registries, "overworld");
+        level.biome_zoom_seed = i64::decode(&golden.input("ZOOM_SEED"));
+        level.biome_manager = BiomeManager::new(level.biome_zoom_seed);
+        for packet in packets {
+            ClientPacketListener::handle_level_chunk_with_light_in(&mut level, packet);
+        }
+        settle(&mut level);
+        for placement in golden.input("COURSE").as_array().expect("the course") {
+            let placement = Vec::<i32>::decode(placement);
+            let pos = BlockPos::new(placement[0], placement[1], placement[2]);
+            level.set_server_verified_block_state(&pos, Block::state_by_id(placement[3]), 19);
+        }
+        settle(&mut level);
+
+        let biomes = registries.lookup_or_throw(Registries::BIOME);
+        let biome_keys: Vec<ResourceKey> = (0..biomes.size())
+            .map(|id| {
+                biomes
+                    .holder_by_id_or_throw(id)
+                    .unwrap_key()
+                    .expect("a registry's holder has its key")
+                    .clone()
+            })
+            .collect();
+        let system = EnvironmentAttributeSystem::for_client_level(
+            &Identifier::with_default_namespace("overworld"),
+            &biome_keys,
+            true,
+        )
+        .expect("the overworld's attributes");
+        let synchronized = registry_access::tests::golden();
+        let clock_registry = synchronized.lookup_or_throw(Registries::WORLD_CLOCK);
+        let block_colors = BlockColors::create_default();
+
+        for (number, (args, expected)) in golden.cases("programs").into_iter().enumerate() {
+            let level_seed = i64::decode(&args[0]);
+            let animate_seed = i64::decode(&args[1]);
+            let particles = match args[2].as_str().expect("a status") {
+                "ALL" => ParticleStatus::ALL,
+                "DECREASED" => ParticleStatus::DECREASED,
+                _ => ParticleStatus::MINIMAL,
+            };
+            let camera = Vec::<f64>::decode(&args[3]);
+            let center = Vec::<i32>::decode(&args[4]);
+            let clock_time = i64::decode(&args[7]);
+            *level.random.borrow_mut() = LegacyRandomSource::new(level_seed);
+            level.sky_darken = i32::decode(&args[5]);
+            level.game_time = i64::decode(&args[6]);
+            level.set_rain_level(f32::decode(&args[8]));
+            level.set_thunder_level(f32::decode(&args[9]));
+            // AttributeSuites.Clock: every clock at the program's time.
+            let mut clocks = ClientClockManager::new();
+            let mut updates = ClockUpdates::new();
+            for id in 0..clock_registry.size() {
+                updates.put(
+                    clock_registry.holder_by_id_or_throw(id),
+                    ClockNetworkState::new(clock_time, 0.0, 1.0),
+                );
+            }
+            clocks.handle_updates(0, &updates);
+            system.invalidate_tick_cache();
+            let layer_level = LevelEnvironment::new(&level, clocks);
+            let recorder = Recorder::default();
+            let effects = LevelEffects {
+                particle_engine: &recorder,
+                sound_manager: &recorder,
+                camera_position: Vec3::new(camera[0], camera[1], camera[2]),
+                particles,
+                player: Some(7),
+                environment: Some((&system, &layer_level)),
+                block_colors: &block_colors,
+            };
+            let mut animate_random = SingleThreadedRandomSource::new(animate_seed);
+            let mut pos = MutableBlockPos::new();
+            for _ in 0..667 {
+                for r in [16, 32] {
+                    level.do_animate_tick(
+                        center[0],
+                        center[1],
+                        center[2],
+                        r,
+                        &mut animate_random,
+                        None,
+                        &mut pos,
+                        &effects,
+                    );
+                }
+            }
+            let mut events = recorder.events.take();
+            events.push(Value::from(vec![
+                Value::from("end"),
+                Value::from(level.random.borrow_mut().next_long()),
+                Value::from(animate_random.next_long()),
+            ]));
+            let expected = expected.as_array().expect("events");
+            let first_difference = events
+                .iter()
+                .zip(expected)
+                .position(|(actual, expected)| actual != expected);
+            assert!(
+                first_difference.is_none() && events.len() == expected.len(),
+                "program {number}: {} events, vanilla's {}; the first differing (#{first_difference:?}): {:?} vs vanilla's {:?}",
+                events.len(),
+                expected.len(),
+                first_difference.map(|index| &events[index]),
+                first_difference.map(|index| &expected[index]),
+            );
+        }
     }
 
     fn level_in(registries: &RegistryAccess, dimension: &str) -> ClientLevel {

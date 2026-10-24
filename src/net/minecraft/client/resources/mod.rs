@@ -8,3 +8,4 @@ pub mod metadata;
 pub mod model;
 pub mod palette;
 pub mod server;
+pub mod sounds;

@@ -1,11 +1,14 @@
 //! net/minecraft/world/level/block/EndPortalBlock.java
 //!
-//! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
+//! Its blocks' states are its parent's. Not ported yet: the rest of its behaviour.
 //!
 //! Of its behaviour, its shape (a slab from 6 to 12 sixteenths up) and its render shape (invisible:
-//! its block entity draws it) are ported.
+//! its block entity draws it), and its smoke (`animateTick`) are ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -21,6 +24,7 @@ use std::sync::LazyLock;
 pub struct EndPortalBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(EndPortalBlock::animate_tick),
     get_shape: Some(EndPortalBlock::get_shape),
     get_render_shape: Some(EndPortalBlock::get_render_shape),
     ..BlockClass::new(
@@ -58,5 +62,21 @@ impl EndPortalBlock {
 
     fn get_render_shape(_block: &BlockData, _state: BlockState) -> RenderShape {
         RenderShape::INVISIBLE
+    }
+}
+
+impl EndPortalBlock {
+    /// `animateTick`: smoke over it.
+    fn animate_tick(
+        _block: &BlockData,
+        _state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        let x = f64::from(pos.get_x()) + random.next_double();
+        let y = f64::from(pos.get_y()) + 0.8;
+        let z = f64::from(pos.get_z()) + random.next_double();
+        level.add_particle(ParticleTypes::SMOKE, x, y, z, 0.0, 0.0, 0.0);
     }
 }

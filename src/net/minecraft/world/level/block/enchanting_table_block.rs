@@ -1,10 +1,16 @@
 //! net/minecraft/world/level/block/EnchantingTableBlock.java
 //!
-//! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour.
+//! Its blocks' states are its parent's. Not ported yet: the rest of its behaviour.
 //!
-//! Of its behaviour, `useShapeForLightOcclusion` and its shape are ported.
+//! Of its behaviour, `useShapeForLightOcclusion` and its shape, and its letters (`animateTick`) are
+//! ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
+use crate::net::minecraft::core::vec3i::Vec3i;
+use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -19,6 +25,7 @@ use std::sync::LazyLock;
 pub struct EnchantingTableBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(EnchantingTableBlock::animate_tick),
     get_shape: Some(EnchantingTableBlock::get_shape),
     use_shape_for_light_occlusion: Some(EnchantingTableBlock::use_shape_for_light_occlusion),
     ..BlockClass::new(
@@ -61,3 +68,71 @@ impl EnchantingTableBlock {
         SHAPE.clone()
     }
 }
+
+impl EnchantingTableBlock {
+    /// `animateTick`: its parent's (nothing), and now and then letters flying from each bookshelf around it that nothing blocks.
+    fn animate_tick(
+        block: &BlockData,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        Block::super_animate_tick(block, &CLASS, state, level, pos, random);
+
+        for offset in BOOKSHELF_OFFSETS.iter() {
+            if random.next_int_bounded(16) == 0
+                && EnchantingTableBlock::is_valid_book_shelf(level, pos, offset)
+            {
+                let xd = f64::from(offset.get_x() as f32 + random.next_float()) - 0.5;
+                let yd = f64::from(offset.get_y() as f32 - random.next_float() - 1.0);
+                let zd = f64::from(offset.get_z() as f32 + random.next_float()) - 0.5;
+                level.add_particle(
+                    ParticleTypes::ENCHANT,
+                    f64::from(pos.get_x()) + 0.5,
+                    f64::from(pos.get_y()) + 2.0,
+                    f64::from(pos.get_z()) + 0.5,
+                    xd,
+                    yd,
+                    zd,
+                );
+            }
+        }
+    }
+
+    /// `isValidBookShelf`: a bookshelf there, with nothing in the way.
+    pub fn is_valid_book_shelf(
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        offset: &BlockPos,
+    ) -> bool {
+        level
+            .get_block_state(&pos.offset(offset))
+            .is_tag(BlockTags::ENCHANTMENT_POWER_PROVIDER)
+            && level
+                .get_block_state(&pos.offset(&Vec3i::new(
+                    offset.get_x() / 2,
+                    offset.get_y(),
+                    offset.get_z() / 2,
+                )))
+                .is_tag(BlockTags::ENCHANTMENT_POWER_TRANSMITTER)
+    }
+}
+
+/// `BOOKSHELF_OFFSETS`: the blocks two from the table, at its height and one up, in
+/// `betweenClosedStream`'s order (x fastest, then y, then z).
+pub static BOOKSHELF_OFFSETS: LazyLock<Vec<BlockPos>> = LazyLock::new(|| {
+    let mut offsets = Vec::new();
+    for z in -2_i32..=2 {
+        for y in 0..=1 {
+            for x in -2_i32..=2 {
+                if x.abs() == 2 || z.abs() == 2 {
+                    offsets.push(BlockPos::new(x, y, z));
+                }
+            }
+        }
+    }
+    offsets
+});
+
+impl EnchantingTableBlock {}

@@ -10,6 +10,7 @@ pub mod references;
 pub mod resources;
 pub mod server;
 pub mod shared_constants;
+pub mod sounds;
 pub mod stats;
 pub mod tags;
 pub mod util;

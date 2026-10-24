@@ -1,11 +1,14 @@
 //! net/minecraft/world/level/block/BrewingStandBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
 //!
-//! Of its behaviour, its shape (a rod on a base) is ported.
+//! Of its behaviour, its shape (a rod on a base), and its smoke (`animateTick`) are ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
@@ -26,6 +29,7 @@ use std::sync::LazyLock;
 pub struct BrewingStandBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(BrewingStandBlock::animate_tick),
     get_shape: Some(BrewingStandBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.BrewingStandBlock",
@@ -90,5 +94,21 @@ impl BrewingStandBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl BrewingStandBlock {
+    /// `animateTick`: smoke above its rod.
+    fn animate_tick(
+        _block: &BlockData,
+        _state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        let x = f64::from(pos.get_x()) + 0.4 + f64::from(random.next_float()) * 0.2;
+        let y = f64::from(pos.get_y()) + 0.7 + f64::from(random.next_float()) * 0.3;
+        let z = f64::from(pos.get_z()) + 0.4 + f64::from(random.next_float()) * 0.2;
+        level.add_particle(ParticleTypes::SMOKE, x, y, z, 0.0, 0.0, 0.0);
     }
 }

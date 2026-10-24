@@ -1,9 +1,16 @@
 //! net/minecraft/world/level/block/BubbleColumnBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
+//!
+//! Of its behaviour, its particles and sounds (`animateTick`) are ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
+use crate::net::minecraft::sounds::sound_events::SoundEvents;
+use crate::net::minecraft::sounds::sound_source::SoundSource;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -24,6 +31,7 @@ use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 pub struct BubbleColumnBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(BubbleColumnBlock::animate_tick),
     get_shape: Some(BubbleColumnBlock::get_shape),
     get_render_shape: Some(BubbleColumnBlock::get_render_shape),
     get_fluid_state: Some(BubbleColumnBlock::get_fluid_state),
@@ -84,5 +92,81 @@ impl BubbleColumnBlock {
 
     fn get_render_shape(_block: &BlockData, _state: BlockState) -> RenderShape {
         RenderShape::INVISIBLE
+    }
+}
+
+impl BubbleColumnBlock {
+    /// `animateTick`: its current or bubbles, always shown, and its sound now and then.
+    fn animate_tick(
+        _block: &BlockData,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        let x = f64::from(pos.get_x());
+        let y = f64::from(pos.get_y());
+        let z = f64::from(pos.get_z());
+        if state.get_value(BubbleColumnBlock::DRAG_DOWN) {
+            level.add_always_visible_particle(
+                ParticleTypes::CURRENT_DOWN,
+                x + 0.5,
+                y + 0.8,
+                z,
+                0.0,
+                0.0,
+                0.0,
+            );
+            if random.next_int_bounded(200) == 0 {
+                let volume = 0.2 + random.next_float() * 0.2;
+                let pitch = 0.9 + random.next_float() * 0.15;
+                level.play_local_sound(
+                    x,
+                    y,
+                    z,
+                    SoundEvents::BUBBLE_COLUMN_WHIRLPOOL_AMBIENT,
+                    SoundSource::BLOCKS,
+                    volume,
+                    pitch,
+                    false,
+                );
+            }
+        } else {
+            level.add_always_visible_particle(
+                ParticleTypes::BUBBLE_COLUMN_UP,
+                x + 0.5,
+                y,
+                z + 0.5,
+                0.0,
+                0.04,
+                0.0,
+            );
+            let bx = x + f64::from(random.next_float());
+            let by = y + f64::from(random.next_float());
+            let bz = z + f64::from(random.next_float());
+            level.add_always_visible_particle(
+                ParticleTypes::BUBBLE_COLUMN_UP,
+                bx,
+                by,
+                bz,
+                0.0,
+                0.04,
+                0.0,
+            );
+            if random.next_int_bounded(200) == 0 {
+                let volume = 0.2 + random.next_float() * 0.2;
+                let pitch = 0.9 + random.next_float() * 0.15;
+                level.play_local_sound(
+                    x,
+                    y,
+                    z,
+                    SoundEvents::BUBBLE_COLUMN_UPWARDS_AMBIENT,
+                    SoundSource::BLOCKS,
+                    volume,
+                    pitch,
+                    false,
+                );
+            }
+        }
     }
 }

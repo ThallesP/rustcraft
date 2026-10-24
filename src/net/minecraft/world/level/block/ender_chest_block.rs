@@ -1,12 +1,16 @@
 //! net/minecraft/world/level/block/EnderChestBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
 //!
-//! Of its behaviour, `getFluidState` and its shape are ported.
+//! Of its behaviour, `getFluidState` and its shape, and its portal particles (`animateTick`) are
+//! ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::abstract_chest_block::{self, AbstractChestBlock};
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
@@ -30,6 +34,7 @@ use std::sync::LazyLock;
 pub struct EnderChestBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(EnderChestBlock::animate_tick),
     get_shape: Some(EnderChestBlock::get_shape),
     get_fluid_state: Some(EnderChestBlock::get_fluid_state),
     ..BlockClass::new(
@@ -93,5 +98,28 @@ impl EnderChestBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl EnderChestBlock {
+    /// `animateTick`: three portal particles around it.
+    fn animate_tick(
+        _block: &BlockData,
+        _state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        for _ in 0..3 {
+            let flip_x = random.next_int_bounded(2) * 2 - 1;
+            let flip_z = random.next_int_bounded(2) * 2 - 1;
+            let x = f64::from(pos.get_x()) + 0.5 + 0.25 * f64::from(flip_x);
+            let y = f64::from(pos.get_y() as f32 + random.next_float());
+            let z = f64::from(pos.get_z()) + 0.5 + 0.25 * f64::from(flip_z);
+            let xa = f64::from(random.next_float() * flip_x as f32);
+            let ya = (f64::from(random.next_float()) - 0.5) * 0.125;
+            let za = f64::from(random.next_float() * flip_z as f32);
+            level.add_particle(ParticleTypes::PORTAL, x, y, z, xa, ya, za);
+        }
     }
 }

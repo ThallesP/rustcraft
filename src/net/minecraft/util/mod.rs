@@ -17,6 +17,7 @@ pub mod light_coords_util;
 pub mod linear_congruential_generator;
 pub mod mth;
 pub mod parsing;
+pub mod particle_utils;
 pub mod png_info;
 pub mod problem_reporter;
 pub mod random;

@@ -1,12 +1,16 @@
 //! net/minecraft/world/level/block/SculkSensorBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
 //!
-//! Of its behaviour, `getFluidState`, `useShapeForLightOcclusion` and its shape (half a block) are
-//! ported.
+//! Of its behaviour, `getFluidState`, `useShapeForLightOcclusion` and its shape (half a block), and
+//! its dust (`animateTick`) are ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::particles::dust_color_transition_options::DustColorTransitionOptions;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
@@ -31,6 +35,7 @@ use std::sync::LazyLock;
 pub struct SculkSensorBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(SculkSensorBlock::animate_tick),
     get_shape: Some(SculkSensorBlock::get_shape),
     use_shape_for_light_occlusion: Some(SculkSensorBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(SculkSensorBlock::get_fluid_state),
@@ -113,5 +118,47 @@ impl SculkSensorBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl SculkSensorBlock {
+    /// `animateTick`: active, now and then dust going from sculk to redstone at one of its sides.
+    fn animate_tick(
+        _block: &BlockData,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        if SculkSensorBlock::get_phase(state) == SculkSensorPhase::ACTIVE {
+            let dir = Direction::get_random(random);
+            if dir != Direction::UP && dir != Direction::DOWN {
+                let x = f64::from(pos.get_x())
+                    + 0.5
+                    + if dir.get_step_x() == 0 {
+                        0.5 - random.next_double()
+                    } else {
+                        f64::from(dir.get_step_x()) * 0.6
+                    };
+                let y = f64::from(pos.get_y()) + 0.25;
+                let z = f64::from(pos.get_z())
+                    + 0.5
+                    + if dir.get_step_z() == 0 {
+                        0.5 - random.next_double()
+                    } else {
+                        f64::from(dir.get_step_z()) * 0.6
+                    };
+                let ya = f64::from(random.next_float()) * 0.04;
+                level.add_particle(
+                    DustColorTransitionOptions::SCULK_TO_REDSTONE,
+                    x,
+                    y,
+                    z,
+                    0.0,
+                    ya,
+                    0.0,
+                );
+            }
+        }
     }
 }

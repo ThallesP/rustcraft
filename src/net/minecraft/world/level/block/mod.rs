@@ -235,6 +235,7 @@ pub mod snow_layer_block;
 pub mod snowy_block;
 pub mod soul_fire_block;
 pub mod soul_sand_block;
+pub mod sounds;
 pub mod spawner_block;
 pub mod speleothem_block;
 pub mod sponge_block;

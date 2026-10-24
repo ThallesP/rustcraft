@@ -604,6 +604,11 @@ impl GameRenderer {
             .restart_animations(self.device, &self.sampler_cache, &pipelines);
     }
 
+    /// The level's environment attributes (`level.environmentAttributes()`), once they're made.
+    pub fn environment_attributes(&self) -> Option<&EnvironmentAttributeSystem> {
+        self.environment_attributes.as_ref()
+    }
+
     /// Whether the level's environment attributes are yet to be made.
     pub fn needs_environment_attributes(&self) -> bool {
         self.environment_attributes.is_none()

@@ -1,6 +1,6 @@
 //! net/minecraft/tags/BlockTags.java
 //!
-//! Only the tags an entity's movement and blocks' shapes ask about, and the ones entity types are immune to
+//! Only the tags an entity's movement, blocks' shapes and their particles ask about, and the ones entity types are immune to
 //! (`EntityType.Builder.immuneTo`). In Java a block's tags are bound to its registry
 //! holder from what the server sends (`ClientboundUpdateTagsPacket`, in configuration), which
 //! isn't ported yet. A vanilla server sends its data pack's, so until the packet comes,
@@ -44,6 +44,21 @@ impl BlockTags {
     pub const BLOCKS_MOTION_IN_HEIGHTMAP: TagKey = TagKey("blocks_motion_in_heightmap");
     pub const BLOCKS_MOTION_IN_HEIGHTMAP_NO_LEAVES: TagKey =
         TagKey("blocks_motion_in_heightmap_no_leaves");
+    pub const IMPERMEABLE: TagKey = TagKey("impermeable");
+    pub const FIRE: TagKey = TagKey("fire");
+    pub const SPELEOTHEMS: TagKey = TagKey("speleothems");
+    pub const TERRACOTTA: TagKey = TagKey("terracotta");
+    pub const PALE_OAK_LOGS: TagKey = TagKey("pale_oak_logs");
+    pub const ENCHANTMENT_POWER_PROVIDER: TagKey = TagKey("enchantment_power_provider");
+    pub const ENCHANTMENT_POWER_TRANSMITTER: TagKey = TagKey("enchantment_power_transmitter");
+    pub const TRIGGERS_AMBIENT_DESERT_SAND_BLOCK_SOUNDS: TagKey =
+        TagKey("triggers_ambient_desert_sand_block_sounds");
+    pub const TRIGGERS_AMBIENT_DESERT_DRY_VEGETATION_BLOCK_SOUNDS: TagKey =
+        TagKey("triggers_ambient_desert_dry_vegetation_block_sounds");
+    pub const TRIGGERS_AMBIENT_DRIED_GHAST_BLOCK_SOUNDS: TagKey =
+        TagKey("triggers_ambient_dried_ghast_block_sounds");
+    pub const REQUIRED_FOR_POPLAR_LEAF_AMBIENCE: TagKey =
+        TagKey("required_for_poplar_leaf_ambience");
 }
 
 /// Each tag's blocks by registered name, resolved as they're first asked for.

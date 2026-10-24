@@ -3,20 +3,22 @@
 //! A biome as the client knows it: its climate (`ClimateSettings`), its environment attributes
 //! (`EnvironmentAttributeMap`, the syncable ones) and its colours (`BiomeSpecialEffects`), what
 //! `NETWORK_CODEC` reads of it (`RegistryDataLoader`, from the server's NBT or a known pack's
-//! JSON). Not ported yet: the temperature at a block (`getTemperature` with its cache,
-//! `getHeightAdjustedTemperature`, `TemperatureModifier`'s `modifyTemperature` and
-//! `FROZEN_TEMPERATURE_NOISE`), precipitation, freezing and snow, which come with weather, and
-//! the generation settings and `DIRECT_CODEC`, which only the server has.
+//! JSON), and the temperature at a block (`getTemperature`, without its cache, which only saves
+//! work) with what rains or snows there (`getPrecipitationAt`). Not ported yet: freezing and
+//! snow (`shouldFreeze`, `shouldSnow`), and the generation settings and `DIRECT_CODEC`, which only
+//! the server has.
 //!
-//! `BIOME_INFO_NOISE` is a `SimplexNoise` of a `WorldgenRandom` over a `LegacyRandomSource`,
-//! whose bits `WorldgenRandom` draws from the legacy source, so the noise is made from the legacy
-//! source itself.
+//! `BIOME_INFO_NOISE`, `TEMPERATURE_NOISE` and `FROZEN_TEMPERATURE_NOISE`'s layers are
+//! `SimplexNoise`s of a `WorldgenRandom` over a `LegacyRandomSource`, whose bits `WorldgenRandom`
+//! draws from the legacy source, so each noise is made from the legacy source itself (the frozen
+//! noise's three from one, in turn).
 
 use std::sync::LazyLock;
 
 use crate::com::mojang::serialization::codec::{BOOL, CodecExt, FLOAT, SharedCodec, StaticCodec};
 use crate::com::mojang::serialization::codecs::record_codec_builder;
 use crate::com::mojang::serialization::map_codec::{MapCodecExt, SharedMapCodec, StaticMapCodec};
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::string_representable::{self, StringRepresentable};
 use crate::net::minecraft::world::attribute::environment_attribute_map::EnvironmentAttributeMap;
@@ -30,6 +32,43 @@ use crate::net::minecraft::world::level::levelgen::synth::simplex_noise::Simplex
 /// `BIOME_INFO_NOISE`: deprecated in Java, and still what the swamp's grass reads.
 pub static BIOME_INFO_NOISE: LazyLock<SimplexNoise> =
     LazyLock::new(|| SimplexNoise::new_discarding_offset(&mut LegacyRandomSource::new(2345)));
+
+/// `TEMPERATURE_NOISE`: how much colder it gets above the snow line, by column.
+static TEMPERATURE_NOISE: LazyLock<SimplexNoise> =
+    LazyLock::new(|| SimplexNoise::new_discarding_offset(&mut LegacyRandomSource::new(1234)));
+
+/// `FROZEN_TEMPERATURE_NOISE`: a `NoiseStack` of three simplex noises, each a layer of a frequency
+/// and an amplitude, which frozen biomes' ice patches follow.
+pub static FROZEN_TEMPERATURE_NOISE: LazyLock<[(SimplexNoise, f64, f32); 3]> =
+    LazyLock::new(|| {
+        let mut random = LegacyRandomSource::new(3456);
+        [
+            (
+                SimplexNoise::new_discarding_offset(&mut random),
+                1.0,
+                0.14285715,
+            ),
+            (
+                SimplexNoise::new_discarding_offset(&mut random),
+                0.5,
+                0.2857143,
+            ),
+            (
+                SimplexNoise::new_discarding_offset(&mut random),
+                0.25,
+                0.5714286,
+            ),
+        ]
+    });
+
+/// `NoiseStack.get(double, double)` of the frozen noise: its layers' values summed as floats.
+pub fn frozen_temperature_noise(x: f64, y: f64) -> f32 {
+    let mut value = 0.0_f32;
+    for (noise, frequency, amplitude) in FROZEN_TEMPERATURE_NOISE.iter() {
+        value += amplitude * noise.get_2d(x * frequency, y * frequency);
+    }
+    value
+}
 
 static NETWORK_CODEC: StaticCodec<Biome> = LazyLock::new(|| {
     record_codec_builder::create(
@@ -131,6 +170,52 @@ impl Biome {
         self.climate_settings.temperature
     }
 
+    /// `getPrecipitationAt`: none where it never rains, snow where it's cold enough, rain
+    /// elsewhere.
+    pub fn get_precipitation_at(&self, pos: &BlockPos, sea_level: i32) -> Precipitation {
+        if !self.has_precipitation() {
+            Precipitation::NONE
+        } else if self.cold_enough_to_snow(pos, sea_level) {
+            Precipitation::SNOW
+        } else {
+            Precipitation::RAIN
+        }
+    }
+
+    /// `getHeightAdjustedTemperature`: the modified temperature, colder higher above the snow
+    /// line (17 above the sea).
+    fn get_height_adjusted_temperature(&self, pos: &BlockPos, sea_level: i32) -> f32 {
+        let adjusted_temperature = self
+            .climate_settings
+            .temperature_modifier
+            .modify_temperature(pos, self.get_base_temperature());
+        let snow_level = sea_level.wrapping_add(17);
+        if pos.get_y() > snow_level {
+            let v = TEMPERATURE_NOISE.get_2d(
+                f64::from(pos.get_x() as f32 / 8.0),
+                f64::from(pos.get_z() as f32 / 8.0),
+            ) * 8.0;
+            adjusted_temperature - (v + pos.get_y() as f32 - snow_level as f32) * 0.05 / 40.0
+        } else {
+            adjusted_temperature
+        }
+    }
+
+    /// `getTemperature`: Java keeps the last 1,024 blocks' in a cache, which only saves work.
+    pub fn get_temperature(&self, pos: &BlockPos, sea_level: i32) -> f32 {
+        self.get_height_adjusted_temperature(pos, sea_level)
+    }
+
+    /// `warmEnoughToRain`.
+    pub fn warm_enough_to_rain(&self, pos: &BlockPos, sea_level: i32) -> bool {
+        self.get_temperature(pos, sea_level) >= 0.15
+    }
+
+    /// `coldEnoughToSnow`.
+    pub fn cold_enough_to_snow(&self, pos: &BlockPos, sea_level: i32) -> bool {
+        !self.warm_enough_to_rain(pos, sea_level)
+    }
+
     pub fn get_special_effects(&self) -> &BiomeSpecialEffects {
         &self.special_effects
     }
@@ -208,8 +293,16 @@ impl ClimateSettings {
     }
 }
 
-/// `Biome.TemperatureModifier`: how a biome changes its temperature where it is. Not ported yet:
-/// `modifyTemperature`, which comes with the temperature at a block.
+/// `Biome.Precipitation`: what falls in a biome when it rains.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum Precipitation {
+    NONE,
+    RAIN,
+    SNOW,
+}
+
+/// `Biome.TemperatureModifier`: how a biome changes its temperature where it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum TemperatureModifier {
@@ -224,6 +317,37 @@ impl TemperatureModifier {
     pub const VALUES: [TemperatureModifier; 2] =
         [TemperatureModifier::NONE, TemperatureModifier::FROZEN];
     pub const CODEC: &'static StaticCodec<TemperatureModifier> = &TEMPERATURE_MODIFIER_CODEC;
+
+    /// `modifyTemperature`: a frozen biome is 0.2 in its ice patches.
+    pub fn modify_temperature(&self, pos: &BlockPos, base_temperature: f32) -> f32 {
+        match self {
+            TemperatureModifier::NONE => base_temperature,
+            TemperatureModifier::FROZEN => {
+                let ground_value_large_variation = f64::from(
+                    frozen_temperature_noise(
+                        f64::from(pos.get_x()) * 0.05,
+                        f64::from(pos.get_z()) * 0.05,
+                    ) * 7.0,
+                );
+                let ground_value_edge_variation = f64::from(
+                    BIOME_INFO_NOISE
+                        .get_2d(f64::from(pos.get_x()) * 0.2, f64::from(pos.get_z()) * 0.2),
+                );
+                let ice_patches = ground_value_large_variation + ground_value_edge_variation;
+                if ice_patches < 0.3 {
+                    let ground_value_small_variation = f64::from(
+                        BIOME_INFO_NOISE
+                            .get_2d(f64::from(pos.get_x()) * 0.09, f64::from(pos.get_z()) * 0.09),
+                    );
+                    if ground_value_small_variation < 0.8 {
+                        return 0.2;
+                    }
+                }
+
+                base_temperature
+            }
+        }
+    }
 }
 
 impl StringRepresentable for TemperatureModifier {

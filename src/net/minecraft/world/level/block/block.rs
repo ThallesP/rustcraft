@@ -20,9 +20,11 @@ use std::any::Any;
 use std::fmt;
 use std::ops::Deref;
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::id_mapper::IdMapper;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks, REGISTRY};
 use crate::net::minecraft::world::level::block::state::block_behaviour::{
     BlockBehaviour, EmptyBlockGetter, Properties, RenderShape,
@@ -66,6 +68,11 @@ pub type SkipRenderingMethod = fn(&BlockData, BlockState, BlockState, Direction)
 /// A class's `getBlockSupportShape` or `getInteractionShape`, which nothing asks for.
 pub type PositionShapeMethod =
     fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos) -> VoxelShape;
+
+/// A class's `animateTick`: the particles and sounds its block makes now and then, from the
+/// level's animations' random source.
+pub type AnimateTickMethod =
+    fn(&BlockData, BlockState, &LevelWithEffects<'_>, &BlockPos, &mut dyn RandomSource);
 
 /// A block class: Java's `Class<? extends Block>` and the overrides that matter so far.
 pub struct BlockClass {
@@ -111,6 +118,8 @@ pub struct BlockClass {
     pub get_max_vertical_offset: Option<fn(&BlockData) -> f32>,
     /// `getSeed(BlockState, BlockPos)`, if it overrides it.
     pub get_seed: Option<fn(&BlockData, BlockState, &BlockPos) -> i64>,
+    /// `animateTick(BlockState, Level, BlockPos, RandomSource)`, if it overrides it.
+    pub animate_tick: Option<AnimateTickMethod>,
 }
 
 impl BlockClass {
@@ -138,6 +147,7 @@ impl BlockClass {
             get_max_horizontal_offset: None,
             get_max_vertical_offset: None,
             get_seed: None,
+            animate_tick: None,
         }
     }
 
@@ -319,6 +329,34 @@ impl Deref for BlockData {
 impl Block {
     /// How many blocks a field of `Blocks` holding one takes.
     pub(crate) const COUNT: u16 = 1;
+
+    /// `animateTick(BlockState, Level, BlockPos, RandomSource)`: its class's, or `Block`'s, which
+    /// does nothing.
+    pub fn animate_tick(
+        &self,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        if let Some(animate_tick) = self.class().find(|class| class.animate_tick) {
+            animate_tick(self, state, level, pos, random);
+        }
+    }
+
+    /// `super.animateTick(...)` from `class`'s override: its parent's, if one overrides it.
+    pub fn super_animate_tick(
+        block: &BlockData,
+        class: &'static BlockClass,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        if let Some(animate_tick) = class.find_super(|class| class.animate_tick) {
+            animate_tick(block, state, level, pos, random);
+        }
+    }
 
     /// The `Block` constructor, for `class`, whose state definition `definition` makes: Java's
     /// `this.createBlockStateDefinition`, the most derived class's.

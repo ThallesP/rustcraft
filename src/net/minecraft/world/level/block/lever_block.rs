@@ -1,12 +1,16 @@
 //! net/minecraft/world/level/block/LeverBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
+//! of its behaviour.
 //!
-//! Of its behaviour, its shape (on the face it hangs from) is ported.
+//! Of its behaviour, its shape (on the face it hangs from), and its particles (`animateTick`) are
+//! ported.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::particles::dust_particle_options::DustParticleOptions;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
@@ -33,6 +37,7 @@ pub struct LeverBlock {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    animate_tick: Some(LeverBlock::animate_tick),
     get_shape: Some(LeverBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.LeverBlock",
@@ -111,5 +116,49 @@ impl LeverBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         block.fields::<LeverBlock>().shapes[state.index() as usize].clone()
+    }
+}
+
+impl LeverBlock {
+    /// `animateTick`: now and then, while on, a speck of redstone at its tip.
+    fn animate_tick(
+        _block: &BlockData,
+        state: BlockState,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        if state.get_value(LeverBlock::POWERED) && random.next_float() < 0.25 {
+            LeverBlock::make_particle(state, level, pos, 0.5);
+        }
+    }
+
+    fn make_particle(state: BlockState, level: &LevelWithEffects<'_>, pos: &BlockPos, scale: f32) {
+        let opposite = state
+            .get_value(HorizontalDirectionalBlock::FACING)
+            .get_opposite();
+        let opposite_connect =
+            FaceAttachedHorizontalDirectionalBlock::get_connected_direction(state).get_opposite();
+        let x = f64::from(pos.get_x())
+            + 0.5
+            + 0.1 * f64::from(opposite.get_step_x())
+            + 0.2 * f64::from(opposite_connect.get_step_x());
+        let y = f64::from(pos.get_y())
+            + 0.5
+            + 0.1 * f64::from(opposite.get_step_y())
+            + 0.2 * f64::from(opposite_connect.get_step_y());
+        let z = f64::from(pos.get_z())
+            + 0.5
+            + 0.1 * f64::from(opposite.get_step_z())
+            + 0.2 * f64::from(opposite_connect.get_step_z());
+        level.add_particle(
+            DustParticleOptions::new(16711680, scale),
+            x,
+            y,
+            z,
+            0.0,
+            0.0,
+            0.0,
+        );
     }
 }

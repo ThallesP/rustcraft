@@ -320,6 +320,11 @@ final class LightSuites {
             return this.lightUpdateQueue.size();
         }
 
+        /** The chunk at the position, if the harness has it. */
+        ProtoChunk loadedChunk(final int x, final int z) {
+            return this.loaded.get(ChunkPos.pack(x, z));
+        }
+
         /**
          * ClientLevel.setServerVerifiedBlockState: Level.setBlock (in the level's bounds, in a chunk it has), and
          * LevelChunk.setBlockState's light part.

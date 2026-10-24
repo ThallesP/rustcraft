@@ -163,6 +163,11 @@ impl Options {
         self.render_distance = render_distance.clamp(2, 32);
     }
 
+    /// `particles().get()`.
+    pub fn particles(&self) -> ParticleStatus {
+        self.particles
+    }
+
     /// `particles().set(value)`.
     pub fn set_particles(&mut self, particles: ParticleStatus) {
         self.particles = particles;

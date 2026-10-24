@@ -4,15 +4,20 @@
 //! (`FlowingFluid.FALLING`, and `LEVEL_FLOWING` for a flowing one), so here a state is its fluid
 //! and their values, `Copy` and compared by value, which is comparing Java's references since a
 //! definition holds one state for each combination. Its heights and flow (`getHeight`,
-//! `getHeightForCamera`, `getOwnHeight`, `getFlow`) ask its fluid (`Fluid`). Not ported yet:
+//! `getHeightForCamera`, `getOwnHeight`, `getFlow`) and its animations (`animateTick`,
+//! `getDripParticle`) ask its fluid (`Fluid`). Not ported yet:
 //! `Fluid.FLUID_STATE_REGISTRY`'s ids and the other behaviour methods (`getShape`, ticking), which
 //! come with what calls them.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::particles::particle_options::ParticleOptions;
 use crate::net::minecraft::tags::fluid_tags::FluidTagKey;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
+use crate::net::minecraft::world::level::material::{lava_fluid, water_fluid};
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 
@@ -79,6 +84,37 @@ impl FluidState {
 
     pub fn is_randomly_ticking(&self) -> bool {
         self.fluid.is_randomly_ticking()
+    }
+
+    /// `animateTick(Level, BlockPos, RandomSource)`: its fluid's sounds and particles; the empty
+    /// fluid has none.
+    pub fn animate_tick(
+        &self,
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        random: &mut dyn RandomSource,
+    ) {
+        match self.fluid {
+            Fluids::EMPTY => {}
+            Fluids::WATER | Fluids::FLOWING_WATER => {
+                water_fluid::animate_tick(level, pos, *self, random)
+            }
+            Fluids::LAVA | Fluids::FLOWING_LAVA => lava_fluid::animate_tick(level, pos, random),
+        }
+    }
+
+    /// `getDripParticle()`: what drips from under it, none for the empty fluid.
+    pub fn get_drip_particle(&self) -> Option<ParticleOptions> {
+        match self.fluid {
+            Fluids::EMPTY => None,
+            Fluids::WATER | Fluids::FLOWING_WATER => Some(water_fluid::get_drip_particle()),
+            Fluids::LAVA | Fluids::FLOWING_LAVA => Some(lava_fluid::get_drip_particle()),
+        }
+    }
+
+    /// `isSourceOfType(Fluid)`: a source of that fluid.
+    pub fn is_source_of_type(&self, fluid: Fluids) -> bool {
+        self.fluid == fluid && self.is_source()
     }
 
     /// `is(TagKey<Fluid>)`: whether its fluid is in the tag.

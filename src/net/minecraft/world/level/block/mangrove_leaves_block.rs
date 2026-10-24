@@ -1,11 +1,10 @@
 //! net/minecraft/world/level/block/MangroveLeavesBlock.java
 //!
-//! Only the class so far: its blocks' states are its parent's. Not ported yet: its behaviour, and
-//! its constructor's `leafParticleChance`.
+//! Its blocks' states are its parent's. Not ported yet: the rest of its behaviour.
+//!
+//! For its parent's `animateTick`, its constructor (`leafParticleChance`) is ported.
 
-use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
-};
+use crate::net::minecraft::world::level::block::block::{BlockClass, BlockData};
 use crate::net::minecraft::world::level::block::leaves_block::LeavesBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::tinted_particle_leaves_block::{
@@ -20,19 +19,13 @@ pub static CLASS: BlockClass = BlockClass::new(
 );
 
 impl MangroveLeavesBlock {
-    pub fn new(properties: Properties) -> BlockData {
-        MangroveLeavesBlock::new_with(
+    /// `MangroveLeavesBlock(leafParticleChance, properties)`.
+    pub fn new(leaf_particle_chance: f32, properties: Properties) -> BlockData {
+        TintedParticleLeavesBlock::new_with(
             properties,
             &CLASS,
             LeavesBlock::create_block_state_definition,
+            leaf_particle_chance,
         )
-    }
-
-    pub(crate) fn new_with(
-        properties: Properties,
-        class: &'static BlockClass,
-        definition: CreateBlockStateDefinition,
-    ) -> BlockData {
-        TintedParticleLeavesBlock::new_with(properties, class, definition)
     }
 }

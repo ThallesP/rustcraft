@@ -1,6 +1,6 @@
 //! net/minecraft/util/valueproviders/UniformInt.java
 //!
-//! `sample`, which a server's worldgen and mob spawning call, comes with its callers.
+//! `sample` is `Mth.randomBetweenInclusive`, which the lightning rod's sparks draw with.
 
 use std::fmt;
 use std::sync::LazyLock;
@@ -9,6 +9,7 @@ use crate::com::mojang::serialization::codec::{CodecExt, INT};
 use crate::com::mojang::serialization::codecs::record_codec_builder;
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::map_codec::{MapCodecExt, StaticMapCodec};
+use crate::net::minecraft::util::random_source::RandomSource;
 
 static MAP_CODEC: StaticMapCodec<UniformInt> = LazyLock::new(|| {
     let check = |u: UniformInt| {
@@ -60,6 +61,17 @@ impl UniformInt {
 
     pub fn max_inclusive(&self) -> i32 {
         self.max_inclusive
+    }
+
+    /// `sample(random)`: `Mth.randomBetweenInclusive`.
+    pub fn sample(&self, random: &mut dyn RandomSource) -> i32 {
+        random
+            .next_int_bounded(
+                self.max_inclusive
+                    .wrapping_sub(self.min_inclusive)
+                    .wrapping_add(1),
+            )
+            .wrapping_add(self.min_inclusive)
     }
 }
 
