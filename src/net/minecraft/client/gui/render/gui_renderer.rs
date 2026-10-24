@@ -8,9 +8,11 @@
 //! makes a buffer of the same bytes, and the draws read it at the same offsets, which changes no
 //! pixel.
 //!
+//! The strata after the blur a screen asks for draw after the depth is cleared and the level and
+//! the strata before are blurred (`processBlurEffect`, which the game renderer hands in).
+//!
 //! Not ported yet: items (`prepareItemElements` and the GUI's item atlas, `GuiItemAtlas`), pictures
-//! in pictures, the panorama (`CubeMap`), and the blur between strata (`processBlurEffect`), which
-//! the pause screen asks for.
+//! in pictures, and the panorama (`CubeMap`).
 
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -120,6 +122,7 @@ impl GuiRenderer {
     }
 
     /// `render`: prepare, draw, and the state reset for the next frame.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         device: &dyn GpuDevice,
@@ -128,9 +131,16 @@ impl GuiRenderer {
         main_render_target: &MainTarget,
         window: GuiWindow,
         glyph_textures: &GlyphTextures,
+        process_blur_effect: &mut dyn FnMut(&mut Pipelines),
     ) {
         self.prepare(render_state, glyph_textures);
-        self.draw(device, pipelines, main_render_target, window);
+        self.draw(
+            device,
+            pipelines,
+            main_render_target,
+            window,
+            process_blur_effect,
+        );
         self.draws.clear();
         render_state.reset();
         self.first_draw_index_after_blur = usize::MAX;
@@ -219,6 +229,7 @@ impl GuiRenderer {
         pipelines: &mut Pipelines,
         main_render_target: &MainTarget,
         window: GuiWindow,
+        process_blur_effect: &mut dyn FnMut(&mut Pipelines),
     ) {
         if self.draws.is_empty() {
             return;
@@ -284,9 +295,24 @@ impl GuiRenderer {
             );
         }
         if self.draws.len() > self.first_draw_index_after_blur {
-            // Java clears the depth and blurs the level here (processBlurEffect), which comes with
-            // the pause screen.
-            panic!("the GUI's blur isn't ported");
+            device.create_command_encoder().clear_depth_texture(
+                &**main_render_target
+                    .get_depth_texture()
+                    .expect("the main target has depth"),
+                0.0,
+            );
+            process_blur_effect(pipelines);
+            self.execute_draw_range(
+                device,
+                "GUI after blur",
+                pipelines,
+                main_render_target,
+                window,
+                &dynamic_transforms,
+                &vertex_buffer,
+                &index_buffer,
+                self.first_draw_index_after_blur..self.draws.len(),
+            );
         }
     }
 

@@ -999,6 +999,17 @@ mod tests {
         );
     }
 
+    /// The pause menu's scenario: the walk's start, the menu opened (the keys released) and closed
+    /// again; the replay opens no screen, and holds no keys while the menu is up.
+    #[test]
+    fn pause_no_gui() {
+        check_scenario(
+            "pause-no-gui",
+            "3d1048f7c08ee33e4640399dc548be19",
+            "5308120994325267de96905957c43754",
+        );
+    }
+
     #[test]
     fn surface_concrete() {
         check_scenario(

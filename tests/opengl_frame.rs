@@ -474,6 +474,22 @@ const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
     ("sky-night", "stars", "976de7b4bb8226cc5099e593b3415ea1"),
     ("sky-sunrise", "east", "a8003efca04138403a4812fced227287"),
     ("sky-sunrise", "up", "945a20075d656a90f21083e91d038dcf"),
+    ("pause-no-gui", "paused", "4350c9facc35752a7708ecba620d0ffb"),
+    (
+        "pause-no-gui",
+        "hovered",
+        "a2144669815c6349d67f9c0859546fd8",
+    ),
+    (
+        "pause-no-gui",
+        "tooltip",
+        "eba198826998737548b8c87258092d41",
+    ),
+    (
+        "pause-no-gui",
+        "resumed",
+        "2fc891762ababfe30cce0e7d8a4546a2",
+    ),
     ("chat", "tellraw", "5885a05cfc100e8e3687b5ee89990eee"),
     ("chat", "feedback", "a74ffeed5795b07837f9518c105dad32"),
     ("chat", "fading", "fbdf11cea5dbc46f2da297397b1f617d"),

@@ -80,6 +80,11 @@ impl GuiRenderState {
         self.strata.push(self.current);
     }
 
+    /// Whether a stratum asked for the blur under it.
+    pub fn has_blur(&self) -> bool {
+        self.first_stratum_after_blur != usize::MAX
+    }
+
     /// Java throws `IllegalStateException` for a second blur, the panic.
     pub fn blur_before_this_stratum(&mut self) {
         if self.first_stratum_after_blur != usize::MAX {

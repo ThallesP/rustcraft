@@ -79,6 +79,8 @@ use crate::net::minecraft::client::renderer::level_renderer::{
     LevelFeatures, LevelRenderOptions, LevelRenderer, LevelResources,
 };
 use crate::net::minecraft::client::renderer::lightmap::Lightmap;
+use crate::net::minecraft::client::renderer::post_chain::PostChain;
+use crate::net::minecraft::client::renderer::post_chain_config::PostChainConfig;
 use crate::net::minecraft::client::renderer::projection::Projection;
 use crate::net::minecraft::client::renderer::projection_matrix_buffer::ProjectionMatrixBuffer;
 use crate::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
@@ -143,6 +145,8 @@ pub struct RenderOptions {
     /// `textureFiltering() == RGSS`.
     pub use_rgss: bool,
     pub hide_gui: bool,
+    /// `menuBackgroundBlurriness()`, the menu blur's radius the globals hand the shaders.
+    pub menu_background_blurriness: i32,
 }
 
 /// What the frame reads of the environment at the camera: Java asks the camera's
@@ -284,6 +288,10 @@ pub struct GameRenderer {
     block_outline_render_state: Option<BlockOutlineRenderState>,
     /// `Minecraft.fontFilterFishy`: the fonts without their fishy glyphs.
     font_filter_fishy: Rc<Font>,
+    /// The client's resources, which post effects are loaded from.
+    resource_manager: Rc<MultiPackResourceManager>,
+    /// `ShaderManager.getPostChain(BLUR_POST_CHAIN_ID, …)`, loaded the first time it's asked for.
+    blur_effect: Option<PostChain>,
 }
 
 impl GameRenderer {
@@ -434,6 +442,8 @@ impl GameRenderer {
             level_submit_node_storage: SubmitNodeStorage::new(),
             block_outline_render_state: None,
             font_filter_fishy,
+            resource_manager: manager,
+            blur_effect: None,
         }
     }
 
@@ -524,7 +534,8 @@ impl GameRenderer {
         extract(&mut graphics);
     }
 
-    /// `render`'s GUI, after the level: `guiRenderer.render()` over the main target.
+    /// `render`'s GUI, after the level: `guiRenderer.render()` over the main target, the level
+    /// blurred under the strata after the blur (`processBlurEffect`).
     pub fn render_gui(&mut self, gui_scale_option: i32) {
         let window = self.gui_window(gui_scale_option);
         let glyph_textures = GlyphTextures {
@@ -532,14 +543,55 @@ impl GameRenderer {
             lightmap: self.ui_lightmap.get_texture_view().clone(),
             lightmap_sampler: Rc::clone(self.sampler_cache.get_clamp_to_edge(FilterMode::LINEAR)),
         };
+        if self.blur_effect.is_none() && self.gui_render_state.has_blur() {
+            self.blur_effect = Some(GameRenderer::load_post_chain(
+                self.device,
+                &*self.resource_manager,
+                &Identifier::with_default_namespace("blur"),
+            ));
+        }
+        let device = self.device;
+        let main_render_target = &self.main_render_target;
+        let sampler_cache = &self.sampler_cache;
+        let blur_effect = &mut self.blur_effect;
         self.gui_renderer.render(
-            self.device,
+            device,
             &mut self.gui_render_state,
             &mut self.pipelines,
-            &self.main_render_target,
+            main_render_target,
             window,
             &glyph_textures,
+            &mut |pipelines| {
+                // processBlurEffect.
+                if let Some(blur_effect) = blur_effect.as_mut() {
+                    blur_effect.process(device, main_render_target, pipelines, sampler_cache);
+                }
+            },
         );
+    }
+
+    /// `ShaderManager`'s post chain `id`, from `post_effect/<id>.json`; panics where Java logs a
+    /// broken effect and goes on without it.
+    fn load_post_chain(
+        device: &dyn GpuDevice,
+        resource_manager: &dyn ResourceManager,
+        id: &Identifier,
+    ) -> PostChain {
+        let location = Identifier::from_namespace_and_path(
+            id.get_namespace(),
+            &format!("post_effect/{}.json", id.get_path()),
+        );
+        let resource = resource_manager
+            .get_resource(&location)
+            .unwrap_or_else(|| panic!("no post effect {location}"));
+        let bytes = resource
+            .open()
+            .unwrap_or_else(|error| panic!("reading {location}: {error}"));
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes).unwrap_or_else(|error| panic!("{location}: {error}"));
+        let config =
+            PostChainConfig::decode(&json).unwrap_or_else(|error| panic!("{location}: {error}"));
+        PostChain::load(device, &config, id)
     }
 
     /// `extractOptions`: what the frame reads of the options, and whether the HUD is hidden.
@@ -556,6 +608,7 @@ impl GameRenderer {
             glint_strength: options.glint_strength,
             use_rgss: options.texture_filtering_rgss,
             hide_gui: hud_hidden,
+            menu_background_blurriness: options.get_menu_background_blurriness(),
         }
     }
 
@@ -946,7 +999,7 @@ impl GameRenderer {
             options.glint_strength,
             game_time,
             partial_ticks,
-            0,
+            options.menu_background_blurriness,
             &self.camera_render_state.pos,
             options.use_rgss,
         );

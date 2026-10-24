@@ -169,6 +169,7 @@ impl OracleGameTest {
             glint_strength: 0.75,
             use_rgss: true,
             hide_gui: scenario.options.hide_gui,
+            menu_background_blurriness: 5,
         }
     }
 

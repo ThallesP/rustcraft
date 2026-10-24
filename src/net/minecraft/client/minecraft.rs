@@ -41,6 +41,7 @@ use crate::net::minecraft::client::gui::hud::HudContext;
 use crate::net::minecraft::client::gui::screens::chat_screen::ChatScreen;
 use crate::net::minecraft::client::gui::screens::disconnected_screen::DisconnectedScreen;
 use crate::net::minecraft::client::gui::screens::level_loading_screen::LevelLoadingScreen;
+use crate::net::minecraft::client::gui::screens::pause_screen::PauseScreen;
 use crate::net::minecraft::client::gui::screens::screen::{self, ScreenRef};
 use crate::net::minecraft::client::input::character_event::CharacterEvent;
 use crate::net::minecraft::client::input::key_event::KeyEvent;
@@ -295,6 +296,21 @@ impl Minecraft {
         Some(result)
     }
 
+    /// `pauseGame`: the pause menu, whose game doesn't pause on a server
+    /// (`canGameReallyBePaused` needs a singleplayer server).
+    pub fn pause_game(&self, suppress_pause_menu_if_we_really_are_pausing: bool) {
+        let _ = suppress_pause_menu_if_we_really_are_pausing;
+        if self.screen().is_none() {
+            let pause_screen = PauseScreen::new(&self.rc(), true);
+            self.set_screen(Some(Rc::new(RefCell::new(pause_screen))));
+        }
+    }
+
+    /// `isLocalServer`: the port only joins servers.
+    pub fn is_local_server(&self) -> bool {
+        false
+    }
+
     /// `mouseHandler.grabMouse()`: the window's mouse grabbed for turning, the screen gone.
     pub fn grab_mouse(&self) {
         if self.mouse_handler.borrow().is_mouse_grabbed() {
@@ -321,6 +337,21 @@ impl Minecraft {
         if let Some((window, _)) = self.window.borrow().as_ref() {
             SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), false);
         }
+    }
+
+    /// `disconnectFromWorld`: leaves the server, for the title screen, which isn't ported yet, so
+    /// the game stops at the disconnected screen.
+    pub fn disconnect_from_world(&self) {
+        if let Some(connection) = self.get_connection() {
+            let connection = connection.borrow().get_connection();
+            connection.disconnect(DisconnectionDetails::translatable(
+                "multiplayer.status.quitting",
+            ));
+        }
+        self.disconnect(
+            &DisconnectionDetails::translatable("multiplayer.status.quitting"),
+            false,
+        );
     }
 
     /// `gui.openChatScreen`: the chat screen with the draft or the method's prefix.
@@ -972,6 +1003,10 @@ impl Minecraft {
                     }
                 }
                 SDLEvents::SDL_EVENT_WINDOW_FOCUS_LOST => {
+                    // `onFocusChanged`: a game without a screen pauses (the pause menu).
+                    if self.screen().is_none() && self.level.borrow().is_some() {
+                        self.pause_game(false);
+                    }
                     self.release_mouse();
                 }
                 _ => {}

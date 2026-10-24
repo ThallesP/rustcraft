@@ -3,10 +3,11 @@
 //! Keys go to the screen first (`keyPressed`, `keyReleased`), and to the game's key mappings when
 //! there's no screen: W, A, S and D, space, left shift (sneak) and left control (sprint) hold their
 //! mappings down while pressed, T and / are clicked to open the chat, F1 hides the HUD, and Escape
-//! lets go of the mouse, where vanilla opens the pause menu. Not ported yet: the rest of the
-//! bindings and their options, the global keys (fullscreen, screenshots), the debug keys (F3 and
-//! its combinations), the narrator's hotkey, and the clipboard.
+//! opens the pause menu. Not ported yet: the rest of the bindings and their options, the global
+//! keys (fullscreen, screenshots), the debug keys (F3 and its combinations), the narrator's hotkey,
+//! and the clipboard.
 
+use crate::net::minecraft::client::gui::screens::pause_screen::PauseScreen;
 use crate::net::minecraft::client::input::input_with_modifiers::InputWithModifiers;
 use crate::net::minecraft::client::input::key_event::KeyEvent;
 use crate::net::minecraft::client::input_type::{self, InputType};
@@ -90,11 +91,20 @@ impl KeyboardHandler {
         }
 
         let handles_game_input = minecraft.screen().is_none();
+        let handles_global_input = handles_game_input
+            || minecraft.screen().is_some_and(|screen| {
+                screen.try_borrow().is_ok_and(|screen| {
+                    screen
+                        .as_any()
+                        .downcast_ref::<PauseScreen>()
+                        .is_some_and(|pause| !pause.shows_pause_menu())
+                })
+            });
         if action == KeyAction::RELEASE {
             KeyboardHandler::set_mappings(minecraft, event.key, false, false);
         } else {
-            if handles_game_input && event.is_escape() {
-                minecraft.release_mouse();
+            if handles_global_input && event.is_escape() {
+                minecraft.pause_game(false);
             }
             if handles_game_input {
                 KeyboardHandler::set_mappings(minecraft, event.key, true, true);
