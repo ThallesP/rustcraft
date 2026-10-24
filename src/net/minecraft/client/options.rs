@@ -7,9 +7,12 @@
 //! The player's model parts are their masks combined (`PlayerModelPart`, all seven by default),
 //! and the text filter is the user's profanity filter flag, off for an offline user. The
 //! movement keys (as `KeyMapping`s held down or not), `autoJump` and `sprintWindow` are here for
-//! the player, and `framerateLimit` and `enableVsync` for the game loop. What the screens read is
-//! here with its default: `menuBackgroundBlurriness`.
+//! the player, with `keyChat` and `keyCommand` (T and /), which open the chat, and `framerateLimit`
+//! and `enableVsync` for the game loop. What the screens and the chat read are here with their
+//! defaults: `menuBackgroundBlurriness`, the chat's opacity, line spacing, width, heights and scale,
+//! and `chatColors`.
 
+use crate::net::minecraft::client::gui::components::chat_component::ChatComponent;
 use crate::net::minecraft::client::key_mapping::KeyMapping;
 use crate::net::minecraft::server::level::client_information::ClientInformation;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
@@ -36,6 +39,8 @@ pub struct Options {
     pub key_jump: KeyMapping,
     pub key_shift: KeyMapping,
     pub key_sprint: KeyMapping,
+    pub key_chat: KeyMapping,
+    pub key_command: KeyMapping,
     auto_jump: bool,
     sprint_window: i32,
     biome_blend_radius: i32,
@@ -64,6 +69,14 @@ pub struct Options {
     pub enable_vsync: bool,
     /// `menuBackgroundBlurriness()`: the menu blur's radius, 0 to 10.
     pub menu_background_blurriness: i32,
+    /// `chatOpacity()`, `chatLineSpacing()`, `chatWidth()`, `chatHeightFocused()`,
+    /// `chatHeightUnfocused()` and `chatScale()`.
+    pub chat_opacity: f64,
+    pub chat_line_spacing: f64,
+    pub chat_width: f64,
+    pub chat_height_focused: f64,
+    pub chat_height_unfocused: f64,
+    pub chat_scale: f64,
 }
 
 impl Default for Options {
@@ -97,6 +110,8 @@ impl Options {
             key_jump: KeyMapping::new("key.jump"),
             key_shift: KeyMapping::new("key.sneak"),
             key_sprint: KeyMapping::new("key.sprint"),
+            key_chat: KeyMapping::bound("key.chat", 23),
+            key_command: KeyMapping::bound("key.command", 56),
             auto_jump: false,
             sprint_window: 7,
             biome_blend_radius: Options::DEFAULT_BIOME_BLEND_RADIUS,
@@ -116,12 +131,34 @@ impl Options {
             framerate_limit: 120,
             enable_vsync: true,
             menu_background_blurriness: 5,
+            chat_opacity: 1.0,
+            chat_line_spacing: 0.0,
+            chat_width: 1.0,
+            chat_height_focused: 1.0,
+            chat_height_unfocused: ChatComponent::default_unfocused_pct(),
+            chat_scale: 1.0,
         }
     }
 
     /// `getMenuBackgroundBlurriness`.
     pub fn get_menu_background_blurriness(&self) -> i32 {
         self.menu_background_blurriness
+    }
+
+    /// `chatColors().get()`.
+    pub fn chat_colors(&self) -> bool {
+        self.chat_colors
+    }
+
+    /// `chatVisibility().get()`.
+    pub fn chat_visibility(&self) -> ChatVisiblity {
+        self.chat_visibility
+    }
+
+    /// The key mappings a key goes to (`KeyMapping.MAP`): the movement keys by their defaults, and
+    /// the chat's.
+    pub fn key_mappings_mut(&mut self) -> [&mut KeyMapping; 2] {
+        [&mut self.key_chat, &mut self.key_command]
     }
 
     /// `KeyMapping.releaseAll()`.
@@ -134,6 +171,8 @@ impl Options {
             &mut self.key_jump,
             &mut self.key_shift,
             &mut self.key_sprint,
+            &mut self.key_chat,
+            &mut self.key_command,
         ] {
             mapping.release();
         }
@@ -156,6 +195,20 @@ impl Options {
             0.0,
             0.0,
         )
+    }
+
+    /// `getBackgroundColor(int)`: the default, unless the background isn't only the chat's.
+    pub fn get_background_color_or(&self, default_color: i32) -> i32 {
+        if self.background_for_chat_only {
+            default_color
+        } else {
+            crate::net::minecraft::util::argb::ARGB::color_from_float(
+                self.text_background_opacity as f32,
+                0.0,
+                0.0,
+                0.0,
+            )
+        }
     }
 
     /// `autoJump().get()`.

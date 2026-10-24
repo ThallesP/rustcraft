@@ -2,10 +2,10 @@
 //!
 //! Keys go to the screen first (`keyPressed`, `keyReleased`), and to the game's key mappings when
 //! there's no screen: W, A, S and D, space, left shift (sneak) and left control (sprint) hold their
-//! mappings down while pressed, F1 hides the HUD, and Escape lets go of the mouse, where vanilla
-//! opens the pause menu. Not ported yet: the rest of the bindings and their options, the global
-//! keys (fullscreen, screenshots), the debug keys (F3 and its combinations), the narrator's hotkey,
-//! and the clipboard.
+//! mappings down while pressed, T and / are clicked to open the chat, F1 hides the HUD, and Escape
+//! lets go of the mouse, where vanilla opens the pause menu. Not ported yet: the rest of the
+//! bindings and their options, the global keys (fullscreen, screenshots), the debug keys (F3 and
+//! its combinations), the narrator's hotkey, and the clipboard.
 
 use crate::net::minecraft::client::input::input_with_modifiers::InputWithModifiers;
 use crate::net::minecraft::client::input::key_event::KeyEvent;
@@ -50,6 +50,14 @@ impl KeyboardHandler {
             mapping.set_down(down);
             if click {
                 mapping.click();
+            }
+        }
+        for mapping in options.key_mappings_mut() {
+            if mapping.matches(key) {
+                mapping.set_down(down);
+                if click {
+                    mapping.click();
+                }
             }
         }
     }

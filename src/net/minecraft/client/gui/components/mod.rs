@@ -2,6 +2,7 @@ pub mod abstract_button;
 pub mod abstract_string_widget;
 pub mod abstract_widget;
 pub mod button;
+pub mod chat_component;
 pub mod common_buttons;
 pub mod component_render_utils;
 pub mod edit_box;

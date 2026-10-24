@@ -365,7 +365,7 @@ How the first-person hand draws the arm (`FirstPersonHandsAndItemsRenderer`'s po
 - `GridLayout` (the layouts' math): 600 random trees of `GridLayout`s (cells placed by hand with spans, or by a `RowHelper`, whose shared default settings change after its children are added a quarter of the time), `LinearLayout`s and `FrameLayout`s (with minimum sizes) down to `SpacerElement`s of random sizes, each child with random paddings (some negative) and alignments (the quarters and random floats) over its layout's defaults, or the defaults themselves; arranged (`arrangeElements`), then placed in a random rectangle by `FrameLayout.alignInRectangle` like a screen places its layout. A tree is the spec both sides build it from (the suite's javadoc has the format), and the result is the root's bounds and every spacer's place, in the order they were made.
 - `SpriteLoader`'s `stitch` also lays out the GUI atlas (`minecraft:gui`, without mipmaps, like `AtlasManager`).
 
-How the GUI draws them, `GuiRenderer`'s draws over the main target, shows in screenshots: the walk's HUD (TESTING's screenshots below; PROGRESS.md has the diffs). Screens, which scenarios open with their input steps (below), show in theirs.
+How the GUI draws them, `GuiRenderer`'s draws over the main target, shows in screenshots: the walk's HUD (TESTING's screenshots below; PROGRESS.md has the diffs), and screens, which scenarios open with their input steps (below): `chat` (system chat over the HUD, wrapped and styled, a command typed into the chat screen and its feedback, and the lines fading).
 
 ### The font
 

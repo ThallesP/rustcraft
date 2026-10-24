@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod chunk_batch_size_calculator;
 pub mod client_chunk_cache;
 pub mod client_common_packet_listener_impl;

@@ -251,6 +251,17 @@ impl Style {
         Style::check_empty_after_change(new_style, had_font, has_font)
     }
 
+    /// `withItalic(Boolean)`.
+    pub fn with_italic(&self, italic: Option<bool>) -> Style {
+        if self.italic == italic {
+            return self.clone();
+        }
+        let mut new_style = self.clone();
+        new_style.is_empty_constant = false;
+        new_style.italic = italic;
+        Style::check_empty_after_change(new_style, self.italic.is_some(), italic.is_some())
+    }
+
     /// `withColor(ChatFormatting)`.
     pub fn with_color_formatting(&self, color: ChatFormatting) -> Style {
         self.with_color(TextColor::from_legacy_format(color))

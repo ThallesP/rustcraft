@@ -585,6 +585,8 @@ fn render_scenario(
             can_hurt_player: player_mode.is_survival(),
             has_experience: player_mode.is_survival(),
             is_hardcore: level.is_hardcore(),
+            options: &options,
+            chat_focused: false,
         };
         game_renderer.extract_gui(
             options.gui_scale,

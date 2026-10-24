@@ -282,6 +282,8 @@ pub struct GameRenderer {
     level_submit_node_storage: SubmitNodeStorage,
     /// `levelRenderState.blockOutlineRenderState`.
     block_outline_render_state: Option<BlockOutlineRenderState>,
+    /// `Minecraft.fontFilterFishy`: the fonts without their fishy glyphs.
+    font_filter_fishy: Rc<Font>,
 }
 
 impl GameRenderer {
@@ -372,10 +374,9 @@ impl GameRenderer {
         .unwrap_or_else(|error| panic!("couldn't stitch {}", error.sprite));
         celestials_atlas.upload(device, &sampler_cache, &animation_pipelines, celestials);
         // FontManager's reload, with no font options (Unicode and Japanese variants off).
-        let font = Rc::new(Font::new(
-            Rc::new(FontManager::load(Some(device), &*manager, &[])),
-            false,
-        ));
+        let font_manager = Rc::new(FontManager::load(Some(device), &*manager, &[]));
+        let font = Rc::new(Font::new(Rc::clone(&font_manager), false));
+        let font_filter_fishy = Rc::new(Font::new(font_manager, true));
         let mut texture_manager =
             TextureManager::with_resource_manager(Rc::clone(&manager) as Rc<dyn ResourceManager>);
         texture_manager.register(
@@ -432,6 +433,7 @@ impl GameRenderer {
             line_indices: RenderSystem::sequential_buffer(PrimitiveTopology::LINES),
             level_submit_node_storage: SubmitNodeStorage::new(),
             block_outline_render_state: None,
+            font_filter_fishy,
         }
     }
 
@@ -467,6 +469,10 @@ impl GameRenderer {
     pub fn resize(&mut self, width: i32, height: i32) {
         self.main_render_target.resize(self.device, width, height);
         self.level_renderer.resize(width, height);
+    }
+
+    pub fn font_filter_fishy(&self) -> &Rc<Font> {
+        &self.font_filter_fishy
     }
 
     /// `Sheets.GUI_SHEET`, the GUI atlas's texture.

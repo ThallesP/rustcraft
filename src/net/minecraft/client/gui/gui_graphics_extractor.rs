@@ -7,7 +7,7 @@
 //! from what owns them for the extract.
 //!
 //! Tooltips are deferred to the end of the screen's extract (`extractDeferredElements`), a stratum
-//! above it, and the text collectors (`textRenderer`) draw a widget's text.
+//! above it, and the text collectors (`textRenderer`) draw a widget's or the chat's text.
 //!
 //! Not ported yet: items and their decorations, maps, the picture in picture states (entities,
 //! skins, books, banners, the profiler chart), tooltip images, the hovered text's effects (the

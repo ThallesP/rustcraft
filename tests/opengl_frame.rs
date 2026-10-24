@@ -474,6 +474,10 @@ const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
     ("sky-night", "stars", "976de7b4bb8226cc5099e593b3415ea1"),
     ("sky-sunrise", "east", "a8003efca04138403a4812fced227287"),
     ("sky-sunrise", "up", "945a20075d656a90f21083e91d038dcf"),
+    ("chat", "tellraw", "5885a05cfc100e8e3687b5ee89990eee"),
+    ("chat", "feedback", "a74ffeed5795b07837f9518c105dad32"),
+    ("chat", "fading", "fbdf11cea5dbc46f2da297397b1f617d"),
+    ("chat", "faded", "217d29f7f3b67b6685884184540b1592"),
 ];
 
 fn rgba_digest(pixels: &[u8]) -> String {

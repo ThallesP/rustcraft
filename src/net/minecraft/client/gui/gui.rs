@@ -2,12 +2,12 @@
 //!
 //! The HUD, the screen over it, and later the overlay and the toasts. The screen is the game's
 //! (`Minecraft::set_screen`, Java's `setScreen`), which ticks and draws it after the HUD, outside
-//! this cell, since a screen reaches the game. `GuiRenderState` is the game renderer's
-//! (`GameRenderState.guiRenderState`), which the extract borrows through its
+//! this cell, since a screen reaches the game (the chat screen the HUD's chat). `GuiRenderState` is
+//! the game renderer's (`GameRenderState.guiRenderState`), which the extract borrows through its
 //! `GuiGraphicsExtractor`.
 //!
-//! Not ported yet: the chat listener, the toasts, the splash manager, the screens' narration and
-//! the saving indicator's text (a singleplayer server's).
+//! Not ported yet: the chat listener's delay, the toasts, the splash manager, the screens'
+//! narration and the saving indicator's text (a singleplayer server's).
 
 use crate::net::minecraft::client::gui::gui_graphics_extractor::GuiGraphicsExtractor;
 use crate::net::minecraft::client::gui::hud::{Hud, HudContext};
@@ -18,6 +18,8 @@ pub struct Gui {
     pub hud: Hud,
     /// `screen`.
     pub screen: Option<ScreenRef>,
+    /// Whether the screen is the chat screen (`ChatComponent.isChatFocused`), kept as it's set.
+    pub chat_screen_shown: bool,
 }
 
 impl Gui {

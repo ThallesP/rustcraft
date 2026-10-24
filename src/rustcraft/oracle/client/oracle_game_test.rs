@@ -703,6 +703,9 @@ impl TestDriver for OracleGameTest {
                     {
                         return;
                     }
+                    // `settle`'s end: the setup's chat feedback cleared, so it doesn't show up in
+                    // screenshots (the toasts aren't ported).
+                    minecraft.gui.borrow_mut().hud.chat.clear_messages(false);
                     let path = self.out_dir.join("trace.jsonl");
                     match TraceWriter::new(&path) {
                         Ok(trace) => self.trace = Some(trace),

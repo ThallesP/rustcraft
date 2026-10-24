@@ -1727,11 +1727,11 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
+        // ChatListener.handleSystemMessage: the action bar's overlay, or a line in the chat.
         if packet.overlay() {
             self.texts.action_bar = Some(packet.content());
         } else {
-            let text = packet.content().get_string();
-            eprintln!("[CHAT] {}", text.replace('\r', "\\r").replace('\n', "\\n"));
+            minecraft.add_server_system_message(packet.content());
         }
     }
 

@@ -10,8 +10,8 @@
 //!
 //! Not ported yet, each with what it needs: the text it draws (the experience level, the held
 //! item's name, overlay messages, titles, the demo's and the autosave's text, the scoreboard), the
-//! font; the items in the hotbar's slots and the offhand, items; the chat, the tab list, the boss
-//! bars, the subtitles, the spectator's hotbar and the debug overlay, their components; the
+//! font; the items in the hotbar's slots and the offhand, items; the tab list, the boss bars, the
+//! subtitles, the spectator's hotbar and the debug overlay, their components; the
 //! vignette (which the oracle client turns off), the spyglass, portal, nausea, powder snow and
 //! equipment overlays, and the mob effects' icons and heart and food sprites, which need the
 //! world border, the level's light, textures by location and mob effects; and the attack
@@ -19,9 +19,13 @@
 //! as full, which is what a player who hasn't attacked or switched items for a few ticks sees.
 //! The locator and jumpable vehicle bars come with waypoints and vehicles.
 
+use crate::net::minecraft::client::gui::components::chat_component::{
+    ChatComponent, ChatContext, DisplayMode,
+};
 use crate::net::minecraft::client::gui::contextualbar::contextual_bar::ContextualBar;
 use crate::net::minecraft::client::gui::contextualbar::experience_bar::ExperienceBar;
 use crate::net::minecraft::client::gui::gui_graphics_extractor::GuiGraphicsExtractor;
+use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
 use crate::net::minecraft::resources::identifier::Identifier;
@@ -37,6 +41,10 @@ use crate::net::minecraft::world::level::game_type::GameType;
 pub struct HudContext<'a> {
     /// `Minecraft.font`.
     pub font: &'a std::rc::Rc<crate::net::minecraft::client::gui::font::Font>,
+    /// `Minecraft.options`, which the chat reads.
+    pub options: &'a Options,
+    /// `chat.isChatFocused()`: the chat screen draws the chat instead.
+    pub chat_focused: bool,
     pub is_hidden: bool,
     pub player: &'a LocalPlayer,
     pub player_mode: GameType,
@@ -46,6 +54,8 @@ pub struct HudContext<'a> {
 }
 
 pub struct Hud {
+    /// `getChat()`.
+    pub chat: ChatComponent,
     random: Box<dyn RandomSource>,
     tick_count: i32,
     last_health: i32,
@@ -89,6 +99,7 @@ impl Default for Hud {
 impl Hud {
     pub fn new() -> Hud {
         Hud {
+            chat: ChatComponent::new(),
             random: random_source::create(),
             tick_count: 0,
             last_health: 0,
@@ -115,8 +126,30 @@ impl Hud {
             self.extract_hotbar_and_decorations(graphics, context);
         }
         if !context.is_hidden {
-            // The chat's stratum, which an empty chat draws nothing in.
+            self.extract_chat(graphics, context);
+        }
+    }
+
+    /// `extractChat`: the chat over the HUD, unless the chat screen draws it.
+    fn extract_chat(&mut self, graphics: &mut GuiGraphicsExtractor, context: &HudContext) {
+        if !context.chat_focused {
+            let (mouse_x, mouse_y) = (graphics.mouse_x(), graphics.mouse_y());
             graphics.next_stratum();
+            let chat_context = ChatContext {
+                options: context.options,
+                font: context.font,
+                gui_ticks: self.tick_count,
+                chat_focused: context.chat_focused,
+            };
+            self.chat.extract_render_state(
+                graphics,
+                &chat_context,
+                self.tick_count,
+                mouse_x,
+                mouse_y,
+                DisplayMode::BACKGROUND,
+                false,
+            );
         }
     }
 
@@ -476,7 +509,8 @@ impl Hud {
     pub fn tick(&mut self, pause: bool) {
         if !pause {
             self.tick_count = self.tick_count.wrapping_add(1);
-            // The vignette's brightness, the held item's highlight and the chat come with them.
+            // The vignette's brightness and the held item's highlight come with them.
+            self.chat.tick();
         }
     }
 }

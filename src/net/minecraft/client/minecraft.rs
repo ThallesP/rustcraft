@@ -33,10 +33,12 @@ use crate::com::mojang::renderpearl::api::device::gpu_surface::{GpuSurface, Pres
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::delta_tracker::Timer;
 use crate::net::minecraft::client::framerate_limiter::FramerateLimiter;
+use crate::net::minecraft::client::gui::components::chat_component::{ChatContext, ChatMethod};
 use crate::net::minecraft::client::gui::font::Font;
 use crate::net::minecraft::client::gui::font::font_manager::FontManager;
 use crate::net::minecraft::client::gui::gui::Gui;
 use crate::net::minecraft::client::gui::hud::HudContext;
+use crate::net::minecraft::client::gui::screens::chat_screen::ChatScreen;
 use crate::net::minecraft::client::gui::screens::disconnected_screen::DisconnectedScreen;
 use crate::net::minecraft::client::gui::screens::level_loading_screen::LevelLoadingScreen;
 use crate::net::minecraft::client::gui::screens::screen::{self, ScreenRef};
@@ -186,6 +188,14 @@ impl Minecraft {
         }))
     }
 
+    /// `fontFilterFishy`: the game renderer's, or the headless font, which has every glyph.
+    pub fn font_filter_fishy(&self) -> Rc<Font> {
+        match self.game_renderer.borrow().as_ref() {
+            Some(game_renderer) => Rc::clone(game_renderer.font_filter_fishy()),
+            None => self.font(),
+        }
+    }
+
     /// The window's size in pixels.
     pub fn window_size(&self) -> (i32, i32) {
         self.window_size.get()
@@ -203,7 +213,8 @@ impl Minecraft {
         self.gui.borrow().screen.clone()
     }
 
-    /// `gui.setScreen`: the screen shown (none goes back to the game), the last one removed and the new one added and made at the window's
+    /// `gui.setScreen`: the screen shown (none goes back to the game, or to the chat screen a
+    /// sleeping player left), the last one removed and the new one added and made at the window's
     /// GUI size, the mouse released for it or grabbed for the game.
     pub fn set_screen(&self, screen: Option<ScreenRef>) {
         let old = self.gui.borrow_mut().screen.take();
@@ -225,9 +236,20 @@ impl Minecraft {
             None => input_type::set_last_input_type(InputType::NONE),
         }
 
-        // The title screen, when there's no level, isn't ported yet; a dead player's death screen
-        // isn't either.
-        self.gui.borrow_mut().screen = screen.clone();
+        let screen = match screen {
+            Some(screen) => Some(screen),
+            // The title screen, when there's no level, isn't ported yet; a dead player's death
+            // screen isn't either.
+            None if self.level.borrow().is_none() => None,
+            None => self.gui.borrow_mut().hud.chat.restore_chat_screen(),
+        };
+        {
+            let mut gui = self.gui.borrow_mut();
+            gui.screen = screen.clone();
+            gui.chat_screen_shown = screen
+                .as_ref()
+                .is_some_and(|screen| screen.borrow().as_any().is::<ChatScreen>());
+        }
         if let Some(screen) = &screen {
             screen.borrow_mut().added();
         }
@@ -299,6 +321,56 @@ impl Minecraft {
         if let Some((window, _)) = self.window.borrow().as_ref() {
             SDLMouse::SDL_SetWindowRelativeMouseMode(window.handle(), false);
         }
+    }
+
+    /// `gui.openChatScreen`: the chat screen with the draft or the method's prefix.
+    pub fn open_chat_screen(&self, chat_method: ChatMethod) {
+        if self.player.borrow().is_some() {
+            let (text, is_draft) = self.gui.borrow().hud.chat.screen_text(chat_method);
+            let chat_screen = ChatScreen::new(&self.rc(), text, is_draft);
+            self.set_screen(Some(Rc::new(RefCell::new(chat_screen))));
+        }
+    }
+
+    /// What the chat reads of the game.
+    pub fn chat_context<R>(&self, f: impl FnOnce(&ChatContext) -> R) -> R {
+        let options = self.options.borrow();
+        let font = self.font();
+        let chat_focused = self.is_chat_focused();
+        let gui_ticks = self.gui.borrow().hud.get_gui_ticks();
+        f(&ChatContext {
+            options: &options,
+            font: &font,
+            gui_ticks,
+            chat_focused,
+        })
+    }
+
+    /// `ChatListener.handleSystemMessage`'s chat line: the server's system message added to the
+    /// chat.
+    pub fn add_server_system_message(
+        &self,
+        message: crate::net::minecraft::network::chat::component::Component,
+    ) {
+        let options = self.options.borrow();
+        let font = self.font();
+        let chat_focused = self.is_chat_focused();
+        let mut gui = self.gui.borrow_mut();
+        let gui_ticks = gui.hud.get_gui_ticks();
+        gui.hud.chat.add_server_system_message(
+            message,
+            &ChatContext {
+                options: &options,
+                font: &font,
+                gui_ticks,
+                chat_focused,
+            },
+        );
+    }
+
+    /// `isChatFocused`: the chat screen is shown.
+    pub fn is_chat_focused(&self) -> bool {
+        self.gui.borrow().chat_screen_shown
     }
 
     pub fn get_user(&self) -> &User {
@@ -402,8 +474,11 @@ impl Minecraft {
         if self.screen().is_some() {
             self.miss_time.set(10000);
         }
-        if self.screen().is_none() && self.miss_time.get() > 0 {
-            self.miss_time.set(self.miss_time.get() - 1);
+        if self.screen().is_none() {
+            self.handle_keybinds();
+            if self.miss_time.get() > 0 {
+                self.miss_time.set(self.miss_time.get() - 1);
+            }
         }
 
         if self.level.borrow().is_some() {
@@ -544,6 +619,17 @@ impl Minecraft {
         }
     }
 
+    /// `handleKeybinds`, as far as it's ported: F1 is the keyboard's, and the chat's keys open the
+    /// chat screen (`gui.handleKeybinds`).
+    fn handle_keybinds(&self) {
+        while self.options.borrow_mut().key_chat.consume_click() {
+            self.open_chat_screen(ChatMethod::MESSAGE);
+        }
+        if self.screen().is_none() && self.options.borrow_mut().key_command.consume_click() {
+            self.open_chat_screen(ChatMethod::COMMAND);
+        }
+    }
+
     /// The client's listener of the game protocol, once the player is in a level:
     /// `player.connection`.
     pub fn get_connection(&self) -> Option<Rc<RefCell<ClientPacketListener>>> {
@@ -659,6 +745,8 @@ impl Minecraft {
                 can_hurt_player: game_mode.can_hurt_player(),
                 has_experience: game_mode.has_experience(),
                 is_hardcore: level.is_hardcore(),
+                options: &self.options.borrow(),
+                chat_focused: self.is_chat_focused(),
             }),
             _ => None,
         };
@@ -1005,5 +1093,6 @@ impl Minecraft {
                 self.removed_screens.borrow_mut().push(old);
             }
         }
+        self.gui.borrow_mut().chat_screen_shown = false;
     }
 }
