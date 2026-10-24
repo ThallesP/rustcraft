@@ -5,13 +5,16 @@
 //! `travelInAir` with the block's friction, `travelInFluid` (water and lava, getting out of them at
 //! an edge), climbing (`onClimbable`, `handleOnClimbable`), `jumpFromGround`, sprinting's speed
 //! modifier, and its overrides of `Entity`'s gravity, air drag, step height, speed factor and size.
+//! On the client, a living entity in the level pushes the local player (`pushEntities`,
+//! `isPushable`, `push`), and only travels where it's authoritative (`canSimulateMovement`).
 //! `LivingEntityClass` holds the methods its subclasses override (PORTING.md, "Entities").
 //!
 //! Not ported yet: health beyond its value, damage and death, effects (`hasEffect` is never true:
 //! no jump boost, slow falling, levitation or dolphin's grace), equipment and using items, riding
 //! (`travelRidden`, `floatInLiquidWhileRidden`), gliding (`travelFallFlying`, which panics),
-//! pushing other entities, the swim amount, the body's and head's rotation and the walk animation,
-//! which only rendering reads, and `applyEffectsFromBlocks` (see `Entity`).
+//! the cramming damage of `pushEntities` (the server's), the swim amount, the head's rotation
+//! (`lerpHeadTo`, `rotate_head`), the body's and the walk animation, which only rendering reads,
+//! and `applyEffectsFromBlocks` (see `Entity`).
 
 // Java's negated comparisons are kept as they are: they differ from the plain ones for NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -31,6 +34,7 @@ use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes
 use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
 use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
 use crate::net::minecraft::world::entity::entity_type::EntityType;
+use crate::net::minecraft::world::entity::entity_types::EntityTypes;
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
@@ -275,6 +279,24 @@ pub trait LivingEntityClass: EntityClass {
     {
         ai_step(self, level);
     }
+
+    fn push_entities(
+        &mut self,
+        level: &dyn Level,
+        local_player: Option<&mut (impl LivingEntityClass + Sized)>,
+    ) where
+        Self: Sized,
+    {
+        push_entities(self, level, local_player);
+    }
+
+    /// `doPush(Entity)`: the other entity pushed by this one.
+    fn do_push(&mut self, level: &dyn Level, entity: &mut (impl LivingEntityClass + Sized))
+    where
+        Self: Sized,
+    {
+        entity.push(level, self);
+    }
 }
 
 /// `LivingEntity.getDimensions(Pose)`: the pose's size, scaled.
@@ -462,14 +484,28 @@ pub fn ai_step(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level) {
         this.living_entity_mut().no_jump_delay -= 1;
     }
 
+    if !this.entity().is_interpolating() && !this.can_simulate_movement() {
+        let delta = this.entity().get_delta_movement();
+        this.entity_mut().set_delta_movement(delta.scale(0.98));
+    }
+
     let movement = this.entity().get_delta_movement();
     let mut dx = movement.x;
     let mut dy = movement.y;
     let mut dz = movement.z;
-    // `is(EntityTypes.PLAYER)`: only players are ported.
-    if movement.horizontal_distance_sqr() < 9.0E-6 {
-        dx = 0.0;
-        dz = 0.0;
+    if this.entity().get_type() == EntityTypes::PLAYER {
+        if movement.horizontal_distance_sqr() < 9.0E-6 {
+            dx = 0.0;
+            dz = 0.0;
+        }
+    } else {
+        if movement.x.abs() < 0.003 {
+            dx = 0.0;
+        }
+
+        if movement.z.abs() < 0.003 {
+            dz = 0.0;
+        }
     }
 
     if movement.y.abs() < 0.003 {
@@ -524,8 +560,94 @@ pub fn ai_step(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level) {
         f64::from(living.yya),
         f64::from(living.zza),
     );
-    // canSimulateMovement and isEffectiveAi: the local player's always are.
-    this.travel(level, &input);
+    // `isEffectiveAi()` is `isLocalInstanceAuthoritative()`, and a mob's needs its AI too, which
+    // only matters where it's authoritative: the server.
+    if this.can_simulate_movement() && this.is_local_instance_authoritative() {
+        this.travel(level, &input);
+    }
+
+    // `pushEntities()`: what the client finds pushable by an entity is the local player alone
+    // (`EntitySelector.pushableBy`), so the local player's own pushes nothing, and the level's
+    // entities push it in their tick (`tick_in_level`).
+}
+
+/// `LivingEntity.tick()` for an entity in the client's level: `tick`, its `aiStep` ending with
+/// `pushEntities`, which pushes what the level finds pushable by it: on the client the local
+/// player alone (`EntitySelector.pushableBy`), handed in since the game holds it. What `tick` does
+/// after `aiStep` (the rotations kept near the old ones, the attributes) reads nothing a push
+/// changes, so the push comes after it.
+pub fn tick_in_level(
+    this: &mut (impl LivingEntityClass + Sized),
+    level: &dyn Level,
+    local_player: Option<&mut (impl LivingEntityClass + Sized)>,
+) {
+    tick(this, level);
+    this.push_entities(level, local_player);
+}
+
+/// `LivingEntity.pushEntities()` on the client: the local player pushed when it's in the box and
+/// pushable (the teams' collision rules are always `ALWAYS`: teams aren't ported).
+pub fn push_entities(
+    this: &mut (impl LivingEntityClass + Sized),
+    level: &dyn Level,
+    local_player: Option<&mut (impl LivingEntityClass + Sized)>,
+) {
+    if let Some(player) = local_player
+        && !player.is_spectator()
+        && player
+            .entity()
+            .get_bounding_box()
+            .intersects(&this.entity().get_bounding_box())
+        && player.is_pushable(level)
+    {
+        this.do_push(level, player);
+    }
+}
+
+/// `LivingEntity.isPushable()` on the client: alive, and neither a spectator nor climbing (the
+/// server also asks that its chunk ticks entities).
+pub fn is_pushable(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level) -> bool {
+    !this.living_entity().is_dead_or_dying() && !this.is_spectator() && !this.on_climbable(level)
+}
+
+/// `LivingEntity.push(Entity)`: `Entity`'s, unless it sleeps, which isn't ported.
+pub fn push(
+    this: &mut (impl LivingEntityClass + Sized),
+    level: &dyn Level,
+    entity: &mut (impl EntityClass + Sized),
+) {
+    entity::push(this, level, entity);
+}
+
+/// `createLivingAttributes()`, the attributes a living entity's movement and size read, with the
+/// class's base values where they're not the defaults.
+pub fn create_living_attributes(
+    base_values: &[(&'static Attribute, f64)],
+) -> Vec<(&'static Attribute, f64)> {
+    [
+        Attributes::MAX_HEALTH,
+        Attributes::MOVEMENT_SPEED,
+        Attributes::ARMOR,
+        Attributes::STEP_HEIGHT,
+        Attributes::SCALE,
+        Attributes::GRAVITY,
+        Attributes::JUMP_STRENGTH,
+        Attributes::ENTITY_INTERACTION_RANGE,
+        Attributes::WATER_MOVEMENT_EFFICIENCY,
+        Attributes::MOVEMENT_EFFICIENCY,
+        Attributes::BOUNCINESS,
+        Attributes::AIR_DRAG_MODIFIER,
+        Attributes::FRICTION_MODIFIER,
+    ]
+    .into_iter()
+    .map(|attribute| {
+        let base_value = base_values
+            .iter()
+            .find(|(other, _)| Attribute::same(other, attribute))
+            .map_or_else(|| attribute.get_default_value(), |&(_, value)| value);
+        (attribute, base_value)
+    })
+    .collect()
 }
 
 /// `LivingEntity.getJumpPower(float)`: the jump strength, times the block's jump factor.

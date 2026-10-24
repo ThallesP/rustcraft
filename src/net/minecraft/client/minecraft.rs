@@ -593,7 +593,7 @@ impl Minecraft {
                     }
                 }
                 if let Some(level) = self.level.borrow_mut().as_mut() {
-                    level.tick_entities();
+                    level.tick_entities(self.player.borrow_mut().as_mut());
                 }
                 // `level.tickBlockEntities()`.
                 self.with_level_ticking(|level| {

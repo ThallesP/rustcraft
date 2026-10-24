@@ -87,7 +87,7 @@ use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::registry_friendly_byte_buf::RegistryFriendlyByteBuf;
 use crate::net::minecraft::network::var_int::VarInt;
 use crate::net::minecraft::resources::identifier::Identifier;
-use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
+use crate::net::minecraft::world::entity::entity::{AnyEntity, Entity, EntityClass};
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks};
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
@@ -293,7 +293,7 @@ impl CapturedLevel {
                 if packet.name == "minecraft:client_tick_end"
                     && let Some(level) = level.as_mut()
                 {
-                    level.tick_entities();
+                    level.tick_entities(None);
                 }
                 continue;
             }
@@ -421,12 +421,13 @@ impl CapturedLevel {
 /// The commands are `fill` and `setblock` in their `strict` mode, which places the states as they
 /// are written, with no shape updates from or to their neighbours (`FillCommand`'s flags 816), so
 /// the blocks are the commands' own. Where vanilla's capture is, the tests check they're the ones
-/// its server sent. A `summon` makes an entity of its type where it says, which is where the
-/// server adds it, in the order the server sends them; it's the client's as long as no entity's
-/// class ticks it anywhere (none is ported), and its data (`NoAI`, `NoGravity`) is the server's.
+/// its server sent. A `summon` makes an entity of its type's class where it says, which is where
+/// the server adds it, in the order the server sends them; it stays there as long as the server
+/// doesn't move it (its `NoAI` and `NoGravity` are the server's), and its class's tick runs after
+/// the player's (a pig pushing the player).
 pub struct FlatLevel {
     blocks: HashMap<BlockPos, BlockState>,
-    entities: Vec<Entity>,
+    entities: Vec<AnyEntity>,
     world_border: WorldBorder,
 }
 
@@ -440,8 +441,19 @@ impl FlatLevel {
     }
 
     /// The entities the setup summoned, in order.
-    pub fn entities(&self) -> &[Entity] {
-        &self.entities
+    pub fn entities(&self) -> impl Iterator<Item = &Entity> {
+        self.entities.iter().map(AnyEntity::entity)
+    }
+
+    /// `tickEntities()` after the player's tick: each entity's `commonTick` and class's `tick`,
+    /// which can push the player.
+    pub fn tick_entities(&mut self, player: &mut LocalPlayer) {
+        let mut entities = std::mem::take(&mut self.entities);
+        for entity in &mut entities {
+            entity.entity_mut().common_tick_in(self);
+            entity.tick(self, Some(&mut *player));
+        }
+        self.entities = entities;
     }
 
     /// The flat preset with the commands' blocks, in their order, and the entities they summon; a
@@ -462,8 +474,10 @@ impl FlatLevel {
                 let r#type = BuiltInRegistries::ENTITY_TYPE
                     .get_optional(&Identifier::parse(r#type))
                     .unwrap_or_else(|| panic!("{command}: no entity type {type}"));
-                let mut entity = Entity::new(r#type, r#type.get_dimensions());
-                entity.snap_to(position(x), position(y), position(z), 0.0, 0.0);
+                let mut entity = AnyEntity::create(r#type);
+                entity
+                    .entity_mut()
+                    .snap_to(position(x), position(y), position(z), 0.0, 0.0);
                 level.entities.push(entity);
                 continue;
             }
@@ -642,7 +656,7 @@ pub struct Replay {
 /// The level a replay runs on.
 pub enum ReplayLevel<'a> {
     /// The flat preset and the entities its setup summons, which stay where they are.
-    Flat(&'a FlatLevel),
+    Flat(&'a mut FlatLevel),
     /// The level a capture filled, whose other entities its packets after the marker (its play
     /// packets, both ways) move between the ticks, and the ticks interpolate.
     Captured {
@@ -654,7 +668,7 @@ pub enum ReplayLevel<'a> {
 impl ReplayLevel<'_> {
     fn level(&self) -> &dyn Level {
         match self {
-            ReplayLevel::Flat(flat) => *flat,
+            ReplayLevel::Flat(flat) => &**flat,
             ReplayLevel::Captured { level, .. } => &**level,
         }
     }
@@ -662,7 +676,7 @@ impl ReplayLevel<'_> {
     /// The other entities, in the order the client added them.
     fn others(&self) -> Vec<&Entity> {
         match self {
-            ReplayLevel::Flat(flat) => flat.entities().iter().collect(),
+            ReplayLevel::Flat(flat) => flat.entities().collect(),
             ReplayLevel::Captured { level, .. } => level.entities_for_rendering().collect(),
         }
     }
@@ -779,8 +793,11 @@ pub fn replay(
                 }
             }
             tick(&mut player, level.level());
+            if let ReplayLevel::Flat(flat) = &mut level {
+                flat.tick_entities(&mut player);
+            }
             if let ReplayLevel::Captured { level, play } = &mut level {
-                level.tick_entities();
+                level.tick_entities(Some(&mut player));
                 // The tick's own packets, up to its end; what came amid them is handled before the
                 // next tick.
                 while let Some(packet) = play.get(next) {
@@ -1060,11 +1077,11 @@ mod tests {
                 && !command.contains("NoGravity:1b")
         });
         // Vanilla's player is the server's first entity.
-        let flat = FlatLevel::with_setup(&scenario.setup);
+        let mut flat = FlatLevel::with_setup(&scenario.setup);
         if !waits && !moves {
             let on_flat = replay(
                 &scenario,
-                ReplayLevel::Flat(&flat),
+                ReplayLevel::Flat(&mut flat),
                 Arc::new(RegistryAccess::new(Vec::new())),
                 1,
                 None,
@@ -1152,10 +1169,10 @@ mod tests {
         for step in &mut scenario.steps {
             step.wait_for.clear();
         }
-        let flat = FlatLevel::with_setup(&scenario.setup);
+        let mut flat = FlatLevel::with_setup(&scenario.setup);
         let draft = replay(
             &scenario,
-            ReplayLevel::Flat(&flat),
+            ReplayLevel::Flat(&mut flat),
             Arc::new(RegistryAccess::new(Vec::new())),
             1,
             None,
@@ -1391,6 +1408,33 @@ mod tests {
             "entities-falling",
             "4f44104845a42ec6bdf62d78c5d4af91",
             "c1cc2fe9f328c4e6633af5fd1018cb93",
+        );
+    }
+
+    #[test]
+    fn entities_falling_blocks() {
+        check_scenario(
+            "entities-falling-blocks",
+            "d38f79f9ad5cf79a79d2fd0a9eecfc96",
+            "c1cc2fe9f328c4e6633af5fd1018cb93",
+        );
+    }
+
+    #[test]
+    fn entities_items() {
+        check_scenario(
+            "entities-items",
+            "a177978b0b3767044c79c89432648e9a",
+            "c1cc2fe9f328c4e6633af5fd1018cb93",
+        );
+    }
+
+    #[test]
+    fn entities_pushing() {
+        check_scenario(
+            "entities-pushing",
+            "d353e37c525dc5d1652c4361a3f97ac2",
+            "f056d46818410d2789e09c26c554a083",
         );
     }
 

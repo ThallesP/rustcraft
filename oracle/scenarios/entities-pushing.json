@@ -1,0 +1,13 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival", "tick_rate": 2},
+  "player": {"pos": [0.5, -60.0, 0.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "summon minecraft:pig 0.9 -60.0 4.5 {UUID:[I;0,0,5,1],NoAI:1b,Silent:1b}",
+    "summon minecraft:armor_stand 0.0 -60.0 8.5 {UUID:[I;0,0,5,2],NoGravity:1b,Silent:1b}"
+  ],
+  "steps": [
+    {"ticks": 45, "keys": ["forward"]},
+    {"ticks": 15, "keys": []}
+  ]
+}

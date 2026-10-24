@@ -69,6 +69,7 @@ use crate::net::minecraft::client::color::block::block_tint_cache::BlockTintCach
 use crate::net::minecraft::client::multiplayer::client_chunk_cache::ClientChunkCache;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::particle::particle_engine::ParticleEngine;
+use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::client::renderer::biome_colors;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
 use crate::net::minecraft::client::renderer::chunk::render_section_region::TintsToGiveBack;
@@ -104,7 +105,7 @@ use crate::net::minecraft::world::attribute::environment_attribute::EnvironmentA
 use crate::net::minecraft::world::attribute::environment_attribute_layer::LayerLevel;
 use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
 use crate::net::minecraft::world::attribute::environment_attributes::EnvironmentAttributes;
-use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
+use crate::net::minecraft::world::entity::entity::{AnyEntity, Entity, EntityClass};
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::level::biome::biome::{Biome, Precipitation};
 use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
@@ -180,7 +181,7 @@ pub struct ClientLevel {
     tint_caches: [(&'static ColorResolver, BlockTintCache); 4],
     biome_blend_radius: i32,
     /// `entityStorage`'s entities and `tickingEntities`, the player's aside.
-    entity_storage: EntityLookup<Entity>,
+    entity_storage: EntityLookup<AnyEntity>,
     ticking_entities: EntityTickList,
     /// `Minecraft.levelExtractor`, which the level's changes mark sections dirty in.
     level_extractor: Rc<LevelExtractor>,
@@ -756,9 +757,10 @@ impl ClientLevel {
     }
 
     /// `addEntity(Entity)`: in place of one it had by the id, ticking from now on.
-    pub fn add_entity(&mut self, entity: Entity) {
-        self.remove_entity(entity.get_id());
-        self.ticking_entities.add(entity.get_id());
+    pub fn add_entity(&mut self, entity: AnyEntity) {
+        let id = entity.entity().get_id();
+        self.remove_entity(id);
+        self.ticking_entities.add(id);
         self.entity_storage.add(entity);
     }
 
@@ -766,7 +768,7 @@ impl ClientLevel {
     /// (`setRemoved`'s callbacks).
     pub fn remove_entity(&mut self, id: i32) {
         if let Some(entity) = self.entity_storage.get_entity(id) {
-            let uuid = entity.get_uuid();
+            let uuid = entity.entity().get_uuid();
             self.ticking_entities.remove(id);
             self.entity_storage.remove(id, uuid);
         }
@@ -774,16 +776,25 @@ impl ClientLevel {
 
     /// `getEntity(int)`, the player's aside.
     pub fn get_entity(&self, id: i32) -> Option<&Entity> {
-        self.entity_storage.get_entity(id)
+        self.entity_storage.get_entity(id).map(AnyEntity::entity)
     }
 
     pub fn get_entity_mut(&mut self, id: i32) -> Option<&mut Entity> {
-        self.entity_storage.get_entity_mut(id)
+        self.entity_storage
+            .get_entity_mut(id)
+            .map(AnyEntity::entity_mut)
+    }
+
+    /// `getEntity(int)` with its class, the player's aside.
+    pub fn get_any_entity(&self, id: i32) -> Option<&AnyEntity> {
+        self.entity_storage.get_entity(id)
     }
 
     /// `entitiesForRendering()`: the entities in the order they were added, the player's aside.
     pub fn entities_for_rendering(&self) -> impl Iterator<Item = &Entity> {
-        self.entity_storage.get_all_entities()
+        self.entity_storage
+            .get_all_entities()
+            .map(AnyEntity::entity)
     }
 
     /// `tick(BooleanSupplier)`, as far as it's ported: the world border's move, the game time and
@@ -1190,11 +1201,19 @@ impl ClientLevel {
     }
 
     /// `tickEntities()` for the entities besides the player, in the tick list's order:
-    /// `tickNonPassenger`'s `commonTick`, which steps their interpolation; their classes' `tick`
-    /// isn't ported.
-    pub fn tick_entities(&mut self) {
+    /// `tickNonPassenger`'s `commonTick`, which steps their interpolation, then their class's
+    /// `tick` (`AnyEntity::tick`), which can push the local player. One its tick removed (on the
+    /// client, only a falling block of air) is gone from the level, like `discard()`'s.
+    pub fn tick_entities(&mut self, mut local_player: Option<&mut LocalPlayer>) {
         for id in self.ticking_entities.for_each() {
-            self.with_entity(id, |entity, level| entity.common_tick_in(level));
+            let removed = self.with_any_entity(id, |entity, level| {
+                entity.entity_mut().common_tick_in(level);
+                entity.tick(level, local_player.as_deref_mut());
+                entity.is_removed()
+            });
+            if removed == Some(true) {
+                self.remove_entity(id);
+            }
         }
     }
 
@@ -1204,6 +1223,15 @@ impl ClientLevel {
         &mut self,
         id: i32,
         f: impl FnOnce(&mut Entity, &ClientLevel) -> R,
+    ) -> Option<R> {
+        self.with_any_entity(id, |entity, level| f(entity.entity_mut(), level))
+    }
+
+    /// `with_entity` with the entity's class.
+    pub fn with_any_entity<R>(
+        &mut self,
+        id: i32,
+        f: impl FnOnce(&mut AnyEntity, &ClientLevel) -> R,
     ) -> Option<R> {
         let (index, mut entity) = self.entity_storage.take(id)?;
         let result = f(&mut entity, self);

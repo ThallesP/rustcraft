@@ -132,7 +132,7 @@ use crate::net::minecraft::stats::recipe_book_settings::RecipeBookSettings;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::problem_reporter::ScopedCollector;
 use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes;
-use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
+use crate::net::minecraft::world::entity::entity::{self, AnyEntity, Entity, EntityClass};
 use crate::net::minecraft::world::entity::living_entity::LivingEntityClass;
 use crate::net::minecraft::world::entity::position_move_rotation::PositionMoveRotation;
 use crate::net::minecraft::world::entity::position_path::PositionPath;
@@ -577,13 +577,12 @@ impl ClientPacketListener {
 }
 
 impl ClientPacketListener {
-    /// `createEntityFromPacket`, then `recreateFromPacket`: an entity of the type, with what its
-    /// class's `createInterpolationHandler` makes, set up from the packet. A class not ported yet
-    /// is a plain `Entity` of the type, a player too, where Java makes a `RemotePlayer`.
-    pub fn create_entity_from_packet(packet: &ClientboundAddEntityPacket) -> Entity {
-        let r#type = packet.get_type();
-        let mut entity = Entity::new(r#type, r#type.get_dimensions());
-        entity.set_interpolation_handler(Entity::create_interpolation_handler(r#type));
+    /// `createEntityFromPacket`, then `recreateFromPacket`: an entity of the type's class, with
+    /// what its class's `createInterpolationHandler` makes, set up from the packet. A class not
+    /// ported yet is a plain `Entity` of the type, a player too, where Java makes a
+    /// `RemotePlayer`.
+    pub fn create_entity_from_packet(packet: &ClientboundAddEntityPacket) -> AnyEntity {
+        let mut entity = AnyEntity::create(packet.get_type());
         entity.recreate_from_packet(packet);
         entity
     }

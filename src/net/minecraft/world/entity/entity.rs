@@ -44,11 +44,18 @@ use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::tags::fluid_tags::{FluidTagKey, FluidTags};
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::abstract_interpolation_handler::Interpolated;
+use crate::net::minecraft::world::entity::animal::pig::pig::Pig;
+use crate::net::minecraft::world::entity::decoration::armor_stand::ArmorStand;
 use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
 use crate::net::minecraft::world::entity::entity_fluid_interaction::EntityFluidInteraction;
 use crate::net::minecraft::world::entity::entity_type::EntityType;
+use crate::net::minecraft::world::entity::entity_types::EntityTypes;
 use crate::net::minecraft::world::entity::interpolation_handler::InterpolationHandler;
+use crate::net::minecraft::world::entity::item::falling_block_entity::FallingBlockEntity;
+use crate::net::minecraft::world::entity::item::item_entity::ItemEntity;
 use crate::net::minecraft::world::entity::linear_interpolation_handler::LinearInterpolationHandler;
+use crate::net::minecraft::world::entity::living_entity::{self, LivingEntityClass};
+use crate::net::minecraft::world::entity::move_simulation_type::MoveSimulationType;
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::entity::position_path::PositionPath;
@@ -364,6 +371,14 @@ impl Entity {
         }
     }
 
+    /// `push(double, double, double)`: a finite impulse added to its movement. The server's
+    /// `needsSync`, which it sets too, isn't the client's.
+    pub fn push_xyz(&mut self, xa: f64, ya: f64, za: f64) {
+        if xa.is_finite() && ya.is_finite() && za.is_finite() {
+            self.set_delta_movement(self.get_delta_movement().add_xyz(xa, ya, za));
+        }
+    }
+
     /// `setRot(float, float)`: each rotation `% 360`.
     pub fn set_rot(&mut self, y_rot: f32, x_rot: f32) {
         self.set_y_rot(y_rot % 360.0);
@@ -654,6 +669,11 @@ impl Entity {
         self.x_rot_o = self.x_rot;
     }
 
+    /// `xo`, `yo` and `zo` set, the rotations left.
+    pub fn set_old_position(&mut self, position: Vec3) {
+        self.old_position = position;
+    }
+
     /// `setOldPosAndRot(Vec3, float, float)`.
     pub fn set_old_pos_and_rot_to(&mut self, position: Vec3, y_rot: f32, x_rot: f32) {
         self.old_position = position;
@@ -894,6 +914,108 @@ impl EntityClass for Entity {
     }
 }
 
+/// A Java `Entity` reference, as the level holds one: an entity of a class the port has, its
+/// class's struct, or a plain `Entity` of its type for the other classes.
+#[derive(Clone, Debug)]
+pub enum AnyEntity {
+    Entity(Entity),
+    ItemEntity(ItemEntity),
+    FallingBlockEntity(FallingBlockEntity),
+    ArmorStand(ArmorStand),
+    Pig(Pig),
+}
+
+impl AnyEntity {
+    /// `EntityType.create(Level, EntitySpawnReason)`: an entity of the type's class, with the
+    /// interpolation handler its class makes.
+    pub fn create(r#type: EntityType) -> AnyEntity {
+        let mut entity = if r#type == EntityTypes::ITEM {
+            AnyEntity::ItemEntity(ItemEntity::new())
+        } else if r#type == EntityTypes::FALLING_BLOCK {
+            AnyEntity::FallingBlockEntity(FallingBlockEntity::new())
+        } else if r#type == EntityTypes::ARMOR_STAND {
+            AnyEntity::ArmorStand(ArmorStand::new())
+        } else if r#type == EntityTypes::PIG {
+            AnyEntity::Pig(Pig::new())
+        } else {
+            AnyEntity::Entity(Entity::new(r#type, r#type.get_dimensions()))
+        };
+        entity
+            .entity_mut()
+            .set_interpolation_handler(Entity::create_interpolation_handler(r#type));
+        entity
+    }
+
+    pub fn entity(&self) -> &Entity {
+        match self {
+            AnyEntity::Entity(entity) => entity,
+            AnyEntity::ItemEntity(item) => item.entity(),
+            AnyEntity::FallingBlockEntity(falling_block) => falling_block.entity(),
+            AnyEntity::ArmorStand(armor_stand) => armor_stand.entity(),
+            AnyEntity::Pig(pig) => pig.entity(),
+        }
+    }
+
+    pub fn entity_mut(&mut self) -> &mut Entity {
+        match self {
+            AnyEntity::Entity(entity) => entity,
+            AnyEntity::ItemEntity(item) => item.entity_mut(),
+            AnyEntity::FallingBlockEntity(falling_block) => falling_block.entity_mut(),
+            AnyEntity::ArmorStand(armor_stand) => armor_stand.entity_mut(),
+            AnyEntity::Pig(pig) => pig.entity_mut(),
+        }
+    }
+
+    /// `recreateFromPacket(ClientboundAddEntityPacket)`, by its class.
+    pub fn recreate_from_packet(&mut self, packet: &ClientboundAddEntityPacket) {
+        match self {
+            AnyEntity::FallingBlockEntity(falling_block) => {
+                falling_block.recreate_from_packet(packet);
+            }
+            _ => self.entity_mut().recreate_from_packet(packet),
+        }
+    }
+
+    /// `isRemoved()`: only a falling block of air removes itself on the client.
+    pub fn is_removed(&self) -> bool {
+        match self {
+            AnyEntity::FallingBlockEntity(falling_block) => falling_block.is_removed(),
+            _ => false,
+        }
+    }
+
+    /// `ClientLevel.tickNonPassenger`'s `tick()` after its `commonTick()` (`common_tick_in`), by
+    /// its class. A class not ported yet has no tick: what `Entity.baseTick` works out for it
+    /// (its fluids, swimming) moves nothing. A living entity's `pushEntities` pushes what the
+    /// level finds pushable by it, which on the client is the local player alone
+    /// (`EntitySelector.pushableBy`): the game holds it, so it's handed in.
+    pub fn tick(
+        &mut self,
+        level: &dyn Level,
+        local_player: Option<&mut (impl LivingEntityClass + Sized)>,
+    ) {
+        match self {
+            AnyEntity::Entity(_) => {}
+            AnyEntity::ItemEntity(item) => item.tick(level),
+            AnyEntity::FallingBlockEntity(falling_block) => falling_block.tick(level),
+            AnyEntity::ArmorStand(armor_stand) => {
+                living_entity::tick_in_level(armor_stand, level, local_player);
+            }
+            AnyEntity::Pig(pig) => living_entity::tick_in_level(pig, level, local_player),
+        }
+    }
+}
+
+impl EntityAccess for AnyEntity {
+    fn get_id(&self) -> i32 {
+        self.entity().get_id()
+    }
+
+    fn get_uuid(&self) -> UUID {
+        self.entity().get_uuid()
+    }
+}
+
 pub trait EntityClass {
     fn entity(&self) -> &Entity;
 
@@ -991,6 +1113,40 @@ pub trait EntityClass {
     /// may move it (`canSimulateMovement`).
     fn is_local_instance_authoritative(&self) -> bool {
         false
+    }
+
+    /// `getMoveSimulationType()`: which sides move it.
+    fn get_move_simulation_type(&self) -> MoveSimulationType {
+        MoveSimulationType::AUTHORITATIVE_SIDE
+    }
+
+    /// `canSimulateMovement()` on the client: whether its own tick may move it.
+    fn can_simulate_movement(&self) -> bool {
+        match self.get_move_simulation_type() {
+            MoveSimulationType::SERVER_AND_CLIENT => true,
+            // `isLocalInstanceAuthoritative()`, and on the client `isLocalClientAuthoritative()`,
+            // which is the same there.
+            MoveSimulationType::AUTHORITATIVE_SIDE
+            | MoveSimulationType::AUTHORITATIVE_SIDE_AND_SERVER => {
+                self.is_local_instance_authoritative()
+            }
+        }
+    }
+
+    /// `isPushable()`: whether other entities push it.
+    fn is_pushable(&mut self, _level: &dyn Level) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
+    /// `push(Entity)`: this and the other entity pushed apart.
+    fn push(&mut self, level: &dyn Level, entity: &mut (impl EntityClass + Sized))
+    where
+        Self: Sized,
+    {
+        push(self, level, entity);
     }
 
     /// `CollisionContext.of(this)`.
@@ -1255,8 +1411,11 @@ pub fn r#move(
         this.check_fall_damage(level, movement.y, on_ground, effect_state, effect_pos);
     }
 
-    // canSimulateMovement: the local player always may.
-    if moved_vertically && this.entity().vertical_collision || this.entity().horizontal_collision {
+    // `isRemoved()`: nothing the client moves removes itself in its move.
+    if this.can_simulate_movement()
+        && (moved_vertically && this.entity().vertical_collision
+            || this.entity().horizontal_collision)
+    {
         restitute_movement_after_collisions(
             this,
             effect_state,
@@ -1600,6 +1759,51 @@ pub fn collide_with_shapes(movement: &Vec3, bounding_box: &AABB, shapes: &[Voxel
         }
     }
     resolved_movement
+}
+
+/// `applyGravity()`.
+pub fn apply_gravity(this: &mut (impl EntityClass + ?Sized)) {
+    let gravity = Entity::get_gravity(this);
+    if gravity != 0.0 {
+        let delta = this.entity().get_delta_movement();
+        this.entity_mut()
+            .set_delta_movement(delta.add_xyz(0.0, -gravity, 0.0));
+    }
+}
+
+/// `Entity.push(Entity)`: each pushed away from the other by a twentieth, less when they're over
+/// a block apart, when it's pushable; nothing rides either (riding isn't ported).
+pub fn push(
+    this: &mut (impl EntityClass + Sized),
+    level: &dyn Level,
+    entity: &mut (impl EntityClass + Sized),
+) {
+    if !entity.entity().no_physics && !this.entity().no_physics {
+        let mut xa = entity.entity().get_x() - this.entity().get_x();
+        let mut za = entity.entity().get_z() - this.entity().get_z();
+        let mut dd = Mth::abs_max_f64(xa, za);
+        if dd >= f64::from(0.01_f32) {
+            dd = dd.sqrt();
+            xa /= dd;
+            za /= dd;
+            let mut pow = 1.0 / dd;
+            if pow > 1.0 {
+                pow = 1.0;
+            }
+
+            xa *= pow;
+            za *= pow;
+            xa *= f64::from(0.05_f32);
+            za *= f64::from(0.05_f32);
+            if this.is_pushable(level) {
+                this.entity_mut().push_xyz(-xa, 0.0, -za);
+            }
+
+            if entity.is_pushable(level) {
+                entity.entity_mut().push_xyz(xa, 0.0, za);
+            }
+        }
+    }
 }
 
 /// `moveRelative(float, Vec3)`: the input, turned by where the entity looks, added to its

@@ -54,6 +54,7 @@ use crate::net::minecraft::world::entity::ai::attributes::attributes::Attributes
 use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
 use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
 use crate::net::minecraft::world::entity::living_entity::{self, LivingEntity, LivingEntityClass};
+use crate::net::minecraft::world::entity::move_simulation_type::MoveSimulationType;
 use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::player::input::Input;
 use crate::net::minecraft::world::entity::player::player::{self, Player, PlayerClass};
@@ -852,6 +853,19 @@ impl EntityClass for LocalPlayer {
     /// Players are moved by their client (`Player.isLocalClientAuthoritative`).
     fn is_local_instance_authoritative(&self) -> bool {
         true
+    }
+
+    /// `Player.getMoveSimulationType()`: its client, and the server's simulation of it.
+    fn get_move_simulation_type(&self) -> MoveSimulationType {
+        MoveSimulationType::AUTHORITATIVE_SIDE_AND_SERVER
+    }
+
+    fn is_pushable(&mut self, level: &dyn Level) -> bool {
+        living_entity::is_pushable(self, level)
+    }
+
+    fn push(&mut self, level: &dyn Level, entity: &mut (impl EntityClass + Sized)) {
+        living_entity::push(self, level, entity);
     }
 
     fn maybe_back_off_from_edge(
