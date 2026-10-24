@@ -19,7 +19,12 @@
 //!   (`ServerStatusPinger`), prints its status's JSON and the round trip, and exits 0 when the
 //!   pong came, without joining;
 //! - `--stall SECONDS`, which stalls the game thread that long once the level is ready, and exits
-//!   0 when the connection held (`StallTest`).
+//!   0 when the connection held (`StallTest`);
+//! - `--bench BENCH.json`, which plays in a window with a bench's options (`BenchOptions`), and
+//!   `--benchOut FILE`, which records the benchmark's measurements into FILE (`bench`): what
+//!   `tools/bench.py` runs;
+//! - `--benchLevel CAPTURE`, which joins nothing: the offline benchmark of a bench's capture
+//!   (`bench::level`).
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,6 +49,7 @@ use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::network::packet_processor::lock;
 use crate::net::minecraft::network::protocol::unported::Unported;
+use crate::rustcraft::bench::{self, BenchOptions};
 use crate::rustcraft::oracle::client::oracle_game_test::{OracleGameTest, Outcome};
 use crate::rustcraft::oracle::client::scenario::Scenario;
 use crate::rustcraft::stall_test::StallTest;
@@ -58,7 +64,7 @@ struct OptionSet {
 
 impl OptionSet {
     /// The options that take a value, which is the next argument.
-    const WITH_ARGUMENT: [&'static str; 12] = [
+    const WITH_ARGUMENT: [&'static str; 15] = [
         "username",
         "uuid",
         "accessToken",
@@ -71,6 +77,9 @@ impl OptionSet {
         "oracleOut",
         "ping",
         "stall",
+        "bench",
+        "benchOut",
+        "benchLevel",
     ];
 
     fn parse(args: &[String]) -> Result<OptionSet, String> {
@@ -155,6 +164,15 @@ impl Main {
         if let Some(address) = option_set.value_of("ping") {
             return Main::ping(address);
         }
+        if let Some(capture) = option_set.value_of("benchLevel") {
+            return match bench::level(Path::new(capture)) {
+                Ok(()) => 0,
+                Err(message) => {
+                    eprintln!("{message}");
+                    2
+                }
+            };
+        }
 
         let Some(server_address) = option_set
             .value_of("quickPlayMultiplayer")
@@ -193,6 +211,16 @@ impl Main {
             minecraft.set_test_driver(Box::new(driver));
             outcome = Some(driver_outcome);
             server_data.name = "rustcraft oracle".to_string();
+        } else if let Some(path) = option_set.value_of("bench") {
+            let bench_options = match BenchOptions::load(Path::new(path)) {
+                Ok(bench_options) => bench_options,
+                Err(message) => {
+                    eprintln!("{message}");
+                    return 2;
+                }
+            };
+            window_size = (bench_options.width, bench_options.height);
+            bench_options.apply(&minecraft);
         } else if let Some(seconds) = option_set.value_of("stall") {
             let Ok(seconds) = seconds.parse::<f64>() else {
                 eprintln!("--stall takes a number of seconds, not {seconds}");
@@ -201,6 +229,13 @@ impl Main {
             let (driver, driver_outcome) = StallTest::new(Duration::from_secs_f64(seconds));
             minecraft.set_test_driver(Box::new(driver));
             outcome = Some(driver_outcome);
+        }
+
+        if let Some(path) = option_set.value_of("benchOut")
+            && let Err(error) = bench::start(Path::new(path))
+        {
+            eprintln!("{path}: {error}");
+            return 2;
         }
 
         if needs_renderer {

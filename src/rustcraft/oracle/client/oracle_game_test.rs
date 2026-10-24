@@ -124,6 +124,7 @@ impl OracleGameTest {
             options.cloud_range = 64;
             options.texture_filtering_rgss = true;
             options.vignette = false;
+            options.enable_vsync = false;
             options.gui_scale = scenario.options.gui_scale;
         }
         minecraft.hud_hidden.set(scenario.options.hide_gui);

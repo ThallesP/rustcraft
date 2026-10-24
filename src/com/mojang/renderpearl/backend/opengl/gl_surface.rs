@@ -1,9 +1,9 @@
 //! com/mojang/renderpearl/backend/opengl/GlSurface.java
 //!
-//! Only blitting a texture into the window and swapping so far; `configure` (the swap interval)
-//! and `acquireNextTexture` come with the window loop.
+//! Blitting a texture into the window, swapping, and the swap interval (`configure`): FIFO is
+//! vsync, IMMEDIATE none. `acquireNextTexture` comes with the window loop.
 
-use crate::com::mojang::renderpearl::api::device::gpu_surface::GpuSurface;
+use crate::com::mojang::renderpearl::api::device::gpu_surface::{GpuSurface, PresentMode};
 use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
 use crate::com::mojang::renderpearl::backend::opengl::gl_device::GlDevice;
 use crate::org::lwjgl::sdl::sdl_video::{SDLVideo, SdlWindow};
@@ -22,7 +22,25 @@ impl<'a> GlSurface<'a> {
     }
 }
 
+impl GlSurface<'_> {
+    const SUPPORTED_PRESENT_MODES: [PresentMode; 2] = [PresentMode::FIFO, PresentMode::IMMEDIATE];
+}
+
 impl GpuSurface for GlSurface<'_> {
+    /// The swap interval of the device's context on this window.
+    fn configure(&self, present_mode: PresentMode) {
+        self.device.make_current(self.window_handle);
+        SDLVideo::SDL_GL_SetSwapInterval(if present_mode == PresentMode::FIFO {
+            1
+        } else {
+            0
+        });
+    }
+
+    fn supported_present_modes(&self) -> &[PresentMode] {
+        &GlSurface::SUPPORTED_PRESENT_MODES
+    }
+
     fn blit_from_texture(&self, texture_view: &GpuTextureView) {
         let (width, height) =
             SDLVideo::SDL_GetWindowSizeInPixels(self.window_handle).unwrap_or((0, 0));

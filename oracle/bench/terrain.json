@@ -1,0 +1,14 @@
+{
+  "world": {"seed": 0, "level_type": "minecraft:normal", "time": 6000},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 12, "max_fps": 260},
+  "warmup_seconds": 30,
+  "path": [
+    {"pos": [16.5, 160.0, 0.5], "look": [-90.0, 25.0], "seconds": 3},
+    {"pos": [64.5, 160.0, 0.5], "look": [-90.0, 25.0], "seconds": 3},
+    {"pos": [112.5, 160.0, 0.5], "look": [-90.0, 25.0], "seconds": 3},
+    {"pos": [160.5, 160.0, 0.5], "look": [-90.0, 25.0], "seconds": 3},
+    {"pos": [208.5, 160.0, 0.5], "look": [-90.0, 25.0], "seconds": 3},
+    {"pos": [256.5, 160.0, 0.5], "look": [-90.0, 25.0], "seconds": 3}
+  ],
+  "hold": {"pos": [1024.5, 160.0, 0.5], "look": [-90.0, 25.0], "settle_seconds": 20, "seconds": 30}
+}

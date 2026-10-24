@@ -128,6 +128,7 @@ use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
 use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::net::minecraft::world::phys::vec3::Vec3;
+use crate::rustcraft::bench;
 
 /// The client's listener in the game protocol.
 pub struct ClientPacketListener {
@@ -958,9 +959,11 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
+        let start = bench::now();
         if let Some(level) = minecraft.level.borrow_mut().as_mut() {
             ClientPacketListener::handle_level_chunk_with_light_in(level, packet);
         }
+        bench::record(bench::Kind::Chunk, start);
     }
 
     /// The light the server sent for the chunk, queued for the level.

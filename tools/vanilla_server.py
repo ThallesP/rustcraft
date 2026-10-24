@@ -78,7 +78,7 @@ def offline_uuid(name):
     return uuid.UUID(bytes=hashlib.md5(f"OfflinePlayer:{name}".encode()).digest(), version=3)
 
 
-def prepare_run_dir(run_dir, port, seed, compression_threshold, level_type, generate_structures, view_distance):
+def prepare_run_dir(run_dir, port, seed, compression_threshold, level_type, generate_structures, view_distance, watchdog=True):
     shutil.rmtree(run_dir, ignore_errors=True)
     run_dir.mkdir(parents=True)
 
@@ -92,6 +92,9 @@ def prepare_run_dir(run_dir, port, seed, compression_threshold, level_type, gene
         "level-seed": str(seed),
         "network-compression-threshold": str(compression_threshold),
     }
+    if not watchdog:
+        # A tick that takes a minute (a busy machine generating chunks) doesn't stop the server.
+        properties["max-tick-time"] = "-1"
     (run_dir / "server.properties").write_text("".join(f"{key}={value}\n" for key, value in properties.items()))
     (run_dir / "eula.txt").write_text("eula=true\n")
     ops = [{"uuid": str(offline_uuid(OP_NAME)), "name": OP_NAME, "level": 4, "bypassesPlayerLimit": False}]
@@ -126,6 +129,7 @@ def main():
     parser.add_argument("--generate-structures", action="store_true", help="generate villages and the other structures")
     parser.add_argument("--view-distance", type=int, default=4, help="chunks the server sends around a player (default: 4)")
     parser.add_argument("--console", action="store_true", help="forward stdin to the server's console once it's ready, stopping it at its end")
+    parser.add_argument("--no-watchdog", action="store_true", help="don't stop the server when a tick takes over a minute (max-tick-time -1)")
     args = parser.parse_args()
 
     if not args.accept_eula:
@@ -142,7 +146,7 @@ def main():
     run_dir = version_dir / "server-run" / args.name
     prepare_run_dir(
         run_dir, args.port, args.seed, args.compression_threshold,
-        args.level_type, args.generate_structures, args.view_distance,
+        args.level_type, args.generate_structures, args.view_distance, not args.no_watchdog,
     )
 
     # The bundler unpacks the server and its libraries once into the shared repo dir, not every run dir.

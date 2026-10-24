@@ -20,6 +20,7 @@ shared_library_loader::functions! {
     SDL_GL_DestroyContext: fn(SdlGlContext) -> bool;
     SDL_GL_MakeCurrent: fn(SdlWindow, SdlGlContext) -> bool;
     SDL_GL_SwapWindow: fn(SdlWindow) -> bool;
+    SDL_GL_SetSwapInterval: fn(c_int) -> bool;
     SDL_CreateWindow: fn(*const c_char, c_int, c_int, u64) -> SdlWindow;
     SDL_DestroyWindow: fn(SdlWindow);
     SDL_SetWindowMinimumSize: fn(SdlWindow, c_int, c_int) -> bool;
@@ -87,6 +88,10 @@ impl SDLVideo {
 
     pub(crate) fn SDL_GL_SwapWindow(window: SdlWindow) -> bool {
         unsafe { (FUNCTIONS.SDL_GL_SwapWindow)(window) }
+    }
+
+    pub(crate) fn SDL_GL_SetSwapInterval(interval: c_int) -> bool {
+        unsafe { (FUNCTIONS.SDL_GL_SetSwapInterval)(interval) }
     }
 
     pub(crate) fn SDL_CreateWindow(

@@ -13,18 +13,20 @@
 //! The game is shared by its listeners and its player, like Java's, so its state is in cells, and
 //! its back-references are parameters (`LocalPlayer::send_changes`). The screen is one of the few
 //! the port has, without drawing anything: the connect screen, the level's loading screen, or the
-//! disconnected screen, which a headless client stops at. Frames come at most at vanilla's default
-//! frame rate limit, the game thread sleeping until the next is due, while the connection's own
-//! thread goes on reading it (`Connection`), like Java's Netty threads.
+//! disconnected screen, which a headless client stops at. Frames come at most at the options'
+//! frame rate limit (`FramerateLimiter`, none at 260), the game thread sleeping until the next is
+//! due, while the connection's own thread goes on reading it (`Connection`), like Java's Netty
+//! threads. The surface's present mode follows `enableVsync` from the start. The benchmark times
+//! each frame, the end of its GL calls, each tick and each frame's light updates (`bench`).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use crate::com::mojang::blaze3d::platform::window::Window;
-use crate::com::mojang::renderpearl::api::device::gpu_surface::GpuSurface;
+use crate::com::mojang::renderpearl::api::device::gpu_surface::{GpuSurface, PresentMode};
 use crate::net::minecraft::client::delta_tracker::Timer;
+use crate::net::minecraft::client::framerate_limiter::FramerateLimiter;
 use crate::net::minecraft::client::gui::gui::Gui;
 use crate::net::minecraft::client::gui::hud::HudContext;
 use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
@@ -52,6 +54,7 @@ use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::flowing_fluid;
 use crate::org::lwjgl::sdl::sdl_events::{SDLEvents, SdlEvent};
 use crate::org::lwjgl::sdl::sdl_mouse::SDLMouse;
+use crate::rustcraft::bench;
 
 /// The screen shown, of the ones the port has.
 enum Screen {
@@ -102,10 +105,6 @@ pub struct Minecraft {
 }
 
 impl Minecraft {
-    /// Vanilla's default `framerateLimit`: frames are at most this often, and each processes the
-    /// packets queued for the game thread.
-    const FRAMERATE_LIMIT: u64 = 120;
-
     pub fn new(user: User, options: Options) -> Rc<Minecraft> {
         // A new game's fluids keep no shapes yet (`FlowingFluid.shapes`, a JVM's in Java).
         flowing_fluid::clear_shapes();
@@ -145,24 +144,23 @@ impl Minecraft {
         *self.test_driver.borrow_mut() = Some(driver);
     }
 
-    /// Frames until the game stops: each runs a tick if one is due, then waits for the next
-    /// frame (`Window.updateDisplay`'s frame rate limit).
+    /// Frames until the game stops: each runs a tick if one is due and processes the packets
+    /// queued for the game thread, then waits for the next frame (`renderFrame`'s frame rate
+    /// limit, under 260).
     pub fn run(self: &Rc<Minecraft>) {
-        let frame = Duration::from_nanos(1_000_000_000 / Minecraft::FRAMERATE_LIMIT);
-        let mut next_frame = Instant::now();
         while self.running.get() {
+            let frame = bench::now();
             self.run_tick(true);
             self.mouse_handler
                 .borrow_mut()
                 .handle_accumulated_movement(self);
             self.render_frame();
             self.poll_events();
-            next_frame += frame;
-            let now = Instant::now();
-            if next_frame < now {
-                next_frame = now;
+            let framerate_limit = self.options.borrow().framerate_limit;
+            if framerate_limit < 260 {
+                FramerateLimiter::limit_display_fps(framerate_limit);
             }
-            std::thread::sleep(next_frame - now);
+            bench::record(bench::Kind::Frame, frame);
         }
     }
 
@@ -203,7 +201,9 @@ impl Minecraft {
 
         // `renderFrame`'s update, before the frame is drawn: the level's light.
         if advance_game_time && let Some(level) = self.level.borrow_mut().as_mut() {
+            let start = bench::now();
             level.update();
+            bench::record(bench::Kind::Light, start);
         }
 
         self.pause.set(false);
@@ -213,6 +213,12 @@ impl Minecraft {
     }
 
     pub fn tick(self: &Rc<Minecraft>) {
+        let start = bench::now();
+        self.tick_game();
+        bench::record(bench::Kind::Tick, start);
+    }
+
+    fn tick_game(self: &Rc<Minecraft>) {
         self.client_tick_count
             .set(self.client_tick_count.get().wrapping_add(1));
         let has_level = self.level.borrow().is_some();
@@ -336,6 +342,13 @@ impl Minecraft {
         window: Option<(Window, Box<dyn GpuSurface>)>,
     ) {
         *self.game_renderer.borrow_mut() = Some(game_renderer);
+        // `renderFrame`'s first configuration of the surface: the present mode vsync picks.
+        if let Some((_, surface)) = &window {
+            surface.configure(PresentMode::get_supported_vsync_mode(
+                surface.supported_present_modes(),
+                self.options.borrow().enable_vsync,
+            ));
+        }
         *self.window.borrow_mut() = window;
     }
 
@@ -540,6 +553,7 @@ impl Minecraft {
                     .get_color_texture_view()
                     .expect("the main target has color"),
             );
+            bench::mark(bench::Kind::Submit);
             surface.present();
         }
     }

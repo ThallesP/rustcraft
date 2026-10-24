@@ -7,7 +7,7 @@
 //! The player's model parts are their masks combined (`PlayerModelPart`, all seven by default),
 //! and the text filter is the user's profanity filter flag, off for an offline user. The
 //! movement keys (as `KeyMapping`s held down or not), `autoJump` and `sprintWindow` are here for
-//! the player.
+//! the player, and `framerateLimit` and `enableVsync` for the game loop.
 
 use crate::net::minecraft::client::key_mapping::KeyMapping;
 use crate::net::minecraft::server::level::client_information::ClientInformation;
@@ -57,6 +57,10 @@ pub struct Options {
     /// `textBackgroundOpacity()` and `backgroundForChatOnly()`, behind the GUI's text.
     pub text_background_opacity: f64,
     pub background_for_chat_only: bool,
+    /// `framerateLimit()`, `maxFps` in `options.txt`: frames a second at most, 260 for no limit.
+    pub framerate_limit: i32,
+    /// `enableVsync()`: frames wait for the display's refresh (the surface's present mode).
+    pub enable_vsync: bool,
 }
 
 impl Default for Options {
@@ -106,6 +110,8 @@ impl Options {
             vignette: true,
             text_background_opacity: 0.5,
             background_for_chat_only: true,
+            framerate_limit: 120,
+            enable_vsync: true,
         }
     }
 

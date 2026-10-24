@@ -28,3 +28,12 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 3
 debug = false
+
+# The build to play and to benchmark at its best: fat LTO over one codegen unit, which took 7 to
+# 10% fewer cycles than `release` in the offline benchmark (`--benchLevel`) and 9 to 14% less CPU
+# in its section compiles (PROGRESS.md, 2026-10-24), but two and a half times as long to build.
+# `release` keeps the default, since every track's live checks build it on a shared machine.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
