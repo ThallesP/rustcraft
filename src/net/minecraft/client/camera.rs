@@ -360,6 +360,13 @@ impl Camera {
         self.initialized
     }
 
+    /// Whether the eye height and the field of view stopped easing toward the entity's: each the
+    /// same as the tick before (`eyeHeight` and `eyeHeightOld`, `fovModifier` and
+    /// `oldFovModifier`, which the oracle client reads by reflection).
+    pub fn is_at_rest(&self) -> bool {
+        self.eye_height == self.eye_height_old && self.fov_modifier == self.old_fov_modifier
+    }
+
     /// `getNearPlane`: the near plane's middle and half its sides, from the camera, at the
     /// projection the camera last had.
     pub fn get_near_plane(&self, fov: f32) -> NearPlane {

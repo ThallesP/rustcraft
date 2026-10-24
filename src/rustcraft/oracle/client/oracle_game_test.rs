@@ -18,8 +18,9 @@
 //! `<out>/<scenario>/screenshots/<name>.png`, when the client has a renderer (the runner makes one
 //! for a scenario with screenshots). The port has no screens, so waiting for the level's loading
 //! screen to close is waiting for the level to be ready, which closes it in vanilla too; "chunks
-//! rendered" is every chunk in the render distance being in the level and, with a renderer, every
-//! visible section compiled (`levelRenderer.hasRenderedAllSections()`).
+//! rendered" is every chunk the server sends being in the level with its light and, with a
+//! renderer, every visible section compiled (`levelRenderer.hasRenderedAllSections()`), and the
+//! settling ends with the camera at rest too.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -37,6 +38,7 @@ use crate::net::minecraft::network::protocol::common::custom::discarded_payload:
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
+use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::rustcraft::oracle::client::scenario::{self, Scenario};
 use crate::rustcraft::oracle::client::server_ticks::ServerTicks;
 use crate::rustcraft::oracle::client::trace_writer::{self, TraceWriter};
@@ -217,10 +219,20 @@ impl OracleGameTest {
         })
     }
 
-    /// Every chunk within the render distance around the player is in the level and, with a
-    /// renderer, every visible section compiled.
+    /// The level as the screenshots need it, like the oracle client's `areChunksRendered`: every
+    /// chunk within the render distance in the level, and every chunk the server sends a player at
+    /// that distance (`ChunkTrackingView.isWithinDistance`, with the neighbours it includes, which
+    /// the sections at the render distance's edge need to compile), the level's light caught up
+    /// (nothing queued, which `poll_light_updates` takes a tenth of a frame, and no work left for
+    /// its engine), and, with a renderer, every visible section compiled (`hasRenderedAllSections`
+    /// only counts the queued ones, not those still waiting for their neighbours).
     fn are_chunks_rendered(&self, minecraft: &Minecraft) -> bool {
         self.are_chunks_loaded(minecraft)
+            && self.are_tracked_chunks_loaded(minecraft)
+            && minecraft.level.borrow().as_ref().is_some_and(|level| {
+                !level.has_light_updates()
+                    && !level.get_chunk_source().get_light_engine().has_light_work()
+            })
             && minecraft
                 .game_renderer
                 .borrow()
@@ -228,6 +240,48 @@ impl OracleGameTest {
                 .is_none_or(|game_renderer| {
                     game_renderer.level_renderer().has_rendered_all_sections()
                 })
+    }
+
+    /// The camera at rest, like the oracle client's `isCameraAtRest`: its eye height and field of
+    /// view ease toward the player's a tick at a time from 0 (`Camera.tick` halves what's left),
+    /// and stop some 25 ticks after the level came. A client that renders slowly ticks less while
+    /// the chunks come, and took the spawn screenshot with the field of view a hair short of the
+    /// player's (TESTING.md, "Screenshots"). Without a renderer there's no camera.
+    fn is_camera_at_rest(&self, minecraft: &Minecraft) -> bool {
+        minecraft
+            .game_renderer
+            .borrow()
+            .as_ref()
+            .is_none_or(|game_renderer| game_renderer.main_camera().is_at_rest())
+    }
+
+    /// `ChunkTrackingView.isWithinDistance`'s chunks around the player, with their neighbours.
+    fn are_tracked_chunks_loaded(&self, minecraft: &Minecraft) -> bool {
+        let level = minecraft.level.borrow();
+        let player = minecraft.player.borrow();
+        let (Some(level), Some(player)) = (level.as_ref(), player.as_ref()) else {
+            return false;
+        };
+
+        let center = player.block_position();
+        let (center_x, center_z) = (
+            SectionPos::block_to_section_coord(center.get_x()),
+            SectionPos::block_to_section_coord(center.get_z()),
+        );
+        let distance = minecraft.options.borrow().get_effective_render_distance();
+        (-distance - 2..=distance + 2).all(|dz| {
+            (-distance - 2..=distance + 2).all(|dx| {
+                let delta_x = i64::from((dx.abs() - 2).max(0));
+                let delta_z = i64::from((dz.abs() - 2).max(0));
+                let tracked = delta_x * delta_x + delta_z * delta_z
+                    < i64::from(distance) * i64::from(distance);
+                !tracked
+                    || level
+                        .get_chunk_source()
+                        .get_chunk(center_x + dx, center_z + dz)
+                        .is_some()
+            })
+        })
     }
 
     /// Every chunk within the render distance around the player is in the level.
@@ -560,13 +614,17 @@ impl TestDriver for OracleGameTest {
                     self.next(Stage::Settling);
                 }
                 Stage::Settling => {
-                    // `settle`: the ticks, then until the player is on the ground.
+                    // `settle`: the ticks, then until the player is on the ground and, with a
+                    // renderer, the camera at rest.
                     let on_ground = minecraft
                         .player
                         .borrow()
                         .as_ref()
                         .is_some_and(|player| player.on_ground());
-                    if self.ticks_in_stage < OracleGameTest::SETTLE_TICKS || !on_ground {
+                    if self.ticks_in_stage < OracleGameTest::SETTLE_TICKS
+                        || !on_ground
+                        || !self.is_camera_at_rest(minecraft)
+                    {
                         return;
                     }
                     let path = self.out_dir.join("trace.jsonl");

@@ -7,6 +7,7 @@ import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -19,6 +20,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
+import net.minecraft.client.Camera;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -304,7 +306,7 @@ public final class OracleGameTest implements FabricClientGameTest {
      */
     private static void settle(ClientGameTestContext context, ServerTicks ticks) {
         ticks.waitTicks(SETTLE_TICKS);
-        ticks.waitFor(client -> client.player.onGround(), LOAD_TIMEOUT_TICKS);
+        ticks.waitFor(client -> client.player.onGround() && isCameraAtRest(client), LOAD_TIMEOUT_TICKS);
         context.runOnClient(client -> {
             client.gui.hud.getChat().clearMessages(false);
             client.gui.toastManager().clear();
@@ -392,8 +394,68 @@ public final class OracleGameTest implements FabricClientGameTest {
             && Math.abs(client.player.getZ() - player.z()) < 1.0E-6;
     }
 
+    /**
+     * The level as the screenshots need it: every chunk the server sends a player at this view distance in the level, its
+     * light caught up, and every visible section compiled. hasRenderedAllSections only counts the sections queued: one
+     * at the render distance's edge waits for the chunks past it (LevelExtractor's hasAllNeighbors), which the server
+     * sends too (ChunkTrackingView.isWithinDistance, with the neighbours it includes), and a chunk's sections only
+     * become dirty once its light is in (ClientLevel.pollLightUpdates runs some of the queue a frame). It only reads the
+     * level.
+     */
     private static boolean areChunksRendered(Minecraft client) {
-        return areChunksLoaded(client) && client.levelRenderer.hasRenderedAllSections();
+        return areChunksLoaded(client) && areTrackedChunksLoaded(client) && isLightSettled(client.level)
+            && client.levelRenderer.hasRenderedAllSections();
+    }
+
+    /**
+     * The camera at rest: its eye height and field of view ease toward the player's a tick at a time from 0 (Camera.tick
+     * halves what's left) and stop some 25 ticks after the level came, each then the same as the tick before. A client
+     * that renders slowly ticks less while the chunks come, and took the spawn screenshot with the field of view a hair
+     * short of the player's (TESTING.md, "Screenshots"); this one is at rest by then anyway. It only reads the camera.
+     */
+    private static boolean isCameraAtRest(Minecraft client) {
+        Camera camera = client.gameRenderer.mainCamera();
+        return floatField(camera, "eyeHeight") == floatField(camera, "eyeHeightOld")
+            && floatField(camera, "fovModifier") == floatField(camera, "oldFovModifier");
+    }
+
+    private static float floatField(Camera camera, String name) {
+        try {
+            Field field = Camera.class.getDeclaredField(name);
+            field.setAccessible(true);
+            return field.getFloat(camera);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    /** ChunkTrackingView.isWithinDistance's chunks around the player, with their neighbours, are in the level. */
+    private static boolean areTrackedChunksLoaded(Minecraft client) {
+        ClientLevel level = client.level;
+        ChunkPos center = client.player.chunkPosition();
+        int distance = client.options.getEffectiveRenderDistance();
+        for (int dz = -distance - 2; dz <= distance + 2; dz++) {
+            for (int dx = -distance - 2; dx <= distance + 2; dx++) {
+                long deltaX = Math.max(0, Math.abs(dx) - 2);
+                long deltaZ = Math.max(0, Math.abs(dz) - 2);
+                boolean tracked = deltaX * deltaX + deltaZ * deltaZ < (long)distance * distance;
+                if (tracked && level.getChunk(center.x() + dx, center.z() + dz, ChunkStatus.FULL, false) == null) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** No light update queued for the level, and none left for its light engine. */
+    private static boolean isLightSettled(ClientLevel level) {
+        try {
+            Field queue = ClientLevel.class.getDeclaredField("lightUpdateQueue");
+            queue.setAccessible(true);
+            return ((Deque<?>)queue.get(level)).isEmpty() && !level.getChunkSource().getLightEngine().hasLightWork();
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     /** Every chunk within the render distance around the player is in the level. */

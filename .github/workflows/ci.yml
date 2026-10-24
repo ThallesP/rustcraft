@@ -107,3 +107,9 @@ jobs:
       - run: cargo test --release --test opengl_frame
         env:
           RUSTCRAFT_CHUNK_CAPTURE: ${{ github.workspace }}/target/oracle/walk-no-gui/capture.jsonl
+      # The port's runs (screenshots, client logs, captures), to compare with vanilla's when a digest differs here.
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: port-runs
+          path: target/oracle
