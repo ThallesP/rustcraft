@@ -1,7 +1,7 @@
 //! net/minecraft/network/protocol/game/ClientboundInitializeBorderPacket.java
 //!
-//! Not ported yet: its public constructor, which reads a `WorldBorder`, the world track's; the
-//! client only reads the packet.
+//! Not ported yet: its public constructor, which reads a server's `WorldBorder`; the client only
+//! reads the packet.
 
 use std::sync::LazyLock;
 
@@ -146,7 +146,7 @@ mod tests {
         });
         golden.pending(
             "<init>(Lnet/minecraft/world/level/border/WorldBorder;)V",
-            "reads a WorldBorder, which isn't ported",
+            "reads a server's WorldBorder; the client only reads the packet",
         );
         golden.check_method("getNewCenterX()D", |this: &mut This| {
             this.get_new_center_x()

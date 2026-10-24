@@ -243,6 +243,11 @@ The game compares blocks and states by reference and numbers them in the order `
 - **A chunk owns its block entities** in a Java `HashMap` by position (`BlockPos` hashes like `Vec3i`), so they iterate in Java's order. `getBlockEntity(pos, IMMEDIATE)`, which makes one where its block makes one, takes the chunk mutably (`get_block_entity_immediate`, `ClientLevel::get_block_entity`); the shapes' and the renderer's reads don't make one (`get_existing_block_entity`, Java's `CHECK`). A block entity's level back-reference is the chunk that holds it.
 - **`ValueInput` is `TagValueInput`**, the one implementation the client reads with: a compound read through the registries' ops, a value of the wrong kind or one its codec can't read reported to a `ProblemReporter` and taken as missing (a codec's partial value kept), as Java's. The reporter collects descriptions and logs them when dropped (`ScopedCollector`), or discards them.
 
+## The level's ticking
+
+- **What the level's tick reads of the game is a parameter**: `ClientLevel::tick` takes the packet listener's clocks (Java's `clockManager()`, `connection.clockManager()`), which `Minecraft::tick` borrows from the player's connection.
+- **The world border's extents are an enum** (`BorderExtent`: `Static`, `Moving`), whose methods take the border's center and maximum size, which Java's inner classes read from their outer instance. A border's listeners and `setDirty` are the server's, and left out.
+
 ## Block models
 
 - **JSON is Gson's tree.** Models and block states are read strictly, like `GsonHelper.fromJson` and `StrictJsonParser` read them, into `com::google::gson`'s `JsonElement` ("Gson" above). A number keeps its text, Gson's `LazilyParsedNumber`, and a getter parses it into the type it's asked for: a float is `Float.parseFloat` of the text, correctly rounded straight to a float, not a double narrowed. An object keeps its members in the file's order, a repeated name replacing the value in its place, like Gson's `LinkedTreeMap`. `JsonParser::parse_strict` is `StrictJsonParser.parse` with the exception as a string, which the readers pass on, and `GsonHelper`'s getters return `Result`s whose `Err` is Java's `JsonSyntaxException`.

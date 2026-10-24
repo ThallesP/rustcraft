@@ -2,13 +2,14 @@
 //!
 //! Not ported yet: nearly all of it. The game protocol's packets it handles so far are the ones a
 //! join needs: the login, the teleports, bundles, the chunk batches (the chunks themselves are the
-//! world track's), the chunk cache's radius, the simulation distance, the game events (only
-//! `LEVEL_CHUNKS_LOAD_START` does anything yet) and the return to configuration, with the common
-//! ones. The chunks, their light, block updates and biomes fill the level (`ClientLevel`), whose
-//! light updates the handlers queue like Java's. The chunk cache's center, the player's abilities,
-//! health, experience and held slot, the difficulty, the world border and the tick rate are read
-//! too, and so are an entity's motion, hurt animation, events and damage, and their handlers leave
-//! what they set (the player's, the level's, the entities') for the tracks that port it. The time sets the level's game time and the clocks (`clockManager`, which the sky's
+//! world track's), the chunk cache's radius, the simulation distance, the game events (the
+//! level's loading, the game mode, and the rain and thunder) and the return to configuration, with
+//! the common ones. The chunks, their light, block updates and biomes fill the level
+//! (`ClientLevel`), whose light updates the handlers queue like Java's, and the border packets set
+//! its world border. The chunk cache's center, the player's abilities, health, experience and held
+//! slot, the difficulty and the tick rate are read too, and so are an entity's motion, hurt
+//! animation, events and damage, and their handlers leave what they set (the player's, the
+//! level's, the entities') for the tracks that port it. The time sets the level's game time and the clocks (`clockManager`, which the sky's
 //! timelines read), the spawn the level's, and the player's attributes and synced data are kept on
 //! the player for the player track (`LocalPlayer`); other entities' aren't ported, like the
 //! entities. Every other packet is `Unported`, and answers nothing. Also not ported: chat signing,
@@ -71,6 +72,11 @@ use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chu
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_center_packet::ClientboundSetBorderCenterPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_lerp_size_packet::ClientboundSetBorderLerpSizePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_size_packet::ClientboundSetBorderSizePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_warning_delay_packet::ClientboundSetBorderWarningDelayPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_warning_distance_packet::ClientboundSetBorderWarningDistancePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet_data::ClientboundLightUpdatePacketData;
@@ -878,7 +884,30 @@ impl ClientGamePacketListener for ClientPacketListener {
             return;
         }
         let event = packet.get_event();
-        if event == Some(ClientboundGameEventPacket::LEVEL_CHUNKS_LOAD_START)
+        let param_float = packet.get_param();
+        if let Some(event) = event
+            && [
+                ClientboundGameEventPacket::START_RAINING,
+                ClientboundGameEventPacket::STOP_RAINING,
+                ClientboundGameEventPacket::RAIN_LEVEL_CHANGE,
+                ClientboundGameEventPacket::THUNDER_LEVEL_CHANGE,
+            ]
+            .contains(&event)
+        {
+            let mut level = minecraft.level.borrow_mut();
+            let Some(level) = level.as_mut() else {
+                return;
+            };
+            if event == ClientboundGameEventPacket::START_RAINING {
+                level.set_rain_level(0.0);
+            } else if event == ClientboundGameEventPacket::STOP_RAINING {
+                level.set_rain_level(1.0);
+            } else if event == ClientboundGameEventPacket::RAIN_LEVEL_CHANGE {
+                level.set_rain_level(param_float);
+            } else {
+                level.set_thunder_level(param_float);
+            }
+        } else if event == Some(ClientboundGameEventPacket::LEVEL_CHUNKS_LOAD_START)
             && let Some(level_load_tracker) = self.level_load_tracker.as_mut()
         {
             level_load_tracker.loading_packets_received();
@@ -1123,8 +1152,121 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
-        // Java sets up the level's `WorldBorder`, the world track's, which isn't ported yet.
-        let _ = packet;
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            let game_time = level.get_game_time();
+            let border = level.get_world_border_mut();
+            border.set_center(packet.get_new_center_x(), packet.get_new_center_z());
+            let lerp_time = packet.get_lerp_time();
+            if lerp_time > 0 {
+                border.lerp_size_between(
+                    packet.get_old_size(),
+                    packet.get_new_size(),
+                    lerp_time,
+                    game_time,
+                );
+            } else {
+                border.set_size(packet.get_new_size());
+            }
+
+            border.set_absolute_max_size(packet.get_new_absolute_max_size());
+            border.set_warning_blocks(packet.get_warning_blocks());
+            border.set_warning_time(packet.get_warning_time());
+        }
+    }
+
+    fn handle_set_border_center(&mut self, packet: &ClientboundSetBorderCenterPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level
+                .get_world_border_mut()
+                .set_center(packet.get_new_center_x(), packet.get_new_center_z());
+        }
+    }
+
+    fn handle_set_border_lerp_size(&mut self, packet: &ClientboundSetBorderLerpSizePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            let game_time = level.get_game_time();
+            level.get_world_border_mut().lerp_size_between(
+                packet.get_old_size(),
+                packet.get_new_size(),
+                packet.get_lerp_time(),
+                game_time,
+            );
+        }
+    }
+
+    fn handle_set_border_size(&mut self, packet: &ClientboundSetBorderSizePacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level.get_world_border_mut().set_size(packet.get_size());
+        }
+    }
+
+    fn handle_set_border_warning_delay(&mut self, packet: &ClientboundSetBorderWarningDelayPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level
+                .get_world_border_mut()
+                .set_warning_time(packet.get_warning_delay());
+        }
+    }
+
+    fn handle_set_border_warning_distance(
+        &mut self,
+        packet: &ClientboundSetBorderWarningDistancePacket,
+    ) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        if let Some(level) = minecraft.level.borrow_mut().as_mut() {
+            level
+                .get_world_border_mut()
+                .set_warning_blocks(packet.get_warning_blocks());
+        }
     }
 
     fn handle_player_abilities(&mut self, packet: &ClientboundPlayerAbilitiesPacket) {
@@ -1740,6 +1882,29 @@ impl ClientGamePacketListener for NettyHalf {
     }
 
     fn handle_initialize_border(&mut self, packet: &ClientboundInitializeBorderPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_border_center(&mut self, packet: &ClientboundSetBorderCenterPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_border_lerp_size(&mut self, packet: &ClientboundSetBorderLerpSizePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_border_size(&mut self, packet: &ClientboundSetBorderSizePacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_border_warning_delay(&mut self, packet: &ClientboundSetBorderWarningDelayPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_set_border_warning_distance(
+        &mut self,
+        packet: &ClientboundSetBorderWarningDistancePacket,
+    ) {
         self.common.on_game_thread(&self.this, packet);
     }
 

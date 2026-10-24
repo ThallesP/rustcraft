@@ -101,8 +101,8 @@ impl RenderRegionCache {
 /// Java class: in Java the level answers it. The clocks are the packet listener's
 /// (`ClientLevel.clockManager()`), a clock it doesn't have being at no ticks like Java's new
 /// instance; the noise biomes are the chunks' (`Level.getNoiseBiome`, plains for a chunk the
-/// level doesn't have, `getUncachedNoiseBiome`). The level's weather isn't ported, so it's clear:
-/// no rain, thunder or lightning, which is the scenarios' (`weather clear`).
+/// level doesn't have, `getUncachedNoiseBiome`). The weather is the level's, as of this tick
+/// (`getRainLevel(1.0F)`, `getThunderLevel(1.0F)`), and so is the lightning's flash.
 pub struct LevelEnvironment<'a> {
     level: &'a ClientLevel,
     clocks: std::cell::RefCell<ClientClockManager>,
@@ -123,15 +123,15 @@ impl LayerLevel for LevelEnvironment<'_> {
     }
 
     fn rain_level(&self) -> f32 {
-        0.0
+        self.level.get_rain_level(1.0)
     }
 
     fn thunder_level(&self) -> f32 {
-        0.0
+        self.level.get_thunder_level(1.0)
     }
 
     fn sky_flash_time(&self) -> i32 {
-        0
+        self.level.get_sky_flash_time()
     }
 
     fn get_noise_biome_at_quart(&self, quart_x: i32, quart_y: i32, quart_z: i32) -> Holder {

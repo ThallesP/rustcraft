@@ -48,6 +48,11 @@ use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chu
 use crate::net::minecraft::network::protocol::game::clientbound_game_event_packet::ClientboundGameEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_hurt_animation_packet::ClientboundHurtAnimationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_initialize_border_packet::ClientboundInitializeBorderPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_warning_distance_packet::ClientboundSetBorderWarningDistancePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_warning_delay_packet::ClientboundSetBorderWarningDelayPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_size_packet::ClientboundSetBorderSizePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_lerp_size_packet::ClientboundSetBorderLerpSizePacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_border_center_packet::ClientboundSetBorderCenterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_level_chunk_with_light_packet::ClientboundLevelChunkWithLightPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_light_update_packet::ClientboundLightUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_login_packet::ClientboundLoginPacket;
@@ -752,23 +757,23 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_BORDER_CENTER,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_BORDER_CENTER),
+                ClientboundSetBorderCenterPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_BORDER_LERP_SIZE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_BORDER_LERP_SIZE),
+                ClientboundSetBorderLerpSizePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_BORDER_SIZE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_BORDER_SIZE),
+                ClientboundSetBorderSizePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_BORDER_WARNING_DELAY,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_BORDER_WARNING_DELAY),
+                ClientboundSetBorderWarningDelayPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_BORDER_WARNING_DISTANCE,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_BORDER_WARNING_DISTANCE),
+                ClientboundSetBorderWarningDistancePacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_CAMERA,

@@ -38,6 +38,7 @@ import net.minecraft.core.RegistrySynchronization;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.PacketListener;
 import net.minecraft.network.ProtocolInfo;
 import net.minecraft.network.protocol.Packet;
@@ -81,6 +82,11 @@ import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
 import net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket;
 import net.minecraft.network.protocol.game.ClientboundClearTitlesPacket;
 import net.minecraft.network.protocol.game.ClientboundInitializeBorderPacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderCenterPacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderLerpSizePacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderSizePacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderWarningDelayPacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderWarningDistancePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
@@ -653,6 +659,39 @@ final class PacketValues {
             ClientboundInitializeBorderPacket.class, PacketValues::borderPacket,
             List.of("newCenterX", "newCenterZ", "oldSize", "newSize", "lerpTime", "newAbsoluteMaxSize", "warningBlocks", "warningTime"), DOUBLES,
             DOUBLES, DOUBLES, DOUBLES, LONGS, INTS, INTS, INTS
+        );
+        // The border's other packets, whose public constructors read a server's border, made by their readers.
+        packet(
+            ClientboundSetBorderCenterPacket.class,
+            fields -> decoded(ClientboundSetBorderCenterPacket.STREAM_CODEC, buffer -> {
+                buffer.writeDouble((Double)fields[0]);
+                buffer.writeDouble((Double)fields[1]);
+            }),
+            List.of("newCenterX", "newCenterZ"), DOUBLES, DOUBLES
+        );
+        packet(
+            ClientboundSetBorderLerpSizePacket.class,
+            fields -> decoded(ClientboundSetBorderLerpSizePacket.STREAM_CODEC, buffer -> {
+                buffer.writeDouble((Double)fields[0]);
+                buffer.writeDouble((Double)fields[1]);
+                buffer.writeVarLong((Long)fields[2]);
+            }),
+            List.of("oldSize", "newSize", "lerpTime"), DOUBLES, DOUBLES, LONGS
+        );
+        packet(
+            ClientboundSetBorderSizePacket.class,
+            fields -> decoded(ClientboundSetBorderSizePacket.STREAM_CODEC, buffer -> buffer.writeDouble((Double)fields[0])),
+            List.of("size"), DOUBLES
+        );
+        packet(
+            ClientboundSetBorderWarningDelayPacket.class,
+            fields -> decoded(ClientboundSetBorderWarningDelayPacket.STREAM_CODEC, buffer -> buffer.writeVarInt((Integer)fields[0])),
+            List.of("warningDelay"), INTS
+        );
+        packet(
+            ClientboundSetBorderWarningDistancePacket.class,
+            fields -> decoded(ClientboundSetBorderWarningDistancePacket.STREAM_CODEC, buffer -> buffer.writeVarInt((Integer)fields[0])),
+            List.of("warningBlocks"), INTS
         );
 
         // The game protocol's packets about an entity: its motion, its hurt animation and its events (every byte). The
@@ -1474,6 +1513,13 @@ final class PacketValues {
         buffer.writeEnum((ServerboundPlayerCommandPacket.Action)fields[1]);
         buffer.writeVarInt((Integer)fields[2]);
         return ServerboundPlayerCommandPacket.STREAM_CODEC.decode(buffer);
+    }
+
+    // The packet a codec reads from what the writer puts in a buffer.
+    private static <T> T decoded(final StreamCodec<FriendlyByteBuf, T> codec, final java.util.function.Consumer<FriendlyByteBuf> write) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        write.accept(buffer);
+        return codec.decode(buffer);
     }
 
     // The packet its reader makes of the border's fields, in their order.

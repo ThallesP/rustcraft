@@ -4,8 +4,8 @@
 //! screens, input, telemetry and the profiler. What's here is the game loop's timing and what a
 //! tick does with a connection to a server: run the packets queued for the game thread, then up
 //! to 10 ticks, each ticking the connection (the game mode's, or the connect screen's before
-//! there's a level), the game renderer, the player on its level, what the player sends, and
-//! ending with `client_tick_end`; then the frame's update of the level's light (`renderFrame`'s
+//! there's a level), the game renderer, the player on its level, what the player sends, the
+//! level's own tick, and ending with `client_tick_end`; then the frame's update of the level's light (`renderFrame`'s
 //! `level.update()`) and, with a renderer, a frame of the level, offscreen or presented to the
 //! window. The renderer is made on demand (`init_renderer`): a headless client that takes no
 //! screenshots runs without one.
@@ -270,8 +270,17 @@ impl Minecraft {
                 }
             }
 
-            if !self.options.borrow().joined_first_server {
-                self.options.borrow_mut().joined_first_server = true;
+            if !self.pause.get() {
+                if !self.options.borrow().joined_first_server {
+                    self.options.borrow_mut().joined_first_server = true;
+                }
+
+                // `level.tick`, with the listener's clocks.
+                if let (Some(level), Some(connection)) =
+                    (self.level.borrow_mut().as_mut(), self.get_connection())
+                {
+                    level.tick(connection.borrow_mut().clock_manager_mut());
+                }
             }
 
             if let Some(connection) = self.get_connection()

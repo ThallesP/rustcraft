@@ -104,6 +104,11 @@ import net.minecraft.network.protocol.handshake.ClientIntent;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
 import net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket;
 import net.minecraft.network.protocol.game.ClientboundInitializeBorderPacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderCenterPacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderLerpSizePacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderSizePacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderWarningDelayPacket;
+import net.minecraft.network.protocol.game.ClientboundSetBorderWarningDistancePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
@@ -1283,6 +1288,11 @@ public final class Golden {
         InstanceSuite.every(ClientboundTickingStepPacket.class),
         InstanceSuite.every(ClientboundPlayerAbilitiesPacket.class),
         InstanceSuite.every(ClientboundInitializeBorderPacket.class),
+        InstanceSuite.every(ClientboundSetBorderCenterPacket.class),
+        InstanceSuite.every(ClientboundSetBorderLerpSizePacket.class),
+        InstanceSuite.every(ClientboundSetBorderSizePacket.class),
+        InstanceSuite.every(ClientboundSetBorderWarningDelayPacket.class),
+        InstanceSuite.every(ClientboundSetBorderWarningDistancePacket.class),
         // The packets about an entity: its motion, its hurt animation and its events, whose reader also reads the walk's,
         // and the entities leaving the client's view.
         InstanceSuite.every(ClientboundSetEntityMotionPacket.class),
@@ -1425,7 +1435,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), BiomeSuites.suites(), RegistrySuites.suites(), BlockEntitySuites.suites(), PlayerSuites.suites(), ModelSuites.suites(), AttributeSuites.suites(), EntityModelSuites.suites(), GuiSuites.suites(), GsonSuites.suites(), FontSuites.suites(), BrigadierSuites.suites(), SnbtSuites.suites(), SelectorSuites.suites(), ItemSuites.suites()).flatMap(List::stream).toList()) {
+        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), BiomeSuites.suites(), RegistrySuites.suites(), BlockEntitySuites.suites(), LevelSuites.suites(), PlayerSuites.suites(), ModelSuites.suites(), AttributeSuites.suites(), EntityModelSuites.suites(), GuiSuites.suites(), GsonSuites.suites(), FontSuites.suites(), BrigadierSuites.suites(), SnbtSuites.suites(), SelectorSuites.suites(), ItemSuites.suites()).flatMap(List::stream).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }

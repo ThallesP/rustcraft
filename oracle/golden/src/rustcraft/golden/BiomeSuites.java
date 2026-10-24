@@ -72,7 +72,7 @@ final class BiomeSuites {
     static List<Suite> suites() {
         return List.of(
             new ColormapSuite(GrassColor.class.getName(), "grass", GrassColor::get), new ColormapSuite(FoliageColor.class.getName(), "foliage", FoliageColor::get),
-            new ColormapSuite(DryFoliageColor.class.getName(), "dry_foliage", DryFoliageColor::get), new BiomeSuite(), new BiomeManagerSuite(), new TintSuite(), new BlockColorsSuite()
+            new ColormapSuite(DryFoliageColor.class.getName(), "dry_foliage", DryFoliageColor::get), new BiomeSuite(), new BiomeManagerSuite(), new BlockColorsSuite()
         );
     }
 

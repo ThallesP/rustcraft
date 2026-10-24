@@ -28,10 +28,16 @@
 //! Java's light updates are `Runnable`s that close over the packet listener; here they're closures
 //! of the level (`queue_light_update`), since all they touch is the level.
 //!
-//! The game time and the spawn are what the server last sent. The level's tick (`tickTime`, which
-//! adds a game tick and ticks the listener's clocks) isn't ported, and `setRespawnData` keeps the
-//! spawn as it came, where Java moves one outside the world border to the heightmap's top at the
-//! border's center (`getWorldBorderAdjustedRespawnData`), which waits for the heightmaps.
+//! The game time is what the server last sent, and each tick adds one and ticks the listener's
+//! clocks (`tickTime`, the clocks a parameter, Java's `clockManager()`). The tick also steps the
+//! world border's move and the sky's flash; the rest of `tick` isn't ported: the sky's darkening
+//! (`updateSkyBrightness`, from the environment attributes the game renderer holds), the rain's
+//! particles and sounds (`tickWeatherEffects`, which needs a biome's precipitation at a block),
+//! block breaking progress, the End's flashes and the explosions. The weather is the levels the
+//! server's game events set (`setRainLevel`, `setThunderLevel`), each with the last tick's, which
+//! the server steps by sending them every tick they change. `setRespawnData` keeps the spawn as it
+//! came, where Java moves one outside the world border to the heightmap's top at the border's
+//! center (`getWorldBorderAdjustedRespawnData`).
 //!
 //! Its dimension type is the synchronized registry's value of the holder the login named
 //! (`dimensionType()`), which gives its height, sky light, cardinal lighting and fast lava.
@@ -40,6 +46,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
 use crate::net::minecraft::client::color::block::block_tint_cache::BlockTintCache;
 use crate::net::minecraft::client::multiplayer::client_chunk_cache::ClientChunkCache;
 use crate::net::minecraft::client::options::Options;
@@ -54,8 +61,10 @@ use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::core::registry::Registry;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
 use crate::net::minecraft::core::section_pos::SectionPos;
+use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::argb::ARGB;
+use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
 use crate::net::minecraft::world::level::biome::biome::Biome;
 use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
@@ -102,6 +111,12 @@ pub struct ClientLevel {
     is_flat: bool,
     world_border: WorldBorder,
     game_time: i64,
+    /// `Level`'s `oRainLevel`, `rainLevel`, `oThunderLevel` and `thunderLevel`.
+    o_rain_level: f32,
+    rain_level: f32,
+    o_thunder_level: f32,
+    thunder_level: f32,
+    sky_flash_time: i32,
     respawn_data: RespawnData,
     light_update_queue: VecDeque<LightUpdate>,
     biomes: Registry,
@@ -164,6 +179,11 @@ impl ClientLevel {
             is_flat,
             world_border: WorldBorder::new(),
             game_time: 0,
+            o_rain_level: 0.0,
+            rain_level: 0.0,
+            o_thunder_level: 0.0,
+            thunder_level: 0.0,
+            sky_flash_time: 0,
             respawn_data: RespawnData::clone(RespawnData::DEFAULT),
             light_update_queue: VecDeque::new(),
             biomes,
@@ -213,6 +233,76 @@ impl ClientLevel {
     /// `entitiesForRendering()`: the entities in the order they were added, the player's aside.
     pub fn entities_for_rendering(&self) -> impl Iterator<Item = &Entity> {
         self.entity_storage.get_all_entities()
+    }
+
+    /// `tick(BooleanSupplier)`, as far as it's ported: the world border's move, the game time and
+    /// the clocks, and the sky's flash.
+    pub fn tick(&mut self, clock_manager: &mut ClientClockManager) {
+        // `tickRateManager().runsNormally()`: the tick rate isn't ported, so it always does.
+        self.world_border.tick();
+        self.tick_time(clock_manager);
+        if self.sky_flash_time > 0 {
+            self.set_sky_flash_time(self.sky_flash_time - 1);
+        }
+    }
+
+    /// `tickTime()`: a game tick more, which the clocks follow.
+    pub(crate) fn tick_time(&mut self, clock_manager: &mut ClientClockManager) {
+        let game_time = self.game_time.wrapping_add(1);
+        self.game_time = game_time;
+        clock_manager.tick(game_time);
+    }
+
+    /// `Level.getRainLevel(float)`: between the last tick's rain and this one's.
+    pub fn get_rain_level(&self, a: f32) -> f32 {
+        Mth::lerp_f32(a, self.o_rain_level, self.rain_level)
+    }
+
+    /// `Level.setRainLevel`: both ticks' rain, clamped to 0 to 1.
+    pub fn set_rain_level(&mut self, rain_level: f32) {
+        let clamped_rain_level = Mth::clamp_f32(rain_level, 0.0, 1.0);
+        self.o_rain_level = clamped_rain_level;
+        self.rain_level = clamped_rain_level;
+    }
+
+    /// `Level.getThunderLevel(float)`: between the last tick's thunder and this one's, times the
+    /// rain.
+    pub fn get_thunder_level(&self, a: f32) -> f32 {
+        Mth::lerp_f32(a, self.o_thunder_level, self.thunder_level) * self.get_rain_level(a)
+    }
+
+    /// `Level.setThunderLevel`: both ticks' thunder, clamped to 0 to 1.
+    pub fn set_thunder_level(&mut self, thunder_level: f32) {
+        let clamped_thunder_level = Mth::clamp_f32(thunder_level, 0.0, 1.0);
+        self.o_thunder_level = clamped_thunder_level;
+        self.thunder_level = clamped_thunder_level;
+    }
+
+    /// `Level.canHaveWeather()`: sky light, no ceiling, and not the End.
+    pub fn can_have_weather(&self) -> bool {
+        self.dimension_type_value.has_sky_light()
+            && !self.dimension_type_value.has_ceiling()
+            && *self.dimension.identifier() != Identifier::with_default_namespace("the_end")
+    }
+
+    /// `Level.isThundering()`.
+    pub fn is_thundering(&self) -> bool {
+        self.can_have_weather() && f64::from(self.get_thunder_level(1.0)) > 0.9
+    }
+
+    /// `Level.isRaining()`.
+    pub fn is_raining(&self) -> bool {
+        self.can_have_weather() && f64::from(self.get_rain_level(1.0)) > 0.2
+    }
+
+    /// `getSkyFlashTime()`: the ticks a lightning bolt's flash has left. Java reads it as 0 with
+    /// the options' `hideLightningFlash`, which the options don't have yet.
+    pub fn get_sky_flash_time(&self) -> i32 {
+        self.sky_flash_time
+    }
+
+    pub fn set_sky_flash_time(&mut self, sky_flash_time: i32) {
+        self.sky_flash_time = sky_flash_time;
     }
 
     /// `tickEntities()` for the entities besides the player, in the tick list's order:
@@ -731,8 +821,14 @@ impl fmt::Debug for ClientLevel {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::ClientLevel;
-    use crate::golden::{Decode, Golden, unhex};
+    use crate::golden::{Decode, Encode, Golden, unhex};
+    use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
+    use crate::net::minecraft::core::registry_access::{self, RegistryAccess};
+    use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClockUpdates;
+    use crate::net::minecraft::world::clock::clock_network_state::ClockNetworkState;
     use crate::io::netty::buffer::unpooled;
     use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
     use crate::net::minecraft::client::renderer::biome_colors;
@@ -755,9 +851,10 @@ mod tests {
     /// The walk's chunks, biomes laid on them by a `chunks_biomes` packet, and every resolver's
     /// tint at each column (at three heights) as vanilla's `calculateBlockTint` blends them: from
     /// the level's tint caches, so read twice (the second time cached), and the second layout
-    /// laid on the first's level, whose tints the packet's chunks must forget.
+    /// laid on the first's level, whose tints the packet's chunks must forget. Then the level's
+    /// ticks (`ticks_match_vanilla`).
     #[test]
-    fn tints_match_vanillas_blend() {
+    fn matches_vanilla() {
         load_colormaps();
         let chunk_golden = Golden::load(
             "net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket",
@@ -835,6 +932,90 @@ mod tests {
                 assert_eq!(index, expected.len());
             }
         }
+        ticks_match_vanilla(&golden, &registries);
         golden.finish();
+    }
+
+    fn level_in(registries: &RegistryAccess, dimension: &str) -> ClientLevel {
+        ClientLevel::new(
+            registries,
+            false,
+            false,
+            ResourceKey::create(
+                Registries::DIMENSION,
+                Identifier::with_default_namespace(dimension),
+            ),
+            Holder::Reference(ResourceKey::create(
+                Registries::DIMENSION_TYPE,
+                Identifier::with_default_namespace(dimension),
+            )),
+            8,
+            8,
+            false,
+            0,
+            63,
+        )
+    }
+
+    /// `ticks`: the game time a tick at a time (`tickTime`) and as the server sets it, the clocks,
+    /// and the weather the server's game events set, in each dimension.
+    fn ticks_match_vanilla(golden: &Golden, registries: &RegistryAccess) {
+        // The clocks of the synchronized registries, in id order.
+        let synchronized = registry_access::tests::golden();
+        let clock_registry = synchronized.lookup_or_throw(Registries::WORLD_CLOCK);
+        let clocks: Vec<Holder> = (0..clock_registry.size())
+            .map(|id| clock_registry.holder_by_id_or_throw(id))
+            .collect();
+        golden.check("ticks", |dimension: String, ops: Value| {
+            let mut level = level_in(registries, &dimension);
+            let mut clock_manager = ClientClockManager::new();
+            let outputs = ops
+                .as_array()
+                .expect("ops")
+                .iter()
+                .map(|op| {
+                    let op = op.as_array().expect("an op is an array");
+                    match op[0].as_str().expect("an op's name") {
+                        "tickTime" => level.tick_time(&mut clock_manager),
+                        "handleSetTime" => {
+                            let game_time = i64::decode(&op[1]);
+                            let mut updates = ClockUpdates::new();
+                            for (clock, state) in Vec::<(Holder, ClockNetworkState)>::decode(&op[2])
+                            {
+                                updates.put(clock, state);
+                            }
+                            level.set_time_from_server(game_time);
+                            clock_manager.handle_updates(game_time, &updates);
+                        }
+                        "setRainLevel" => level.set_rain_level(f32::decode(&op[1])),
+                        "setThunderLevel" => level.set_thunder_level(f32::decode(&op[1])),
+                        "weather" => {
+                            let partial = f32::decode(&op[1]);
+                            return Value::from(vec![
+                                level.get_rain_level(partial).encode(),
+                                level.get_thunder_level(partial).encode(),
+                                level.is_raining().encode(),
+                                level.is_thundering().encode(),
+                            ]);
+                        }
+                        "time" => {
+                            let mut state = vec![level.get_game_time().encode()];
+                            for clock in &clocks {
+                                let instance = clock_manager.get_instance(clock);
+                                state.push(Value::from(vec![
+                                    instance.total_ticks().encode(),
+                                    instance.partial_tick().encode(),
+                                    instance.rate().encode(),
+                                ]));
+                            }
+                            return Value::from(state);
+                        }
+                        name => panic!("unknown op {name}"),
+                    }
+                    Value::Null
+                })
+                .collect::<Vec<_>>();
+            Value::from(outputs)
+        });
     }
 }
