@@ -1,7 +1,7 @@
 //! net/minecraft/client/multiplayer/ClientCommonPacketListenerImpl.java
 //!
-//! Not ported yet: the resource packs (`handleResourcePackPush`, which waits for its packet, and
-//! the downloaded pack source that `handleResourcePackPop` pops from), the post effects the player
+//! Not ported yet: downloading and applying the server's resource packs (`DownloadedPackSource`),
+//! and popping them (`handleResourcePackPop`); the post effects the player
 //! gets (`handlePostEffects`, which comes with the renderer), dialogs (`handleShowDialog`,
 //! `clearDialog`), server links, transfers (`handleTransfer`, which disconnects and connects to
 //! the other server: the port disconnects), the disconnection report written about a packet
@@ -26,10 +26,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::java::util::hash_map::HashMap;
+use crate::java::util::uuid::UUID;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::common_listener_cookie::CommonListenerCookie;
-use crate::net::minecraft::client::multiplayer::server_data::ServerData;
-use crate::net::minecraft::network::chat::formatted_text::FormattedText;
+use crate::net::minecraft::client::multiplayer::server_data::{ServerData, ServerPackStatus};
 use crate::net::minecraft::network::connection::Connection;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::packet_processor::{GameThreadListener, PacketProcessor, lock};
@@ -42,6 +42,8 @@ use crate::net::minecraft::network::protocol::common::clientbound_keep_alive_pac
 use crate::net::minecraft::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_post_effects_packet::ClientboundPostEffectsPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_resource_pack_pop_packet::ClientboundResourcePackPopPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_resource_pack_push_packet::ClientboundResourcePackPushPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_server_links_packet::ClientboundServerLinksPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_store_cookie_packet::ClientboundStoreCookiePacket;
 use crate::net::minecraft::network::protocol::common::clientbound_transfer_packet::ClientboundTransferPacket;
 use crate::net::minecraft::network::protocol::common::custom::brand_payload::BrandPayload;
@@ -50,11 +52,15 @@ use crate::net::minecraft::network::protocol::common::custom::discarded_payload:
 use crate::net::minecraft::network::protocol::common::server_common_packet_listener::ServerCommonPacketListener;
 use crate::net::minecraft::network::protocol::common::serverbound_keep_alive_packet::ServerboundKeepAlivePacket;
 use crate::net::minecraft::network::protocol::common::serverbound_pong_packet::ServerboundPongPacket;
+use crate::net::minecraft::network::protocol::common::serverbound_resource_pack_packet::{
+    Action, ServerboundResourcePackPacket,
+};
 use crate::net::minecraft::network::protocol::cookie::clientbound_cookie_request_packet::ClientboundCookieRequestPacket;
 use crate::net::minecraft::network::protocol::cookie::serverbound_cookie_response_packet::ServerboundCookieResponsePacket;
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_utils::PacketUtils;
 use crate::net::minecraft::resources::identifier::Identifier;
+use crate::net::minecraft::server::server_links::{Entry, ServerLinks};
 use crate::net::minecraft::util::util::Util;
 
 /// A packet the client sends once a condition holds, or drops when it expires first.
@@ -73,6 +79,7 @@ pub struct ClientCommonPacketListenerImpl<S: ?Sized> {
     shared: Arc<Shared<S>>,
     pub server_cookies: Vec<(Identifier, Arc<Vec<i8>>)>,
     pub custom_report_details: HashMap<String, String>,
+    pub server_links: ServerLinks,
 }
 
 /// The fields both of the listener's halves touch, and the handlers Java runs on Netty's thread,
@@ -105,7 +112,7 @@ impl<S: ServerCommonPacketListener + ?Sized + 'static> Shared<S> {
     /// The server's reason, which the connection disconnects with.
     fn handle_disconnect(&self, packet: &ClientboundDisconnectPacket) {
         self.connection
-            .disconnect(DisconnectionDetails::new(packet.reason().get_string()));
+            .disconnect(DisconnectionDetails::new(packet.reason().clone()));
     }
 
     fn send_when(
@@ -152,6 +159,7 @@ impl<S: ServerCommonPacketListener + ?Sized + 'static> ClientCommonPacketListene
             }),
             server_cookies: cookie.server_cookies.clone(),
             custom_report_details: cookie.custom_report_details.clone(),
+            server_links: cookie.server_links.clone(),
         }
     }
 
@@ -171,7 +179,7 @@ impl<S: ServerCommonPacketListener + ?Sized + 'static> ClientCommonPacketListene
     pub fn on_packet_error(&mut self, packet: &str, cause: &str) {
         eprintln!("Failed to handle packet {packet}, disconnecting: {cause}");
         self.connection
-            .disconnect(DisconnectionDetails::new("disconnect.packetError"));
+            .disconnect(DisconnectionDetails::translatable("disconnect.packetError"));
     }
 
     pub fn should_handle_message(&self, packet: &dyn std::any::Any) -> bool {
@@ -232,6 +240,169 @@ impl<S: ServerCommonPacketListener + ?Sized + 'static> ClientCommonPacketListene
     /// which is every one so far: the game protocol's debug payloads aren't ported yet.
     fn handle_unknown_custom_payload(&self, payload: &dyn CustomPacketPayload) {
         eprintln!("Unknown custom packet payload: {}", payload.r#type().id());
+    }
+
+    /// Java asks the player with a screen (`PackConfirmScreen`) unless the server's setting answers
+    /// already (allowed, or declined and the pack optional). The port has no screens, so it answers
+    /// the prompt unattended (PORTING.md), with the answer that keeps the player on the server: a
+    /// required pack's "Proceed", which accepts it, and an optional pack's "No", which declines it.
+    pub fn handle_resource_pack_push<T>(
+        &mut self,
+        this: &Weak<RefCell<T>>,
+        packet: &ClientboundResourcePackPushPacket,
+    ) where
+        T: ClientCommonPacketListener + 'static,
+    {
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            this,
+            self.minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        let pack_id = packet.id();
+        if !ClientCommonPacketListenerImpl::<S>::is_resource_pack_url(&packet.url()) {
+            self.send(ServerboundResourcePackPacket::new(
+                pack_id,
+                Action::INVALID_URL,
+            ));
+            return;
+        }
+        let required = packet.required();
+        let server_pack_status = self.server_data.as_ref().map_or(
+            ServerPackStatus::PROMPT,
+            ServerData::get_resource_pack_status,
+        );
+        if server_pack_status != ServerPackStatus::PROMPT
+            && (!required || server_pack_status != ServerPackStatus::DISABLED)
+        {
+            self.push_pack(pack_id);
+        } else {
+            self.answer_pack_prompt(required, required, &[pack_id]);
+        }
+    }
+
+    /// `PackConfirmScreen`'s callback, with the player's answer `result` (yes or proceed) for the
+    /// packs the prompt asked about.
+    fn answer_pack_prompt(&mut self, result: bool, required: bool, requests: &[UUID]) {
+        if result {
+            if let Some(server_data) = self.server_data.as_mut() {
+                server_data.set_resource_pack_status(ServerPackStatus::ENABLED);
+            }
+            self.minecraft
+                .downloaded_pack_source
+                .borrow_mut()
+                .allow_server_packs();
+        } else {
+            self.minecraft
+                .downloaded_pack_source
+                .borrow_mut()
+                .reject_server_packs();
+            if required {
+                self.connection
+                    .disconnect(DisconnectionDetails::translatable(
+                        "multiplayer.requiredTexturePrompt.disconnect",
+                    ));
+            } else if let Some(server_data) = self.server_data.as_mut() {
+                server_data.set_resource_pack_status(ServerPackStatus::DISABLED);
+            }
+        }
+        for &pack_id in requests {
+            self.push_pack(pack_id);
+        }
+    }
+
+    /// `DownloadedPackSource.pushPack`, whose answers go to the server in this listener's protocol.
+    fn push_pack(&self, pack_id: UUID) {
+        let answers = self
+            .minecraft
+            .downloaded_pack_source
+            .borrow_mut()
+            .push_pack(pack_id);
+        for action in answers {
+            self.send(ServerboundResourcePackPacket::new(pack_id, action));
+        }
+    }
+
+    /// `parseResourcePackUrl` not null: Java's `new URL(url)` with an `http` or `https`
+    /// protocol. Of `URL`'s parsing, what's ported is finding the protocol (the string trimmed, an
+    /// optional `url:` skipped, the scheme before the first `:`, lowercased) and the port that
+    /// `http`'s handler parses as a number, which decide the answer for the URLs a server sends.
+    fn is_resource_pack_url(url: &str) -> bool {
+        let spec = url.trim_matches(|c: char| c <= ' ');
+        let spec = match spec.get(..4) {
+            Some(prefix) if prefix.eq_ignore_ascii_case("url:") => &spec[4..],
+            _ => spec,
+        };
+        let Some(colon) = spec.find(':') else {
+            return false;
+        };
+        let scheme = &spec[..colon];
+        let valid = scheme
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'));
+        if !valid {
+            return false;
+        }
+        let scheme = scheme.to_ascii_lowercase();
+        if scheme != "http" && scheme != "https" {
+            return false;
+        }
+        let rest = &spec[colon + 1..];
+        match rest.strip_prefix("//") {
+            Some(authority) => {
+                let end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+                let host = &authority[..end];
+                let host = host.rsplit_once('@').map_or(host, |(_, host)| host);
+                let port = if host.starts_with('[') {
+                    host.split_once("]:").map(|(_, port)| port)
+                } else {
+                    host.rsplit_once(':').map(|(_, port)| port)
+                };
+                port.is_none_or(|port| port.chars().all(|c| c.is_ascii_digit()))
+            }
+            None => true,
+        }
+    }
+
+    /// The links the server sent, each checked like an untrusted URI; one that isn't is logged and
+    /// left out.
+    pub fn handle_server_links<T>(
+        &mut self,
+        this: &Weak<RefCell<T>>,
+        packet: &ClientboundServerLinksPacket,
+    ) where
+        T: ClientCommonPacketListener + 'static,
+    {
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            this,
+            self.minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        let mut trusted_entries = Vec::new();
+        for entry in packet.links() {
+            match Util::parse_and_validate_untrusted_uri(&entry.link) {
+                Ok(parsed_link) => trusted_entries.push(Entry {
+                    r#type: entry.r#type,
+                    link: parsed_link,
+                }),
+                Err(error) => eprintln!(
+                    "Received invalid link for type {}:{}: {error}",
+                    entry.r#type, entry.link
+                ),
+            }
+        }
+        self.server_links = ServerLinks::new(trusted_entries);
     }
 
     pub fn handle_resource_pack_pop<T>(
@@ -386,7 +557,7 @@ impl<S: ServerCommonPacketListener + ?Sized + 'static> ClientCommonPacketListene
             packet.port()
         );
         self.connection
-            .disconnect(DisconnectionDetails::new("disconnect.transfer"));
+            .disconnect(DisconnectionDetails::translatable("disconnect.transfer"));
         self.connection.set_read_only();
         self.connection.handle_disconnection();
     }
@@ -418,7 +589,7 @@ impl<S: ServerCommonPacketListener + ?Sized + 'static> ClientCommonPacketListene
 
     pub fn on_disconnect(&mut self, details: &DisconnectionDetails) {
         self.minecraft.disconnect(details, self.is_transferring());
-        eprintln!("Client disconnected with reason: {}", details.reason());
+        eprintln!("Client disconnected with reason: {}", details.reason_text());
     }
 
     pub fn server_brand(&self) -> Option<&str> {
@@ -538,12 +709,28 @@ macro_rules! client_common_handlers {
                 self.common.handle_custom_payload(&this, packet);
             }
 
+            fn handle_resource_pack_push(
+                &mut self,
+                packet: &$crate::net::minecraft::network::protocol::common::clientbound_resource_pack_push_packet::ClientboundResourcePackPushPacket,
+            ) {
+                let this = self.this.clone();
+                self.common.handle_resource_pack_push(&this, packet);
+            }
+
             fn handle_resource_pack_pop(
                 &mut self,
                 packet: &$crate::net::minecraft::network::protocol::common::clientbound_resource_pack_pop_packet::ClientboundResourcePackPopPacket,
             ) {
                 let this = self.this.clone();
                 self.common.handle_resource_pack_pop(&this, packet);
+            }
+
+            fn handle_server_links(
+                &mut self,
+                packet: &$crate::net::minecraft::network::protocol::common::clientbound_server_links_packet::ClientboundServerLinksPacket,
+            ) {
+                let this = self.this.clone();
+                self.common.handle_server_links(&this, packet);
             }
 
             fn handle_post_effects(
@@ -644,9 +831,23 @@ macro_rules! client_common_netty_handlers {
                 self.common.handle_custom_payload(&self.this, packet);
             }
 
+            fn handle_resource_pack_push(
+                &mut self,
+                packet: &$crate::net::minecraft::network::protocol::common::clientbound_resource_pack_push_packet::ClientboundResourcePackPushPacket,
+            ) {
+                self.common.on_game_thread(&self.this, packet);
+            }
+
             fn handle_resource_pack_pop(
                 &mut self,
                 packet: &$crate::net::minecraft::network::protocol::common::clientbound_resource_pack_pop_packet::ClientboundResourcePackPopPacket,
+            ) {
+                self.common.on_game_thread(&self.this, packet);
+            }
+
+            fn handle_server_links(
+                &mut self,
+                packet: &$crate::net::minecraft::network::protocol::common::clientbound_server_links_packet::ClientboundServerLinksPacket,
             ) {
                 self.common.on_game_thread(&self.this, packet);
             }

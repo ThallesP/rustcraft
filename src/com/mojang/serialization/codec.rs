@@ -908,6 +908,7 @@ mod tests {
     use crate::java::lang::integer::Integer;
     use crate::net::minecraft::nbt::nbt_ops::NbtOps;
     use crate::net::minecraft::nbt::tag::Tag;
+    use crate::net::minecraft::resources::identifier::Identifier;
 
     // `N.encode` and `N.decode`, on NBT.
     fn check<C>(golden: &Golden, name: &str, codec: C)
@@ -984,6 +985,11 @@ mod tests {
         check(&golden, "FLOAT", FLOAT);
         check(&golden, "DOUBLE", DOUBLE);
         check(&golden, "STRING", STRING);
+        check(
+            &golden,
+            "Identifier.CODEC",
+            super::SharedCodec::shared(Identifier::CODEC),
+        );
         check(&golden, "INT.listOf()", INT.list_of());
         check(&golden, "STRING.listOf(1, 3)", STRING.list_of_sized(1, 3));
         check(&golden, "INT.listOf().listOf()", INT.list_of().list_of());

@@ -37,6 +37,7 @@ use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
 use crate::net::minecraft::client::renderer::game_renderer::{CameraEntityState, GameRenderer};
+use crate::net::minecraft::client::resources::server::downloaded_pack_source::DownloadedPackSource;
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
@@ -96,6 +97,8 @@ pub struct Minecraft {
     pub hud_hidden: Cell<bool>,
     mouse_handler: RefCell<MouseHandler>,
     pub gui: RefCell<Gui>,
+    /// `downloadedPackSource`: the server's resource packs.
+    pub downloaded_pack_source: RefCell<DownloadedPackSource>,
 }
 
 impl Minecraft {
@@ -126,6 +129,7 @@ impl Minecraft {
             hud_hidden: Cell::new(false),
             mouse_handler: RefCell::new(MouseHandler::new()),
             gui: RefCell::new(Gui::new()),
+            downloaded_pack_source: RefCell::new(DownloadedPackSource::new()),
         })
     }
 
@@ -561,7 +565,7 @@ impl Minecraft {
     /// The disconnected screen, with its title and the reason. A client with no screens to go on
     /// to stops there.
     pub fn show_disconnected(&self, title: &str, details: &DisconnectionDetails) {
-        eprintln!("{title}: {}", details.reason());
+        eprintln!("{title}: {}", details.reason_text());
         *self.screen.borrow_mut() = Screen::Disconnected {
             title: title.to_string(),
             details: details.clone(),

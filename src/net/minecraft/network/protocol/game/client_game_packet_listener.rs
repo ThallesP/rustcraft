@@ -12,6 +12,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_change_difficult
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_clear_titles_packet::ClientboundClearTitlesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
@@ -40,6 +41,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_d
 use crate::net::minecraft::network::protocol::game::clientbound_set_subtitle_text_packet::ClientboundSetSubtitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_title_text_packet::ClientboundSetTitleTextPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_titles_animation_packet::ClientboundSetTitlesAnimationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
@@ -121,6 +123,10 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
     fn handle_system_chat(&mut self, packet: &ClientboundSystemChatPacket);
 
     fn set_title_text(&mut self, packet: &ClientboundSetTitleTextPacket);
+
+    fn set_titles_animation(&mut self, packet: &ClientboundSetTitlesAnimationPacket);
+
+    fn handle_titles_clear(&mut self, packet: &ClientboundClearTitlesPacket);
 
     fn set_subtitle_text(&mut self, packet: &ClientboundSetSubtitleTextPacket);
 
@@ -300,6 +306,14 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
 
     fn set_title_text(&mut self, packet: &ClientboundSetTitleTextPacket) {
         self.record("setTitleText", packet);
+    }
+
+    fn set_titles_animation(&mut self, packet: &ClientboundSetTitlesAnimationPacket) {
+        self.record("setTitlesAnimation", packet);
+    }
+
+    fn handle_titles_clear(&mut self, packet: &ClientboundClearTitlesPacket) {
+        self.record("handleTitlesClear", packet);
     }
 
     fn set_subtitle_text(&mut self, packet: &ClientboundSetSubtitleTextPacket) {

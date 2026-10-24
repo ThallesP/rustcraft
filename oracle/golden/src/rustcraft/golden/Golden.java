@@ -118,10 +118,14 @@ import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
 import net.minecraft.world.Difficulty;
 import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
+import net.minecraft.network.protocol.common.ClientboundResourcePackPushPacket;
+import net.minecraft.network.protocol.common.ClientboundServerLinksPacket;
 import net.minecraft.network.protocol.game.ClientboundServerDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundClearTitlesPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
 import net.minecraft.network.protocol.game.ClientboundTabListPacket;
 import net.minecraft.network.protocol.game.ClientboundRecipeBookSettingsPacket;
@@ -164,6 +168,7 @@ import net.minecraft.network.protocol.handshake.HandshakeProtocols;
 import net.minecraft.network.protocol.login.ClientboundCustomQueryPacket;
 import net.minecraft.network.protocol.login.ClientboundHelloPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket;
+import net.minecraft.network.protocol.login.ClientboundLoginDisconnectPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket;
 import net.minecraft.network.protocol.login.LoginPacketTypes;
 import net.minecraft.network.protocol.login.LoginProtocols;
@@ -1325,6 +1330,16 @@ public final class Golden {
         // hashed and printed by identity.
         InstanceSuite.every(ClientboundDisconnectPacket.class)
             .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1)),
+        // The login's reason is JSON text, which reads no tags.
+        InstanceSuite.every(ClientboundLoginDisconnectPacket.class),
+        InstanceSuite.every(ClientboundResourcePackPushPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1))
+            .exclude(
+                "<init>(Ljava/util/UUID;Ljava/lang/String;Ljava/lang/String;ZLjava/util/Optional;)V",
+                "an Optional argument is a Transformation's (the harness's only one), not a prompt"
+            ),
+        InstanceSuite.every(ClientboundServerLinksPacket.class)
+            .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1)),
         InstanceSuite.every(ClientboundSystemChatPacket.class)
             .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1))
             .extraInputs("STREAM_CODEC.decode", registryBuffers(SYSTEM_CHATS)),
@@ -1337,6 +1352,8 @@ public final class Golden {
             .exclude("<init>(Lnet/minecraft/network/chat/Component;Ljava/util/Optional;)V", "an Optional argument is a Transformation's (the harness's only one), not an icon's bytes"),
         InstanceSuite.every(ClientboundSetTitleTextPacket.class)
             .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1)),
+        InstanceSuite.every(ClientboundSetTitlesAnimationPacket.class),
+        InstanceSuite.every(ClientboundClearTitlesPacket.class),
         InstanceSuite.every(ClientboundSetSubtitleTextPacket.class)
             .where("STREAM_CODEC.decode", args -> NbtValues.readsLittleTags((io.netty.buffer.ByteBuf)args[0], 1)),
         InstanceSuite.every(ClientboundSetActionBarTextPacket.class)

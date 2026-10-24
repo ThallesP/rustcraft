@@ -43,6 +43,7 @@ use crate::net::minecraft::client::renderer::game_renderer::GameRenderer;
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
 use crate::net::minecraft::network::packet_processor::lock;
+use crate::net::minecraft::network::protocol::unported::Unported;
 use crate::rustcraft::oracle::client::oracle_game_test::{OracleGameTest, Outcome};
 use crate::rustcraft::oracle::client::scenario::Scenario;
 use crate::rustcraft::stall_test::StallTest;
@@ -215,13 +216,17 @@ impl Main {
             server_data,
         );
         minecraft.run();
+        // What the client skipped, for the soak's report (`Unported`).
+        for (r#type, count) in Unported::counts() {
+            println!("Unported packet {type}: {count}");
+        }
 
         match outcome.map(|outcome| outcome.take()) {
             Some(Some(Outcome::Finished)) => 0,
             Some(Some(Outcome::Failed(_))) => 1,
             _ => match minecraft.disconnection() {
                 Some((title, details)) => {
-                    eprintln!("{title}: {}", details.reason());
+                    eprintln!("{title}: {}", details.reason_text());
                     1
                 }
                 None => 0,

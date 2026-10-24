@@ -105,6 +105,8 @@ CHUNK = re.compile(r"Chunk at \[(-?\d+), (-?\d+)\]")
 ENTITY_POS = re.compile(r"has the following entity data: \[(\S+)d, (\S+)d, (\S+)d\]")
 JOINED_AT = re.compile(rf"{OP_NAME}\[[^\]]*\] logged in with entity id \d+ at \((\S+), (\S+), (\S+)\)")
 CLIENT_PROBLEM = re.compile(r"panic|isn't ported|aren't ported")
+# What the client prints as it exits: each packet type it skipped (`Unported`), with how many.
+UNPORTED = re.compile(r"^Unported packet (\S+): (\d+)$")
 # Rust's panic lines name the thread with its id, which changes from run to run.
 THREAD_ID = re.compile(r"^(thread '[^']*') \(\d+\)")
 LONG_LINE = 200
@@ -513,8 +515,14 @@ def soak(preset, seed, seconds_per_stop, accept_eula, render=False):
     except ClientGone as error:
         gone = str(error)
     finally:
-        stop_process(client, 10, group=True)
+        # The server first, so the client is disconnected and exits on its own, printing what it skipped.
         stop_server(server)
+        if client is not None:
+            try:
+                client.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+        stop_process(client, 10, group=True)
 
     return report(client_log, server_log, gone, visited, skipped, time.monotonic() - started)
 
@@ -593,11 +601,15 @@ def report(client_log, server_log, gone, visited, skipped, elapsed):
     lines = client_log.read_text(errors="replace").splitlines() if client_log.exists() else []
     problems = Counter()
     others = Counter()
+    unported = []
     index = 0
     while index < len(lines):
         # Rust prints a panic's location, then its message on the next line.
         line = THREAD_ID.sub(r"\1", lines[index])
-        if "panicked at" in line and index + 1 < len(lines):
+        if match := UNPORTED.match(line):
+            unported.append((match[1], int(match[2])))
+            index += 1
+        elif "panicked at" in line and index + 1 < len(lines):
             problems[f"{line} {lines[index + 1]}"] += 1
             index += 2
         elif CLIENT_PROBLEM.search(line):
@@ -618,6 +630,10 @@ def report(client_log, server_log, gone, visited, skipped, elapsed):
         print(f"  {stop['name']:<12} {stop['x']:g}, {stop['y']}, {stop['z']:g}  {stop['seconds']:.0f} s  {where}")
     for name, reason in skipped:
         print(f"  {name:<12} skipped: {reason}")
+    if unported:
+        print(f"packets the client skipped as Unported: {sum(count for _, count in unported)} of {len(unported)} types")
+        for name, count in unported:
+            print(f"  {count:>6}x {name}")
     if others:
         print("other lines in the client's log:")
         for line, count in others.most_common(20):

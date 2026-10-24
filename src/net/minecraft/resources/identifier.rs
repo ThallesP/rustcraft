@@ -338,7 +338,10 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.resources.Identifier");
-        golden.pending("CODEC", "waits for DataFixerUpper's codecs");
+        golden.pending(
+            "CODEC",
+            "an instance suite can't encode a codec: DfuCodecSuite checks it, as `Identifier.CODEC`",
+        );
         golden.check_codec("STREAM_CODEC", || Identifier::STREAM_CODEC);
         golden.pending("ERROR_INVALID", "waits for brigadier");
         golden.pending(

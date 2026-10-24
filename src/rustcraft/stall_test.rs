@@ -10,6 +10,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::net::minecraft::client::minecraft::{Minecraft, TestDriver};
+use crate::net::minecraft::network::chat::component::Component;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::rustcraft::oracle::client::oracle_game_test::Outcome;
 
@@ -71,10 +72,15 @@ impl TestDriver for StallTest {
                     "still connected {} s after the stall",
                     AFTER_STALL.as_secs_f64()
                 );
-                connection.disconnect(DisconnectionDetails::new("Stall test finished"));
+                connection.disconnect(DisconnectionDetails::new(Component::literal(
+                    "Stall test finished",
+                )));
                 self.outcome.set(Some(Outcome::Finished));
                 self.stage = Stage::Done;
-                minecraft.disconnect(&DisconnectionDetails::new("Stall test finished"), false);
+                minecraft.disconnect(
+                    &DisconnectionDetails::new(Component::literal("Stall test finished")),
+                    false,
+                );
             }
             Stage::Done => {}
         }

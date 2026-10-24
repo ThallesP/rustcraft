@@ -29,8 +29,7 @@
 //! is for (`send::<dyn ServerGamePacketListener>`), and the encoder casts it to its protocol's,
 //! failing like Java's `ClassCastException` for another protocol's packet. Errors the pipeline
 //! throws (a packet that doesn't decode, a handler that fails) are panics, which it catches like
-//! Netty's `exceptionCaught`. A reason is the translation key or the text it would show
-//! (`DisconnectionDetails`).
+//! Netty's `exceptionCaught`.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -47,6 +46,8 @@ use std::time::{Duration, Instant};
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::io::netty::buffer::unpooled;
+use crate::net::minecraft::network::chat::component::Component;
+use crate::net::minecraft::network::chat::contents::translatable_contents::TranslationArgument;
 use crate::net::minecraft::network::compression_decoder::CompressionDecoder;
 use crate::net::minecraft::network::compression_encoder::CompressionEncoder;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
@@ -135,7 +136,11 @@ trait Inbound: Send + Sync {
 
     /// The listener's details of a disconnection the connection's own error caused, unless the
     /// listener is the one handling a packet.
-    fn create_disconnection_info(&self, reason: &str, cause: &str) -> Option<DisconnectionDetails>;
+    fn create_disconnection_info(
+        &self,
+        reason: &Component,
+        cause: &str,
+    ) -> Option<DisconnectionDetails>;
 }
 
 /// A packet the decoder read, on its way to the listener.
@@ -176,9 +181,17 @@ impl<T: PacketListener + ?Sized + 'static> Inbound for InboundProtocol<T> {
         (terminal, received)
     }
 
-    fn create_disconnection_info(&self, reason: &str, cause: &str) -> Option<DisconnectionDetails> {
+    fn create_disconnection_info(
+        &self,
+        reason: &Component,
+        cause: &str,
+    ) -> Option<DisconnectionDetails> {
         let mut listener = self.listener.try_lock().ok()?;
-        Some(listener.listener().create_disconnection_info(reason, cause))
+        Some(
+            listener
+                .listener()
+                .create_disconnection_info(reason.clone(), cause),
+        )
     }
 }
 
@@ -334,7 +347,7 @@ impl Connection {
         if let Some(channel) = self.channel.get() {
             channel.open.store(false, Ordering::SeqCst);
         }
-        self.disconnect(DisconnectionDetails::new("disconnect.endOfStream"));
+        self.disconnect(DisconnectionDetails::translatable("disconnect.endOfStream"));
     }
 
     /// Something in the pipeline failed: Netty's `exceptionCaught`, on the client's side.
@@ -342,9 +355,15 @@ impl Connection {
         let is_first_fault = !self.handling_fault.swap(true, Ordering::SeqCst);
         if self.is_connected() {
             if timeout {
-                self.disconnect(DisconnectionDetails::new("disconnect.timeout"));
+                self.disconnect(DisconnectionDetails::translatable("disconnect.timeout"));
             } else {
-                let reason = format!("Internal Exception: {cause}");
+                let reason: Component = Component::translatable_with_args(
+                    "disconnect.genericReason",
+                    vec![TranslationArgument::String(format!(
+                        "Internal Exception: {cause}"
+                    ))],
+                )
+                .into();
                 let decoder = lock(&self.decoder).clone();
                 let details = decoder
                     .and_then(|decoder| decoder.create_disconnection_info(&reason, cause))
@@ -570,7 +589,7 @@ impl Connection {
         // which logs and disconnects: a closed connection doesn't take the client down.
         if let Err(error) = written {
             eprintln!("Failed to send packet: {error}");
-            self.disconnect(DisconnectionDetails::new(format!(
+            self.disconnect(DisconnectionDetails::generic_reason(&format!(
                 "Internal Exception: {error}"
             )));
         }
@@ -755,7 +774,7 @@ impl Connection {
                     packet_listener.or_else(|| lock(&self.disconnect_listener).clone());
                 if let Some(disconnect_listener) = disconnect_listener {
                     let details = self.get_disconnection_details().unwrap_or_else(|| {
-                        DisconnectionDetails::new("multiplayer.disconnect.generic")
+                        DisconnectionDetails::translatable("multiplayer.disconnect.generic")
                     });
                     disconnect_listener.on_disconnect(&details);
                 }
@@ -916,7 +935,7 @@ impl Connection {
                 // `channelRead0`'s, when the game thread takes no more packets.
                 let message = panic_message(&*cause);
                 if message.starts_with("RejectedExecutionException") {
-                    self.disconnect(DisconnectionDetails::new(
+                    self.disconnect(DisconnectionDetails::translatable(
                         "multiplayer.disconnect.server_shutdown",
                     ));
                 } else {

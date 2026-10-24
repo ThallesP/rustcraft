@@ -12,6 +12,8 @@ use crate::net::minecraft::network::protocol::common::clientbound_keep_alive_pac
 use crate::net::minecraft::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_post_effects_packet::ClientboundPostEffectsPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_resource_pack_pop_packet::ClientboundResourcePackPopPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_resource_pack_push_packet::ClientboundResourcePackPushPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_server_links_packet::ClientboundServerLinksPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_store_cookie_packet::ClientboundStoreCookiePacket;
 use crate::net::minecraft::network::protocol::common::clientbound_transfer_packet::ClientboundTransferPacket;
 use crate::net::minecraft::network::protocol::cookie::client_cookie_packet_listener::ClientCookiePacketListener;
@@ -25,7 +27,11 @@ pub trait ClientCommonPacketListener: ClientCookiePacketListener {
 
     fn handle_custom_payload(&mut self, packet: &ClientboundCustomPayloadPacket);
 
+    fn handle_resource_pack_push(&mut self, packet: &ClientboundResourcePackPushPacket);
+
     fn handle_resource_pack_pop(&mut self, packet: &ClientboundResourcePackPopPacket);
+
+    fn handle_server_links(&mut self, packet: &ClientboundServerLinksPacket);
 
     fn handle_post_effects(&mut self, packet: &ClientboundPostEffectsPacket);
 
@@ -56,8 +62,16 @@ impl ClientCommonPacketListener
         self.record("handleCustomPayload", packet);
     }
 
+    fn handle_resource_pack_push(&mut self, packet: &ClientboundResourcePackPushPacket) {
+        self.record("handleResourcePackPush", packet);
+    }
+
     fn handle_resource_pack_pop(&mut self, packet: &ClientboundResourcePackPopPacket) {
         self.record("handleResourcePackPop", packet);
+    }
+
+    fn handle_server_links(&mut self, packet: &ClientboundServerLinksPacket) {
+        self.record("handleServerLinks", packet);
     }
 
     fn handle_post_effects(&mut self, packet: &ClientboundPostEffectsPacket) {

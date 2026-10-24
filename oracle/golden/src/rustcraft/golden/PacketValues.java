@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 import com.mojang.authlib.GameProfile;
+import com.mojang.datafixers.util.Either;
 import io.netty.buffer.Unpooled;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
@@ -24,6 +25,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
@@ -48,6 +50,8 @@ import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket;
 import net.minecraft.network.protocol.common.ClientboundPingPacket;
 import net.minecraft.network.protocol.common.ClientboundPostEffectsPacket;
 import net.minecraft.network.protocol.common.ClientboundResourcePackPopPacket;
+import net.minecraft.network.protocol.common.ClientboundResourcePackPushPacket;
+import net.minecraft.network.protocol.common.ClientboundServerLinksPacket;
 import net.minecraft.network.protocol.common.ClientboundStoreCookiePacket;
 import net.minecraft.network.protocol.common.ClientboundTransferPacket;
 import net.minecraft.network.protocol.common.CommonPacketTypes;
@@ -75,6 +79,7 @@ import net.minecraft.network.protocol.cookie.CookiePacketTypes;
 import net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
 import net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket;
+import net.minecraft.network.protocol.game.ClientboundClearTitlesPacket;
 import net.minecraft.network.protocol.game.ClientboundInitializeBorderPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
@@ -86,8 +91,10 @@ import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStatePacket;
 import net.minecraft.network.protocol.game.ClientboundTickingStepPacket;
+import net.minecraft.server.ServerLinks;
 import net.minecraft.world.Difficulty;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.ClientboundDisconnectPacket;
@@ -140,6 +147,7 @@ import net.minecraft.network.protocol.handshake.HandshakePacketTypes;
 import net.minecraft.network.protocol.login.ClientboundCustomQueryPacket;
 import net.minecraft.network.protocol.login.ClientboundHelloPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket;
+import net.minecraft.network.protocol.login.ClientboundLoginDisconnectPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket;
 import net.minecraft.network.protocol.login.LoginPacketTypes;
 import net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket;
@@ -293,6 +301,15 @@ final class PacketValues {
     );
 
     // A transfer's host, and around readUtf()'s limit of 32767 in characters of one byte and four.
+    private static final Values.Generator SERVER_LINKS = strings(
+        "https://example.com", "http://example.com/a?b#c", "ftp://example.com", "not a link", "", "https://a b", "javascript:alert(1)"
+    );
+    private static final Values.Generator PACK_URLS = strings(
+        "https://example.com/pack.zip", "http://example.com:8080/a b.zip", "ftp://example.com/pack.zip", "not a url", "", "a".repeat(32767)
+    );
+    private static final Values.Generator PACK_HASHES = strings(
+        "", "0123456789abcdef0123456789abcdef01234567", "ABCDEF", "é".repeat(40), "😀".repeat(20)
+    );
     private static final Values.Generator TRANSFER_HOSTS = strings(
         "localhost", "127.0.0.1", "", "mc.example.com", "a".repeat(32767), "a".repeat(32768), "😀".repeat(16383) + "a", "😀".repeat(16384)
     );
@@ -713,6 +730,51 @@ final class PacketValues {
         );
         PAYLOADS.put(Component.class, components);
         packet(ClientboundDisconnectPacket.class, fields -> new ClientboundDisconnectPacket((Component)fields[0]), List.of(), components);
+        packet(ClientboundLoginDisconnectPacket.class, fields -> new ClientboundLoginDisconnectPacket((Component)fields[0]), List.of(), components);
+        // A server's links: each of a kind the client names, or named with the server's text, and its link, valid or not.
+        List<Object> linkTypeEdges = new ArrayList<>();
+        for (ServerLinks.KnownLinkType type : ServerLinks.KnownLinkType.values()) {
+            linkTypeEdges.add(Either.left(type));
+        }
+        components.edges().forEach(edge -> linkTypeEdges.add(Either.right(edge)));
+        Values.Generator linkTypes = new Values.Generator() {
+            @Override
+            public List<Object> edges() {
+                return linkTypeEdges;
+            }
+
+            @Override
+            public Object random(final Random random) {
+                ServerLinks.KnownLinkType[] types = ServerLinks.KnownLinkType.values();
+                return random.nextBoolean() ? Either.left(types[random.nextInt(types.length)]) : Either.right(components.random(random));
+            }
+
+            @Override
+            public JsonElement encode(final Object spec) {
+                return ((Either<?, ?>)spec).map(
+                    left -> side("left", new JsonPrimitive(((Enum<?>)left).name())), right -> side("right", components.encode(right))
+                );
+            }
+
+            @Override
+            public Object instantiate(final Object spec) {
+                return ((Either<?, ?>)spec).mapRight(components::instantiate);
+            }
+        };
+        // ServerLinks before its UntrustedEntry, as the game initializes them: the entry's codec reads ServerLinks' type codec,
+        // and ServerLinks' list codec the entry's.
+        Objects.requireNonNull(ServerLinks.UNTRUSTED_LINKS_STREAM_CODEC);
+        Values.Generator untrustedLinks = values(
+            ServerLinks.UntrustedEntry.class, fields -> new ServerLinks.UntrustedEntry(linkType(fields[0]), (String)fields[1]), List.of(), linkTypes,
+            SERVER_LINKS
+        );
+        packet(ClientboundServerLinksPacket.class, fields -> new ClientboundServerLinksPacket(untrustedEntries(fields[0])), List.of(), Codecs.listOf(untrustedLinks));
+        // A pack's URL, valid and not, and its hash, up to the 40 characters the constructor allows.
+        packet(
+            ClientboundResourcePackPushPacket.class,
+            fields -> new ClientboundResourcePackPushPacket((UUID)fields[0], (String)fields[1], (String)fields[2], (Boolean)fields[3], prompt(fields[4])),
+            List.of(), UUIDS, PACK_URLS, PACK_HASHES, BOOLEANS, Codecs.optionalOf(components)
+        );
         packet(
             ClientboundSystemChatPacket.class, fields -> new ClientboundSystemChatPacket((Component)fields[0], (Boolean)fields[1]), List.of(), components,
             BOOLEANS
@@ -722,6 +784,12 @@ final class PacketValues {
             components, Codecs.optionalOf(Values.generator(byte[].class))
         );
         packet(ClientboundSetTitleTextPacket.class, fields -> new ClientboundSetTitleTextPacket((Component)fields[0]), List.of(), components);
+        packet(
+            ClientboundSetTitlesAnimationPacket.class,
+            fields -> new ClientboundSetTitlesAnimationPacket((Integer)fields[0], (Integer)fields[1], (Integer)fields[2]),
+            List.of("fadeIn", "stay", "fadeOut"), INTS, INTS, INTS
+        );
+        packet(ClientboundClearTitlesPacket.class, fields -> new ClientboundClearTitlesPacket((Boolean)fields[0]), List.of("resetTimes"), BOOLEANS);
         packet(ClientboundSetSubtitleTextPacket.class, fields -> new ClientboundSetSubtitleTextPacket((Component)fields[0]), List.of(), components);
         packet(ClientboundSetActionBarTextPacket.class, fields -> new ClientboundSetActionBarTextPacket((Component)fields[0]), List.of(), components);
         packet(
@@ -914,6 +982,28 @@ final class PacketValues {
     }
 
     // A packet class's values, which are the packets themselves.
+    @SuppressWarnings("unchecked")
+    private static Optional<Component> prompt(final Object field) {
+        return (Optional<Component>)field;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Either<ServerLinks.KnownLinkType, Component> linkType(final Object field) {
+        return (Either<ServerLinks.KnownLinkType, Component>)field;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<ServerLinks.UntrustedEntry> untrustedEntries(final Object field) {
+        return (List<ServerLinks.UntrustedEntry>)field;
+    }
+
+    private static JsonArray side(final String side, final JsonElement value) {
+        JsonArray array = new JsonArray();
+        array.add(side);
+        array.add(value);
+        return array;
+    }
+
     private static void packet(
         final Class<?> type, final Function<Object[], Object> constructor, final List<String> fieldNames, final Values.Generator... fields
     ) {

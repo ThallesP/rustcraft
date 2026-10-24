@@ -25,6 +25,8 @@ use crate::net::minecraft::client::multiplayer::resolver::resolved_server_addres
 use crate::net::minecraft::client::multiplayer::resolver::server_address::ServerAddress;
 use crate::net::minecraft::client::multiplayer::resolver::server_name_resolver::ServerNameResolver;
 use crate::net::minecraft::client::multiplayer::server_data::ServerData;
+use crate::net::minecraft::network::chat::component::Component;
+use crate::net::minecraft::network::chat::formatted_text::FormattedText;
 use crate::net::minecraft::network::clientbound_packet_listener::ClientboundPacketListener;
 use crate::net::minecraft::network::connection::{Connection, NettyListener, SplitListener};
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
@@ -64,7 +66,7 @@ impl ServerStatusPinger {
         let Some(address) = ServerNameResolver::resolve_address(&raw_address)
             .map(|address: ResolvedServerAddress| address.as_inet_socket_address())
         else {
-            ServerStatusPinger::on_ping_failed(ConnectScreen::UNKNOWN_HOST_MESSAGE, &data);
+            ServerStatusPinger::on_ping_failed(&ConnectScreen::unknown_host_message(), &data);
             return Ok(());
         };
 
@@ -86,9 +88,9 @@ impl ServerStatusPinger {
         Ok(())
     }
 
-    fn on_ping_failed(reason: &str, data: &Mutex<ServerData>) {
+    fn on_ping_failed(reason: &Component, data: &Mutex<ServerData>) {
         let mut data = lock(data);
-        eprintln!("Can't ping {}: {reason}", data.ip);
+        eprintln!("Can't ping {}: {}", data.ip, reason.get_string());
         data.server_status = None;
     }
 
@@ -117,7 +119,9 @@ impl ServerStatusPinger {
                 self.connections
                     .borrow_mut()
                     .retain(|other| !Arc::ptr_eq(other, &connection));
-                connection.disconnect(DisconnectionDetails::new("multiplayer.status.cancelled"));
+                connection.disconnect(DisconnectionDetails::translatable(
+                    "multiplayer.status.cancelled",
+                ));
             }
         }
     }
@@ -201,7 +205,9 @@ impl ClientStatusPacketListener for StatusNettyHalf {
     fn handle_status_response(&mut self, packet: &ClientboundStatusResponsePacket) {
         if self.received_ping {
             self.connection
-                .disconnect(DisconnectionDetails::new("multiplayer.status.unrequested"));
+                .disconnect(DisconnectionDetails::translatable(
+                    "multiplayer.status.unrequested",
+                ));
         } else {
             self.received_ping = true;
             // Java fills in the MOTD, version, players and icon from the status's parts.
@@ -222,7 +228,9 @@ impl ClientPongPacketListener for StatusNettyHalf {
         let now = Util::get_millis();
         lock(&self.data).ping = now - then;
         self.connection
-            .disconnect(DisconnectionDetails::new("multiplayer.status.finished"));
+            .disconnect(DisconnectionDetails::translatable(
+                "multiplayer.status.finished",
+            ));
         (self.on_pong_response)();
     }
 }

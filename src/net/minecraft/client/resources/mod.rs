@@ -7,3 +7,4 @@ pub mod legacy_stuff_wrapper;
 pub mod metadata;
 pub mod model;
 pub mod palette;
+pub mod server;

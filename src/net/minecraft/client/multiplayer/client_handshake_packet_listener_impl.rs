@@ -2,7 +2,7 @@
 //!
 //! Not ported yet: encryption and online-mode login (`handleHello` sets up the cipher and asks
 //! Mojang's session server to let the player join), which the port can't do yet, so it
-//! disconnects there; the login disconnect packet, which waits for text components; the status
+//! disconnects there; the status
 //! messages the connect screen shows; telemetry; and the transfer state a transferred-to
 //! connection starts with.
 //!
@@ -26,6 +26,8 @@ use crate::net::minecraft::client::multiplayer::common_listener_cookie::CommonLi
 use crate::net::minecraft::client::multiplayer::level_load_tracker::LevelLoadTracker;
 use crate::net::minecraft::client::multiplayer::server_data::ServerData;
 use crate::net::minecraft::core::registry_access::RegistryAccess;
+use crate::net::minecraft::network::chat::component::Component;
+use crate::net::minecraft::network::chat::contents::translatable_contents::TranslationArgument;
 use crate::net::minecraft::network::clientbound_packet_listener::ClientboundPacketListener;
 use crate::net::minecraft::network::connection::{Connection, NettyListener, SplitListener};
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
@@ -43,6 +45,7 @@ use crate::net::minecraft::network::protocol::login::client_login_packet_listene
 use crate::net::minecraft::network::protocol::login::clientbound_custom_query_packet::ClientboundCustomQueryPacket;
 use crate::net::minecraft::network::protocol::login::clientbound_hello_packet::ClientboundHelloPacket;
 use crate::net::minecraft::network::protocol::login::clientbound_login_compression_packet::ClientboundLoginCompressionPacket;
+use crate::net::minecraft::network::protocol::login::clientbound_login_disconnect_packet::ClientboundLoginDisconnectPacket;
 use crate::net::minecraft::network::protocol::login::clientbound_login_finished_packet::ClientboundLoginFinishedPacket;
 use crate::net::minecraft::network::protocol::login::server_login_packet_listener::ServerLoginPacketListener;
 use crate::net::minecraft::network::protocol::login::serverbound_custom_query_answer_packet::ServerboundCustomQueryAnswerPacket;
@@ -50,6 +53,7 @@ use crate::net::minecraft::network::protocol::login::serverbound_login_acknowled
 use crate::net::minecraft::network::protocol::packet::Packet;
 use crate::net::minecraft::network::protocol::packet_utils::PacketUtils;
 use crate::net::minecraft::resources::identifier::Identifier;
+use crate::net::minecraft::server::server_links::ServerLinks;
 
 /// Where the login is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,9 +130,19 @@ impl Shared {
         self.switch_state(State::AUTHORIZING);
         let _ = packet;
         self.connection.disconnect(DisconnectionDetails::new(
-            "disconnect.loginFailedInfo: encryption isn't ported yet, so only offline-mode \
-             servers can be joined",
+            Component::translatable_with_args(
+                "disconnect.loginFailedInfo",
+                vec![TranslationArgument::String(
+                    "encryption isn't ported yet, so only offline-mode servers can be joined"
+                        .to_string(),
+                )],
+            ),
         ));
+    }
+
+    fn handle_disconnect(&self, packet: &ClientboundLoginDisconnectPacket) {
+        self.connection
+            .disconnect(DisconnectionDetails::new(packet.reason()));
     }
 
     fn handle_compression(&self, packet: &ClientboundLoginCompressionPacket) {
@@ -214,6 +228,7 @@ impl ClientLoginPacketListener for ClientHandshakePacketListenerImpl {
             server_data: self.server_data.clone(),
             server_cookies: lock(&self.shared.cookies).clone(),
             custom_report_details: HashMap::new(),
+            server_links: ServerLinks::empty(),
         };
         let listener = ClientConfigurationPacketListenerImpl::new(
             Rc::clone(&self.minecraft),
@@ -237,6 +252,10 @@ impl ClientLoginPacketListener for ClientHandshakePacketListenerImpl {
             .send::<dyn ServerConfigurationPacketListener>(
                 ServerboundClientInformationPacket::new(information),
             );
+    }
+
+    fn handle_disconnect(&mut self, packet: &ClientboundLoginDisconnectPacket) {
+        self.shared.handle_disconnect(packet);
     }
 
     fn handle_compression(&mut self, packet: &ClientboundLoginCompressionPacket) {
@@ -303,6 +322,10 @@ impl ClientLoginPacketListener for NettyHalf {
         self.shared.switch_state(State::JOINING);
         let _ =
             PacketUtils::ensure_running_on_same_thread(packet, &self.this, &self.packet_processor);
+    }
+
+    fn handle_disconnect(&mut self, packet: &ClientboundLoginDisconnectPacket) {
+        self.shared.handle_disconnect(packet);
     }
 
     fn handle_compression(&mut self, packet: &ClientboundLoginCompressionPacket) {

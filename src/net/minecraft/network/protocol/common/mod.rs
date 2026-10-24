@@ -7,6 +7,8 @@ pub mod clientbound_keep_alive_packet;
 pub mod clientbound_ping_packet;
 pub mod clientbound_post_effects_packet;
 pub mod clientbound_resource_pack_pop_packet;
+pub mod clientbound_resource_pack_push_packet;
+pub mod clientbound_server_links_packet;
 pub mod clientbound_store_cookie_packet;
 pub mod clientbound_transfer_packet;
 pub mod common_packet_types;

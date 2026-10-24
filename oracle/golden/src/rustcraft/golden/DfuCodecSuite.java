@@ -20,6 +20,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
+import net.minecraft.resources.Identifier;
 
 /**
  * DataFixerUpper's codecs on NBT: the primitive codecs, and codecs made with each combinator the game's codecs reach
@@ -145,6 +146,8 @@ final class DfuCodecSuite implements Suite {
     private static final Shape FLOAT = shape(r -> Values.generator(float.class).random(r), value -> Values.encode(value, float.class));
     private static final Shape DOUBLE = shape(r -> Values.generator(double.class).random(r), value -> Values.encode(value, double.class));
     private static final Shape STRING = shape(r -> STRINGS.get(r.nextInt(STRINGS.size())), value -> new JsonPrimitive((String)value));
+    // The game's identifiers, and the mutations' strings, which mostly aren't one.
+    private static final Shape IDENTIFIER = shape(CoreValues.IDENTIFIER::random, CoreValues.IDENTIFIER::encode);
 
     // Small ints mostly, with the edges now and then.
     private static int randomInt(final Random random) {
@@ -286,6 +289,7 @@ final class DfuCodecSuite implements Suite {
         codecs.add(new Named("FLOAT", erase(Codec.FLOAT), FLOAT));
         codecs.add(new Named("DOUBLE", erase(Codec.DOUBLE), DOUBLE));
         codecs.add(new Named("STRING", erase(Codec.STRING), STRING));
+        codecs.add(new Named("Identifier.CODEC", erase(Identifier.CODEC), IDENTIFIER));
         codecs.add(new Named("INT.listOf()", erase(Codec.INT.listOf()), list(INT, 6)));
         codecs.add(new Named("STRING.listOf(1, 3)", erase(Codec.STRING.listOf(1, 3)), list(STRING, 5)));
         codecs.add(new Named("INT.listOf().listOf()", erase(Codec.INT.listOf().listOf()), list(list(INT, 3), 3)));

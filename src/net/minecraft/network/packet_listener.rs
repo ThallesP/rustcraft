@@ -12,6 +12,7 @@
 
 use std::any::Any;
 
+use crate::net::minecraft::network::chat::component::Component;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::tickable_packet_listener::TickablePacketListener;
 
@@ -27,7 +28,11 @@ pub trait PacketListener {
     }
 
     /// The details of a disconnection the connection's own error caused.
-    fn create_disconnection_info(&mut self, reason: &str, cause: &str) -> DisconnectionDetails {
+    fn create_disconnection_info(
+        &mut self,
+        reason: Component,
+        cause: &str,
+    ) -> DisconnectionDetails {
         let _ = cause;
         DisconnectionDetails::new(reason)
     }

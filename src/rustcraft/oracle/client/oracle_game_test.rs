@@ -33,6 +33,7 @@ use crate::net::minecraft::client::minecraft::{Minecraft, TestDriver};
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::renderer::game_renderer::RenderOptions;
 use crate::net::minecraft::core::section_pos::SectionPos;
+use crate::net::minecraft::network::chat::component::Component;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::protocol::common::custom::discarded_payload::DiscardedPayload;
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
@@ -676,11 +677,16 @@ impl TestDriver for OracleGameTest {
                         .get_connection()
                         .expect("the player is in a level");
                     let connection = connection.borrow().get_connection();
-                    connection.disconnect(DisconnectionDetails::new("Scenario finished"));
+                    connection.disconnect(DisconnectionDetails::new(Component::literal(
+                        "Scenario finished",
+                    )));
                     // The game stops at the disconnected screen, which is where this run ends.
                     self.outcome.set(Some(Outcome::Finished));
                     self.next(Stage::Done);
-                    minecraft.disconnect(&DisconnectionDetails::new("Scenario finished"), false);
+                    minecraft.disconnect(
+                        &DisconnectionDetails::new(Component::literal("Scenario finished")),
+                        false,
+                    );
                     let missed = self.server_ticks.as_ref().map_or(0, ServerTicks::missed);
                     if missed > 0 {
                         let reason = format!(
@@ -723,7 +729,7 @@ impl TestDriver for OracleGameTest {
                 format!(
                     "disconnected at {:?}: {title}: {}",
                     self.stage,
-                    details.reason()
+                    details.reason_text()
                 ),
             );
             return;

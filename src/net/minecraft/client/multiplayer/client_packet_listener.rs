@@ -27,7 +27,7 @@
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::com::mojang::authlib::game_profile::GameProfile;
@@ -63,6 +63,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_change_difficult
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_clear_titles_packet::ClientboundClearTitlesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
@@ -92,6 +93,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_d
 use crate::net::minecraft::network::protocol::game::clientbound_set_subtitle_text_packet::ClientboundSetSubtitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_title_text_packet::ClientboundSetTitleTextPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_titles_animation_packet::ClientboundSetTitlesAnimationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
@@ -170,7 +172,6 @@ impl ClientPacketListener {
                 shared: Arc::new(Shared {
                     closed: AtomicBool::new(false),
                     chunk_batch_size_calculator: Mutex::new(ChunkBatchSizeCalculator::new()),
-                    chunks_in_finished_batches: AtomicI32::new(0),
                 }),
                 level_load_tracker: Some(cookie.level_load_tracker),
                 server_enforces_secure_chat: false,
@@ -266,9 +267,10 @@ impl ClientPacketListener {
     }
 
     /// The renderer's part of the level's load: once it has compiled the section the camera is
-    /// in, it calls the tracker back. With no renderer and no chunks yet (the world track's), the
-    /// first chunk batch having finished stands for it: the server sends the chunks nearest the
-    /// player first (`LevelLoadTracker`).
+    /// in, it calls the tracker back (`LevelExtractor`'s `playerCompiledSectionCallback`). Until
+    /// the render track moves the call there, the chunk the player is in being in the level stands
+    /// for it (`LevelLoadTracker`): what the game thread has handled, so the moment doesn't depend
+    /// on when Netty's thread reads the chunk batches.
     fn check_player_section(&self) {
         let Some(callback) = self
             .level_load_tracker
@@ -277,17 +279,21 @@ impl ClientPacketListener {
         else {
             return;
         };
-        if self.chunks_in_finished_batches() > 0 {
+        let minecraft = &self.common.minecraft;
+        let player = minecraft.player.borrow();
+        let level = minecraft.level.borrow();
+        let (Some(player), Some(level)) = (player.as_ref(), level.as_ref()) else {
+            return;
+        };
+        let chunk_x = SectionPos::block_to_section_coord(Mth::floor_f64(player.get_x()));
+        let chunk_z = SectionPos::block_to_section_coord(Mth::floor_f64(player.get_z()));
+        if level
+            .get_chunk_source()
+            .get_chunk(chunk_x, chunk_z)
+            .is_some()
+        {
             callback();
         }
-    }
-
-    /// How many chunks the finished chunk batches had: what the client knows of its chunks until
-    /// the world track's chunk packets and storage come.
-    pub fn chunks_in_finished_batches(&self) -> i32 {
-        self.shared
-            .chunks_in_finished_batches
-            .load(Ordering::SeqCst)
     }
 
     /// `handleLevelChunkWithLight`'s body on the game thread, on the level: the chunk goes into
@@ -594,8 +600,6 @@ impl ClientPongPacketListener for ClientPacketListener {
 struct Shared {
     closed: AtomicBool,
     chunk_batch_size_calculator: Mutex<ChunkBatchSizeCalculator>,
-    /// How many chunks the finished chunk batches had (`check_player_section`).
-    chunks_in_finished_batches: AtomicI32,
 }
 
 impl Shared {
@@ -616,12 +620,6 @@ impl Shared {
     ) {
         let mut chunk_batch_size_calculator = lock(&self.chunk_batch_size_calculator);
         chunk_batch_size_calculator.on_batch_finished(packet.batch_size());
-        let chunks = packet.batch_size().max(0);
-        let _ = self.chunks_in_finished_batches.try_update(
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            |finished| Some(finished.saturating_add(chunks)),
-        );
         connection.send::<dyn ServerGamePacketListener>(ServerboundChunkBatchReceivedPacket::new(
             chunk_batch_size_calculator.get_desired_chunks_per_tick(),
         ));
@@ -686,8 +684,10 @@ impl ClientPongPacketListener for NettyHalf {
     }
 }
 
-/// The server's texts that `Gui` and the server list would show.
-#[derive(Clone, Debug, Default)]
+/// The server's texts that `Gui` and the server list would show, with the titles' times, which
+/// Java's `Hud` keeps (`setTimes`, `setTitle`, `clearTitles`, `resetTitleTimes`); the HUD's tick
+/// counting `title_time` down comes with the titles' drawing.
+#[derive(Clone, Debug)]
 pub struct ServerTexts {
     pub title: Option<Component>,
     pub subtitle: Option<Component>,
@@ -695,6 +695,71 @@ pub struct ServerTexts {
     pub tab_list_header: Option<Component>,
     pub tab_list_footer: Option<Component>,
     pub motd: Option<Component>,
+    pub title_time: i32,
+    pub title_fade_in_time: i32,
+    pub title_stay_time: i32,
+    pub title_fade_out_time: i32,
+}
+
+impl Default for ServerTexts {
+    fn default() -> ServerTexts {
+        let mut texts = ServerTexts {
+            title: None,
+            subtitle: None,
+            action_bar: None,
+            tab_list_header: None,
+            tab_list_footer: None,
+            motd: None,
+            title_time: 0,
+            title_fade_in_time: 0,
+            title_stay_time: 0,
+            title_fade_out_time: 0,
+        };
+        texts.reset_title_times();
+        texts
+    }
+}
+
+impl ServerTexts {
+    pub fn reset_title_times(&mut self) {
+        self.title_fade_in_time = 10;
+        self.title_stay_time = 70;
+        self.title_fade_out_time = 20;
+    }
+
+    /// A negative time keeps the one before.
+    pub fn set_times(&mut self, fade_in_time: i32, stay_time: i32, fade_out_time: i32) {
+        if fade_in_time >= 0 {
+            self.title_fade_in_time = fade_in_time;
+        }
+        if stay_time >= 0 {
+            self.title_stay_time = stay_time;
+        }
+        if fade_out_time >= 0 {
+            self.title_fade_out_time = fade_out_time;
+        }
+        if self.title_time > 0 {
+            self.title_time = self.title_total_time();
+        }
+    }
+
+    pub fn set_title(&mut self, title: Component) {
+        self.title = Some(title);
+        self.title_time = self.title_total_time();
+    }
+
+    pub fn clear_titles(&mut self) {
+        self.title = None;
+        self.subtitle = None;
+        self.title_time = 0;
+    }
+
+    // Java's int sum, which wraps.
+    fn title_total_time(&self) -> i32 {
+        self.title_fade_in_time
+            .wrapping_add(self.title_stay_time)
+            .wrapping_add(self.title_fade_out_time)
+    }
 }
 
 impl ClientGamePacketListener for ClientPacketListener {
@@ -846,6 +911,7 @@ impl ClientGamePacketListener for ClientPacketListener {
             server_data: self.common.server_data.clone(),
             server_cookies: self.common.server_cookies.clone(),
             custom_report_details: self.common.custom_report_details.clone(),
+            server_links: self.common.server_links.clone(),
         };
         let connection = Arc::clone(&self.common.connection);
         let listener = ClientConfigurationPacketListenerImpl::new(
@@ -1506,7 +1572,42 @@ impl ClientGamePacketListener for ClientPacketListener {
         {
             return;
         }
-        self.texts.title = Some(packet.text());
+        self.texts.set_title(packet.text());
+    }
+
+    fn set_titles_animation(&mut self, packet: &ClientboundSetTitlesAnimationPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.texts.set_times(
+            packet.get_fade_in(),
+            packet.get_stay(),
+            packet.get_fade_out(),
+        );
+    }
+
+    fn handle_titles_clear(&mut self, packet: &ClientboundClearTitlesPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.texts.clear_titles();
+        if packet.should_reset_times() {
+            self.texts.reset_title_times();
+        }
     }
 
     fn set_subtitle_text(&mut self, packet: &ClientboundSetSubtitleTextPacket) {
@@ -1719,6 +1820,14 @@ impl ClientGamePacketListener for NettyHalf {
     }
 
     fn set_title_text(&mut self, packet: &ClientboundSetTitleTextPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn set_titles_animation(&mut self, packet: &ClientboundSetTitlesAnimationPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_titles_clear(&mut self, packet: &ClientboundClearTitlesPacket) {
         self.common.on_game_thread(&self.this, packet);
     }
 

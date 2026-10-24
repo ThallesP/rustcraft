@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonPrimitive;
+import com.mojang.datafixers.util.Either;
 import com.mojang.math.Axis;
 import java.lang.reflect.Array;
 import java.lang.reflect.ParameterizedType;
@@ -26,6 +27,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import net.minecraft.network.chat.Component;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 
@@ -439,6 +441,19 @@ final class Values {
         return false;
     }
 
+    private static JsonElement encodeSide(final String side, final Object value) {
+        JsonArray array = new JsonArray();
+        array.add(side);
+        array.add(value instanceof Enum<?> constant ? new JsonPrimitive(constant.name()) : encode(value, ownClass(value)));
+        return array;
+    }
+
+    // The class a value inside an Optional or an Either is encoded as: its own, but for a component, which is encoded as
+    // one whatever its class.
+    private static Class<?> ownClass(final Object value) {
+        return value instanceof Component ? Component.class : value.getClass();
+    }
+
     static JsonElement encode(final Object value, final Class<?> type) {
         if (value == null) {
             return JsonNull.INSTANCE;
@@ -478,7 +493,7 @@ final class Values {
         }
         // An empty Optional is null, like an argument a method lets be null. The value is encoded by its own class.
         if (type == Optional.class) {
-            return ((Optional<?>)value).map(present -> encode(present, present.getClass())).orElse(JsonNull.INSTANCE);
+            return ((Optional<?>)value).map(present -> encode(present, ownClass(present))).orElse(JsonNull.INSTANCE);
         }
         // Like an Optional: the int, or null.
         if (type == OptionalInt.class) {
@@ -493,6 +508,10 @@ final class Values {
         // Before collections, since a ListTag is a List and a CollectionTag an Iterable.
         if (NbtValues.canEncode(type)) {
             return NbtValues.encode(value);
+        }
+        // ["left", value] or ["right", value], like the codec suites' (DfuCodecSuite); a component inside is encoded as one.
+        if (value instanceof Either<?, ?> either) {
+            return either.map(left -> encodeSide("left", left), right -> encodeSide("right", right));
         }
         // Before records, since a DataValue's serializer is encoded as its id.
         if (RegistryValues.canEncode(type)) {

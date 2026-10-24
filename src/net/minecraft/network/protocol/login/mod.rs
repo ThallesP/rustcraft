@@ -2,6 +2,7 @@ pub mod client_login_packet_listener;
 pub mod clientbound_custom_query_packet;
 pub mod clientbound_hello_packet;
 pub mod clientbound_login_compression_packet;
+pub mod clientbound_login_disconnect_packet;
 pub mod clientbound_login_finished_packet;
 pub mod custom;
 pub mod login_packet_types;

@@ -15,6 +15,7 @@ use crate::net::minecraft::network::protocol::login::client_login_packet_listene
 use crate::net::minecraft::network::protocol::login::clientbound_custom_query_packet::ClientboundCustomQueryPacket;
 use crate::net::minecraft::network::protocol::login::clientbound_hello_packet::ClientboundHelloPacket;
 use crate::net::minecraft::network::protocol::login::clientbound_login_compression_packet::ClientboundLoginCompressionPacket;
+use crate::net::minecraft::network::protocol::login::clientbound_login_disconnect_packet::ClientboundLoginDisconnectPacket;
 use crate::net::minecraft::network::protocol::login::clientbound_login_finished_packet::ClientboundLoginFinishedPacket;
 use crate::net::minecraft::network::protocol::login::login_packet_types::LoginPacketTypes;
 use crate::net::minecraft::network::protocol::login::server_login_packet_listener::ServerLoginPacketListener;
@@ -24,7 +25,6 @@ use crate::net::minecraft::network::protocol::login::serverbound_key_packet::Ser
 use crate::net::minecraft::network::protocol::login::serverbound_login_acknowledged_packet::ServerboundLoginAcknowledgedPacket;
 use crate::net::minecraft::network::protocol::protocol_info_builder::ProtocolInfoBuilder;
 use crate::net::minecraft::network::protocol::simple_unbound_protocol::StaticSimpleUnboundProtocol;
-use crate::net::minecraft::network::protocol::unported::Unported;
 use crate::net::minecraft::network::protocol_info::StaticProtocolInfo;
 
 static SERVERBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
@@ -67,7 +67,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
         builder
             .add_packet(
                 LoginPacketTypes::CLIENTBOUND_LOGIN_DISCONNECT,
-                Unported::codec(LoginPacketTypes::CLIENTBOUND_LOGIN_DISCONNECT),
+                ClientboundLoginDisconnectPacket::STREAM_CODEC,
             )
             .add_packet(
                 LoginPacketTypes::CLIENTBOUND_HELLO,
@@ -118,8 +118,15 @@ impl LoginProtocols {
 mod tests {
     use super::LoginProtocols;
     use crate::golden::{Golden, encode_packets};
+    use crate::net::minecraft::network::protocol::cookie::clientbound_cookie_request_packet::ClientboundCookieRequestPacket;
     use crate::net::minecraft::network::protocol::cookie::cookie_packet_types::CookiePacketTypes;
     use crate::net::minecraft::network::protocol::cookie::serverbound_cookie_response_packet::ServerboundCookieResponsePacket;
+    use crate::net::minecraft::network::protocol::login::client_login_packet_listener::ClientLoginPacketListener;
+    use crate::net::minecraft::network::protocol::login::clientbound_custom_query_packet::ClientboundCustomQueryPacket;
+    use crate::net::minecraft::network::protocol::login::clientbound_hello_packet::ClientboundHelloPacket;
+    use crate::net::minecraft::network::protocol::login::clientbound_login_compression_packet::ClientboundLoginCompressionPacket;
+    use crate::net::minecraft::network::protocol::login::clientbound_login_disconnect_packet::ClientboundLoginDisconnectPacket;
+    use crate::net::minecraft::network::protocol::login::clientbound_login_finished_packet::ClientboundLoginFinishedPacket;
     use crate::net::minecraft::network::protocol::login::login_packet_types::LoginPacketTypes;
     use crate::net::minecraft::network::protocol::login::server_login_packet_listener::ServerLoginPacketListener;
     use crate::net::minecraft::network::protocol::login::serverbound_custom_query_answer_packet::ServerboundCustomQueryAnswerPacket;
@@ -127,6 +134,15 @@ mod tests {
     use crate::net::minecraft::network::protocol::login::serverbound_key_packet::ServerboundKeyPacket;
     use crate::net::minecraft::network::protocol::login::serverbound_login_acknowledged_packet::ServerboundLoginAcknowledgedPacket;
     use crate::net::minecraft::network::protocol_info::tests::listed;
+
+    encode_packets!(dyn ClientLoginPacketListener {
+        LoginPacketTypes::CLIENTBOUND_LOGIN_DISCONNECT => ClientboundLoginDisconnectPacket,
+        LoginPacketTypes::CLIENTBOUND_HELLO => ClientboundHelloPacket,
+        LoginPacketTypes::CLIENTBOUND_LOGIN_FINISHED => ClientboundLoginFinishedPacket,
+        LoginPacketTypes::CLIENTBOUND_LOGIN_COMPRESSION => ClientboundLoginCompressionPacket,
+        LoginPacketTypes::CLIENTBOUND_CUSTOM_QUERY => ClientboundCustomQueryPacket,
+        CookiePacketTypes::CLIENTBOUND_COOKIE_REQUEST => ClientboundCookieRequestPacket,
+    });
 
     encode_packets!(dyn ServerLoginPacketListener {
         LoginPacketTypes::SERVERBOUND_HELLO => ServerboundHelloPacket,
@@ -150,10 +166,9 @@ mod tests {
                 LoginProtocols::CLIENTBOUND.flow(),
             ),
         );
-        golden.pending(
-            "CLIENTBOUND.codec()",
-            "needs ClientboundLoginDisconnectPacket, which reads its reason with Component's codec",
-        );
+        golden.check_codec("CLIENTBOUND.codec()", || {
+            LoginProtocols::CLIENTBOUND.codec()
+        });
         golden.field(
             "SERVERBOUND_TEMPLATE",
             listed(LoginProtocols::SERVERBOUND_TEMPLATE.details()),

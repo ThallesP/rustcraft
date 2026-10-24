@@ -1,12 +1,10 @@
 //! net/minecraft/network/codec/ByteBufCodecs.java
 //!
 //! Not ported yet:
-//! - `fromCodec(DynamicOps, Codec)` and `lenientJson`, which wait for Gson;
 //! - `INSTANT`, which waits for `java.time.Instant`, and `PUBLIC_KEY`, which waits for `Crypt`;
 //! - the registries' other codecs (`registry`, `holder`, `holderSet` and `idMapper(IdMap)`).
 //!   `holderRegistry` reads and writes an element's id in the registries a
 //!   `RegistryFriendlyByteBuf` holds, for which the golden harness has no generator yet;
-//! - `either`, which waits for DataFixerUpper's `Either`;
 //! - `registryFriendlyLengthPrefixed`, which waits for `RegistryFriendlyByteBuf`.
 //!
 //! An interface Java only uses for its constants and static methods, so a unit struct like `Mth`.
@@ -17,13 +15,16 @@ use std::fmt;
 use std::sync::LazyLock;
 
 use crate::com::google::common::collect::immutable_multimap::ImmutableMultimap;
+use crate::com::google::gson::gson_builder::GsonBuilder;
+use crate::com::google::gson::json_element::JsonElement;
 use crate::com::mojang::authlib::game_profile::GameProfile;
 use crate::com::mojang::authlib::properties::property::Property;
 use crate::com::mojang::authlib::properties::property_map::PropertyMap;
+use crate::com::mojang::datafixers::util::either::Either;
 use crate::com::mojang::serialization::codec::BoxedCodec;
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::com::mojang::serialization::decoder::Decoder;
-use crate::com::mojang::serialization::dynamic_ops::DynamicOps;
+use crate::com::mojang::serialization::dynamic_ops::{DynamicOps, OpsValue};
 use crate::com::mojang::serialization::encoder::Encoder;
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::io::netty::buffer::unpooled;
@@ -44,6 +45,7 @@ use crate::net::minecraft::network::var_long::VarLong;
 use crate::net::minecraft::resources::registry_ops::RegistryOps;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::util::argb::ARGB;
+use crate::net::minecraft::util::lenient_json_parser::LenientJsonParser;
 use crate::net::minecraft::util::mth::Mth;
 use crate::org::joml::quaternionf::Quaternionf;
 use crate::org::joml::vector3f::Vector3f;
@@ -444,6 +446,112 @@ impl ByteBufCodecs {
             move |input: &mut ByteBuf| {
                 let tag = decode_tag.decode(input);
                 parse_or_throw(&codec, &NbtOps::INSTANCE, &tag)
+            },
+        )
+    }
+
+    /// `fromCodec(DynamicOps, Codec)`, applied to the codec of the ops' values, `original`: the
+    /// value it reads, decoded with `ops`, which `make_ops` makes for each call; panics where Java
+    /// throws `DecoderException` or `EncoderException`.
+    pub fn from_codec_ops<B, T, A, O>(
+        make_ops: impl Fn() -> O + Send + Sync + 'static,
+        codec: BoxedCodec<A>,
+        original: impl StreamCodec<Buffer = B, Value = T> + 'static,
+    ) -> impl StreamCodec<Buffer = B, Value = A>
+    where
+        B: 'static,
+        T: OpsValue + fmt::Display,
+        A: fmt::Display + 'static,
+        O: DynamicOps<T>,
+    {
+        let make_ops = std::sync::Arc::new(make_ops);
+        let original = std::sync::Arc::new(original);
+        let encoder = codec.clone();
+        let (encode_ops, encode_original) = (
+            std::sync::Arc::clone(&make_ops),
+            std::sync::Arc::clone(&original),
+        );
+        stream_codec::of(
+            move |output: &mut B, value: &A| {
+                let payload = match encoder.encode_start(&encode_ops(), value) {
+                    DataResult::Success(success) => success.into_value(),
+                    DataResult::Error(error) => panic!(
+                        "EncoderException: Failed to encode: {} {value}",
+                        error.message()
+                    ),
+                };
+                encode_original.encode(output, &payload);
+            },
+            move |input: &mut B| {
+                let payload = original.decode(input);
+                match codec.parse(&make_ops(), &payload) {
+                    DataResult::Success(success) => success.into_value(),
+                    DataResult::Error(error) => panic!(
+                        "DecoderException: Failed to decode: {} {payload}",
+                        error.message()
+                    ),
+                }
+            },
+        )
+    }
+
+    /// `either(StreamCodec, StreamCodec)`: a boolean, true for the left value, then the value.
+    pub fn either<B, L, R>(
+        left_codec: impl StreamCodec<Buffer = B, Value = L>,
+        right_codec: impl StreamCodec<Buffer = B, Value = R>,
+    ) -> impl StreamCodec<Buffer = B, Value = Either<L, R>>
+    where
+        B: AsMut<ByteBuf> + 'static,
+        L: 'static,
+        R: 'static,
+    {
+        let left_codec = std::sync::Arc::new(left_codec);
+        let right_codec = std::sync::Arc::new(right_codec);
+        let (left_encoder, right_encoder) = (
+            std::sync::Arc::clone(&left_codec),
+            std::sync::Arc::clone(&right_codec),
+        );
+        stream_codec::of(
+            move |output: &mut B, value: &Either<L, R>| match value {
+                Either::Left(left) => {
+                    output.as_mut().write_boolean(true);
+                    left_encoder.encode(output, left);
+                }
+                Either::Right(right) => {
+                    output.as_mut().write_boolean(false);
+                    right_encoder.encode(output, right);
+                }
+            },
+            move |input: &mut B| {
+                if input.as_mut().read_boolean() {
+                    Either::Left(left_codec.decode(input))
+                } else {
+                    Either::Right(right_codec.decode(input))
+                }
+            },
+        )
+    }
+
+    /// `lenientJson(int)`: JSON as a string of at most `max_string_length` characters, read
+    /// leniently (`LenientJsonParser`) and written by a Gson that doesn't escape HTML.
+    pub fn lenient_json(
+        max_string_length: i32,
+    ) -> impl StreamCodec<Buffer = ByteBuf, Value = JsonElement> {
+        stream_codec::of(
+            move |output: &mut ByteBuf, value: &JsonElement| {
+                let payload = GsonBuilder::new()
+                    .disable_html_escaping()
+                    .create()
+                    .to_json(value)
+                    .unwrap_or_else(|exception| panic!("{exception}"));
+                Utf8String::write(output, &payload, max_string_length);
+            },
+            move |input: &mut ByteBuf| {
+                let payload = Utf8String::read(input, max_string_length);
+                match LenientJsonParser::parse(&payload) {
+                    Ok(element) => element,
+                    Err(_) => panic!("DecoderException: Failed to parse JSON"),
+                }
             },
         )
     }

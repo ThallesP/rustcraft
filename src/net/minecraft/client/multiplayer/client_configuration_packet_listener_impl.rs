@@ -209,6 +209,7 @@ impl ClientConfigurationPacketListener for ClientConfigurationPacketListenerImpl
             server_data: self.common.server_data.clone(),
             server_cookies: self.common.server_cookies.clone(),
             custom_report_details: self.common.custom_report_details.clone(),
+            server_links: self.common.server_links.clone(),
         };
         let connection = Arc::clone(&self.common.connection);
         connection.setup_inbound_protocol(

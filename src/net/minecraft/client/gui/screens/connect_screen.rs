@@ -16,6 +16,9 @@ use crate::net::minecraft::client::multiplayer::level_load_tracker::LevelLoadTra
 use crate::net::minecraft::client::multiplayer::resolver::server_address::ServerAddress;
 use crate::net::minecraft::client::multiplayer::resolver::server_name_resolver::ServerNameResolver;
 use crate::net::minecraft::client::multiplayer::server_data::ServerData;
+use crate::net::minecraft::client::resources::server::downloaded_pack_source::DownloadedPackSource;
+use crate::net::minecraft::network::chat::component::Component;
+use crate::net::minecraft::network::chat::contents::translatable_contents::TranslationArgument;
 use crate::net::minecraft::network::connection::Connection;
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::protocol::login::server_login_packet_listener::ServerLoginPacketListener;
@@ -28,7 +31,16 @@ pub struct ConnectScreen {
 }
 
 impl ConnectScreen {
-    pub const UNKNOWN_HOST_MESSAGE: &'static str = "disconnect.genericReason: Unknown host";
+    /// `UNKNOWN_HOST_MESSAGE`.
+    pub fn unknown_host_message() -> Component {
+        Component::translatable_with_args(
+            "disconnect.genericReason",
+            vec![TranslationArgument::Component(
+                Component::translatable("disconnect.unknownHost").into(),
+            )],
+        )
+        .into()
+    }
 
     /// Shows the screen and connects to the server.
     pub fn start_connecting(
@@ -55,7 +67,7 @@ impl ConnectScreen {
         let Some(address) = ServerNameResolver::resolve_address(host_and_port) else {
             minecraft.show_disconnected(
                 "connect.failed",
-                &DisconnectionDetails::new(ConnectScreen::UNKNOWN_HOST_MESSAGE),
+                &DisconnectionDetails::new(ConnectScreen::unknown_host_message()),
             );
             return;
         };
@@ -66,12 +78,18 @@ impl ConnectScreen {
                 eprintln!("Couldn't connect to server: {error}");
                 minecraft.show_disconnected(
                     "connect.failed",
-                    &DisconnectionDetails::new(format!("disconnect.genericReason: {error}")),
+                    &DisconnectionDetails::generic_reason(&error.to_string()),
                 );
                 return;
             }
         };
         self.connection = Some(Arc::clone(&connection));
+        minecraft
+            .downloaded_pack_source
+            .borrow_mut()
+            .configure_for_server_control(DownloadedPackSource::convert_pack_status(
+                server.get_resource_pack_status(),
+            ));
 
         let listener = ClientHandshakePacketListenerImpl::new(
             Arc::clone(&connection),

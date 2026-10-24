@@ -17,6 +17,8 @@ use crate::net::minecraft::network::protocol::common::clientbound_keep_alive_pac
 use crate::net::minecraft::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_post_effects_packet::ClientboundPostEffectsPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_resource_pack_pop_packet::ClientboundResourcePackPopPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_resource_pack_push_packet::ClientboundResourcePackPushPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_server_links_packet::ClientboundServerLinksPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_store_cookie_packet::ClientboundStoreCookiePacket;
 use crate::net::minecraft::network::protocol::common::clientbound_transfer_packet::ClientboundTransferPacket;
 use crate::net::minecraft::network::protocol::common::common_packet_types::CommonPacketTypes;
@@ -38,6 +40,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_change_difficult
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_finished_packet::ClientboundChunkBatchFinishedPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunk_batch_start_packet::ClientboundChunkBatchStartPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_chunks_biomes_packet::ClientboundChunksBiomesPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_clear_titles_packet::ClientboundClearTitlesPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_damage_event_packet::ClientboundDamageEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_entity_event_packet::ClientboundEntityEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_forget_level_chunk_packet::ClientboundForgetLevelChunkPacket;
@@ -66,6 +69,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_simulation_d
 use crate::net::minecraft::network::protocol::game::clientbound_set_subtitle_text_packet::ClientboundSetSubtitleTextPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_time_packet::ClientboundSetTimePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_title_text_packet::ClientboundSetTitleTextPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_set_titles_animation_packet::ClientboundSetTitlesAnimationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_start_configuration_packet::ClientboundStartConfigurationPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_system_chat_packet::ClientboundSystemChatPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_tab_list_packet::ClientboundTabListPacket;
@@ -443,7 +447,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_CLEAR_TITLES,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_CLEAR_TITLES),
+                ClientboundClearTitlesPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_COMMAND_SUGGESTIONS,
@@ -715,7 +719,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_RESOURCE_PACK_PUSH,
-                Unported::codec(CommonPacketTypes::CLIENTBOUND_RESOURCE_PACK_PUSH),
+                ClientboundResourcePackPushPacket::STREAM_CODEC,
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_POST_EFFECTS,
@@ -855,7 +859,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SET_TITLES_ANIMATION,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_SET_TITLES_ANIMATION),
+                ClientboundSetTitlesAnimationPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_SOUND_ENTITY,
@@ -947,7 +951,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_SERVER_LINKS,
-                Unported::codec(CommonPacketTypes::CLIENTBOUND_SERVER_LINKS),
+                ClientboundServerLinksPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_WAYPOINT,

@@ -17,6 +17,8 @@ use crate::net::minecraft::network::protocol::common::clientbound_keep_alive_pac
 use crate::net::minecraft::network::protocol::common::clientbound_ping_packet::ClientboundPingPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_post_effects_packet::ClientboundPostEffectsPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_resource_pack_pop_packet::ClientboundResourcePackPopPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_resource_pack_push_packet::ClientboundResourcePackPushPacket;
+use crate::net::minecraft::network::protocol::common::clientbound_server_links_packet::ClientboundServerLinksPacket;
 use crate::net::minecraft::network::protocol::common::clientbound_store_cookie_packet::ClientboundStoreCookiePacket;
 use crate::net::minecraft::network::protocol::common::clientbound_transfer_packet::ClientboundTransferPacket;
 use crate::net::minecraft::network::protocol::common::common_packet_types::CommonPacketTypes;
@@ -142,7 +144,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_RESOURCE_PACK_PUSH,
-                Unported::codec(CommonPacketTypes::CLIENTBOUND_RESOURCE_PACK_PUSH),
+                ClientboundResourcePackPushPacket::STREAM_CODEC,
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_POST_EFFECTS,
@@ -174,7 +176,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_SERVER_LINKS,
-                Unported::codec(CommonPacketTypes::CLIENTBOUND_SERVER_LINKS),
+                ClientboundServerLinksPacket::STREAM_CODEC,
             )
             .add_packet(
                 CommonPacketTypes::CLIENTBOUND_CLEAR_DIALOG,
