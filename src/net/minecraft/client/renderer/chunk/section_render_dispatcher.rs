@@ -4,14 +4,16 @@
 //! compiles synchronously, on the render thread, which only changes when a mesh is ready: the
 //! oracle waits for every section to be compiled before it takes a screenshot. Translucent quads
 //! are sorted again (`ResortTransparencyTask`) synchronously too. Not ported yet: the background
-//! executor and its queue (`SectionTaskDynamicQueue`, `SectionBufferBuilderPool`), and Java's
-//! buffers behind the uber buffers:
-//! `UberGpuBuffer`'s `TlsfAllocator` heaps and the `StagingBuffer` they're copied through. Here
-//! each layer's sections lie one after another in one vertex buffer and one index buffer, rebuilt
-//! when a section's mesh comes or goes: the draws read the same vertices and indices from other
-//! offsets.
+//! executor and its queue (`SectionTaskDynamicQueue`, `SectionBufferBuilderPool`) and the
+//! `StagingBuffer` the uber buffers copy through (`UberGpuBuffer` writes its heaps straight). Java
+//! releases a mesh's allocations when its section lets go of it; here the dispatcher keeps each
+//! mesh it put in the uber buffers, in the order they came, and takes out of them the ones nothing
+//! else holds any more, at each upload, before the new ones go in.
 
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
+
+use crate::com::mojang::blaze3d::vertex::uber_gpu_buffer::UberGpuBuffer;
 
 use crate::com::mojang::blaze3d::vertex::vertex_sorting::VertexSorting;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::{self, GpuBuffer};
@@ -30,12 +32,18 @@ use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::vec3::Vec3;
+use crate::rustcraft::bench;
 
 pub struct SectionRenderDispatcher {
     fixed_buffers: SectionBufferBuilderPack,
     camera_position: Vec3,
     section_compiler: SectionCompiler,
     chunk_uber_buffers: [SectionUberBuffers; 3],
+    /// The meshes with allocations in the uber buffers, in the order they came, and each one's
+    /// place in that order by its address, which keys its allocations.
+    meshes: BTreeMap<u64, Rc<CompiledSectionMesh>>,
+    mesh_order: HashMap<usize, u64>,
+    next_mesh: u64,
     /// Meshes whose buffers wait for the next upload, with their section's index in the view
     /// area and its section then: Java's upload callbacks (`vertexBufferUploadCallback`,
     /// `checkSectionMesh`).
@@ -51,67 +59,32 @@ pub struct RenderSectionBufferSlice {
     pub index_buffer_offset: i64,
 }
 
-/// A layer's buffers: each mesh's vertices and sorted indices, in the order they came.
-#[derive(Default)]
+/// `SectionUberBuffers`: a layer's meshes' vertices and sorted indices, keyed by the meshes'
+/// addresses.
 struct SectionUberBuffers {
-    allocations: Vec<Allocation>,
-    vertex_buffer: Option<Rc<dyn GpuBuffer>>,
-    index_buffer: Option<Rc<dyn GpuBuffer>>,
-    dirty: bool,
-}
-
-struct Allocation {
-    mesh: Rc<CompiledSectionMesh>,
-    vertices: Vec<u8>,
-    indices: Option<Vec<u8>>,
-    vertex_offset: i64,
-    index_offset: i64,
+    vertex_buffer: UberGpuBuffer<usize>,
+    index_buffer: UberGpuBuffer<usize>,
 }
 
 impl SectionUberBuffers {
-    fn get_allocation(&self, mesh: &Rc<CompiledSectionMesh>) -> Option<&Allocation> {
-        self.allocations
-            .iter()
-            .find(|allocation| Rc::ptr_eq(&allocation.mesh, mesh))
-    }
-
-    fn remove_allocation(&mut self, mesh: &Rc<CompiledSectionMesh>) {
-        let before = self.allocations.len();
-        self.allocations
-            .retain(|allocation| !Rc::ptr_eq(&allocation.mesh, mesh));
-        self.dirty |= self.allocations.len() != before;
-    }
-
-    /// Packs the allocations into new buffers when they changed.
-    fn upload(&mut self, device: &dyn GpuDevice, layer: ChunkSectionLayer) {
-        if !self.dirty {
-            return;
-        }
-
-        self.dirty = false;
-        let mut vertices = Vec::new();
-        let mut indices = Vec::new();
-        for allocation in &mut self.allocations {
-            allocation.vertex_offset = vertices.len() as i64;
-            vertices.extend_from_slice(&allocation.vertices);
-            if let Some(allocation_indices) = &allocation.indices {
-                allocation.index_offset = indices.len() as i64;
-                indices.extend_from_slice(allocation_indices);
-            }
-        }
-
-        let label = layer.label();
-        self.vertex_buffer = (!vertices.is_empty()).then(|| {
-            device.create_buffer_with_data(Some(label), gpu_buffer::USAGE_VERTEX, &vertices)
-        });
-        self.index_buffer = (!indices.is_empty()).then(|| {
-            device.create_buffer_with_data(Some(label), gpu_buffer::USAGE_INDEX, &indices)
-        });
-        for allocation in &self.allocations {
-            allocation.mesh.set_vertex_buffer_uploaded(layer);
-            allocation.mesh.set_index_buffer_uploaded(layer);
+    /// The constructor's: heaps of 128 MiB of vertices aligned to the layer's vertex size, and of
+    /// 32 MiB of indices aligned to 8 bytes.
+    fn new(layer: ChunkSectionLayer) -> SectionUberBuffers {
+        SectionUberBuffers {
+            vertex_buffer: UberGpuBuffer::new(
+                layer.label(),
+                gpu_buffer::USAGE_VERTEX,
+                134217728,
+                layer.vertex_format().get_vertex_size(),
+            ),
+            index_buffer: UberGpuBuffer::new(layer.label(), gpu_buffer::USAGE_INDEX, 33554432, 8),
         }
     }
+}
+
+/// A mesh's key in the uber buffers: its address, which no other mesh has while it's kept.
+fn key(mesh: &Rc<CompiledSectionMesh>) -> usize {
+    Rc::as_ptr(mesh) as usize
 }
 
 impl SectionRenderDispatcher {
@@ -122,7 +95,10 @@ impl SectionRenderDispatcher {
             fixed_buffers: SectionBufferBuilderPack::new(),
             camera_position: Vec3::ZERO,
             section_compiler,
-            chunk_uber_buffers: Default::default(),
+            chunk_uber_buffers: ChunkSectionLayer::VALUES.map(SectionUberBuffers::new),
+            meshes: BTreeMap::new(),
+            mesh_order: HashMap::new(),
+            next_mesh: 0,
             waiting_for_upload: Vec::new(),
         }
     }
@@ -144,42 +120,65 @@ impl SectionRenderDispatcher {
             return None;
         };
         let uber_buffers = &self.chunk_uber_buffers[layer as usize];
-        let allocation = uber_buffers.get_allocation(mesh)?;
-        let vertex_buffer = uber_buffers.vertex_buffer.clone()?;
-        let index_buffer = allocation
-            .indices
-            .as_ref()
-            .and(uber_buffers.index_buffer.clone());
+        let vertex_slice = uber_buffers.vertex_buffer.get_allocation(key(mesh))?;
+        let vertex_buffer_offset = vertex_slice.get_offset_from_heap();
+        let (index_buffer, index_buffer_offset) =
+            match uber_buffers.index_buffer.get_allocation(key(mesh)) {
+                Some(index_slice) => (
+                    Some(Rc::clone(
+                        uber_buffers.index_buffer.get_gpu_buffer(index_slice),
+                    )),
+                    index_slice.get_offset_from_heap(),
+                ),
+                None => (None, 0),
+            };
         Some(RenderSectionBufferSlice {
-            vertex_buffer,
-            vertex_buffer_offset: allocation.vertex_offset,
-            index_buffer_offset: if index_buffer.is_some() {
-                allocation.index_offset
-            } else {
-                0
-            },
+            vertex_buffer: Rc::clone(uber_buffers.vertex_buffer.get_gpu_buffer(vertex_slice)),
+            vertex_buffer_offset,
             index_buffer,
+            index_buffer_offset,
         })
     }
 
-    /// Puts the meshes compiled since the last upload into the layers' buffers, and the
-    /// sections whose buffers are all there get their meshes (`checkSectionMesh`). Returns the
-    /// indices of those sections, whose meshes changed (`onSectionMeshUpdate`). A mesh nothing
-    /// holds any more (its section was reset or moved) leaves the buffers.
+    /// `uploadTerrainBuffersToGpu`: the meshes nothing holds any more (their section was reset or
+    /// moved, or compiled again) taken out of the uber buffers, then the staged allocations of each
+    /// layer uploaded, until a layer's vertices make or let go of a heap; then the sections whose
+    /// buffers are all there get their meshes (`checkSectionMesh`). Returns the indices of those
+    /// sections, whose meshes changed (`onSectionMeshUpdate`).
     pub fn upload_terrain_buffers_to_gpu(
         &mut self,
         device: &dyn GpuDevice,
         sections: &mut RotatingSectionStorage<RenderSection>,
     ) -> Vec<usize> {
-        for buffers in &mut self.chunk_uber_buffers {
-            let before = buffers.allocations.len();
-            buffers
-                .allocations
-                .retain(|allocation| Rc::strong_count(&allocation.mesh) > 1);
-            buffers.dirty |= buffers.allocations.len() != before;
+        let released: Vec<u64> = self
+            .meshes
+            .iter()
+            .filter(|(_, mesh)| Rc::strong_count(mesh) == 1)
+            .map(|(&order, _)| order)
+            .collect();
+        for order in released {
+            let mesh = self.meshes.remove(&order).expect("a kept mesh");
+            self.remove_allocations(&mesh);
         }
         for layer in ChunkSectionLayer::VALUES {
-            self.chunk_uber_buffers[layer as usize].upload(device, layer);
+            let buffers = &mut self.chunk_uber_buffers[layer as usize];
+            let (performed_buffer_resize, vertices) =
+                buffers.vertex_buffer.upload_staged_allocations(device);
+            let (_, indices) = buffers.index_buffer.upload_staged_allocations(device);
+            for (uploaded, vertex) in [(vertices, true), (indices, false)]
+                .into_iter()
+                .flat_map(|(keys, vertex)| keys.into_iter().map(move |key| (key, vertex)))
+            {
+                let mesh = &self.meshes[&self.mesh_order[&uploaded]];
+                if vertex {
+                    mesh.set_vertex_buffer_uploaded(layer);
+                } else {
+                    mesh.set_index_buffer_uploaded(layer);
+                }
+            }
+            if performed_buffer_resize {
+                break;
+            }
         }
 
         let mut updated = Vec::new();
@@ -192,8 +191,13 @@ impl SectionRenderDispatcher {
             if section.section_node != section_node {
                 continue;
             }
+            if !all_buffers_updated {
+                // Its other layers' turn comes at a later upload.
+                self.waiting_for_upload.push((index, section_node, mesh));
+                continue;
+            }
             let compiled = SectionMesh::Compiled(mesh);
-            if all_buffers_updated && !section.section_mesh.same(&compiled) {
+            if !section.section_mesh.same(&compiled) {
                 section.set_section_mesh(compiled);
                 updated.push(index);
             }
@@ -201,11 +205,22 @@ impl SectionRenderDispatcher {
         updated
     }
 
+    /// `removeAllocation` of the mesh in every layer's uber buffers.
+    fn remove_allocations(&mut self, mesh: &Rc<CompiledSectionMesh>) {
+        let key = key(mesh);
+        self.mesh_order.remove(&key);
+        for buffers in &mut self.chunk_uber_buffers {
+            buffers.vertex_buffer.remove_allocation(key);
+            buffers.index_buffer.remove_allocation(key);
+        }
+    }
+
     fn release_section_mesh(&mut self, old_mesh: &SectionMesh) {
-        if let SectionMesh::Compiled(mesh) = old_mesh {
-            for buffers in &mut self.chunk_uber_buffers {
-                buffers.remove_allocation(mesh);
-            }
+        if let SectionMesh::Compiled(mesh) = old_mesh
+            && let Some(order) = self.mesh_order.get(&key(mesh))
+        {
+            self.meshes.remove(order);
+            self.remove_allocations(mesh);
         }
     }
 
@@ -221,12 +236,14 @@ impl SectionRenderDispatcher {
         let section_node = section.section_node;
         let section_pos = SectionPos::of_long(section_node);
         let camera_pos = self.camera_position;
+        let compile_start = bench::now();
         let results = self.section_compiler.compile(
             section_pos,
             region,
             &RenderSection::create_vertex_sorting(&section_pos, &camera_pos),
             &mut self.fixed_buffers,
         );
+        bench::record(bench::Kind::Compile, compile_start);
         let translucency_point_of_view = TranslucencyPointOfView::of(&camera_pos, section_node);
         if results.rendered_layers.is_empty() {
             let old_mesh = section.set_section_mesh(SectionMesh::Empty);
@@ -239,17 +256,21 @@ impl SectionRenderDispatcher {
             results,
             start_time_ns,
         ));
+        // `addSectionBuffersToUberBuffer` of each layer: a layer without indices of its own
+        // draws with the shared quad indices, uploaded already.
+        let mesh_key = key(&compiled_section_mesh);
         for (layer, vertices, indices) in compiled_section_mesh.pending_buffers.take() {
             let buffers = &mut self.chunk_uber_buffers[layer as usize];
-            buffers.allocations.push(Allocation {
-                mesh: Rc::clone(&compiled_section_mesh),
-                vertices,
-                indices,
-                vertex_offset: 0,
-                index_offset: 0,
-            });
-            buffers.dirty = true;
+            buffers.vertex_buffer.add_allocation(mesh_key, vertices);
+            match indices {
+                Some(indices) => buffers.index_buffer.add_allocation(mesh_key, indices),
+                None => compiled_section_mesh.set_index_buffer_uploaded(layer),
+            }
         }
+        self.meshes
+            .insert(self.next_mesh, Rc::clone(&compiled_section_mesh));
+        self.mesh_order.insert(mesh_key, self.next_mesh);
+        self.next_mesh += 1;
         self.waiting_for_upload
             .retain(|(index, _, _)| *index != section.index);
         self.waiting_for_upload
@@ -288,16 +309,12 @@ impl SectionRenderDispatcher {
         ) else {
             return;
         };
-        // `addSectionBuffersToUberBuffer` with only the indices: the mesh's allocation takes them,
-        // or, if its first upload is still to come, the bytes waiting for it.
-        let buffers = &mut self.chunk_uber_buffers[ChunkSectionLayer::TRANSLUCENT as usize];
-        if let Some(allocation) = buffers
-            .allocations
-            .iter_mut()
-            .find(|allocation| Rc::ptr_eq(&allocation.mesh, mesh))
-        {
-            allocation.indices = Some(index_buffer);
-            buffers.dirty = true;
+        // `addSectionBuffersToUberBuffer` with only the indices, which the next upload puts in
+        // place of the mesh's.
+        if self.mesh_order.contains_key(&key(mesh)) {
+            self.chunk_uber_buffers[ChunkSectionLayer::TRANSLUCENT as usize]
+                .index_buffer
+                .add_allocation(key(mesh), index_buffer);
         }
         mesh.set_translucency_point_of_view(translucency_point_of_view);
     }

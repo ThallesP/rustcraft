@@ -5,5 +5,7 @@ pub mod default_vertex_format;
 pub mod mesh_data;
 pub mod pose_stack;
 pub mod quad_instance;
+pub mod tlsf_allocator;
+pub mod uber_gpu_buffer;
 pub mod vertex_consumer;
 pub mod vertex_sorting;
