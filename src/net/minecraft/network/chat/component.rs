@@ -15,6 +15,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use crate::com::mojang::brigadier::message::Message;
 use crate::com::mojang::datafixers::util::unit::Unit;
 use crate::net::minecraft::network::chat::component_contents::ComponentContents;
 use crate::net::minecraft::network::chat::contents::keybind_contents::KeybindContents;
@@ -175,5 +176,12 @@ impl FormattedText for Component {
 impl fmt::Display for Component {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+/// Java's `Component` is Brigadier's `Message`: the game's command errors are components.
+impl Message for Component {
+    fn get_string(&self) -> String {
+        FormattedText::get_string(&**self)
     }
 }

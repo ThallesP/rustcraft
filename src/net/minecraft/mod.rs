@@ -1,5 +1,6 @@
 pub mod chat_formatting;
 pub mod client;
+pub mod commands;
 pub mod core;
 pub mod locale;
 pub mod nbt;

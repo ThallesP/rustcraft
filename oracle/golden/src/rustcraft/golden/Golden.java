@@ -559,10 +559,12 @@ public final class Golden {
             .extraInputs("toString(D)Ljava/lang/String;", doubleToStringInputs()),
         // What IntegerProperty.getValue parses a value's name with, which takes any Unicode decimal digit.
         new StaticSuite(Integer.class).only("parseInt(Ljava/lang/String;)I").extraInputs("parseInt(Ljava/lang/String;)I", intStrings()),
+        // And what Brigadier's StringReader skips as whitespace.
         new StaticSuite(Character.class)
-            .only("digit(CI)I")
+            .only("digit(CI)I", "isWhitespace(C)Z")
             .where("digit(CI)I", args -> (Integer)args[1] == 10 || (Integer)args[1] == 16)
-            .extraInputs("digit(CI)I", decimalDigits()),
+            .extraInputs("digit(CI)I", decimalDigits())
+            .extraInputs("isWhitespace(C)Z", allChars()),
         new InstanceSuite(Vector3i.class, "<init>(III)V", "set(III)Lorg/joml/Vector3i;", "get(I)I", "setComponent(II)Lorg/joml/Vector3i;"),
         InstanceSuite.every(Vec3i.class)
             .extraInputs("closerThan(Lnet/minecraft/core/Vec3i;D)Z", distanceTies(0))
@@ -1423,7 +1425,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), BiomeSuites.suites(), RegistrySuites.suites(), PlayerSuites.suites(), ModelSuites.suites(), AttributeSuites.suites(), EntityModelSuites.suites(), GuiSuites.suites(), GsonSuites.suites(), FontSuites.suites()).flatMap(List::stream).toList()) {
+        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), BiomeSuites.suites(), RegistrySuites.suites(), PlayerSuites.suites(), ModelSuites.suites(), AttributeSuites.suites(), EntityModelSuites.suites(), GuiSuites.suites(), GsonSuites.suites(), FontSuites.suites(), BrigadierSuites.suites()).flatMap(List::stream).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }
@@ -2977,6 +2979,14 @@ public final class Golden {
         for (int c = 0; c <= 0xffff; c++) {
             inputs.add(new Object[]{(char)c, 10});
             inputs.add(new Object[]{(char)c, 16});
+        }
+        return inputs;
+    }
+
+    private static List<Object[]> allChars() {
+        List<Object[]> inputs = new ArrayList<>();
+        for (int c = 0; c <= 0xffff; c++) {
+            inputs.add(new Object[]{(char)c});
         }
         return inputs;
     }

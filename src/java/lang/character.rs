@@ -3,7 +3,8 @@
 //! Only `digit(char, int)` in radixes 10 and 16, which `Integer.parseInt` reads digits with (a
 //! text color's hex). The golden suite keeps to those two (`where()`). And `isSpaceChar(char)` and
 //! `isISOControl(char)`, which `URI`'s parser tells the non-ASCII characters it allows unescaped
-//! with: `java.net.URI`'s goldens check them on every char outside the surrogates.
+//! with: `java.net.URI`'s goldens check them on every char outside the surrogates. And
+//! `isWhitespace(char)`, which Brigadier's reader skips, checked on every char.
 
 pub struct Character;
 
@@ -54,6 +55,14 @@ impl Character {
         SPACE_CHARS.contains(&ch)
     }
 
+    /// `isWhitespace(char)`: a space, line or paragraph separator that isn't a no-break space
+    /// (U+00A0, U+2007, U+202F), or one of the controls U+0009 to U+000D and U+001C to U+001F.
+    pub fn is_whitespace(ch: u16) -> bool {
+        (Character::is_space_char(ch) && ![0x00A0, 0x2007, 0x202F].contains(&ch))
+            || (0x09..=0x0D).contains(&ch)
+            || (0x1C..=0x1F).contains(&ch)
+    }
+
     /// `isISOControl(char)`: U+0000 to U+001F and U+007F to U+009F.
     pub fn is_iso_control(ch: u16) -> bool {
         ch <= 0x9F && (ch >= 0x7F || (ch >> 5) == 0)
@@ -69,6 +78,7 @@ mod tests {
     fn matches_vanilla() {
         let golden = Golden::load("java.lang.Character");
         golden.check("digit(CI)I", Character::digit);
+        golden.check("isWhitespace(C)Z", Character::is_whitespace);
         golden.finish();
     }
 }
