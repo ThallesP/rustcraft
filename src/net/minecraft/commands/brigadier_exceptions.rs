@@ -17,7 +17,9 @@ use crate::net::minecraft::network::chat::contents::translatable_contents::Trans
 
 // `Component.translatableEscape(key, args)` as a message.
 fn translatable(key: &str, args: Vec<TranslationArgument>) -> Arc<dyn Message> {
-    Arc::new(Component::from(Component::translatable_with_args(key, args)))
+    Arc::new(Component::from(Component::translatable_with_args(
+        key, args,
+    )))
 }
 
 fn simple(key: &str) -> SimpleCommandExceptionType {
@@ -65,13 +67,19 @@ static READER_INVALID_ESCAPE: DynamicCommandExceptionType<String> =
         translatable("parsing.quote.escape", vec![string(character)])
     });
 static READER_INVALID_BOOL: DynamicCommandExceptionType<String> =
-    DynamicCommandExceptionType::new(|value| translatable("parsing.bool.invalid", vec![string(value)]));
+    DynamicCommandExceptionType::new(|value| {
+        translatable("parsing.bool.invalid", vec![string(value)])
+    });
 static READER_INVALID_INT: DynamicCommandExceptionType<String> =
-    DynamicCommandExceptionType::new(|value| translatable("parsing.int.invalid", vec![string(value)]));
+    DynamicCommandExceptionType::new(|value| {
+        translatable("parsing.int.invalid", vec![string(value)])
+    });
 static READER_EXPECTED_INT: LazyLock<SimpleCommandExceptionType> =
     LazyLock::new(|| simple("parsing.int.expected"));
 static READER_INVALID_LONG: DynamicCommandExceptionType<String> =
-    DynamicCommandExceptionType::new(|value| translatable("parsing.long.invalid", vec![string(value)]));
+    DynamicCommandExceptionType::new(|value| {
+        translatable("parsing.long.invalid", vec![string(value)])
+    });
 static READER_EXPECTED_LONG: LazyLock<SimpleCommandExceptionType> =
     LazyLock::new(|| simple("parsing.long.expected"));
 static READER_INVALID_DOUBLE: DynamicCommandExceptionType<String> =
@@ -89,7 +97,9 @@ static READER_EXPECTED_FLOAT: LazyLock<SimpleCommandExceptionType> =
 static READER_EXPECTED_BOOL: LazyLock<SimpleCommandExceptionType> =
     LazyLock::new(|| simple("parsing.bool.expected"));
 static READER_EXPECTED_SYMBOL: DynamicCommandExceptionType<String> =
-    DynamicCommandExceptionType::new(|symbol| translatable("parsing.expected", vec![string(symbol)]));
+    DynamicCommandExceptionType::new(|symbol| {
+        translatable("parsing.expected", vec![string(symbol)])
+    });
 static DISPATCHER_UNKNOWN_COMMAND: LazyLock<SimpleCommandExceptionType> =
     LazyLock::new(|| simple("command.unknown.command"));
 static DISPATCHER_UNKNOWN_ARGUMENT: LazyLock<SimpleCommandExceptionType> =

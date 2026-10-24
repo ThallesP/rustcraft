@@ -1,10 +1,13 @@
 //! java/lang/Character.java
 //!
 //! Only `digit(char, int)` in radixes 10 and 16, which `Integer.parseInt` reads digits with (a
-//! text color's hex). The golden suite keeps to those two (`where()`). And `isSpaceChar(char)` and
-//! `isISOControl(char)`, which `URI`'s parser tells the non-ASCII characters it allows unescaped
-//! with: `java.net.URI`'s goldens check them on every char outside the surrogates. And
-//! `isWhitespace(char)`, which Brigadier's reader skips, checked on every char.
+//! text color's hex), and 2, which SNBT's binary numbers parse in (ASCII digits only, which
+//! `net.minecraft.nbt.TagParser`'s goldens check). The golden suite keeps to 10 and 16
+//! (`where()`). And `isSpaceChar(char)` and `isISOControl(char)`, which `URI`'s parser tells the
+//! non-ASCII characters it allows unescaped with: `java.net.URI`'s goldens check them on every
+//! char outside the surrogates. And `isWhitespace(char)`, which Brigadier's reader skips, checked
+//! on every char. And `isValidCodePoint(int)` and `toString(int)`, which SNBT's `\x`, `\u` and
+//! `\U` escapes make their character with (`net.minecraft.nbt.TagParser`'s goldens check them).
 
 pub struct Character;
 
@@ -26,13 +29,13 @@ const SPACE_CHARS: [u16; 19] = [
 ];
 
 impl Character {
-    /// `digit(char, radix)` for radix 10 or 16: a decimal digit's value, or a Latin letter's
+    /// `digit(char, radix)` for radix 2, 10 or 16: a decimal digit's value, or a Latin letter's
     /// (`A` to `Z`, either case, ASCII or fullwidth) from 10 up, if it's less than the radix; else
     /// -1. Panics on another radix, which isn't ported.
     pub fn digit(ch: u16, radix: i32) -> i32 {
         assert!(
-            radix == 10 || radix == 16,
-            "Character.digit is only ported for radixes 10 and 16"
+            radix == 2 || radix == 10 || radix == 16,
+            "Character.digit is only ported for radixes 2, 10 and 16"
         );
         let value = DIGIT_ZEROS
             .iter()
@@ -61,6 +64,26 @@ impl Character {
         (Character::is_space_char(ch) && ![0x00A0, 0x2007, 0x202F].contains(&ch))
             || (0x09..=0x0D).contains(&ch)
             || (0x1C..=0x1F).contains(&ch)
+    }
+
+    /// `isValidCodePoint(int)`: U+0000 to U+10FFFF.
+    pub fn is_valid_code_point(code_point: i32) -> bool {
+        ((code_point as u32) >> 16) < ((0x10FFFF + 1) >> 16)
+    }
+
+    /// `toString(int)` of a valid code point, as Java's UTF-16 units: one for the Basic
+    /// Multilingual Plane (a lone surrogate too), a surrogate pair past it.
+    pub fn to_string_code_point(code_point: i32) -> Vec<u16> {
+        let code_point = code_point as u32;
+        if code_point < 0x10000 {
+            vec![code_point as u16]
+        } else {
+            let offset = code_point - 0x10000;
+            vec![
+                0xD800 | (offset >> 10) as u16,
+                0xDC00 | (offset & 0x3FF) as u16,
+            ]
+        }
     }
 
     /// `isISOControl(char)`: U+0000 to U+001F and U+007F to U+009F.

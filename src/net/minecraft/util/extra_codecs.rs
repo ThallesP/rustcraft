@@ -441,11 +441,7 @@ pub fn convert<T: OpsValue, U: OpsValue>(
     out_ops: &dyn DynamicOps<U>,
     input: &T,
 ) -> U {
-    let same = in_ops.kind() == out_ops.kind() && in_ops.kind() != OpsKind::Registry;
-    let to_delegate = in_ops.kind() == OpsKind::Registry
-        && out_ops.kind() != OpsKind::Registry
-        && in_ops.delegate_kind() == out_ops.kind();
-    if same || to_delegate {
+    if converts_to_input(in_ops, out_ops) {
         // The same ops, so the same kind of value.
         let input: &dyn std::any::Any = input;
         if let Some(same) = input.downcast_ref::<U>() {
@@ -453,6 +449,19 @@ pub fn convert<T: OpsValue, U: OpsValue>(
         }
     }
     T::convert_to(out_ops, input)
+}
+
+/// Whether `convert` hands back the input itself, which Java's callers can tell by reference
+/// (`CompoundTag.CODEC` copies it): the same ops, or a `RegistryOps` to its delegate.
+pub fn converts_to_input<T: OpsValue, U: OpsValue>(
+    in_ops: &dyn DynamicOps<T>,
+    out_ops: &dyn DynamicOps<U>,
+) -> bool {
+    let same = in_ops.kind() == out_ops.kind() && in_ops.kind() != OpsKind::Registry;
+    let to_delegate = in_ops.kind() == OpsKind::Registry
+        && out_ops.kind() != OpsKind::Registry
+        && in_ops.delegate_kind() == out_ops.kind();
+    same || to_delegate
 }
 
 /// `ExtraCodecs.LateBoundIdMapper`: values by id, put after the codec's made. Java's `HashBiMap`

@@ -31,7 +31,11 @@ impl CommandSyntaxException {
         }
     }
 
-    pub fn with_context(message: Arc<dyn Message>, input: &str, cursor: i32) -> CommandSyntaxException {
+    pub fn with_context(
+        message: Arc<dyn Message>,
+        input: &str,
+        cursor: i32,
+    ) -> CommandSyntaxException {
         CommandSyntaxException {
             message,
             input: Some(input.to_owned()),

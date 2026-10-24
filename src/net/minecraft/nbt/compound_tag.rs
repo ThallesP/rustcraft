@@ -1,18 +1,31 @@
 //! net/minecraft/nbt/CompoundTag.java
 //!
-//! Not ported yet: `toString` and `accept`, like every tag's (see `Tag`); `CODEC`, `store`,
+//! Not ported yet: `toString` and `accept`, like every tag's (see `Tag`); `store`,
 //! `storeNullable` and `read`, which wait for DataFixerUpper's codecs; `forEach`, whose
 //! `BiConsumer` the golden harness can't generate (iterate `entry_set` instead). The
 //! package-private `shallowCopy`, which `NbtOps` calls, copies the map (`new HashMap<>(tags)`,
 //! sized for its size) with its tags, which Java shares: a copy of a value nothing changes after.
 //!
+//! `CODEC` is `Codec.PASSTHROUGH` read as the tag its data converts to, which must be a compound,
+//! and written as the compound's data: `ExtraCodecs`' `NbtConverter`, which is that passthrough
+//! for NBT, made to take and give compounds. A compound read from NBT is a copy (`copy()`, a new
+//! map grown by putting each tag, so its table can differ), and so is what's written, like Java's.
+//! `TagParser.LENIENT_CODEC`'s goldens check it.
+//!
 //! Its tags are in a `java::util::hash_map::HashMap`, a port of Java's, since a compound writes
 //! its tags in the order its map iterates them. A key's getters hand out what they find, or the
 //! `…Or` default, for a key that's missing or holds another kind of tag.
 
-use std::fmt;
-
 use std::borrow::Cow;
+use std::fmt;
+use std::sync::LazyLock;
+
+use crate::com::mojang::datafixers::util::pair::Pair;
+use crate::com::mojang::serialization::codec::{BoxedCodec, StaticCodec};
+use crate::com::mojang::serialization::data_result::DataResult;
+use crate::com::mojang::serialization::decoder::Decoder;
+use crate::com::mojang::serialization::dynamic_ops::{DynamicOps, OpsValue};
+use crate::com::mojang::serialization::encoder::{Encoder, Valued};
 
 use crate::java::io::data_input::DataInput;
 use crate::java::io::data_output::DataOutput;
@@ -27,6 +40,7 @@ use crate::net::minecraft::nbt::list_tag::ListTag;
 use crate::net::minecraft::nbt::long_array_tag::LongArrayTag;
 use crate::net::minecraft::nbt::long_tag::LongTag;
 use crate::net::minecraft::nbt::nbt_accounter::NbtAccounter;
+use crate::net::minecraft::nbt::nbt_ops::NbtOps;
 use crate::net::minecraft::nbt::numeric_tag::NumericTag;
 use crate::net::minecraft::nbt::short_tag::ShortTag;
 use crate::net::minecraft::nbt::string_tag::{self, StringTag};
@@ -34,6 +48,39 @@ use crate::net::minecraft::nbt::string_tag_visitor::StringTagVisitor;
 use crate::net::minecraft::nbt::tag::{Tag, class};
 use crate::net::minecraft::nbt::tag_type::TagType;
 use crate::net::minecraft::nbt::tag_types::TagTypes;
+use crate::net::minecraft::util::extra_codecs::{self, NbtConverter};
+
+static CODEC: StaticCodec<CompoundTag> = LazyLock::new(|| BoxedCodec::new(CompoundTagCodec));
+
+/// `CODEC`: `Codec.PASSTHROUGH.comapFlatMap(…)`, decoding a compound (a copy, when converting hands
+/// back the input itself) and encoding a copy.
+#[derive(Clone, Copy)]
+struct CompoundTagCodec;
+
+impl Valued for CompoundTagCodec {
+    type Value = CompoundTag;
+}
+
+impl<T: OpsValue> Decoder<T> for CompoundTagCodec {
+    fn decode(&self, ops: &dyn DynamicOps<T>, input: &T) -> DataResult<Pair<CompoundTag, T>> {
+        let same = extra_codecs::converts_to_input(ops, &NbtOps::INSTANCE);
+        NbtConverter.decode(ops, input).flat_map(|pair| {
+            let (tag, rest) = pair.into_parts();
+            let result = match tag {
+                Tag::Compound(compound_tag) if same => DataResult::success(compound_tag.copy()),
+                Tag::Compound(compound_tag) => DataResult::success(compound_tag),
+                tag => DataResult::error(move || format!("Not a compound tag: {tag}")),
+            };
+            result.map(|result| Pair::new(result, rest))
+        })
+    }
+}
+
+impl<T: OpsValue> Encoder<T> for CompoundTagCodec {
+    fn encode(&self, input: &CompoundTag, ops: &dyn DynamicOps<T>, prefix: T) -> DataResult<T> {
+        NbtConverter.encode(&Tag::Compound(input.copy()), ops, prefix)
+    }
+}
 
 /// Tags by name in NBT.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -42,6 +89,7 @@ pub struct CompoundTag {
 }
 
 impl CompoundTag {
+    pub const CODEC: &'static StaticCodec<CompoundTag> = &CODEC;
     pub const TYPE: TagType = TagType::Compound;
     const SELF_SIZE_IN_BYTES: i32 = 48;
 
@@ -450,8 +498,11 @@ mod tests {
         ] {
             golden.pending(name, "comes with the visitors");
         }
-        for name in [
+        golden.pending(
             "CODEC",
+            "an instance suite can't encode a codec: TagParser's LENIENT_CODEC goldens check it",
+        );
+        for name in [
             "read(Lcom/mojang/serialization/MapCodec;)Ljava/util/Optional;",
             "read(Lcom/mojang/serialization/MapCodec;Lcom/mojang/serialization/DynamicOps;)Ljava/util/Optional;",
             "read(Ljava/lang/String;Lcom/mojang/serialization/Codec;)Ljava/util/Optional;",

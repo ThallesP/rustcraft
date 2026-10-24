@@ -92,7 +92,9 @@ impl StringReader {
     }
 
     pub fn is_allowed_number(c: u16) -> bool {
-        (u16::from(b'0')..=u16::from(b'9')).contains(&c) || c == u16::from(b'.') || c == u16::from(b'-')
+        (u16::from(b'0')..=u16::from(b'9')).contains(&c)
+            || c == u16::from(b'.')
+            || c == u16::from(b'-')
     }
 
     pub fn is_quoted_string_start(c: u16) -> bool {
@@ -162,7 +164,7 @@ impl StringReader {
         (u16::from(b'0')..=u16::from(b'9')).contains(&c)
             || (u16::from(b'A')..=u16::from(b'Z')).contains(&c)
             || (u16::from(b'a')..=u16::from(b'z')).contains(&c)
-            || [b'_', b'-', b'.', b'+'].iter().any(|&allowed| c == u16::from(allowed))
+            || b"_-.+".iter().any(|&allowed| c == u16::from(allowed))
     }
 
     pub fn read_unquoted_string(&mut self) -> String {
@@ -262,8 +264,9 @@ impl StringReader {
         String::from_utf16_lossy(&self.units[start as usize..end as usize])
     }
 
-    // `string.charAt(index)`; panics where Java throws `StringIndexOutOfBoundsException`.
-    fn char_at(&self, index: i32) -> u16 {
+    /// `getString().charAt(index)`, which the parse rules over a reader read the string with;
+    /// panics where Java throws `StringIndexOutOfBoundsException`.
+    pub fn char_at(&self, index: i32) -> u16 {
         assert!(
             0 <= index && index < self.get_total_length(),
             "StringIndexOutOfBoundsException: Index {index} out of bounds for length {}",
@@ -290,8 +293,14 @@ mod tests {
         Ok(match name {
             "readInt" => json!(reader.read_int().map_err(error)?),
             "readLong" => json!(reader.read_long().map_err(error)?),
-            "readDouble" => json!(format!("{:016x}", reader.read_double().map_err(error)?.to_bits())),
-            "readFloat" => json!(format!("{:08x}", reader.read_float().map_err(error)?.to_bits())),
+            "readDouble" => json!(format!(
+                "{:016x}",
+                reader.read_double().map_err(error)?.to_bits()
+            )),
+            "readFloat" => json!(format!(
+                "{:08x}",
+                reader.read_float().map_err(error)?.to_bits()
+            )),
             "readUnquotedString" => json!(reader.read_unquoted_string()),
             "readQuotedString" => json!(reader.read_quoted_string().map_err(error)?),
             "readString" => json!(reader.read_string().map_err(error)?),
