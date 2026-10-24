@@ -892,7 +892,12 @@ impl BlockState {
     /// `getFaceOcclusionShape`: nothing and the whole block are the shared constants, which the
     /// renderer tells apart by reference.
     pub fn get_face_occlusion_shape(&self, direction: Direction) -> VoxelShape {
-        self.shapes().occlusion_shapes_by_face[direction as usize].clone()
+        self.face_occlusion_shape(direction).clone()
+    }
+
+    /// `getFaceOcclusionShape` borrowed, which `Block.shouldRenderFace` compares by reference.
+    pub fn face_occlusion_shape(&self, direction: Direction) -> &'static VoxelShape {
+        &self.shapes().occlusion_shapes_by_face[direction as usize]
     }
 
     /// `getOcclusionShape()`: the block's, or nothing for a block that can't occlude.

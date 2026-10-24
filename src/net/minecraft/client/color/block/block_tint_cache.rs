@@ -4,7 +4,8 @@
 //! y, then the column, -1 until worked out. Java's is shared by the threads that mesh sections,
 //! with locks and the latest chunk per thread; the port's is the game thread's, so its state is in
 //! cells, its latest chunk one for all. Its source, Java's function of the level, is a parameter
-//! of `get_color`, since the level owns the cache.
+//! of `get_color`, since the level owns the cache. A chunk's layers are by y in a table that grows
+//! to the ys asked for, where Java's array map searches its layers in turn: the same layers.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -108,19 +109,35 @@ impl BlockTintCache {
 /// `BlockTintCache.CacheData`: a chunk's layers, by y.
 #[derive(Default)]
 struct CacheData {
-    cache: RefCell<HashMap<i32, Box<[i32; BLOCKS_PER_LAYER]>>>,
+    cache: RefCell<Layers>,
     invalidated: Cell<bool>,
+}
+
+/// The layers made so far, by y from `min_y`.
+#[derive(Default)]
+struct Layers {
+    min_y: i32,
+    by_y: Vec<Option<Box<[i32; BLOCKS_PER_LAYER]>>>,
 }
 
 impl CacheData {
     /// The layer at y, made the first time, all -1.
     fn get_layer<R>(&self, y: i32, with: impl FnOnce(&mut [i32; BLOCKS_PER_LAYER]) -> R) -> R {
         let mut cache = self.cache.borrow_mut();
-        with(
+        if cache.by_y.is_empty() {
+            cache.min_y = y;
+        } else if y < cache.min_y {
+            let below = (cache.min_y - y) as usize;
             cache
-                .entry(y)
-                .or_insert_with(|| Box::new([-1; BLOCKS_PER_LAYER])),
-        )
+                .by_y
+                .splice(0..0, std::iter::repeat_with(|| None).take(below));
+            cache.min_y = y;
+        }
+        let index = (y - cache.min_y) as usize;
+        if index >= cache.by_y.len() {
+            cache.by_y.resize_with(index + 1, || None);
+        }
+        with(cache.by_y[index].get_or_insert_with(|| Box::new([-1; BLOCKS_PER_LAYER])))
     }
 
     fn is_invalidated(&self) -> bool {

@@ -1,7 +1,9 @@
 //! it/unimi/dsi/fastutil/HashCommon.java
 //!
 //! From fastutil's bytecode (it publishes no sources with the game): what its open hash sets
-//! size and place their keys with.
+//! size and place their keys with. `MixHasher` hashes a `long` key with `mix`, for std's maps
+//! standing in for fastutil's `Long2ObjectOpenHashMap`s that are only looked up in, never iterated
+//! (the light engine's layers): std's default hasher, SipHash, costs more than the lookup.
 
 /*
  * Copyright (C) 2002-2024 Sebastiano Vigna
@@ -21,8 +23,33 @@
  * Translated to Rust and changed for rustcraft.
  */
 
+use std::hash::{BuildHasherDefault, Hasher};
+
 /// fastutil's hashing helpers.
 pub struct HashCommon;
+
+/// A hasher of one `long`, its `mix`.
+#[derive(Default)]
+pub struct MixHasher(u64);
+
+/// What std's maps take to hash their keys with `MixHasher`.
+pub type BuildMixHasher = BuildHasherDefault<MixHasher>;
+
+impl Hasher for MixHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_i64((self.0 << 8 | u64::from(byte)) as i64);
+        }
+    }
+
+    fn write_i64(&mut self, key: i64) {
+        self.0 = HashCommon::mix_i64(key) as u64;
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
 
 impl HashCommon {
     /// `mix(long)`: the key's bits spread by the golden ratio, which picks its slot.

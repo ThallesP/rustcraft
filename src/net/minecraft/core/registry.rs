@@ -8,8 +8,10 @@
 //! values come with the registries' classes: a registry whose class is ported holds its values in
 //! id order (`with_values`, `RegistryValues`), which `value` hands out for a holder
 //! (`Holder.value()`). Java's registries compare by reference; here two registries with values
-//! are the same when they share them.
+//! are the same when they share them. An element's id is found by its key in a map, like
+//! `MappedRegistry`'s `toId`, which the tints ask 25 times a block.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::net::minecraft::core::holder::Holder;
@@ -27,7 +29,35 @@ use crate::net::minecraft::world::level::dimension::dimension_type::DimensionTyp
 pub struct Registry {
     key: ResourceKey,
     by_id: Vec<ResourceKey>,
+    to_id: KeyIds,
     values: Option<RegistryValues>,
+}
+
+/// Each element's id by its key, the first for a key given twice: what `by_id` says, so it
+/// prints as nothing and compares equal.
+#[derive(Clone, Default)]
+struct KeyIds(HashMap<ResourceKey, i32>);
+
+impl KeyIds {
+    fn of(by_id: &[ResourceKey]) -> KeyIds {
+        let mut ids = HashMap::with_capacity(by_id.len());
+        for (id, key) in by_id.iter().enumerate() {
+            ids.entry(key.clone()).or_insert(id as i32);
+        }
+        KeyIds(ids)
+    }
+}
+
+impl std::fmt::Debug for KeyIds {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("..")
+    }
+}
+
+impl PartialEq for KeyIds {
+    fn eq(&self, _other: &KeyIds) -> bool {
+        true
+    }
 }
 
 /// The values of a registry's elements in id order, for the registries whose classes are ported.
@@ -101,6 +131,7 @@ impl Registry {
     pub fn new(key: ResourceKey, by_id: Vec<ResourceKey>) -> Registry {
         Registry {
             key,
+            to_id: KeyIds::of(&by_id),
             by_id,
             values: None,
         }
@@ -123,6 +154,7 @@ impl Registry {
         assert_eq!(by_id.len(), count, "a value for each element");
         Registry {
             key,
+            to_id: KeyIds::of(&by_id),
             by_id,
             values: Some(values),
         }
@@ -151,15 +183,16 @@ impl Registry {
 
     /// `get(ResourceKey)`: the element's holder, if it has the key.
     pub fn get(&self, key: &ResourceKey) -> Option<Holder> {
-        self.by_id
-            .contains(key)
+        self.to_id
+            .0
+            .contains_key(key)
             .then(|| Holder::Reference(key.clone()))
     }
 
     /// `getOrThrow(key)`'s holder: panics for a key it doesn't have, where Java throws
     /// `IllegalStateException`.
     pub fn get_or_throw(&self, key: &ResourceKey) -> Holder {
-        if self.by_id.contains(key) {
+        if self.to_id.0.contains_key(key) {
             Holder::Reference(key.clone())
         } else {
             panic!("Missing element {key}")
@@ -189,8 +222,8 @@ impl Registry {
     /// `asHolderIdMap().getIdOrThrow(holder)`.
     pub fn holder_id_or_throw(&self, holder: &Holder) -> i32 {
         let Holder::Reference(key) = holder;
-        match self.by_id.iter().position(|element| element == key) {
-            Some(id) => id as i32,
+        match self.to_id.0.get(key) {
+            Some(&id) => id,
             None => panic!("Can't find id for '{key}' in map {}", self.key),
         }
     }
@@ -201,10 +234,7 @@ impl Registry {
 impl IdMap<Holder> for Registry {
     fn get_id(&self, thing: &Holder) -> i32 {
         let Holder::Reference(key) = thing;
-        self.by_id
-            .iter()
-            .position(|element| element == key)
-            .map_or(-1, |id| id as i32)
+        self.to_id.0.get(key).map_or(-1, |&id| id)
     }
 
     fn by_id(&self, id: i32) -> Option<Holder> {

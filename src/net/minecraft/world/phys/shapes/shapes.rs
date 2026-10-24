@@ -76,6 +76,16 @@ impl Shapes {
         BLOCK.clone()
     }
 
+    /// `block()` borrowed, to compare a shape with by reference without sharing it again.
+    pub fn block_ref() -> &'static VoxelShape {
+        &BLOCK
+    }
+
+    /// `empty()` borrowed.
+    pub fn empty_ref() -> &'static VoxelShape {
+        &EMPTY
+    }
+
     /// The `INFINITY` field: the shape of all space.
     pub fn infinity() -> VoxelShape {
         INFINITY.clone()

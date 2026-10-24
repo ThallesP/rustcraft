@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
+use crate::it::unimi::dsi::fastutil::hash_common::BuildMixHasher;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::section_pos::SectionPos;
@@ -34,7 +35,7 @@ impl SkyLightSectionStorage {
                 LightLayer::SKY,
                 SkyDataLayerStorageMap::new(
                     DataLayerStorageMap::default(),
-                    HashMap::new(),
+                    HashMap::default(),
                     i32::MAX,
                 ),
             ),
@@ -221,13 +222,13 @@ impl DerefMut for SkyLightSectionStorage {
 pub struct SkyDataLayerStorageMap {
     base: DataLayerStorageMap,
     current_lowest_y: i32,
-    top_sections: HashMap<i64, i32>,
+    top_sections: HashMap<i64, i32, BuildMixHasher>,
 }
 
 impl SkyDataLayerStorageMap {
     fn new(
         map: DataLayerStorageMap,
-        top_sections: HashMap<i64, i32>,
+        top_sections: HashMap<i64, i32, BuildMixHasher>,
         current_lowest_y: i32,
     ) -> SkyDataLayerStorageMap {
         SkyDataLayerStorageMap {

@@ -4,7 +4,9 @@
 //! light, tints and cardinal lighting. Java's region holds the `ClientLevel` and its light engine;
 //! here it holds a `BlockAndTintGetter`, the `ClientLevel` or a test's level, whose light engine it
 //! hands out and whose light it asks.
-//! Block entities aren't ported (`SectionCopy`).
+//! Block entities aren't ported (`SectionCopy`). The region's own section, which its compile reads
+//! most, is decoded once into its states (`center`), the rest read from their copies' containers:
+//! the same states.
 
 use std::sync::Arc;
 
@@ -26,6 +28,7 @@ pub struct RenderSectionRegion<'a> {
     min_section_y: i32,
     min_section_z: i32,
     sections: Vec<Arc<SectionCopy>>,
+    center: Option<Box<[BlockState]>>,
     level: &'a dyn BlockAndTintGetter,
     cardinal_lighting: CardinalLighting,
 }
@@ -33,6 +36,8 @@ pub struct RenderSectionRegion<'a> {
 impl<'a> RenderSectionRegion<'a> {
     pub const RADIUS: i32 = 1;
     pub const SIZE: i32 = 3;
+    /// The region's own section's index in `sections`.
+    const CENTER: usize = 13;
 
     pub fn new(
         level: &'a dyn BlockAndTintGetter,
@@ -45,21 +50,11 @@ impl<'a> RenderSectionRegion<'a> {
             min_section_x,
             min_section_y,
             min_section_z,
+            center: sections[RenderSectionRegion::CENTER].decode(),
             sections,
             level,
             cardinal_lighting: level.cardinal_lighting(),
         }
-    }
-
-    fn get_section(&self, section_x: i32, section_y: i32, section_z: i32) -> &SectionCopy {
-        &self.sections[RenderSectionRegion::index(
-            self.min_section_x,
-            self.min_section_y,
-            self.min_section_z,
-            section_x,
-            section_y,
-            section_z,
-        )]
     }
 
     pub fn index(
@@ -78,12 +73,21 @@ impl<'a> RenderSectionRegion<'a> {
 
 impl BlockGetter for RenderSectionRegion<'_> {
     fn get_block_state(&self, pos: &BlockPos) -> BlockState {
-        self.get_section(
+        let index = RenderSectionRegion::index(
+            self.min_section_x,
+            self.min_section_y,
+            self.min_section_z,
             SectionPos::block_to_section_coord(pos.get_x()),
             SectionPos::block_to_section_coord(pos.get_y()),
             SectionPos::block_to_section_coord(pos.get_z()),
-        )
-        .get_block_state(pos)
+        );
+        if index == RenderSectionRegion::CENTER
+            && let Some(center) = &self.center
+        {
+            return center[((pos.get_y() & 15) << 8 | (pos.get_z() & 15) << 4 | (pos.get_x() & 15))
+                as usize];
+        }
+        self.sections[index].get_block_state(pos)
     }
 
     fn get_fluid_state(&self, pos: &BlockPos) -> FluidState {

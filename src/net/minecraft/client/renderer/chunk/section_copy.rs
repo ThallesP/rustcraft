@@ -40,6 +40,21 @@ impl SectionCopy {
         }
     }
 
+    /// Every state of the copy, by `PalettedContainer`'s index (`(y << 4 | z) << 4 | x`), which a
+    /// region reads its own section's from: none for a section of only air or the debug level's.
+    pub fn decode(&self) -> Option<Box<[BlockState]>> {
+        let section = self.section.as_ref().filter(|_| !self.debug)?;
+        let mut states = Vec::with_capacity(4096);
+        for y in 0..16 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    states.push(section.get(x, y, z));
+                }
+            }
+        }
+        Some(states.into_boxed_slice())
+    }
+
     pub fn get_block_state(&self, pos: &BlockPos) -> BlockState {
         assert!(
             !self.debug,

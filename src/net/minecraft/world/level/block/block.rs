@@ -481,8 +481,8 @@ impl Block {
         neighbor_state: BlockState,
         direction: Direction,
     ) -> bool {
-        let occluder = neighbor_state.get_face_occlusion_shape(direction.get_opposite());
-        if occluder == Shapes::block() {
+        let occluder = neighbor_state.face_occlusion_shape(direction.get_opposite());
+        if occluder == Shapes::block_ref() {
             return false;
         }
 
@@ -490,16 +490,16 @@ impl Block {
             return false;
         }
 
-        if occluder == Shapes::empty() {
+        if occluder == Shapes::empty_ref() {
             return true;
         }
 
-        let shape = state.get_face_occlusion_shape(direction);
-        if shape == Shapes::empty() {
+        let shape = state.face_occlusion_shape(direction);
+        if shape == Shapes::empty_ref() {
             return true;
         }
 
-        Shapes::join_is_not_empty(&shape, &occluder, BooleanOp::ONLY_FIRST)
+        Shapes::join_is_not_empty(shape, occluder, BooleanOp::ONLY_FIRST)
     }
 
     /// `isFaceFull`: whether the shape's face toward `direction` is the whole face.
