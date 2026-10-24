@@ -1411,6 +1411,17 @@ mod tests {
         );
     }
 
+    /// A fall of 13 blocks into a pool 3 deep, to its bottom, swimming up and out; paced (the
+    /// air under water).
+    #[test]
+    fn water_landing() {
+        check_scenario(
+            "water-landing",
+            "d44e678710d4030bfba0516e220fe014",
+            "4bc1281fe90d5e1c463fa43c9f6c51a8",
+        );
+    }
+
     #[test]
     fn entities_falling_blocks() {
         check_scenario(
