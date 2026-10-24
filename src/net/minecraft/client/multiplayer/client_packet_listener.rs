@@ -55,6 +55,7 @@ use crate::net::minecraft::network::connection::{Connection, NettyListener, Spli
 use crate::net::minecraft::network::disconnection_details::DisconnectionDetails;
 use crate::net::minecraft::network::packet_listener::PacketListener;
 use crate::net::minecraft::network::packet_processor::{GameThreadListener, lock};
+use crate::net::minecraft::network::protocol::common::serverbound_client_information_packet::ServerboundClientInformationPacket;
 use crate::net::minecraft::network::protocol::configuration::configuration_protocols::ConfigurationProtocols;
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
@@ -121,6 +122,7 @@ use crate::net::minecraft::network::syncher::entity_data_serializer::EntityDataV
 use crate::net::minecraft::network::tickable_packet_listener::TickablePacketListener;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
+use crate::net::minecraft::server::level::client_information::ClientInformation;
 use crate::net::minecraft::stats::recipe_book_settings::RecipeBookSettings;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::problem_reporter::ScopedCollector;
@@ -160,6 +162,8 @@ pub struct ClientPacketListener {
     // What `Gui` shows of the server's texts (titles, the action bar, the tab list), which isn't
     // ported: kept here for it.
     texts: ServerTexts,
+    /// `remoteClientInformation`: what the server was last told of the options in play.
+    remote_client_information: Option<ClientInformation>,
 }
 
 impl ClientPacketListener {
@@ -190,6 +194,7 @@ impl ClientPacketListener {
                 clock_manager: ClientClockManager::new(),
                 recipe_book_settings: RecipeBookSettings::new(),
                 texts: ServerTexts::default(),
+                remote_client_information: None,
             })
         })
     }
@@ -252,6 +257,15 @@ impl ClientPacketListener {
     /// which is right for every command without such arguments.
     pub fn send_command(&self, command: &str) {
         self.send(ServerboundChatCommandPacket::new(command.to_string()));
+    }
+
+    /// `broadcastClientInformation`: the options the server is told about, when they aren't what
+    /// it was last told in play.
+    pub fn broadcast_client_information(&mut self, information: ClientInformation) {
+        if self.remote_client_information.as_ref() != Some(&information) {
+            self.send(ServerboundClientInformationPacket::new(information.clone()));
+            self.remote_client_information = Some(information);
+        }
     }
 
     pub fn has_client_loaded(&self) -> bool {

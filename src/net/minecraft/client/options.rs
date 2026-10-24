@@ -10,10 +10,19 @@
 //! the player, with `keyChat` and `keyCommand` (T and /), which open the chat, and `framerateLimit`
 //! and `enableVsync` for the game loop. What the screens and the chat read are here with their
 //! defaults: `menuBackgroundBlurriness`, the chat's opacity, line spacing, width, heights and scale,
-//! and `chatColors`.
+//! and `chatColors`. The options a screen sets have their `OptionInstance` getter (`fov`), which
+//! reaches the plain field the client reads.
+
+use std::rc::Rc;
 
 use crate::net::minecraft::client::gui::components::chat_component::ChatComponent;
 use crate::net::minecraft::client::key_mapping::KeyMapping;
+use crate::net::minecraft::client::minecraft::Minecraft;
+use crate::net::minecraft::client::option_instance::{
+    IntRange, OptionField, OptionInstance, ValueSet,
+};
+use crate::net::minecraft::network::chat::component::Component;
+use crate::net::minecraft::network::chat::contents::translatable_contents::TranslationArgument;
 use crate::net::minecraft::server::level::client_information::ClientInformation;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
 use crate::net::minecraft::world::entity::humanoid_arm::HumanoidArm;
@@ -137,6 +146,64 @@ impl Options {
             chat_height_focused: 1.0,
             chat_height_unfocused: ChatComponent::default_unfocused_pct(),
             chat_scale: 1.0,
+        }
+    }
+
+    /// `fov()`: 30 to 110 degrees, 70 reading "Normal" and 110 "Quake Pro", in `fov`.
+    pub fn fov(&self) -> OptionInstance<i32> {
+        OptionInstance::new(
+            "options.fov",
+            OptionInstance::no_tooltip(),
+            Rc::new(|caption, value| match *value {
+                70 => Options::generic_value_label(
+                    caption,
+                    Component::translatable("options.fov.min").into(),
+                ),
+                110 => Options::generic_value_label(
+                    caption,
+                    Component::translatable("options.fov.max").into(),
+                ),
+                _ => Options::generic_value_label_int(caption, *value),
+            }),
+            ValueSet::Sliderable(Rc::new(IntRange::new(30, 110))),
+            70,
+            OptionInstance::no_action(),
+            OptionField {
+                get: |options| options.fov,
+                set: |options, value| options.fov = value,
+            },
+        )
+    }
+
+    /// `genericValueLabel(Component, Component)`.
+    pub fn generic_value_label(caption: &Component, value: Component) -> Component {
+        Component::translatable_with_args(
+            "options.generic_value",
+            vec![
+                TranslationArgument::Component(caption.clone()),
+                TranslationArgument::Component(value),
+            ],
+        )
+        .into()
+    }
+
+    /// `genericValueLabel(Component, int)`.
+    pub fn generic_value_label_int(caption: &Component, value: i32) -> Component {
+        Options::generic_value_label(caption, Component::literal(&value.to_string()).into())
+    }
+
+    /// `save`: `options.txt` isn't written yet (the port reads none either), then
+    /// `broadcastOptions`.
+    pub fn save(&self, minecraft: &Minecraft) {
+        self.broadcast_options(minecraft);
+    }
+
+    /// `broadcastOptions`: the server told about the options, in play.
+    pub fn broadcast_options(&self, minecraft: &Minecraft) {
+        if let Some(connection) = minecraft.get_connection() {
+            connection
+                .borrow_mut()
+                .broadcast_client_information(self.build_player_information());
         }
     }
 

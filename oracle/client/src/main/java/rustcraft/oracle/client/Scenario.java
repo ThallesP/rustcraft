@@ -27,8 +27,8 @@ public record Scenario(String name, World world, Player player, Options options,
 
     /**
      * Either a screenshot, a key pressed and released ({@code key}), characters typed ({@code type}), the cursor moved
-     * to a place in the window ({@code cursor}) or a command sent ({@code command}, without its slash) between two
-     * ticks, or {@code ticks} ticks with {@code keys} held and an optional fixed {@code look}, and the clientbound packet
+     * to a place in the window ({@code cursor}), a mouse button pressed and released where the cursor is ({@code
+     * click}) or a command sent ({@code command}, without its slash) between two ticks, or {@code ticks} ticks with {@code keys} held and an optional fixed {@code look}, and the clientbound packet
      * types to wait for after its last tick, or after the input ({@code waitFor}, TESTING.md).
      */
     public record Step(
@@ -40,7 +40,8 @@ public record Scenario(String name, World world, Player player, Options options,
         @Nullable String key,
         @Nullable String type,
         double @Nullable [] cursor,
-        @Nullable String command
+        @Nullable String command,
+        @Nullable String click
     ) {}
 
     public static final Set<String> KEYS = Set.of("forward", "back", "left", "right", "jump", "sneak", "sprint", "attack", "use");
@@ -54,6 +55,9 @@ public record Scenario(String name, World world, Player player, Options options,
         "tab", 43,
         "backspace", 42
     );
+
+    /** The buttons a {@code click} step presses, by their SDL numbers (InputConstants' MOUSE_BUTTON_ constants). */
+    public static final Map<String, Integer> MOUSE_BUTTONS = Map.of("left", 1);
 
     public static Scenario load(Path path) {
         JsonObject root;
@@ -110,7 +114,7 @@ public record Scenario(String name, World world, Player player, Options options,
 
     private static Step parseStep(JsonObject step) {
         if (step.has("screenshot")) {
-            return new Step(0, Set.of(), null, step.get("screenshot").getAsString(), List.of(), null, null, null, null);
+            return new Step(0, Set.of(), null, step.get("screenshot").getAsString(), List.of(), null, null, null, null, null);
         }
         // Packets that must each have come since the step began: after its last tick, or after its input.
         List<String> waitFor = new ArrayList<>();
@@ -125,17 +129,24 @@ public record Scenario(String name, World world, Player player, Options options,
             if (!PRESSABLE_KEYS.containsKey(key)) {
                 throw new IllegalArgumentException("unknown key '" + key + "', expected one of " + PRESSABLE_KEYS.keySet());
             }
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), key, null, null, null);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), key, null, null, null, null);
         }
         if (step.has("type")) {
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, step.get("type").getAsString(), null, null);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, step.get("type").getAsString(), null, null, null);
         }
         if (step.has("cursor")) {
             JsonArray cursor = step.getAsJsonArray("cursor");
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, new double[]{cursor.get(0).getAsDouble(), cursor.get(1).getAsDouble()}, null);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, new double[]{cursor.get(0).getAsDouble(), cursor.get(1).getAsDouble()}, null, null);
+        }
+        if (step.has("click")) {
+            String button = step.get("click").getAsString();
+            if (!MOUSE_BUTTONS.containsKey(button)) {
+                throw new IllegalArgumentException("unknown mouse button '" + button + "', expected one of " + MOUSE_BUTTONS.keySet());
+            }
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, null, button);
         }
         if (step.has("command")) {
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, step.get("command").getAsString());
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, step.get("command").getAsString(), null);
         }
 
         Set<String> keys = new LinkedHashSet<>();
@@ -159,6 +170,6 @@ public record Scenario(String name, World world, Player player, Options options,
         if (!waitFor.isEmpty() && ticks < 1) {
             throw new IllegalArgumentException("a step that waits for packets needs a tick");
         }
-        return new Step(ticks, Set.copyOf(keys), look, null, List.copyOf(waitFor), null, null, null, null);
+        return new Step(ticks, Set.copyOf(keys), look, null, List.copyOf(waitFor), null, null, null, null, null);
     }
 }

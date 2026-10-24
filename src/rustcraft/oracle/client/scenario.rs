@@ -67,14 +67,17 @@ pub struct Step {
     pub r#type: Option<String>,
     pub cursor: Option<[f64; 2]>,
     pub command: Option<String>,
+    /// A mouse button pressed and released where the cursor is (`MOUSE_BUTTONS`).
+    pub click: Option<String>,
 }
 
 impl Step {
-    /// Whether it's input between two ticks (a key, characters, the cursor or a command).
+    /// Whether it's input between two ticks (a key, characters, the cursor, a click or a command).
     pub fn is_input(&self) -> bool {
         self.key.is_some()
             || self.r#type.is_some()
             || self.cursor.is_some()
+            || self.click.is_some()
             || self.command.is_some()
     }
 }
@@ -93,6 +96,10 @@ impl Scenario {
         ("tab", 43),
         ("backspace", 42),
     ];
+
+    /// The buttons a `click` step presses, by their SDL numbers (`InputConstants`'
+    /// `MOUSE_BUTTON_` constants).
+    pub const MOUSE_BUTTONS: [(&'static str, i32); 1] = [("left", 1)];
 
     pub fn load(path: &Path) -> Result<Scenario, String> {
         let text = std::fs::read_to_string(path)
@@ -236,6 +243,20 @@ impl Scenario {
                     cursor[0].as_f64().unwrap_or_default(),
                     cursor[1].as_f64().unwrap_or_default(),
                 ]),
+                wait_for: wait_for.clone(),
+                ..Step::default()
+            });
+        }
+        if let Some(button) = step.get("click") {
+            let button = button.as_str().unwrap_or_default();
+            if !Scenario::MOUSE_BUTTONS
+                .iter()
+                .any(|(name, _)| *name == button)
+            {
+                return Err(format!("unknown mouse button '{button}'"));
+            }
+            return Ok(Step {
+                click: Some(button.to_string()),
                 wait_for: wait_for.clone(),
                 ..Step::default()
             });

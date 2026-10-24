@@ -1,4 +1,6 @@
 pub mod abstract_button;
+pub mod abstract_option_slider_button;
+pub mod abstract_slider_button;
 pub mod abstract_string_widget;
 pub mod abstract_widget;
 pub mod button;

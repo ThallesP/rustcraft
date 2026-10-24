@@ -4,11 +4,11 @@
 //! buttons (bugs, feedback, friends, player reporting), and disconnecting, over the blurred level.
 //! On a server the game doesn't pause (`Minecraft.pauseGame`).
 //!
-//! Not ported yet: the screens its buttons open (advancements, statistics, the options, the world
-//! options, the confirmed links, the friends overlay, social interactions), which do nothing; the
-//! server's custom dialog buttons (`getCustomAdditions`: the `pause_screen_additions` dialog tag,
-//! the server links), which a vanilla server has none of; the now playing toast (the oracle's
-//! music is off); the draft report's icon and the player social manager's friend list.
+//! Not ported yet: the screens its buttons open but the options (advancements, statistics, the
+//! world options, the confirmed links, the friends overlay, social interactions), which do
+//! nothing; the server's custom dialog buttons (`getCustomAdditions`: the `pause_screen_additions`
+//! dialog tag, the server links), which a vanilla server has none of; the now playing toast (the
+//! oracle's music is off); the draft report's icon and the player social manager's friend list.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -25,6 +25,7 @@ use crate::net::minecraft::client::gui::layouts::grid_layout::GridLayout;
 use crate::net::minecraft::client::gui::layouts::layout::Layout;
 use crate::net::minecraft::client::gui::layouts::layout_element::LayoutElementRef;
 use crate::net::minecraft::client::gui::layouts::linear_layout::LinearLayout;
+use crate::net::minecraft::client::gui::screens::options::options_screen::OptionsScreen;
 use crate::net::minecraft::client::gui::screens::screen::{self, Screen, ScreenClass};
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::network::chat::component::Component;
@@ -168,13 +169,22 @@ impl PauseScreen {
         );
 
         if minecraft.level.borrow().is_some() {
-            add(
-                widget(PauseScreen::open_screen_button(
+            let options_screen = {
+                let weak = weak.clone();
+                Button::builder(
                     Component::translatable("menu.options").into(),
-                )),
-                1,
-                None,
-            );
+                    Box::new(move |_| {
+                        // `new OptionsScreen(this, …)`: this screen, the game's while it's shown.
+                        if let Some(minecraft) = weak.upgrade() {
+                            let options_screen = OptionsScreen::new(&minecraft, minecraft.screen());
+                            minecraft.set_screen(Some(Rc::new(RefCell::new(options_screen))));
+                        }
+                    }),
+                )
+                .width(BUTTON_WIDTH_HALF)
+                .build()
+            };
+            add(widget(options_screen), 1, None);
             add(
                 widget(PauseScreen::open_screen_button(
                     Component::translatable("options.worldOptions.button").into(),

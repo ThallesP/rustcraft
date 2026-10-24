@@ -494,6 +494,23 @@ const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
     ("chat", "feedback", "a74ffeed5795b07837f9518c105dad32"),
     ("chat", "fading", "fbdf11cea5dbc46f2da297397b1f617d"),
     ("chat", "faded", "217d29f7f3b67b6685884184540b1592"),
+    (
+        "options-no-gui",
+        "options",
+        "1d2e7be5274dcb3303aacbc66c2eff6e",
+    ),
+    ("options-no-gui", "fov", "76b0b7ca7fa3066abc290bcecad01091"),
+    (
+        "options-no-gui",
+        "telemetry",
+        "997b1fef94ee9bfb8edc2d501f2a7a24",
+    ),
+    ("options-no-gui", "back", "079e0fe8327d3f0ac3f1db4d795bb8b6"),
+    (
+        "options-no-gui",
+        "resumed",
+        "b928e0e01496f18eaf778f512dc28801",
+    ),
 ];
 
 fn rgba_digest(pixels: &[u8]) -> String {

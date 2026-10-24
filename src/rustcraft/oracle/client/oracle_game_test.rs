@@ -17,12 +17,12 @@
 //! screenshot renders a frame at a partial tick of 1 and reads it back like
 //! `OracleScreenshot.take`, into `<out>/<scenario>/screenshots/<name>.png`, when the client has a
 //! renderer (the runner makes one for a scenario with screenshots); a key is pressed and released
-//! through the keyboard handler, characters typed, the cursor moved and commands sent, as Fabric's
-//! test input does them, each waiting for its `wait_for` right after it. Keys held while a screen
-//! is up go to the screen, like Java's, so they hold nothing down. "Chunks rendered" is every chunk
-//! the server sends being in the level with its light and, with a renderer, every visible section
-//! compiled (`levelRenderer.hasRenderedAllSections()`), and the settling ends with the camera at
-//! rest too.
+//! through the keyboard handler, characters typed, the cursor moved, a mouse button clicked and
+//! commands sent, as Fabric's test input does them, each waiting for its `wait_for` right after it.
+//! Keys held while a screen is up go to the screen, like Java's, so they hold nothing down.
+//! "Chunks rendered" is every chunk the server sends being in the level with its light and, with a
+//! renderer, every visible section compiled (`levelRenderer.hasRenderedAllSections()`), and the
+//! settling ends with the camera at rest too.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -371,6 +371,15 @@ impl OracleGameTest {
             }
             if let Some([x, y]) = step.cursor {
                 minecraft.mouse_moved_to(x, y);
+            }
+            if let Some(click) = &step.click {
+                let button = Scenario::MOUSE_BUTTONS
+                    .iter()
+                    .find(|(name, _)| name == click)
+                    .map(|(_, button)| *button)
+                    .expect("a button the scenario checked");
+                minecraft.mouse_button(button, true);
+                minecraft.mouse_button(button, false);
             }
             if let Some(command) = &step.command
                 && let Some(connection) = minecraft.get_connection()

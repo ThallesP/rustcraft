@@ -27,6 +27,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::com::mojang::blaze3d::platform::window::Window;
 use crate::com::mojang::renderpearl::api::device::gpu_surface::{GpuSurface, PresentMode};
@@ -308,6 +309,12 @@ impl Minecraft {
 
     /// `isLocalServer`: the port only joins servers.
     pub fn is_local_server(&self) -> bool {
+        false
+    }
+
+    /// `allowsTelemetry`: the user's properties' `TELEMETRY_ENABLED` flag, which an offline user's
+    /// haven't got (`UserApiService.OFFLINE`).
+    pub fn allows_telemetry(&self) -> bool {
         false
     }
 
@@ -875,7 +882,19 @@ impl Minecraft {
         };
         let event = MouseButtonEvent::new(x, y, MouseButtonInfo::new(button, 0));
         if pressed {
-            self.with_screen(|screen| screen.mouse_clicked(&event, false));
+            let Some(screen) = self.screen() else {
+                return;
+            };
+            let now = Instant::now();
+            let double_click = self
+                .mouse_handler
+                .borrow()
+                .is_double_click(&screen, button, now);
+            if self.with_screen(|screen| screen.mouse_clicked(&event, double_click)) == Some(true) {
+                self.mouse_handler
+                    .borrow_mut()
+                    .set_last_click(&screen, button, now);
+            }
         } else {
             self.with_screen(|screen| screen.mouse_released(&event));
         }

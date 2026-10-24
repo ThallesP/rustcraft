@@ -4,13 +4,25 @@
 //! coordinates, and its turning of the player: movement accumulated between frames turns the
 //! player at the default sensitivity (`options.sensitivity()`, 0.5) once a frame
 //! (`handleAccumulatedMovement`) while the mouse is grabbed, which a click on the window does and
-//! a screen undoes, putting the mouse in the window's middle. Not ported yet: the buttons'
-//! bindings (attacking, using, picking), the scroll wheel, dragging, double clicks, the smooth
-//! camera and the spyglass's slower turning, inverted axes. `resyncMousePosition` asks SDL where
+//! a screen undoes, putting the mouse in the window's middle. A click on a screen within 250
+//! milliseconds of the last one it took, with the same button, is a double click (`lastClick`, by
+//! the wall clock like Java's). Not ported yet: the buttons' bindings (attacking, using, picking),
+//! the scroll wheel, dragging, the smooth camera and the spyglass's slower turning, inverted axes. `resyncMousePosition` asks SDL where
 //! the mouse is in Java; here the place it was last moved to stays, which is what a mouse that
 //! didn't move gives.
 
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+use std::time::{Duration, Instant};
+
+use crate::net::minecraft::client::gui::screens::screen::{ScreenClass, ScreenRef};
 use crate::net::minecraft::client::minecraft::Minecraft;
+
+/// `MouseHandler.LastClick`: when a screen last took a click, and which screen.
+struct LastClick {
+    time: Instant,
+    screen: Weak<RefCell<dyn ScreenClass>>,
+}
 
 #[derive(Default)]
 pub struct MouseHandler {
@@ -20,6 +32,8 @@ pub struct MouseHandler {
     accumulated_dy: f64,
     mouse_grabbed: bool,
     ignore_first_move: bool,
+    last_click: Option<LastClick>,
+    last_click_button: i32,
 }
 
 impl MouseHandler {
@@ -27,6 +41,26 @@ impl MouseHandler {
 
     pub fn new() -> MouseHandler {
         MouseHandler::default()
+    }
+
+    /// Whether a click of `button` on `screen` now is a double click.
+    pub fn is_double_click(&self, screen: &ScreenRef, button: i32, now: Instant) -> bool {
+        self.last_click.as_ref().is_some_and(|last_click| {
+            now.duration_since(last_click.time) < Duration::from_millis(250)
+                && last_click
+                    .screen
+                    .upgrade()
+                    .is_some_and(|last_screen| Rc::ptr_eq(&last_screen, screen))
+        }) && self.last_click_button == button
+    }
+
+    /// The click `screen` took, which the next one is a double click after.
+    pub fn set_last_click(&mut self, screen: &ScreenRef, button: i32, time: Instant) {
+        self.last_click = Some(LastClick {
+            time,
+            screen: Rc::downgrade(screen),
+        });
+        self.last_click_button = button;
     }
 
     /// `onMove`: the mouse at a place in the window, which moved by the relative amounts.

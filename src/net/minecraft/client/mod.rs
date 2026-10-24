@@ -15,6 +15,7 @@ pub mod minecraft;
 pub mod model;
 pub mod mouse_handler;
 pub mod multiplayer;
+pub mod option_instance;
 pub mod options;
 pub mod particle;
 pub mod player;

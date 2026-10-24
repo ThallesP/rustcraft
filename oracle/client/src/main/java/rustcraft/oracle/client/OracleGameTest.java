@@ -250,7 +250,7 @@ public final class OracleGameTest implements FabricClientGameTest {
                     answerSince.put(packet, PacketArrivals.count(packet));
                 }
                 // Input between two ticks, handled by the game as it comes (KeyboardHandler.keyPress and charTyped,
-                // MouseHandler.onMove), without a tick: TestInput.pressKey would wait for one, which the trace doesn't
+                // MouseHandler.onMove and onButton), without a tick: TestInput.pressKey would wait for one, which the trace doesn't
                 // have.
                 boolean isInput = true;
                 if (step.key() != null) {
@@ -261,6 +261,10 @@ public final class OracleGameTest implements FabricClientGameTest {
                     input.typeChars(step.type());
                 } else if (step.cursor() != null) {
                     input.setCursorPos(step.cursor()[0], step.cursor()[1]);
+                } else if (step.click() != null) {
+                    int button = Scenario.MOUSE_BUTTONS.get(step.click());
+                    input.holdMouse(button);
+                    input.releaseMouse(button);
                 } else if (step.command() != null) {
                     context.runOnClient(client -> client.player.connection.sendCommand(step.command()));
                 } else {
