@@ -425,7 +425,7 @@ impl LevelRenderer {
         self.compile_sections(level, lighting);
         self.schedule_translucent_section_resort(&camera_state.pos);
         self.upload_terrain_buffers(device);
-        if let Some(view_area) = &self.view_area {
+        if let Some(view_area) = &mut self.view_area {
             let (loaded_chunks, empty_sections) =
                 LevelRenderer::chunk_loading_state(level, view_area);
             self.section_occlusion_graph.update(

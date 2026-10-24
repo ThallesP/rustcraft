@@ -17,6 +17,7 @@ use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::joml::vector3d::Vector3d;
 
@@ -219,7 +220,7 @@ impl SectionOcclusionGraph {
         &mut self,
         camera: &CameraRenderState,
         fov: i32,
-        view_area: &ViewArea,
+        view_area: &mut ViewArea,
         loaded_chunks: HashSet<i64>,
         empty_sections: HashSet<i64>,
     ) {
@@ -242,7 +243,7 @@ impl SectionOcclusionGraph {
         }
     }
 
-    fn run_full_update(&mut self, camera: &CameraRenderState, view_area: &ViewArea) {
+    fn run_full_update(&mut self, camera: &CameraRenderState, view_area: &mut ViewArea) {
         self.needs_full_update = false;
         let mut new_state = GraphState {
             storage: GraphStorage::new(view_area),
@@ -271,7 +272,7 @@ impl SectionOcclusionGraph {
     fn run_partial_update(
         &mut self,
         camera: &CameraRenderState,
-        view_area: &ViewArea,
+        view_area: &mut ViewArea,
         loaded_expected_chunks: &[i64],
     ) {
         let Some(state) = &mut self.current_graph else {
@@ -307,8 +308,8 @@ impl SectionOcclusionGraph {
                 &camera.pos,
                 queue,
                 camera.smart_cull,
-                &mut |section| {
-                    if offset_frustum.is_visible(view_area.section(section).get_bounding_box()) {
+                &mut |bounding_box| {
+                    if offset_frustum.is_visible(bounding_box) {
                         needs_frustum_update = true;
                     }
                 },
@@ -397,12 +398,12 @@ impl SectionOcclusionGraph {
 
     #[allow(clippy::too_many_arguments)]
     fn run_updates(
-        view_area: &ViewArea,
+        view_area: &mut ViewArea,
         storage: &mut GraphStorage,
         camera_pos: &Vec3,
         mut queue: VecDeque<usize>,
         smart_cull: bool,
-        on_section_added: &mut dyn FnMut(usize),
+        on_section_added: &mut dyn FnMut(&AABB),
         empty_sections: &HashSet<i64>,
         loaded_chunks: &HashSet<i64>,
     ) {
@@ -421,8 +422,7 @@ impl SectionOcclusionGraph {
         while let Some(node_section) = queue.pop_front() {
             let node =
                 storage.section_to_node_map[node_section].expect("a queued section has a node");
-            let current_section = view_area.section(node.section);
-            let section_node = current_section.section_node();
+            let section_node = view_area.section(node.section).section_node();
             let chunk_node = SectionOcclusionGraph::chunk_node(section_node);
             if !loaded_chunks.contains(&chunk_node) {
                 storage
@@ -433,15 +433,22 @@ impl SectionOcclusionGraph {
                 continue;
             }
 
-            if !empty_sections.contains(&section_node)
-                && storage.section_tree.add(
-                    node.section,
-                    section_node,
-                    *current_section.get_bounding_box(),
-                )
-            {
-                on_section_added(node.section);
+            if !empty_sections.contains(&section_node) {
+                let bounding_box = *view_area.section(node.section).get_bounding_box();
+                if storage
+                    .section_tree
+                    .add(node.section, section_node, bounding_box)
+                {
+                    on_section_added(&bounding_box);
+                }
+            } else {
+                // A section of only air sees through all its faces, like a compiled empty one.
+                let section = view_area.sections.get_mut(node.section);
+                if section.set_empty_if_uncompiled() {
+                    section.update_upload_time();
+                }
             }
+            let current_section = view_area.section(node.section);
 
             let distant_from_camera = (SectionPos::x_of(section_node) - camera_section_pos.x())
                 .abs()
