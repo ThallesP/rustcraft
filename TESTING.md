@@ -539,6 +539,47 @@ The soak is about the world, not the player's physics, so it keeps the player cl
 
 `RUSTCRAFT_BINARY=path` makes `port_client.py` run that build instead of building the tree's, so a long live check can run on a frozen build while the tree changes.
 
+## Benchmark: the same scene in both clients
+
+Gate 5's numbers come from `tools/bench.py`, which runs vanilla and the port on the same world with the same settings and measures the same points of both. A bench, `oracle/bench/<name>.json`, is a world (seed and level type), the clients' options (window, field of view, GUI scale, render distance 12, `maxFps` 260, which is unlimited), a warm-up at the world's spawn, a path of teleports 48 blocks apart along +x that loads chunks while the player moves, and a view held at a spot far from the path, whose chunks none of the path's are. `terrain` is the normal preset of seed 0, 160 blocks up looking 25° down over the land; `flat` the flat preset, standing on the grass.
+
+```sh
+flock /tmp/rustcraft-oracle.lock python3 tools/bench.py terrain --runs 3 --perf --accept-eula     # both clients, 3 runs each
+flock /tmp/rustcraft-oracle.lock python3 tools/bench.py flat --runs 3 --clients port --accept-eula
+flock /tmp/rustcraft-oracle.lock python3 tools/bench.py terrain --runs 0 --capture --accept-eula  # the offline benchmark's capture
+target/release/rustcraft --benchLevel target/bench/terrain/capture.jsonl                            # the offline benchmark
+```
+
+One vanilla server serves a session: it generates the bench's chunks first (force loaded, then released), with its ticks frozen, its entities killed (the port draws none yet) and a barrier under each spot. Each client then joins it in turn, alternating which goes first, windowed under its own Xvfb on llvmpipe like the oracle's runs, and the server's console takes the player along: the spawn for `warmup_seconds`, each spot of the path for its `seconds`, then the hold's spot, which settles for `settle_seconds` and is held for `seconds`. The player's saved data is deleted between runs, so every run joins at the spawn. The server runs with `vanilla_server.py --no-watchdog` (`max-tick-time -1`): generating a force-loaded block of chunks is one server tick, which took over the watchdog's minute once at a load of 42.
+
+**Vanilla is the unmodified client jar**, launched like the launcher launches it: the launcher's default JVM flags for a new installation (`-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M`), the version's JVM arguments for Linux from `version.json`, the launcher's asset index, and JDK 25 (the version's `javaVersion`). Its game directory is its own, with the oracle client's `options.txt` and the bench's options on top, no inactivity frame limit, no sound and no Realms notifications. It's measured by JFR's method tracing (`jdk.MethodTrace`, JDK 25), which only times: started once the player has joined (`jcmd JFR.start`), so it doesn't slow the startup, with no other JFR event, and turned into the port's events by `tools/JfrEvents.java`. The warm-up gives its JIT the spawn's chunks and frames before anything is timed.
+
+**The port** is the release build, run with `--bench BENCH.json`, which sets the same options, and `--benchOut FILE`, which records the same points (`src/rustcraft/bench.rs`) from a thread of its own. A client `port@BINARY` runs another build, to compare two builds on one world.
+
+The points, the same methods in both:
+
+| Event | Vanilla (traced) | Port (recorded) |
+| --- | --- | --- |
+| `frame` | `Minecraft.runTick` | `Minecraft::run`'s turn |
+| `submit` | `GlCommandEncoder.submit`, after the blit to the window | right before `present`, after the blit |
+| `tick` | `Minecraft.tick` | `Minecraft::tick` |
+| `compile` | `SectionCompiler.compile` (worker threads) | `SectionCompiler::compile` (the render thread) |
+| `light` | `ClientLevel.update` (the queued light updates, then the engine's) | `ClientLevel::update` |
+| `chunk` | `ClientPacketListener.handleLevelChunkWithLight` on the render thread | the game thread's half of the same handler |
+
+What a run reports (`summary.json` has every run's, the table the median and range of the runs):
+- **startup**: the process's start (`/proc`) to the server's "joined the game", which includes reaching the server: both clients connect at once (`--quickPlayMultiplayer`).
+- **held view**: frames a second (frame events in the 30 seconds held), a frame's time (one frame's start to the next), the time from a frame's start to its submit, and the CPU time of the render thread and of the whole process (`/proc/<pid>/task/<tid>/stat`) divided by the frames. With `--perf`, 10 more seconds of the render thread sampled by `perf record` (sudo) split into the client's own code, the driver's (Mesa's libraries, X11's, and code without a symbol, which is llvmpipe's JIT-compiled shaders; vanilla's JIT-compiled Java is named by the JVM's perf map, `jcmd Compiler.perfmap`) and the kernel's. The client's share is "CPU per frame outside the driver".
+- **loading**: while the path's chunks come, frames a second and frame times, section compiles a second and each compile's time (wall time: vanilla's run on worker threads beside llvmpipe's), each chunk's handling on the game thread, and the light updates' time per chunk.
+- **settle**: the hold's teleport to the end of the last section compile before the hold: how long everything visible takes to compile from nothing, the server's sending included (the same server for both).
+- **ticks** and **resident memory** (VmRSS at the end of the hold, VmHWM).
+
+Neither client is limited to a frame rate, so on this machine's llvmpipe a frame's time is mostly the driver's rasterizing, on llvmpipe's threads; the render thread's CPU and its share outside the driver are what say something about the clients themselves.
+
+Vanilla does work the port doesn't do yet, and the numbers include it: entities and block entities (none in the bench's view but the player), particles (minimal), sound, `animateTick`, chat. The port compiles sections on the render thread where vanilla uses worker threads, which shows in the loading frames.
+
+**The offline benchmark**, `rustcraft --benchLevel CAPTURE`, needs no server or window: it puts the chunks of a capture of a bench's join (`bench.py --capture`: the port's join through packet-proxy, the warm-up long) in a level the way the listener puts them, works out their light, then compiles every section of each chunk whose neighbours are there, timing each part in the thread's CPU time, which other processes on the machine don't add to. It prints the times and an MD5 of every mesh's vertex and index bytes and every visibility set, in a fixed order: an optimization of meshing, light or chunk handling must leave the digest as it was. `perf stat -e instructions:u` of it is a measure a busy machine doesn't move. Where outputs go: `target/bench/<bench>/`.
+
 ## Where outputs go
 
 - Vanilla runs: `vanilla/<version>/oracle/<scenario>/`

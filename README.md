@@ -40,7 +40,7 @@ Then, on 2026-10-22, the goal:
 How the port compares with vanilla 26.3, area by area.
 
 Coverage on `main` today (counted from the code and its checks by the comparison agent, 2026-10-23):
-- **Gates** (GOAL.md): 2 of 6 reached, gates 1 (join) and 3 (the walk, pixel for pixel). Gate 2's window has the terrain, sky, fog, the HUD's bars, the hand and movement; gate 3's walk passes `oracle-diff dir --strict` live (trace, packets and both screenshots identical), and CI checks its screenshots' digests on the oracle's Mesa; gate 5 isn't measured.
+- **Gates** (GOAL.md): 2 of 6 reached, gates 1 (join) and 3 (the walk, pixel for pixel). Gate 2's window has the terrain, sky, fog, the HUD's bars, the hand and movement; gate 3's walk passes `oracle-diff dir --strict` live (trace, packets and both screenshots identical), and CI checks its screenshots' digests on the oracle's Mesa; gate 5 is measured (README "Performance"), not yet passed: the port is faster per tick, per compile, to start and in memory, but not yet while chunks load.
 - **Packets**: 121 of vanilla's 260 decoded. Handshake 1 of 1, status 4 of 4, login 11 of 11, configuration 29 of 31 (10 of 10 serverbound, 19 of 21 clientbound), play 56 of 144 clientbound and 20 of 69 serverbound. The rest are `Unported`: skipped by their frame, and counted (the soak lists them).
 - **Scenarios**: 22 in `oracle/scenarios/`. Offline, the 21 with replay tests (the walk, `hud-experience` and 19 physics scenarios) have vanilla's trace and packets from the marker, in CI. Live, 13 have their trace and packets identical and 5 pass `oracle-diff dir --strict` (`walk-no-gui`, `stairs`, `climbing`, `scaffolding`, `walls-and-panes`); the other 9 have no live run recorded.
 - **Screenshots**: 4 of vanilla's 6 pixel-identical (`walk-no-gui`'s two and the `walk`'s two, with the HUD, the hand and the block outline); `hud-experience`'s two differed only in the hand, 18,279 each, before it was ported, and haven't been run since.
@@ -145,7 +145,7 @@ Every step of the loop updates this table.
 | Services | Skins and capes: `SkinManager` fetching textures from Mojang's servers, `DefaultPlayerSkin` | Not started: the game profile's properties are kept (`GameProfile`, `PropertyMap`) | | |
 | Services | Realms (`com/mojang/realmsclient`, 28 screens) | Not started | | |
 | Services | Telemetry, social interactions, player reports, friends and presence (26.3's friends overlay), ban notices | Not started | | |
-| Performance | FPS, frame time, chunk-meshing throughput | Not measured | benchmark scenario | |
+| Performance | FPS, frame time, chunk-meshing throughput | Measured (`tools/bench.py`, `--benchLevel`; "Performance" below): the frame rate limiter and vsync like vanilla's, `UberGpuBuffer` and `TlsfAllocator`; sections compile on the render thread | benchmark scenarios `terrain` and `flat`, both clients, the same methods timed | on llvmpipe: the same frames/s (the driver's); startup 4 to 5 times faster, memory 2.5 to 3.8 times less, ticks 4 to 5 times faster, a section's compile 3 to 5 times faster; a new view settles slower (5 times vanilla's compiles, on the render thread) and chunks take twice as long on the game thread |
 
 ### Physics scenarios
 
@@ -177,6 +177,60 @@ Gate 4's physics, in `oracle/scenarios/`: each builds its course on the flat wor
 | `falls` | falling 3 blocks (no damage), 5 blocks onto stone and 10 onto hay bales (damage), each landing waiting for the server's answer (`wait_for`); the saturation pinned (`effect … saturation`); paced | identical (on vanilla's capture; CI on the port's) | identical (`--strict` exits 0): the damage, motion and health the server answers each landing with, the same every run (CI checks the trace and packets) |
 
 Not covered yet: slime and honey (bouncing and sliding), lava (whose damage comes on the server's clock), a water landing, trapdoors as ladders, and moving entities. The other scenarios (the surfaces, `walls-and-corners`, `fall`, `low-ceiling`, `sneak-edge`) haven't been run live yet.
+
+## Performance
+
+Gate 5's benchmark (GOAL.md; TESTING.md, "Benchmark"): both clients on the same vanilla server's generated chunks, with the same options (854 by 480, render distance 12, no frame limit, no vsync), measured at the same methods. Vanilla is the unmodified 26.3 client jar with the launcher's JVM flags on JDK 25, timed by JFR's method tracing; the port is its release build of 9a62903.
+
+**The machine:** a KVM guest on an AMD Ryzen 5 5600G, 10 vCPUs, 38 GB, Ubuntu 26.04. It has no GPU (`/dev/dri/card0` is `faux_driver`), so both clients draw with Mesa 26.0.8's llvmpipe (LLVM 21.1.8) under Xvfb, on the CPU. Six other agents shared it: the 1-minute load average was 15 to 46 during the runs below, which moves single runs a lot (the brackets). FPS here is the software rasterizer's, which takes most of either client's frame; what says something about the clients is their own CPU time, compiles, ticks, startup and memory. Real-GPU and Mac numbers are under "Needs Thalles" in PROGRESS.md.
+
+The median of 3 runs of each client, smallest to largest in brackets. `terrain` is the normal preset of seed 0 from 160 blocks up, looking 25° down over the land; `flat` is the flat preset, standing on the grass.
+
+| | terrain: vanilla | terrain: port | flat: vanilla | flat: port |
+| --- | --- | --- | --- | --- |
+| Startup to joined (s) | 25.7 (21.1..45.5) | **6.1** (2.4..9.3) | 18.0 (17.4..53.4) | **3.3** (3.0..9.6) |
+| Held view: frames/s on llvmpipe | 3.9 (3.7..4.4) | 3.8 (0.9..4.1) | 25.6 (8.5..35.7) | 18.4 (11.9..24.4) |
+| Held view: render thread CPU per frame (ms) | 120 (115..127) | 116 (108..228) | 18.9 (16.0..22.4) | 21.7 (20.8..25.2) |
+| Held view: the port's render thread outside the driver (ms per frame) | | 13 (10..16) | | 3.8 (2.9..4.0) |
+| Held view: process CPU per frame (ms, llvmpipe's threads with it) | 406 (394..413) | 392 (376..528) | 74 (69..77) | 75 (75..81) |
+| Section compile, median (ms of wall time) | 8.3 (6.0..8.6), worker threads | **2.7** (2.2..4.4), render thread | 4.1 (2.6..4.6) | **0.75** (0.74..0.78) |
+| Loading: frames/s while the path's chunks come | **5.8** (5.2..8.8) | 1.2 (0.7..1.3) | 20.0 (18.5..20.5) | **23.5** (14.1..23.9) |
+| Loading: longest frame (ms) | **428** (324..445) | 2,271 (2,141..3,708) | 180 (154..343) | 171 (129..435) |
+| Teleport to the new view's last compile (s) | **7.4** (7.1..9.3) | 19.7 (18.5..20.0) | **1.9** (1.8..2.8) | 2.5 (2.4..2.8) |
+| Sections compiled meanwhile | **501** | 2,844 | **192** | 1,021 |
+| A chunk handled on the game thread, median (µs) | **80** (78..84) | 175 (165..182) | **59** (57..62) | 106 (106..114) |
+| Light updates per chunk (µs) | **202** (182..396) | 428 (383..568) | 90 (82..112) | 88 (78..91) |
+| Tick, median (ms) | 0.34 | **0.06** | 0.50 | **0.13** |
+| Resident memory at the end (MiB) | 2,101 (2,051..2,172) | **824** (824..836) | 1,622 (1,601..1,725) | **430** (428..433) |
+
+What it says:
+- **The frames are llvmpipe's.** About 85% of either client's render thread in the held view is the driver: on the terrain, 43% in llvmpipe's JIT-compiled vertex code and 40% in libgallium for the port, and the same libraries in the same shares for vanilla. The frame rates match within the noise (the flat ranges overlap; the flat vanilla runs had a load of 15, the port's 25). Of the port's render thread, 3.8 ms a frame on flat and 13 on the terrain are its own code and libc (where the driver's copies land too). Vanilla's own share can't be told apart here: perf doesn't name its JIT-compiled Java, so it lands with llvmpipe's.
+- **Where the port is ahead:** startup (4 to 5 times faster), memory (2.5 to 3.8 times less), ticks (4 to 5 times faster) and a section's compile (3 to 5 times faster; vanilla's run on worker threads beside the frames, the port's on the render thread).
+- **Where vanilla is ahead:** a new view settles sooner, because the port compiles every dirty section in the frame it's marked, and again whenever light or a neighbour marks it (5 to 6 times vanilla's compiles: vanilla's queue drops a task that hasn't started for the newer one), which on the terrain makes the loading frames seconds long. Handling a chunk on the game thread takes the port about twice vanilla's time. Both are the perf track's next steps (PROGRESS.md, "perf").
+
+The offline benchmark, the terrain bench's join without a server or window (`rustcraft --benchLevel`: 637 chunks handled and lit, then all 12,792 of their sections compiled, every mesh's digest the same before and after each change; `perf stat` of the whole run, then the compiles' thread CPU time):
+
+| Build | Instructions | Cycles | Compiles (s of CPU) |
+| --- | --- | --- | --- |
+| before this step's optimizations | 121.3 G | 55.8 G | 12.2 |
+| registry ids by key, tint layers by y | 107.7 G | 49.6 G | 10.8 |
+| + light maps hashed with `mix`, shapes borrowed, the region's section decoded | 88.7 G | 40.1 G | 8.4 |
+| + models by state id | 85.2 G | | |
+| `--profile dist` (fat LTO, one codegen unit) of the build before | −2.9% | −7 to −10% | −9 to −14% |
+
+The uber buffers, A/B in the terrain session: the build before `UberGpuBuffer` packed every layer into one buffer again whenever a mesh came or went, 0.43 frames/s and 1,551 ms of render thread a frame in the held view (1,207 of them in the kernel), 1,742 MiB resident; the port above, 3.8, 116 and 824.
+
+To reproduce (each line holds the oracle lock while it runs; a session of 3 runs of both clients takes about 25 minutes):
+
+```sh
+cargo build --release
+flock /tmp/rustcraft-oracle.lock python3 tools/bench.py terrain --runs 3 --perf --accept-eula   # prints the table above
+flock /tmp/rustcraft-oracle.lock python3 tools/bench.py flat --runs 3 --perf --accept-eula
+flock /tmp/rustcraft-oracle.lock python3 tools/bench.py terrain --runs 0 --capture --accept-eula
+target/release/rustcraft --benchLevel target/bench/terrain/capture.jsonl                          # the offline benchmark
+```
+
+`--perf` needs `perf` (`sudo apt install linux-tools-common linux-tools-$(uname -r)`) and passwordless `sudo` for it. `--clients port@BINARY,port` compares two builds on the same world. Every run's numbers and events are in `target/bench/<bench>/`.
 
 ## Getting started
 

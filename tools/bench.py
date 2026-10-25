@@ -291,7 +291,8 @@ def stop_client(process):
 
 def perf_split(pid, thread, client, run_out):
     """Samples the render thread for PERF_SECONDS and splits its samples by where they fell: the client's own code, the
-    driver's (DRIVER_DSO) or the kernel's."""
+    driver's (DRIVER_DSO, and JIT-compiled code the JVM's map doesn't name, which is llvmpipe's shaders) or the
+    kernel's."""
     data = run_out / "perf.data"
     subprocess.run(
         ["sudo", "-n", "perf", "record", "-q", "-F", "499", "-t", str(thread), "-o", data, "--", "sleep", str(PERF_SECONDS)],
@@ -299,29 +300,31 @@ def perf_split(pid, thread, client, run_out):
     )
     subprocess.run(["sudo", "-n", "chown", getpass.getuser(), data], check=True)
     if client == "vanilla":
-        # The JVM's map of its JIT-compiled code, /tmp/perf-<pid>.map, which perf reads.
+        # The JVM's map of its JIT-compiled code, /tmp/perf-<pid>.map, which names Java's methods in perf's `[JIT]`.
         subprocess.run([oracle_client.find_jdk() / "bin" / "jcmd", str(pid), "Compiler.perfmap"], check=True, capture_output=True)
     report = subprocess.run(
-        ["perf", "report", "-f", "-i", data, "--stdio", "--sort", "dso", "-q", "--percent-limit", "0"],
+        ["perf", "report", "-f", "-i", data, "--stdio", "--sort", "dso,symbol", "-q", "--percent-limit", "0"],
         check=True, capture_output=True, text=True,
     ).stdout
+    (run_out / "perf-symbols.txt").write_text(report)
     split = {"client": 0.0, "driver": 0.0, "kernel": 0.0}
-    dsos = []
+    dsos = {}
     for line in report.splitlines():
-        if match := re.match(r"\s*([\d.]+)%\s+(.+?)\s*$", line):
-            share, dso = float(match[1]) / 100, match[2]
-            dsos.append((dso, share))
-            kind = "kernel" if dso.startswith("[kernel") else "driver" if DRIVER_DSO.match(dso) else "client"
-            split[kind] += share
-    # The hottest symbols, for a look at what the frames spend on.
-    symbols = subprocess.run(
-        ["perf", "report", "-f", "-i", data, "--stdio", "--sort", "dso,symbol", "-q", "--percent-limit", "0.5"],
-        check=True, capture_output=True, text=True,
-    ).stdout
-    (run_out / "perf-symbols.txt").write_text(symbols)
+        match = re.match(r"\s*([\d.]+)%\s+(.+?)\s+\[([.k])\]\s+(.*?)\s*$", line)
+        if not match:
+            continue
+        share, dso, symbol = float(match[1]) / 100, match[2], match[4]
+        if dso.startswith("[kernel") or match[3] == "k":
+            kind = "kernel"
+        elif dso.startswith("[JIT]"):
+            kind = "driver" if symbol.startswith("0x") else "client"
+        else:
+            kind = "driver" if DRIVER_DSO.match(dso) else "client"
+        split[kind] += share
+        dsos[dso] = dsos.get(dso, 0.0) + share
     data.unlink()
     Path(f"/tmp/perf-{pid}.map").unlink(missing_ok=True)
-    return split, dsos
+    return split, sorted(dsos.items(), key=lambda item: -item[1])
 
 
 def run_client(client, run, bench_path, bench, console, server_log, server_run_dir, out_dir, perf):

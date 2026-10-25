@@ -308,7 +308,7 @@ Renderpearl keeps vanilla's split: `com::mojang::renderpearl::api` is what the g
 - **The device lives as long as the game**, like Java's `RenderSystem` device: the client leaks the `Box<dyn GpuDevice>` it makes into a `&'static dyn GpuDevice`, which the game renderer holds and lends. `RenderSystem`'s other statics, the uniforms a pass binds by default (`bindDefaultUniforms`: the projection, the fog, the global settings, the lights) and the model view stack, are the render thread's (`thread_local!`), the only thread that touches them.
 - **The game renderer owns what Java's `Minecraft` shares with it**: the level renderer (`Minecraft.levelRenderer`), the block atlas and the baked block models (`AtlasManager`, `ModelManager`), and the level's environment attributes (`level.environmentAttributes()`) until the level holds them. The level, the player and the listener's clocks are parameters of its tick and frame. The parts of `LevelExtractor` that pick the visible sections and the dirty ones are the level renderer's (`extract_sections`).
 - **Render sections are their index in the view area's storage** (`RotatingSectionStorage`), which the occlusion graph's nodes, its octree's leaves and the visible sections are lists of. The graph's full walk runs when it's asked for instead of on a background thread, and sections compile after the frame's draws (`compileSections`) on the render thread: what changes is only when a mesh shows, and a screenshot waits for every visible section to have compiled.
-- **GPU buffers Java writes into rings** (`DynamicGpuData`'s transforms and chunk sections, the fog's and the lightmap's `MappableRingBuffer`s, the indirect commands) are buffers each frame makes with the same bytes. The uber buffers a layer's sections share (`UberGpuBuffer` over a `TlsfAllocator`, filled through a `StagingBuffer`) are one vertex buffer and one index buffer per layer with the sections one after another, rebuilt when a mesh comes or goes: the multi-draws read the same vertices and indices at other offsets, which changes no pixel.
+- **GPU buffers Java writes into rings** (`DynamicGpuData`'s transforms and chunk sections, the fog's and the lightmap's `MappableRingBuffer`s, the indirect commands) are buffers each frame makes with the same bytes. The uber buffers a layer's sections share are Java's: `UberGpuBuffer`'s heaps (128 MiB of vertices, 32 MiB of indices), each with its `TlsfAllocator`, a mesh's bytes written into the first heap with room at the next upload, so a mesh coming or going writes only its own bytes. Java copies them through a `StagingBuffer`; the port writes them straight into the heap (`writeToBuffer`), which leaves the heap holding the same bytes. Java's staged allocations iterate in an order its identity hashes decide, which only decides where they go in the heaps; the port uploads them in the order they were staged, and the multi-draws read the same vertices and indices wherever they are, which changes no pixel. Java frees a mesh's allocations when its section lets go of it; the dispatcher keeps each mesh it uploaded and frees the ones nothing else holds at the next upload.
 
 ## Where Java and Rust disagree on numbers
 
@@ -346,6 +346,15 @@ The port starts literal. An optimization is welcome as long as every golden test
 - Replacing a lookup table with the real function (`Mth.sin` is a 65536-entry table, not `sin`).
 - SIMD reductions that sum in a different order.
 - Iterating a `HashMap` where Java iterated a `LinkedHashMap`, or relying on any hash order. Java's order is deterministic, Rust's isn't.
+
+These are free, and the benchmark (TESTING.md, "Benchmark") found them worth it:
+
+- A map's hasher, where nothing iterates the map: std's SipHash costs more than the light engine's lookups themselves, so its layer maps hash with fastutil's `mix` (`hash_common::BuildMixHasher`), like Java's `Long2ObjectOpenHashMap`s.
+- An index in place of a linear search, where the search only finds what the index finds: a registry's ids by key (`MappedRegistry`'s `toId`), which the tints ask 25 times a block.
+- Borrowing a shared object where Java compares it by reference: `Shapes::block_ref()` and `BlockState::face_occlusion_shape` let `Block.shouldRenderFace` compare shapes without cloning their `Arc`s.
+- Reading a copy's values once into an array, where nothing changes them meanwhile: a region's own section, which its compile reads most.
+
+Each needs the offline benchmark's mesh digest, or the goldens, to stay as they were.
 
 ## Porting a class
 
