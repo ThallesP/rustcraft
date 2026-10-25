@@ -1,0 +1,18 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival", "tick_rate": 2},
+  "player": {"pos": [8.5, -55.5, 2.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill 7 -60 1 9 -57 3 minecraft:stone strict",
+    "fill 7 -56 1 9 -56 3 minecraft:smooth_stone_slab[type=bottom,waterlogged=false] strict",
+    "fill 6 -61 4 10 -61 13 minecraft:slime_block strict"
+  ],
+  "steps": [
+    {"ticks": 11, "keys": ["forward"]},
+    {"ticks": 70, "keys": []},
+    {"ticks": 24, "keys": ["sneak"]},
+    {"ticks": 20, "keys": ["forward"]},
+    {"ticks": 24, "keys": ["forward", "jump"]},
+    {"ticks": 20, "keys": []}
+  ]
+}

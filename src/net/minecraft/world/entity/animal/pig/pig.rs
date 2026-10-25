@@ -68,6 +68,14 @@ impl EntityClass for Pig {
         living_entity::get_dimensions(self, pose, EntityTypes::PIG.get_dimensions())
     }
 
+    fn is_living_entity(&self) -> bool {
+        true
+    }
+
+    fn is_alive(&self) -> bool {
+        living_entity::is_alive(self)
+    }
+
     fn max_up_step(&self) -> f32 {
         living_entity::max_up_step(self)
     }

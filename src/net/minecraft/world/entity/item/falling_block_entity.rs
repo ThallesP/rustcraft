@@ -1,15 +1,14 @@
 //! net/minecraft/world/entity/item/FallingBlockEntity.java
 //!
 //! A falling block on the client: the block it is (the add packet's data), and its tick, which
-//! moves it on both sides (`MoveSimulationType.SERVER_AND_CLIENT`): gravity, `move`, the air's
-//! drag. Its interpolation handler is `Entity`'s, none, so the server's moves put it where they
-//! say.
+//! moves it on both sides (`MoveSimulationType.SERVER_AND_CLIENT`): gravity, `move`, the blocks it
+//! went through (`applyEffectsFromBlocks`, see `Entity`), the air's drag. Its interpolation
+//! handler is `Entity`'s, none, so the server's moves put it where they say.
 //!
 //! Not ported yet: landing, breaking and hurting what it lands on, which only the server does
-//! (`ServerLevel`'s branch of `tick`); `applyEffectsFromBlocks` (see `Entity`), the portals
-//! (`handlePortal`), the start position (`DATA_START_POS`, synced data only rendering reads),
-//! `requiresPrecisePosition` (which only the server's tracker reads), `blockData` and the block
-//! entity it carries.
+//! (`ServerLevel`'s branch of `tick`); the portals (`handlePortal`), the start position
+//! (`DATA_START_POS`, synced data only rendering reads), `requiresPrecisePosition` (which only the
+//! server's tracker reads), `blockData` and the block entity it carries.
 
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::world::entity::entity::{self, Entity, EntityClass};
@@ -75,6 +74,7 @@ impl FallingBlockEntity {
             entity::apply_gravity(self);
             let delta = self.entity.get_delta_movement();
             self.r#move(level, MoverType::SELF, delta);
+            entity::apply_effects_from_blocks(self, level);
             let air_drag = f64::from(self.get_air_drag());
             let delta = self.entity.get_delta_movement();
             self.entity.set_delta_movement(delta.scale(air_drag));

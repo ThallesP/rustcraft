@@ -9,22 +9,31 @@
 //!
 //! What's here is an entity's movement: `move` with `collide` (step-up included),
 //! `collideBoundingBox` and `collideWithShapes`, the collision flags, the supporting block and
-//! `getOnPos`, the fall distance, `restituteMovementAfterCollisions`, the blocks' speed and jump
-//! factors, `moveRelative`, its position, box, pose and size, the shared flags, the fluids it's
-//! in (`updateFluidInteraction` through `EntityFluidInteraction`, with their currents pushing it),
-//! swimming (`updateSwimming`), `baseTick` and `commonTick`.
+//! `getOnPos`, the fall distance, `restituteMovementAfterCollisions` (bouncing), the blocks' speed
+//! and jump factors, `moveRelative`, its position, box, pose and size, the shared flags, the fluids
+//! it's in (`updateFluidInteraction` through `EntityFluidInteraction`, with their currents pushing
+//! it), swimming (`updateSwimming`), `baseTick` and `commonTick`.
+//!
+//! The blocks it moves through: each tick's moves (`movementThisTick`, which `move` adds to), and
+//! `applyEffectsFromBlocks` over them, the block it stands on (`stepOn`), then `checkInsideBlocks`
+//! along each move, axis by axis in its collision's order, for the blocks and fluids it's inside
+//! (`entityInside`), whose effects an `InsideBlockEffectApplier.StepBasedCollector` applies in
+//! their order once every move is checked: getting stuck (`makeStuckInBlock`), bubble columns
+//! (`onAboveBubbleColumn`, `onInsideBubbleColumn`), powder snow (`isInPowderSnow`) and freezing
+//! (`DATA_TICKS_FROZEN`'s value, a plain field like the air).
 //!
 //! Not ported yet, with what they need:
 //! - water's splash (`doWaterSplashEffect`), which only plays a sound and makes particles, from
 //!   the entity's random source; lava's speed in a dimension with fast lava
 //!   (`EnvironmentAttributes.FAST_LAVA`, the nether's), which panics;
-//! - the blocks' `fallOn`,
-//!   `bounceOn` (which panics when an entity would bounce), `stepOn` and `entityInside`
-//!   (`applyEffectsFromBlocks`: none of the blocks ported so far does anything there), and the
-//!   movement's sounds and game events (`applyMovementEmissionAndPlaySound`), which change nothing
-//!   an entity's movement reads;
-//! - vehicles and passengers, portals, fire and freezing, `lastKnownSpeed`, and entity data (only
-//!   the shared flags, pose and no-gravity flag are here, as fields).
+//! - the movement's sounds and game events (`applyMovementEmissionAndPlaySound`, a bounce's
+//!   `GameEvent.BOUNCE`), which change nothing an entity's movement reads; the blocks' `fallOn`
+//!   and `bounceOn`, which change nothing the client has (`Block`);
+//! - vehicles and passengers, portals, fire (what the blocks' fire effects and rain would change,
+//!   and the extinguishing sound), `lastKnownSpeed`, and entity data (only the shared flags, pose,
+//!   no-gravity flag, air and ticks frozen are here, as fields);
+//! - the server's side of the blocks' effects: `debugBlockIntersection`, and the fire ticks
+//!   `applyEffectsFromBlocks` resets there.
 //!
 //! The entities the server moves are interpolated (`moveOrInterpolateTo`), each with what its
 //! class's `createInterpolationHandler` makes (`create_interpolation_handler`, by its type until
@@ -32,6 +41,8 @@
 
 // Java's negated comparisons are kept as they are: they differ from the plain ones for NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
+
+use std::collections::{HashSet, VecDeque};
 
 use crate::java::lang::float::Float;
 use crate::java::lang::math::Math;
@@ -41,6 +52,7 @@ use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::network::protocol::game::vec_delta_codec::VecDeltaCodec;
 use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::tags::entity_type_tags::EntityTypeTags;
 use crate::net::minecraft::tags::fluid_tags::{FluidTagKey, FluidTags};
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::world::entity::abstract_interpolation_handler::Interpolated;
@@ -50,6 +62,7 @@ use crate::net::minecraft::world::entity::entity_dimensions::EntityDimensions;
 use crate::net::minecraft::world::entity::entity_fluid_interaction::EntityFluidInteraction;
 use crate::net::minecraft::world::entity::entity_type::EntityType;
 use crate::net::minecraft::world::entity::entity_types::EntityTypes;
+use crate::net::minecraft::world::entity::inside_block_effect_applier::StepBasedCollector;
 use crate::net::minecraft::world::entity::interpolation_handler::InterpolationHandler;
 use crate::net::minecraft::world::entity::item::falling_block_entity::FallingBlockEntity;
 use crate::net::minecraft::world::entity::item::item_entity::ItemEntity;
@@ -60,17 +73,22 @@ use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::entity::position_path::PositionPath;
 use crate::net::minecraft::world::entity::stepped_interpolation_handler::SteppedInterpolationHandler;
+use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::fence_gate_block;
+use crate::net::minecraft::world::level::block::powder_snow_block::PowderSnowBlock;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_getter;
 use crate::net::minecraft::world::level::clip_context::{self, ClipContext};
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
 use crate::net::minecraft::world::level::entity::entity_lookup::EntityAccess;
 use crate::net::minecraft::world::level::level::{self, Level};
+use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::hit_result::Type;
-use crate::net::minecraft::world::phys::shapes::entity_collision_context::EntityCollisionContext;
+use crate::net::minecraft::world::phys::shapes::entity_collision_context::{
+    CollidingEntity, EntityCollisionContext, LivingCollision,
+};
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 use crate::net::minecraft::world::phys::vec3::Vec3;
@@ -120,6 +138,13 @@ pub struct Entity {
     /// `DATA_AIR_SUPPLY_ID`'s value, synced data that's a plain field until entity data is
     /// ported, like the shared flags.
     air_supply: i32,
+    /// `DATA_TICKS_FROZEN`'s value, the same.
+    ticks_frozen: i32,
+    /// `movementThisTick`: the moves made since the blocks' effects were last applied, at most
+    /// 100.
+    movement_this_tick: VecDeque<Movement>,
+    /// `finalMovementsThisTick`: the moves the blocks' effects were last applied over.
+    final_movements_this_tick: Vec<Movement>,
     /// `packetPositionCodec`: where the server's moves have it, which their deltas are from.
     packet_position_codec: VecDeltaCodec,
     interpolation_handler: InterpolationHandler,
@@ -189,6 +214,9 @@ impl Entity {
             no_gravity: false,
             in_block_state: None,
             air_supply: Entity::TOTAL_AIR_SUPPLY,
+            ticks_frozen: 0,
+            movement_this_tick: VecDeque::with_capacity(100),
+            final_movements_this_tick: Vec::new(),
             packet_position_codec: VecDeltaCodec::new(),
             interpolation_handler: InterpolationHandler::NoOp,
         }
@@ -411,6 +439,77 @@ impl Entity {
 
     pub fn set_air_supply(&mut self, supply: i32) {
         self.air_supply = supply;
+    }
+
+    pub fn get_ticks_frozen(&self) -> i32 {
+        self.ticks_frozen
+    }
+
+    pub fn set_ticks_frozen(&mut self, ticks: i32) {
+        self.ticks_frozen = ticks;
+    }
+
+    /// `clearFreeze()`.
+    pub fn clear_freeze(&mut self) {
+        self.set_ticks_frozen(0);
+    }
+
+    /// `getTicksRequiredToFreeze()`.
+    pub fn get_ticks_required_to_freeze(&self) -> i32 {
+        140
+    }
+
+    /// `setIsInPowderSnow(boolean)`.
+    pub fn set_is_in_powder_snow(&mut self, is_in_powder_snow: bool) {
+        self.is_in_powder_snow = is_in_powder_snow;
+    }
+
+    /// `Entity.makeStuckInBlock(BlockState, Vec3)`: its fall over, and its next move slowed by the
+    /// multiplier (`move`).
+    pub fn make_stuck_in_block(&mut self, speed_multiplier: Vec3) {
+        self.reset_fall_distance();
+        self.stuck_speed_multiplier = speed_multiplier;
+    }
+
+    /// `addMovementThisTick(Movement)`: past 100, the first two become one.
+    fn add_movement_this_tick(&mut self, movement: Movement) {
+        if self.movement_this_tick.len() >= 100 {
+            let first = self
+                .movement_this_tick
+                .pop_front()
+                .expect("there are 100 moves");
+            let second = self
+                .movement_this_tick
+                .pop_front()
+                .expect("there are 100 moves");
+            let combined = Movement::new(first.from, second.to);
+            self.movement_this_tick.push_front(combined);
+        }
+
+        self.movement_this_tick.push_back(movement);
+    }
+
+    /// `collidedWithFluid(FluidState, BlockPos, Vec3, Vec3)`: whether its box going from `from`
+    /// to `to` touches the fluid's.
+    pub fn collided_with_fluid(
+        &self,
+        level: &dyn Level,
+        fluid_state: FluidState,
+        block_pos: &BlockPos,
+        from: &Vec3,
+        to: &Vec3,
+    ) -> bool {
+        fluid_state
+            .get_aabb(level, block_pos)
+            .is_some_and(|fluid_aabb| self.collided_with_shape_moving_from(from, to, &[fluid_aabb]))
+    }
+
+    /// `collidedWithShapeMovingFrom(Vec3, Vec3, List)`: whether its box going from `from` to `to`
+    /// touches one of the boxes.
+    pub fn collided_with_shape_moving_from(&self, from: &Vec3, to: &Vec3, aabbs: &[AABB]) -> bool {
+        let bounding_box_at_from = self.make_bounding_box_at(from);
+        let travel_vector = to.subtract(from);
+        bounding_box_at_from.collided_along_vector(&travel_vector, aabbs)
     }
 
     pub fn get_id(&self) -> i32 {
@@ -843,6 +942,37 @@ impl Entity {
     }
 }
 
+/// `Entity.Movement`: a move from one place to another, with the movement a collision made it of,
+/// whose order of axes it's checked in (`checkInsideBlocks`).
+#[derive(Clone, Copy, Debug)]
+struct Movement {
+    from: Vec3,
+    to: Vec3,
+    axis_dependent_original_movement: Option<Vec3>,
+}
+
+impl Movement {
+    fn new(from: Vec3, to: Vec3) -> Movement {
+        Movement {
+            from,
+            to,
+            axis_dependent_original_movement: None,
+        }
+    }
+
+    fn with_original_movement(
+        from: Vec3,
+        to: Vec3,
+        axis_dependent_original_movement: Vec3,
+    ) -> Movement {
+        Movement {
+            from,
+            to,
+            axis_dependent_original_movement: Some(axis_dependent_original_movement),
+        }
+    }
+}
+
 impl EntityAccess for Entity {
     fn get_id(&self) -> i32 {
         self.id
@@ -1070,6 +1200,41 @@ pub trait EntityClass {
         false
     }
 
+    /// `instanceof LivingEntity`.
+    fn is_living_entity(&self) -> bool {
+        false
+    }
+
+    /// `isAlive()`: not removed, which nothing the client ticks is while it ticks.
+    fn is_alive(&self) -> bool {
+        true
+    }
+
+    /// `isSteppingCarefully()`: sneaking.
+    fn is_stepping_carefully(&self) -> bool {
+        self.is_shift_key_down()
+    }
+
+    /// `canFreeze()`.
+    fn can_freeze(&self) -> bool {
+        can_freeze(self)
+    }
+
+    /// `makeStuckInBlock(BlockState, Vec3)`.
+    fn make_stuck_in_block(&mut self, _block_state: BlockState, speed_multiplier: Vec3) {
+        self.entity_mut().make_stuck_in_block(speed_multiplier);
+    }
+
+    /// `onAboveBubbleColumn(boolean, BlockPos)`.
+    fn on_above_bubble_column(&mut self, drag_down: bool, pos: &BlockPos) {
+        handle_on_above_bubble_column(self, drag_down, pos);
+    }
+
+    /// `onInsideBubbleColumn(boolean)`.
+    fn on_inside_bubble_column(&mut self, drag_down: bool) {
+        handle_on_inside_bubble_column(self, drag_down);
+    }
+
     /// `isUnderWater()`: its eyes were in water at the start of the tick, and it's in water.
     fn is_under_water(&self) -> bool {
         self.entity().was_eye_in_water && self.entity().is_in_water()
@@ -1149,9 +1314,20 @@ pub trait EntityClass {
         push(self, level, entity);
     }
 
-    /// `CollisionContext.of(this)`.
+    /// `CollisionContext.of(this)`: with the entity, as blocks' shapes ask about it (a living
+    /// one's liquid shape and `canStandOnFluid` are `LivingEntity`'s, which no class ported
+    /// overrides). Its hand is empty: the inventory isn't ported.
     fn collision_context(&self) -> EntityCollisionContext {
         EntityCollisionContext::new(self.is_descending(), false, self.entity().get_y(), false)
+            .with_entity(CollidingEntity {
+                fall_distance: self.entity().fall_distance,
+                is_falling_block: self.entity().get_type() == EntityTypes::FALLING_BLOCK,
+                can_walk_on_powder_snow: PowderSnowBlock::can_entity_walk_on_powder_snow(self),
+                living: self.is_living_entity().then(|| LivingCollision {
+                    liquid_collision_shape: Shapes::empty(),
+                    can_stand_on_fluid: |_| false,
+                }),
+            })
     }
 
     fn maybe_back_off_from_edge(
@@ -1374,7 +1550,10 @@ pub fn r#move(
             }
         }
 
-        let new_position = this.entity().position().add(&movement);
+        let pos = this.entity().position();
+        let new_position = pos.add(&movement);
+        this.entity_mut()
+            .add_movement_this_tick(Movement::with_original_movement(pos, new_position, delta));
         this.entity_mut().set_pos_vec3(&new_position);
     }
 
@@ -1473,8 +1652,10 @@ fn limit_piston_movement(entity: &mut Entity, level: &dyn Level, vec: &Vec3) -> 
     }
 }
 
-/// Stops the movement along each axis it collided on, bouncing by the restitution, which only a
-/// bouncy entity or block gives.
+/// Stops the movement along each axis it collided on, bouncing by the restitution, the entity's
+/// own or, landing, the block's. A bounce calls the block's `bounceOn`, which changes nothing the
+/// client has (the shelf mushroom's plays a sound, which isn't ported), with a game event and
+/// `syncPosition`, the server's.
 fn restitute_movement_after_collisions(
     this: &mut (impl EntityClass + Sized),
     effect_state: BlockState,
@@ -1499,38 +1680,30 @@ fn restitute_movement_after_collisions(
             movement_after_bounce.with(Axis::Z, -current_movement.z * restitution);
     }
 
-    let mut bounced = restitution > 0.0 && (x_collision || z_collision);
     if this.entity().vertical_collision {
         if this.entity().vertical_collision_below {
-            let block_bounciness = f64::from(effect_state.get_block().get_bounce_restitution());
             restitution = if !(-current_movement.y <= this.get_effective_gravity())
                 && !this.is_suppressing_bounce()
+                && !effect_state.is_tag(BlockTags::SUPPRESSES_BOUNCE)
             {
-                // The block's suppresses_bounce tag only matters when there's a bounce to
-                // suppress.
-                let bounce = Math::max_f64(restitution, block_bounciness);
-                if bounce != 0.0 && effect_state.is_tag(BlockTags::SUPPRESSES_BOUNCE) {
-                    0.0
-                } else {
-                    bounce
-                }
+                Math::max_f64(
+                    restitution,
+                    get_block_bounciness(this, effect_state.get_block()),
+                )
             } else {
                 0.0
             };
         }
 
-        let gravity_compensation;
-        let effective_drag;
-        if restitution > 0.0 {
+        let (gravity_compensation, effective_drag) = if restitution > 0.0 {
             let portion_with_movement = movement.y / current_movement.y;
-            gravity_compensation = portion_with_movement * this.get_effective_gravity();
-            effective_drag =
-                Mth::lerp_f64(portion_with_movement, 1.0, f64::from(this.get_air_drag()));
-            bounced = true;
+            (
+                portion_with_movement * this.get_effective_gravity(),
+                Mth::lerp_f64(portion_with_movement, 1.0, f64::from(this.get_air_drag())),
+            )
         } else {
-            gravity_compensation = 0.0;
-            effective_drag = 1.0;
-        }
+            (0.0, 1.0)
+        };
 
         movement_after_bounce = movement_after_bounce.with(
             Axis::Y,
@@ -1538,11 +1711,17 @@ fn restitute_movement_after_collisions(
         );
     }
 
-    assert!(
-        !bounced,
-        "bouncing calls the block's bounceOn, which isn't ported"
-    );
     this.entity_mut().set_delta_movement(movement_after_bounce);
+}
+
+/// `getBlockBounciness(Block)`: the block's restitution, less for what isn't living.
+fn get_block_bounciness(this: &(impl EntityClass + Sized), on_block: Block) -> f64 {
+    let mut block_bounciness = on_block.get_bounce_restitution();
+    if !this.is_living_entity() {
+        block_bounciness *= 0.8;
+    }
+
+    f64::from(block_bounciness)
 }
 
 /// `Entity.getBlockSpeedFactor()`: the block's here, or below when here's is 1, except in water
@@ -1569,7 +1748,8 @@ pub fn get_block_speed_factor(this: &mut (impl EntityClass + Sized), level: &dyn
 }
 
 /// `Entity.checkFallDamage`: the fall distance grows while falling, and goes back to 0 on the
-/// ground. Landing would call the block's `fallOn` (damage and sounds), which isn't ported.
+/// ground. Landing calls the block's `fallOn`, which changes nothing the client has (`Block`), and
+/// makes a game event, the server's.
 pub fn check_fall_damage(
     this: &mut (impl EntityClass + ?Sized),
     _level: &dyn Level,
@@ -1835,6 +2015,273 @@ pub fn get_input_vector(input: &Vec3, speed: f32, y_rot: f32) -> Vec3 {
         movement.y,
         movement.z * f64::from(cos) + movement.x * f64::from(sin),
     )
+}
+
+/// `applyEffectsFromBlocks()`: the effects of the blocks it went through this tick, over its
+/// moves (from where it was to where it is when it made none, and on to where it is when
+/// something moved it after its last), which it keeps (`finalMovementsThisTick`).
+pub fn apply_effects_from_blocks(this: &mut (impl EntityClass + Sized), level: &dyn Level) {
+    let entity = this.entity_mut();
+    entity.final_movements_this_tick.clear();
+    let movements: Vec<Movement> = entity.movement_this_tick.drain(..).collect();
+    entity.final_movements_this_tick.extend(movements);
+    let position = entity.position();
+    match entity.final_movements_this_tick.last() {
+        None => {
+            let old_position = entity.old_position();
+            entity
+                .final_movements_this_tick
+                .push(Movement::new(old_position, position));
+        }
+        Some(last) if last.to.distance_to_sqr(&position) > f64::from(9.9999994E-11_f32) => {
+            let last_to = last.to;
+            entity
+                .final_movements_this_tick
+                .push(Movement::new(last_to, position));
+        }
+        Some(_) => {}
+    }
+
+    let movements = this.entity().final_movements_this_tick.clone();
+    apply_effects_from_blocks_over(this, level, &movements);
+}
+
+/// `applyEffectsFromBlocksForLastMovements()`: the same over the moves they were last applied
+/// over.
+pub fn apply_effects_from_blocks_for_last_movements(
+    this: &mut (impl EntityClass + Sized),
+    level: &dyn Level,
+) {
+    let movements = this.entity().final_movements_this_tick.clone();
+    apply_effects_from_blocks_over(this, level, &movements);
+}
+
+/// `applyEffectsFromBlocks(List)`: the block it stands on (`stepOn`), then the ones it's inside.
+/// Java's collector is a field the entity reuses; each application empties it.
+fn apply_effects_from_blocks_over(
+    this: &mut (impl EntityClass + Sized),
+    level: &dyn Level,
+    movements: &[Movement],
+) {
+    if is_affected_by_blocks(this) {
+        if this.entity().on_ground() {
+            let effect_pos = this.entity().get_on_pos_legacy(level);
+            let effect_state = level.get_block_state(&effect_pos);
+            effect_state
+                .get_block()
+                .step_on(level, &effect_pos, effect_state, this);
+        }
+
+        let mut inside_effect_collector = StepBasedCollector::new();
+        check_inside_blocks(this, level, movements, &mut inside_effect_collector);
+        inside_effect_collector.apply_and_clear(this, level);
+    }
+}
+
+/// `isAffectedByBlocks()`: not removed (see `is_alive`), and with physics.
+fn is_affected_by_blocks(this: &(impl EntityClass + Sized)) -> bool {
+    !this.entity().no_physics
+}
+
+/// `checkInsideBlocks(List, StepBasedCollector)`: along each move, axis by axis in the order its
+/// collision took them, at most 16 steps each, the blocks its box goes through; past that, the
+/// ones where the move ends. Each block once (`visitedBlocks`, a `LongOpenHashSet` it's only asked
+/// what it holds).
+fn check_inside_blocks(
+    this: &mut (impl EntityClass + Sized),
+    level: &dyn Level,
+    movements: &[Movement],
+    effect_collector: &mut StepBasedCollector,
+) {
+    if is_affected_by_blocks(this) {
+        let mut visited_blocks = HashSet::new();
+
+        for movement in movements {
+            let mut pos = movement.from;
+            let delta = movement.to.subtract(&movement.from);
+            let mut max_movement_iterations = 16;
+            match movement.axis_dependent_original_movement {
+                Some(original_movement) if delta.length_sqr() > 0.0 => {
+                    for axis in Direction::axis_step_order(&original_movement) {
+                        let axis_move = delta.get(axis);
+                        if axis_move != 0.0 {
+                            let to = pos.relative(axis.get_positive(), axis_move);
+                            max_movement_iterations -= check_inside_blocks_between(
+                                this,
+                                level,
+                                &pos,
+                                &to,
+                                effect_collector,
+                                &mut visited_blocks,
+                                max_movement_iterations,
+                            );
+                            pos = to;
+                        }
+                    }
+                }
+                _ => {
+                    max_movement_iterations -= check_inside_blocks_between(
+                        this,
+                        level,
+                        &movement.from,
+                        &movement.to,
+                        effect_collector,
+                        &mut visited_blocks,
+                        16,
+                    );
+                }
+            }
+
+            if max_movement_iterations <= 0 {
+                check_inside_blocks_between(
+                    this,
+                    level,
+                    &movement.to,
+                    &movement.to,
+                    effect_collector,
+                    &mut visited_blocks,
+                    1,
+                );
+            }
+        }
+    }
+}
+
+/// `checkInsideBlocks(Vec3, Vec3, StepBasedCollector, LongSet, int)`: the blocks its box, a hair
+/// smaller, goes through from `from` to `to`, up to the step limit, each block it's inside (its
+/// inside shape the whole block or touched on the way) or whose fluid it touches, the first time:
+/// the block's `entityInside` (precise when the box ends in the block or moved about a block or
+/// more) and the fluid's, each in its step. How many steps it went. The server's debug view of
+/// the blocks met isn't the client's, and `onInsideBlock` is only ender pearls'.
+fn check_inside_blocks_between(
+    this: &mut (impl EntityClass + Sized),
+    level: &dyn Level,
+    from: &Vec3,
+    to: &Vec3,
+    effect_collector: &mut StepBasedCollector,
+    visited_blocks: &mut HashSet<i64>,
+    max_movement_iterations: i32,
+) -> i32 {
+    let deflated_bounding_box_at_target = this
+        .entity()
+        .make_bounding_box_at(to)
+        .deflate(f64::from(1.0E-5_f32));
+    let moved_far = from.distance_to_sqr(to) > Mth::square_f64(0.9999900000002526);
+    let mut iterations = 0;
+    block_getter::for_each_block_intersected_between(
+        from,
+        to,
+        &deflated_bounding_box_at_target,
+        &mut |block_intersection, iteration| {
+            if !this.is_alive() {
+                return false;
+            }
+
+            if iteration >= max_movement_iterations {
+                return false;
+            }
+
+            iterations = iteration;
+            let state = level.get_block_state(block_intersection);
+            if state.is_air() {
+                return true;
+            }
+
+            let intersect_shape =
+                state.get_entity_inside_collision_shape(level, block_intersection, &*this);
+            let inside_block = intersect_shape == Shapes::block()
+                || this.entity().collided_with_shape_moving_from(
+                    from,
+                    to,
+                    &intersect_shape
+                        .r#move(&Vec3::from_vec3i(block_intersection))
+                        .to_aabbs(),
+                );
+            let inside_fluid = this.entity().collided_with_fluid(
+                level,
+                state.get_fluid_state(),
+                block_intersection,
+                from,
+                to,
+            );
+            if (inside_block || inside_fluid) && visited_blocks.insert(block_intersection.as_long())
+            {
+                if inside_block {
+                    let is_precise = moved_far
+                        || deflated_bounding_box_at_target.intersects_block_pos(block_intersection);
+                    effect_collector.advance_step(iteration);
+                    state.entity_inside(
+                        level,
+                        block_intersection,
+                        &mut *this,
+                        &mut *effect_collector,
+                        is_precise,
+                    );
+                }
+
+                if inside_fluid {
+                    effect_collector.advance_step(iteration);
+                    state.get_fluid_state().entity_inside(
+                        level,
+                        block_intersection,
+                        &mut *this,
+                        &mut *effect_collector,
+                    );
+                }
+            }
+
+            true
+        },
+    );
+    iterations + 1
+}
+
+/// `Entity.canFreeze()`: unless its type is immune.
+pub fn can_freeze(this: &(impl EntityClass + ?Sized)) -> bool {
+    !this
+        .entity()
+        .get_type()
+        .is_tag(EntityTypeTags::FREEZE_IMMUNE_ENTITY_TYPES)
+}
+
+/// `handleOnAboveBubbleColumn(Entity, boolean, BlockPos)`: pulled down or pushed up, harder than
+/// inside one, where it moves itself. The bubbles it makes are the server's.
+pub fn handle_on_above_bubble_column(
+    entity: &mut (impl EntityClass + ?Sized),
+    drag_down: bool,
+    _pos: &BlockPos,
+) {
+    if entity.can_simulate_movement() {
+        let movement = entity.entity().get_delta_movement();
+        let yd = if drag_down {
+            Math::max_f64(-0.9, movement.y - 0.03)
+        } else {
+            Math::min_f64(1.8, movement.y + 0.1)
+        };
+
+        entity
+            .entity_mut()
+            .set_delta_movement_xyz(movement.x, yd, movement.z);
+    }
+}
+
+/// `handleOnInsideBubbleColumn(Entity, boolean)`: pulled down or pushed up where it moves itself,
+/// and its fall over.
+pub fn handle_on_inside_bubble_column(entity: &mut (impl EntityClass + ?Sized), drag_down: bool) {
+    if entity.can_simulate_movement() {
+        let movement = entity.entity().get_delta_movement();
+        let yd = if drag_down {
+            Math::max_f64(-0.3, movement.y - 0.03)
+        } else {
+            Math::min_f64(0.7, movement.y + 0.06)
+        };
+
+        entity
+            .entity_mut()
+            .set_delta_movement_xyz(movement.x, yd, movement.z);
+    }
+
+    entity.entity_mut().reset_fall_distance();
 }
 
 /// `Entity.baseTick()`'s part that reaches an entity's movement: the block it's in is read again,

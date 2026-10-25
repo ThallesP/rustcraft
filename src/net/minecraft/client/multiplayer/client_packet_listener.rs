@@ -682,6 +682,35 @@ impl ClientPacketListener {
         }
     }
 
+    /// `handleUpdateAttributes`' part for the entity it found: each attribute's base value and its
+    /// modifiers in place of the old ones.
+    pub fn update_attributes_of(
+        entity: &mut impl LivingEntityClass,
+        packet: &ClientboundUpdateAttributesPacket,
+    ) {
+        let attributes = &mut entity.living_entity_mut().attributes;
+        for attribute in packet.get_values() {
+            // An attribute the port hasn't got is one the player's map hasn't got either.
+            let Some(instance) = Attributes::by_holder(&attribute.attribute())
+                .and_then(|holder| attributes.get_instance_mut(holder))
+            else {
+                let Holder::Reference(key) = attribute.attribute();
+                eprintln!(
+                    "Entity {} does not have attribute {}",
+                    packet.get_entity_id(),
+                    key.identifier()
+                );
+                continue;
+            };
+            instance.set_base_value(attribute.base());
+            instance.remove_modifiers();
+
+            for modifier in attribute.modifiers() {
+                instance.add_transient_modifier(modifier);
+            }
+        }
+    }
+
     /// `setValuesFromPositionPacket` for an entity in the level: where the change puts it, by its
     /// handler unless asked not to or it's too far, and whether it was interpolated.
     fn set_entity_values_from_position_packet(
@@ -1676,27 +1705,7 @@ impl ClientGamePacketListener for ClientPacketListener {
         else {
             return;
         };
-        let attributes = &mut player.living_entity_mut().attributes;
-        for attribute in packet.get_values() {
-            // An attribute the port hasn't got is one the player's map hasn't got either.
-            let Some(instance) = Attributes::by_holder(&attribute.attribute())
-                .and_then(|holder| attributes.get_instance_mut(holder))
-            else {
-                let Holder::Reference(key) = attribute.attribute();
-                eprintln!(
-                    "Entity {} does not have attribute {}",
-                    packet.get_entity_id(),
-                    key.identifier()
-                );
-                continue;
-            };
-            instance.set_base_value(attribute.base());
-            instance.remove_modifiers();
-
-            for modifier in attribute.modifiers() {
-                instance.add_transient_modifier(modifier);
-            }
-        }
+        ClientPacketListener::update_attributes_of(player, packet);
     }
 
     fn handle_set_spawn(&mut self, packet: &ClientboundSetDefaultSpawnPositionPacket) {
@@ -1728,8 +1737,9 @@ impl ClientGamePacketListener for ClientPacketListener {
         }
         // Like the attributes, only the player's. `SynchedEntityData` isn't ported, so
         // `assignValues` sets what the player has of its items: the shared flags (0, sprinting and
-        // crouching among them), the pose (6), which resizes it (`onSyncedDataUpdated`), and its
-        // main arm (15) and skin parts shown (16), which its hands are drawn with. Its
+        // crouching among them), the pose (6), which resizes it (`onSyncedDataUpdated`), how long
+        // it's been freezing (7), and its main arm (15) and skin parts shown (16), which its hands
+        // are drawn with. Its
         // health (9) goes through `set_health` packets only, since `setHealth` clamps where the
         // item's assignment doesn't; the other items aren't ported. A value whose type isn't
         // ported ends the packet's values (ClientboundSetEntityDataPacket).
@@ -1754,6 +1764,7 @@ impl ClientGamePacketListener for ClientPacketListener {
         // and `Avatar`'s main arm and skin parts, after `Entity`'s 8 and `LivingEntity`'s 7.
         const DATA_SHARED_FLAGS_ID: i32 = 0;
         const DATA_POSE: i32 = 6;
+        const DATA_TICKS_FROZEN: i32 = 7;
         const DATA_PLAYER_MAIN_HAND: i32 = 15;
         const DATA_PLAYER_MODE_CUSTOMISATION: i32 = 16;
         for item in packet.packed_items() {
@@ -1766,6 +1777,9 @@ impl ClientGamePacketListener for ClientPacketListener {
                     }
                 }
                 (DATA_POSE, EntityDataValue::Pose(pose)) => entity::set_pose(player, *pose),
+                (DATA_TICKS_FROZEN, EntityDataValue::Int(ticks)) => {
+                    player.entity_mut().set_ticks_frozen(*ticks);
+                }
                 (DATA_PLAYER_MAIN_HAND, EntityDataValue::HumanoidArm(arm)) => {
                     player.main_arm = *arm;
                 }

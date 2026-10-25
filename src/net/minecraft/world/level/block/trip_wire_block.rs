@@ -3,9 +3,12 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour, and its constructor's `hook`.
 //!
-//! Of its behaviour, its shape (lower once it's attached) is ported.
+//! Of its behaviour, its shape (lower once it's attached), which is also what an entity has to
+//! touch to be in it, is ported. What it does to an entity inside (`entityInside`) is the
+//! server's.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::world::entity::entity::EntityClass;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -25,6 +28,7 @@ pub struct TripWireBlock;
 
 pub static CLASS: BlockClass = BlockClass {
     get_shape: Some(TripWireBlock::get_shape),
+    get_entity_inside_collision_shape: Some(TripWireBlock::get_entity_inside_collision_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.TripWireBlock",
         &block::CLASS,
@@ -98,5 +102,16 @@ impl TripWireBlock {
         } else {
             SHAPE_NOT_ATTACHED.clone()
         }
+    }
+
+    /// `getEntityInsideCollisionShape`: its shape.
+    fn get_entity_inside_collision_shape(
+        _block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        _entity: &dyn EntityClass,
+    ) -> VoxelShape {
+        state.get_shape(level, pos)
     }
 }

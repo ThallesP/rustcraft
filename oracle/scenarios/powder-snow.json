@@ -1,0 +1,18 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival", "tick_rate": 2},
+  "player": {"pos": [8.8, -58.0, 1.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill 6 -60 1 9 -59 7 minecraft:stone strict",
+    "fill 9 -58 3 9 -57 5 minecraft:powder_snow strict",
+    "fill 6 -63 8 9 -61 8 minecraft:air strict",
+    "fill 6 -63 8 9 -63 8 minecraft:powder_snow strict",
+    "fill 6 -63 9 9 -57 9 minecraft:stone strict"
+  ],
+  "steps": [
+    {"ticks": 50, "keys": ["forward"]},
+    {"ticks": 30, "keys": []},
+    {"ticks": 20, "keys": ["jump"]},
+    {"ticks": 10, "keys": []}
+  ]
+}

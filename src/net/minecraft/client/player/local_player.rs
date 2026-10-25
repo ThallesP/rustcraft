@@ -792,6 +792,30 @@ impl EntityClass for LocalPlayer {
         true
     }
 
+    fn is_living_entity(&self) -> bool {
+        true
+    }
+
+    fn is_alive(&self) -> bool {
+        living_entity::is_alive(self)
+    }
+
+    fn can_freeze(&self) -> bool {
+        living_entity::can_freeze(self)
+    }
+
+    fn make_stuck_in_block(&mut self, block_state: BlockState, speed_multiplier: Vec3) {
+        player::make_stuck_in_block(self, block_state, speed_multiplier);
+    }
+
+    fn on_above_bubble_column(&mut self, drag_down: bool, pos: &BlockPos) {
+        player::on_above_bubble_column(self, drag_down, pos);
+    }
+
+    fn on_inside_bubble_column(&mut self, drag_down: bool) {
+        player::on_inside_bubble_column(self, drag_down);
+    }
+
     /// `LocalPlayer.isUnderWater()`: its eyes were in water when its tick began
     /// (`wasUnderwater`).
     fn is_under_water(&self) -> bool {

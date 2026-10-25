@@ -34,6 +34,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -124,7 +125,8 @@ final class ShapeSuites {
 
     static List<Suite> suites() {
         return List.of(
-            new ShapesSuite(), new VoxelShapeSuite(), new DiscreteVoxelShapeSuite(), new EntitySuite(), new LivingEntitySuite(), new BlockStateShapeSuite()
+            new ShapesSuite(), new VoxelShapeSuite(), new DiscreteVoxelShapeSuite(), new EntitySuite(), new LivingEntitySuite(), new BlockStateShapeSuite(),
+            new BlockGetterSuite()
         );
     }
 
@@ -1277,6 +1279,55 @@ final class ShapeSuites {
                     writer, "getInputVector(" + VEC3_TYPE + "FF)" + VEC3_TYPE, BlockSuites.array(CoreValues.encode(input), f(speed), f(yRot)),
                     () -> CoreValues.encode((Vec3)invoke(GET_INPUT_VECTOR, null, input, speed, yRot))
                 );
+            }
+        }
+    }
+
+    /**
+     * BlockGetter.forEachBlockIntersectedBetween, which Entity.checkInsideBlocks walks the blocks of a tick's moves with: each
+     * visit's block and step, in order, and whether the walk ended. The visitor stops the walk after its nth visit (the
+     * fourth argument), or never for -1. The boxes are entity boxes a hair smaller where a move ends, the moves walking,
+     * falling, jumping, along one axis, too small to walk (under 1.0E-5) and long falls.
+     */
+    static final class BlockGetterSuite implements Suite {
+        private static final String FOR_EACH_BLOCK_INTERSECTED_BETWEEN = "forEachBlockIntersectedBetween(" + VEC3_TYPE + VEC3_TYPE + AABB_TYPE
+            + "Lnet/minecraft/world/level/BlockGetter$BlockStepVisitor;)Z";
+
+        @Override
+        public String name() {
+            return BlockGetter.class.getName();
+        }
+
+        @Override
+        public void write(final GoldenWriter writer) throws IOException {
+            Random random = new Random(0x424c4f43L);
+            for (int i = 0; i < 6000; i++) {
+                Vec3 to = new Vec3(random.nextDouble() * 8.0 - 4.0, random.nextInt(3) == 0 ? -60.0 : -62.0 + random.nextDouble() * 4.0, random.nextDouble() * 8.0 - 4.0);
+                AABB box = (random.nextInt(4) == 0 ? CoreValues.randomEntityBox(random, to) : CoreValues.entityBox(0.6F, 1.8F, to)).deflate(1.0E-5F);
+                Vec3 travel = switch (random.nextInt(8)) {
+                    case 0 -> new Vec3((random.nextDouble() * 2.0 - 1.0) * 0.3, random.nextBoolean() ? 0.0 : -0.0784000015258789, (random.nextDouble() * 2.0 - 1.0) * 0.3);
+                    case 1 -> new Vec3((random.nextDouble() * 2.0 - 1.0) * 0.3, (random.nextDouble() * 2.0 - 1.0) * 0.8, (random.nextDouble() * 2.0 - 1.0) * 0.3);
+                    case 2 -> Vec3.ZERO.with(Direction.Axis.VALUES[random.nextInt(3)], (random.nextDouble() * 2.0 - 1.0) * 1.5);
+                    case 3 -> new Vec3(0.0, -random.nextDouble() * 4.0, 0.0);
+                    case 4 -> Vec3.directionFromRotation((random.nextFloat() * 2.0F - 1.0F) * 90.0F, (random.nextFloat() * 2.0F - 1.0F) * 180.0F)
+                        .scale(random.nextDouble() * 8.0);
+                    case 5 -> new Vec3(random.nextDouble() * 2.0E-5 - 1.0E-5, random.nextDouble() * 2.0E-5 - 1.0E-5, random.nextDouble() * 2.0E-5 - 1.0E-5);
+                    case 6 -> new Vec3(Math.floor(random.nextDouble() * 4.0 - 2.0), Math.floor(random.nextDouble() * 4.0 - 2.0), 0.0);
+                    default -> Vec3.ZERO;
+                };
+                Vec3 from = to.subtract(travel);
+                int stopAfter = random.nextInt(4) == 0 ? 1 + random.nextInt(12) : -1;
+                JsonArray args = BlockSuites.array(CoreValues.encode(from), CoreValues.encode(to), CoreValues.encode(box), new JsonPrimitive(stopAfter));
+                BlockSuites.call(writer, FOR_EACH_BLOCK_INTERSECTED_BETWEEN, args, () -> {
+                    JsonArray visits = new JsonArray();
+                    boolean ended = BlockGetter.forEachBlockIntersectedBetween(from, to, box, (pos, iteration) -> {
+                        visits.add(BlockSuites.array(
+                            new JsonPrimitive(pos.getX()), new JsonPrimitive(pos.getY()), new JsonPrimitive(pos.getZ()), new JsonPrimitive(iteration)
+                        ));
+                        return stopAfter < 0 || visits.size() < stopAfter;
+                    });
+                    return BlockSuites.array(visits, new JsonPrimitive(ended));
+                });
             }
         }
     }

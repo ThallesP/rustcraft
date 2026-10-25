@@ -1,11 +1,15 @@
 //! net/minecraft/world/level/block/SweetBerryBushBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties, its default state and which of its
-//! states tick. Not ported yet: its behaviour.
-//!
-//! Of its behaviour, which states tick and its shape (by its age) are ported.
+//! What decides its blocks' states (its properties, its default state and which of its states
+//! tick), and of its behaviour its shape (by its age) and `entityInside`: a living entity but a
+//! fox or a bee is stuck in it, at four fifths of its speed sideways and three quarters up and
+//! down. The damage it does once grown to an entity moving in it is the server's. Not ported yet:
+//! the rest of its behaviour (growing, picking its berries, bone meal).
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::entity::entity_types::EntityTypes;
+use crate::net::minecraft::world::entity::inside_block_effect_applier::InsideBlockEffectApplier;
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
@@ -18,9 +22,11 @@ use crate::net::minecraft::world::level::block::state::state_definition::Builder
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block::vegetation_block::{self, VegetationBlock};
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
+use crate::net::minecraft::world::phys::vec3::Vec3;
 use std::sync::LazyLock;
 
 pub struct SweetBerryBushBlock;
@@ -28,6 +34,7 @@ pub struct SweetBerryBushBlock;
 pub static CLASS: BlockClass = BlockClass {
     get_shape: Some(SweetBerryBushBlock::get_shape),
     is_randomly_ticking: Some(SweetBerryBushBlock::is_randomly_ticking),
+    entity_inside: Some(SweetBerryBushBlock::entity_inside),
     ..BlockClass::new(
         "net.minecraft.world.level.block.SweetBerryBushBlock",
         &vegetation_block::CLASS,
@@ -66,6 +73,25 @@ impl SweetBerryBushBlock {
 
     fn is_randomly_ticking(_block: &BlockData, state: BlockState) -> bool {
         state.get_value(SweetBerryBushBlock::AGE) < 3
+    }
+
+    fn entity_inside(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn Level,
+        _pos: &BlockPos,
+        entity: &mut dyn EntityClass,
+        _effect_applier: &mut dyn InsideBlockEffectApplier,
+        _is_precise: bool,
+    ) {
+        let r#type = entity.entity().get_type();
+        if entity.is_living_entity() && r#type != EntityTypes::FOX && r#type != EntityTypes::BEE {
+            entity.make_stuck_in_block(
+                state,
+                Vec3::new(f64::from(0.8_f32), 0.75, f64::from(0.8_f32)),
+            );
+            // A grown bush hurts an entity moving in it, on the server.
+        }
     }
 }
 

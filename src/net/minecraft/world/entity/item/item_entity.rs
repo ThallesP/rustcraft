@@ -2,16 +2,16 @@
 //!
 //! An item on the ground, on the client: its tick, which moves it on both sides
 //! (`MoveSimulationType.SERVER_AND_CLIENT`): `Entity`'s tick, then floating in water and lava or
-//! falling, `move` with the air's drag and the block's friction under it, a bounce off the
-//! ground, and its age. Its interpolation handler is `Entity`'s, none, so the server's moves put
-//! it where they say.
+//! falling, `move` with the air's drag and the block's friction under it, the blocks it went
+//! through (`applyEffectsFromBlocks`, see `Entity`), a bounce off the ground, and its age. Its
+//! interpolation handler is `Entity`'s, none, so the server's moves put it where they say.
 //!
 //! Not ported yet: its item (`DATA_ITEM`, an `ItemStack`, whose serializer is the net track's
 //! data components), so it's taken as not empty: an empty one discards itself (on the client
 //! too), and the server discards an item entity whose stack is empty before any player tracks
 //! it. What only the server does: merging with its neighbours, being picked up, despawning,
-//! moving out of blocks (`moveTowardsClosestSpace`). `applyEffectsFromBlocks` (see `Entity`), the
-//! bobbing and spin that only rendering reads (`bobOffs`, `getSpin`).
+//! moving out of blocks (`moveTowardsClosestSpace`). The bobbing and spin that only rendering reads
+//! (`bobOffs`, `getSpin`).
 
 // Java's negated comparisons are kept as they are: they differ from the plain ones for NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -81,10 +81,11 @@ impl ItemEntity {
             && !(self.entity.get_delta_movement().horizontal_distance_sqr() > f64::from(1.0E-5_f32))
             && (self.entity.tick_count.wrapping_add(self.entity.get_id())) % 4 != 0
         {
-            // `applyEffectsFromBlocksForLastMovements()` (see `Entity`).
+            entity::apply_effects_from_blocks_for_last_movements(self, level);
         } else {
             let delta = self.entity.get_delta_movement();
             self.r#move(level, MoverType::SELF, delta);
+            entity::apply_effects_from_blocks(self, level);
             let air_drag = self.get_air_drag();
             let mut ground_friction = air_drag;
             if self.entity.on_ground() {

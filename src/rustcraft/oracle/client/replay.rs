@@ -19,9 +19,9 @@
 //! leaves out the join's per-tick packets. From the marker on, the packets are compared strictly,
 //! each by its name and its payload (`capture.jsonl`'s `name` and `payload`).
 //!
-//! The server's answers after the marker aren't replayed, but at a step's `wait_for`: elsewhere
-//! they're its echoes of the player's own state (`set_entity_data`'s flags and pose,
-//! `update_attributes`' sprinting modifier), which change nothing the client has. Where a step waits
+//! The server's answers after the marker aren't replayed, but at a step's `wait_for` and its
+//! attributes (below): elsewhere they're its echoes of the player's own state (`set_entity_data`'s
+//! flags and pose), which change nothing the client has. Where a step waits
 //! for the server's answer (TESTING.md), the live clients handle what has come by then after the
 //! tick's trace line, before the next tick; the replay takes the capture's clientbound packets in
 //! the order they came, up to the waited-for ones, and applies those that change the player: its
@@ -35,6 +35,8 @@
 //! filled, each of the client's `client_tick_end`s ticking them (their interpolation), and from
 //! the marker on before each tick, the clientbound packets that came before the tick's own (which
 //! a paced scenario's client handles at the tick's slot), the entities ticked after the player.
+//! The player's attributes change the same way (`update_attributes`): besides echoing its
+//! sprinting, the server slows a freezing player down (`LivingEntity.tryAddFrost`).
 //! On the flat level they stay where they're summoned, so a scenario whose entities move can only
 //! be replayed on a capture.
 
@@ -79,6 +81,7 @@ use crate::net::minecraft::network::protocol::game::clientbound_set_entity_data_
 use crate::net::minecraft::network::protocol::game::clientbound_set_entity_motion_packet::ClientboundSetEntityMotionPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_set_health_packet::ClientboundSetHealthPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_teleport_entity_packet::ClientboundTeleportEntityPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_update_attributes_packet::ClientboundUpdateAttributesPacket;
 use crate::net::minecraft::network::protocol::game::game_protocols::{self, GameProtocols};
 use crate::net::minecraft::network::protocol::game::server_game_packet_listener::ServerGamePacketListener;
 use crate::net::minecraft::network::protocol::game::serverbound_chat_command_packet::ServerboundChatCommandPacket;
@@ -788,6 +791,7 @@ pub fn replay(
                     }
                     if !packet.serverbound {
                         apply_entity_packet(level, packet, player_id, &registry_buffer);
+                        apply_player_packet(&mut player, packet, &registry_buffer);
                     }
                     next += 1;
                 }
@@ -804,6 +808,7 @@ pub fn replay(
                     next += 1;
                     if !packet.serverbound {
                         apply_entity_packet(level, packet, player_id, &registry_buffer);
+                        apply_player_packet(&mut player, packet, &registry_buffer);
                     } else if packet.name == "minecraft:client_tick_end" {
                         break;
                     }
@@ -925,6 +930,22 @@ fn apply_entity_packet(
             }
         }
         _ => {}
+    }
+}
+
+/// What the client's listener does with the player's attributes (`handleUpdateAttributes`); the
+/// other packets about it change nothing it has, or are taken at a `wait_for` (`apply_answer`).
+fn apply_player_packet(
+    player: &mut LocalPlayer,
+    packet: &CapturedPacket,
+    registry_buffer: &impl Fn(&[i8]) -> RegistryFriendlyByteBuf,
+) {
+    if packet.name == "minecraft:update_attributes" {
+        let update = ClientboundUpdateAttributesPacket::STREAM_CODEC
+            .decode(&mut registry_buffer(&packet.payload));
+        if update.get_entity_id() == player.get_id() {
+            ClientPacketListener::update_attributes_of(player, &update);
+        }
     }
 }
 
@@ -1064,11 +1085,22 @@ mod tests {
     /// trace and packets are checked too. A scenario that waits for the server is only replayed on a
     /// capture, which has the answers.
     fn check_scenario(name: &str, trace_md5: &str, packets_md5: &str) {
+        check_scenario_answered(name, trace_md5, packets_md5, false);
+    }
+
+    /// `check_scenario` for a scenario whose server changes the player on its own clock outside
+    /// a `wait_for`: the speed it slows a freezing player down to (`update_attributes`), which
+    /// only a capture has, so it's only replayed on one.
+    fn check_scenario_on_capture(name: &str, trace_md5: &str, packets_md5: &str) {
+        check_scenario_answered(name, trace_md5, packets_md5, true);
+    }
+
+    fn check_scenario_answered(name: &str, trace_md5: &str, packets_md5: &str, answered: bool) {
         let scenario = Scenario::load(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("oracle/scenarios/{name}.json")),
         )
         .unwrap();
-        let waits = scenario.steps.iter().any(|step| !step.wait_for.is_empty());
+        let waits = answered || scenario.steps.iter().any(|step| !step.wait_for.is_empty());
         // The flat level's entities stay where they're summoned, which the server's stay too only
         // without its AI or gravity moving them.
         let moves = scenario.setup.iter().any(|command| {
@@ -1130,7 +1162,7 @@ mod tests {
             );
             check(name, &on_captured, trace_md5, packets_md5);
         } else {
-            assert!(!waits, "{name} waits for the server, so it needs a capture");
+            assert!(!waits, "{name} needs the server's answers, from a capture");
             assert!(!moves, "{name}'s entities move, so it needs a capture");
         }
 
@@ -1419,6 +1451,65 @@ mod tests {
             "water-landing",
             "d44e678710d4030bfba0516e220fe014",
             "4bc1281fe90d5e1c463fa43c9f6c51a8",
+        );
+    }
+
+    /// Walking into cobwebs and through them, jumping in one, sweet berry bushes (`age=0`, which
+    /// the server doesn't hurt with), then a drop into a cobweb in a pit.
+    #[test]
+    fn cobwebs() {
+        check_scenario(
+            "cobwebs",
+            "0f53c70826ed9ddd63039ffcbad26a97",
+            "1de2cc59a6b84021df1be4d5d64865d3",
+        );
+    }
+
+    /// A drop onto honey blocks set in the ground, walking on them (their speed factor) and
+    /// jumping and sprint-jumping on them (their jump factor).
+    #[test]
+    fn honey() {
+        check_scenario(
+            "honey",
+            "326fbe612a124c6e97547eec2ea0e15c",
+            "9066b973f52cfdb409584a665f636642",
+        );
+    }
+
+    /// A drop of 4.5 blocks onto slime and the bounces after it, landing sneaking (no bounce),
+    /// walking on slime (`stepOn`) and jumping on it; paced (the fall's particles, by its
+    /// distance on the server).
+    #[test]
+    fn slime() {
+        check_scenario(
+            "slime",
+            "abc32834b3c13d82f02a23f5fde87172",
+            "426d950a82bc43933ba9f7338aa6a31f",
+        );
+    }
+
+    /// Sliding down the side of a honey wall, pressed against it. Live, the server's run differs
+    /// from vanilla's in how often it sends the slide's particles (`entity_event` 53, on one of
+    /// its ticks in five at random, from its level's random source), which no run can pin.
+    #[test]
+    fn honey_slide() {
+        check_scenario(
+            "honey-slide",
+            "ec93af904550c7e9d358d27abed9f80d",
+            "c19d6c649b11eef4b5e7df38736f66ac",
+        );
+    }
+
+    /// Walking along a wall of powder snow, the box in it but not the feet: freezing (the server's
+    /// slow-down, `update_attributes`) without getting stuck; then off a ledge into a shaft against
+    /// its far wall, falling four blocks onto powder snow (its falling shape), sinking into it
+    /// stuck, standing and jumping in it; paced. The server's slow-down only comes on a capture.
+    #[test]
+    fn powder_snow() {
+        check_scenario_on_capture(
+            "powder-snow",
+            "61209617c9523828e6c8779626e63375",
+            "b0fc633eb9ba2de5e0c6c01c39ddbb1b",
         );
     }
 

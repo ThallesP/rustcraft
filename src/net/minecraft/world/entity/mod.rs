@@ -11,6 +11,8 @@ pub mod entity_type;
 pub mod entity_type_ids;
 pub mod entity_types;
 pub mod humanoid_arm;
+pub mod inside_block_effect_applier;
+pub mod inside_block_effect_type;
 pub mod interpolation_handler;
 pub mod item;
 pub mod linear_interpolation_handler;

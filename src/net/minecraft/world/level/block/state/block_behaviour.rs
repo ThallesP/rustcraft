@@ -18,11 +18,18 @@
 //! shape and its faces, `isSolidRender`, the light), worked out the first time it's asked for
 //! (`StateShapes`). Every class's overrides are ported.
 //!
+//! What's inside a block: `getEntityInsideCollisionShape` (every class's overrides) and
+//! `entityInside`, which a class may override like the shapes. Only the overrides that do
+//! something on the client are ported (cobwebs, sweet berry bushes, powder snow, honey, bubble
+//! columns); the others' are the server's (pressure plates, tripwires, buttons, crops, cactus and
+//! fire damage, hoppers, lily pads, wither roses, frogspawn, dripleaves), or change only what isn't
+//! ported (portals, which only `LocalPlayer`'s portal effect reads; the fire and cauldrons, the
+//! entity's fire).
+//!
 //! Not ported yet: every other behaviour method (`useWithoutItem`, `tick`, `updateShape`,
 //! `animateTick`…), which come with the blocks' classes; `Properties.sound` and `SoundType`,
 //! `isValidSpawn` (it takes an `EntityType`) and `requiredFeatures` (`FeatureFlag`), which
-//! Blocks' registrations leave out until they come; `getEntityInsideCollisionShape`, which
-//! comes with what's inside a block.
+//! Blocks' registrations leave out until they come.
 //!
 //! Java's state predicates are lambdas, so `Properties` holds them as values that say which they
 //! are: Properties' defaults, which read the block's shapes or tags, Blocks' named ones, or a
@@ -42,6 +49,8 @@ use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::util::util::Util;
+use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::entity::inside_block_effect_applier::InsideBlockEffectApplier;
 use crate::net::minecraft::world::item::dye_color::DyeColor;
 use crate::net::minecraft::world::level::block::block::{Block, BlockClass, BlockData};
 use crate::net::minecraft::world::level::block::blocks::{self, REGISTRY};
@@ -51,6 +60,7 @@ use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::note_block_instrument::NoteBlockInstrument;
 use crate::net::minecraft::world::level::block::support_type::SupportType;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::level::material::map_color::MapColor;
 use crate::net::minecraft::world::level::material::push_reaction::PushReaction;
 use crate::net::minecraft::world::phys::aabb::AABB;
@@ -1187,6 +1197,52 @@ impl BlockState {
                 get_interaction_shape(Block::data(self.get_block()), *self, level, pos)
             }
             None => Shapes::empty(),
+        }
+    }
+
+    /// `getEntityInsideCollisionShape(BlockGetter, BlockPos, Entity)`: `BlockBehaviour`'s is the
+    /// whole block.
+    pub fn get_entity_inside_collision_shape(
+        &self,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        entity: &dyn EntityClass,
+    ) -> VoxelShape {
+        match self
+            .class()
+            .find(|class| class.get_entity_inside_collision_shape)
+        {
+            Some(get_entity_inside_collision_shape) => get_entity_inside_collision_shape(
+                Block::data(self.get_block()),
+                *self,
+                level,
+                pos,
+                entity,
+            ),
+            None => Shapes::block(),
+        }
+    }
+
+    /// `entityInside(Level, BlockPos, Entity, InsideBlockEffectApplier, boolean)`:
+    /// `BlockBehaviour`'s does nothing.
+    pub fn entity_inside(
+        &self,
+        level: &dyn Level,
+        pos: &BlockPos,
+        entity: &mut dyn EntityClass,
+        effect_applier: &mut dyn InsideBlockEffectApplier,
+        is_precise: bool,
+    ) {
+        if let Some(entity_inside) = self.class().find(|class| class.entity_inside) {
+            entity_inside(
+                Block::data(self.get_block()),
+                *self,
+                level,
+                pos,
+                entity,
+                effect_applier,
+                is_precise,
+            );
         }
     }
 

@@ -3,8 +3,9 @@
 //! What a player adds to a living entity's movement: its abilities (flying), `tick`'s pose and
 //! the world's edge, `aiStep`'s speed, `travel` (swimming toward where it looks), the flying
 //! speed, sneaking back from an edge (`maybeBackOffFromEdge`), whether it's under water and
-//! swimming, and its attributes (`createAttributes`). `PlayerClass` holds the methods its
-//! subclasses override.
+//! swimming, what the blocks it's inside do to it but while it flies (`makeStuckInBlock`,
+//! `onAboveBubbleColumn`, `onInsideBubbleColumn`), and its attributes (`createAttributes`).
+//! `PlayerClass` holds the methods its subclasses override.
 //!
 //! Not ported yet: the inventory and containers, food beyond its level, experience, sleeping,
 //! attacking, item cooldowns, the shoulder entities, picking items up, and fall damage. A
@@ -29,6 +30,7 @@ use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::entity::player::abilities::Abilities;
 use crate::net::minecraft::world::entity::player::player_model_part::PlayerModelPart;
 use crate::net::minecraft::world::entity::pose::Pose;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::level::{self, Level};
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::vec3::Vec3;
@@ -274,6 +276,36 @@ pub fn on_climbable(this: &mut (impl PlayerClass + Sized), level: &dyn Level) ->
         false
     } else {
         living_entity::on_climbable(this, level)
+    }
+}
+
+/// `Player.makeStuckInBlock(BlockState, Vec3)`: `Entity`'s unless it flies. The impulse it would
+/// reset (`tryResetCurrentImpulseContext`, a wind charge's) isn't ported.
+pub fn make_stuck_in_block(
+    this: &mut (impl PlayerClass + ?Sized),
+    _block_state: BlockState,
+    speed_multiplier: Vec3,
+) {
+    if !this.player().abilities.flying {
+        this.entity_mut().make_stuck_in_block(speed_multiplier);
+    }
+}
+
+/// `Player.onAboveBubbleColumn(boolean, BlockPos)`: `Entity`'s unless it flies.
+pub fn on_above_bubble_column(
+    this: &mut (impl PlayerClass + ?Sized),
+    drag_down: bool,
+    pos: &BlockPos,
+) {
+    if !this.player().abilities.flying {
+        entity::handle_on_above_bubble_column(this, drag_down, pos);
+    }
+}
+
+/// `Player.onInsideBubbleColumn(boolean)`: `Entity`'s unless it flies.
+pub fn on_inside_bubble_column(this: &mut (impl PlayerClass + ?Sized), drag_down: bool) {
+    if !this.player().abilities.flying {
+        entity::handle_on_inside_bubble_column(this, drag_down);
     }
 }
 

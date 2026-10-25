@@ -4,8 +4,8 @@
 //! (`FlowingFluid.FALLING`, and `LEVEL_FLOWING` for a flowing one), so here a state is its fluid
 //! and their values, `Copy` and compared by value, which is comparing Java's references since a
 //! definition holds one state for each combination. Its heights and flow (`getHeight`,
-//! `getHeightForCamera`, `getOwnHeight`, `getFlow`) and its animations (`animateTick`,
-//! `getDripParticle`) ask its fluid (`Fluid`). Not ported yet:
+//! `getHeightForCamera`, `getOwnHeight`, `getFlow`, `getAABB`, `entityInside`) and its animations
+//! (`animateTick`, `getDripParticle`) ask its fluid (`Fluid`). Not ported yet:
 //! `Fluid.FLUID_STATE_REGISTRY`'s ids and the other behaviour methods (`getShape`, ticking), which
 //! come with what calls them.
 
@@ -15,13 +15,17 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::particles::particle_options::ParticleOptions;
 use crate::net::minecraft::tags::fluid_tags::FluidTagKey;
 use crate::net::minecraft::util::random_source::RandomSource;
+use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::entity::inside_block_effect_applier::InsideBlockEffectApplier;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::liquid_block::LiquidBlock;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 use crate::net::minecraft::world::level::material::{lava_fluid, water_fluid};
+use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 
@@ -200,6 +204,23 @@ impl FluidState {
     /// `getFlow(BlockGetter, BlockPos)`: the direction it flows in, a unit vector or zero.
     pub fn get_flow(&self, level: &dyn BlockGetter, pos: &BlockPos) -> Vec3 {
         self.fluid.get_flow(level, pos, *self)
+    }
+
+    /// `getAABB(BlockGetter, BlockPos)`: its box in the block, none when it's empty.
+    pub fn get_aabb(&self, level: &dyn BlockGetter, pos: &BlockPos) -> Option<AABB> {
+        self.fluid.get_aabb(*self, level, pos)
+    }
+
+    /// `entityInside(Level, BlockPos, Entity, InsideBlockEffectApplier)`: its fluid's, which only
+    /// asks for effects, whatever the level, the position or the entity.
+    pub fn entity_inside(
+        &self,
+        _level: &dyn Level,
+        _pos: &BlockPos,
+        _entity: &mut dyn EntityClass,
+        effect_applier: &mut dyn InsideBlockEffectApplier,
+    ) {
+        self.fluid.entity_inside(effect_applier);
     }
 }
 

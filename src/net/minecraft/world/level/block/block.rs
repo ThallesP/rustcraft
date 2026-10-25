@@ -4,11 +4,14 @@
 //! definition and default state, `BLOCK_STATE_REGISTRY` with `getId` and `stateById`, the
 //! getters of what `BlockBehaviour` copied (`getFriction`, `getExplosionResistance`…),
 //! `toString`, and the shapes' helpers (`box`, `column`, `boxZ`, `cube`, `isShapeFullBlock`,
-//! `getShapeForEachState`: the player track's), and what shape updates use (`updateOrDestroy`,
-//! `updateFromNeighbourShapes`, `isExceptionForConnection`, and the dispatch of `updateShape`,
-//! `canSurvive` and the like to each class's). Not ported yet: the other behaviour methods
-//! (`playerDestroy`, `fallOn`, `getStateForPlacement`…), `shouldRenderFace`, `asItem`, `getName`
-//! and `withPropertiesOf`, which come with what calls them.
+//! `getShapeForEachState`: the player track's), `stepOn`, which a class overrides like the
+//! shapes, and what shape updates use (`updateOrDestroy`, `updateFromNeighbourShapes`,
+//! `isExceptionForConnection`, and the dispatch of `updateShape`, `canSurvive` and the like to
+//! each class's). Not ported yet: the other behaviour methods (`playerDestroy`,
+//! `getStateForPlacement`…), `shouldRenderFace`, `asItem`, `getName` and `withPropertiesOf`,
+//! which come with what calls them. `fallOn` and `bounceOn` change nothing the client has: a
+//! landing's damage is the server's (`Entity.hurt` does nothing on the client), and their sounds
+//! aren't ported.
 //!
 //! Java's blocks are objects the game compares by reference, so here a `Block` is its id in
 //! `BuiltInRegistries.BLOCK`: a `Copy` handle that derefs to what Java's object holds, a
@@ -30,6 +33,8 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::id_mapper::IdMapper;
 use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::random_source::RandomSource;
+use crate::net::minecraft::world::entity::entity::EntityClass;
+use crate::net::minecraft::world::entity::inside_block_effect_applier::InsideBlockEffectApplier;
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks, REGISTRY};
 use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
 use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
@@ -43,6 +48,7 @@ use crate::net::minecraft::world::level::block::state::state_definition::{
 };
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
+use crate::net::minecraft::world::level::level::Level;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 use crate::net::minecraft::world::level::material::map_color::MapColor;
@@ -118,6 +124,26 @@ pub type UpdateIndirectNeighbourShapesMethod =
 /// entity of the type does each tick there, if anything.
 pub type GetTickerMethod = fn(&BlockData, BlockState, BlockEntityType) -> Option<BlockEntityTicker>;
 
+/// A class's `getEntityInsideCollisionShape`: what of the block an entity has to touch to be in
+/// it.
+pub type EntityInsideShapeMethod =
+    fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos, &dyn EntityClass) -> VoxelShape;
+
+/// A class's `entityInside`: what the block does to an entity inside it, directly or through the
+/// applier, and whether the entity is precisely in it (`isPrecise`).
+pub type EntityInsideMethod = fn(
+    &BlockData,
+    BlockState,
+    &dyn Level,
+    &BlockPos,
+    &mut dyn EntityClass,
+    &mut dyn InsideBlockEffectApplier,
+    bool,
+);
+
+/// A class's `stepOn`: what the block does to an entity on the ground on it.
+pub type StepOnMethod = fn(&BlockData, &dyn Level, &BlockPos, BlockState, &mut dyn EntityClass);
+
 /// A block class: Java's `Class<? extends Block>` and the overrides that matter so far.
 pub struct BlockClass {
     /// `getName()`, the binary name.
@@ -183,6 +209,15 @@ pub struct BlockClass {
     pub is_signal_source: Option<fn(&BlockData, BlockState) -> bool>,
     /// `shouldRedstoneWireConnectTo(...)`, if it overrides it.
     pub should_redstone_wire_connect_to: Option<ShouldRedstoneWireConnectToMethod>,
+    /// `getEntityInsideCollisionShape(BlockState, BlockGetter, BlockPos, Entity)`, if it overrides
+    /// it.
+    pub get_entity_inside_collision_shape: Option<EntityInsideShapeMethod>,
+    /// `entityInside(BlockState, Level, BlockPos, Entity, InsideBlockEffectApplier, boolean)`, if
+    /// it overrides it with something the client does.
+    pub entity_inside: Option<EntityInsideMethod>,
+    /// `stepOn(Level, BlockPos, BlockState, Entity)`, if it overrides it with something the client
+    /// does.
+    pub step_on: Option<StepOnMethod>,
 }
 
 impl BlockClass {
@@ -219,6 +254,9 @@ impl BlockClass {
             may_place_on: None,
             is_signal_source: None,
             should_redstone_wire_connect_to: None,
+            get_entity_inside_collision_shape: None,
+            entity_inside: None,
+            step_on: None,
         }
     }
 
@@ -590,6 +628,19 @@ impl BlockData {
         match self.class.find(|class| class.get_max_vertical_offset) {
             Some(get_max_vertical_offset) => get_max_vertical_offset(self),
             None => 0.2,
+        }
+    }
+
+    /// `stepOn(Level, BlockPos, BlockState, Entity)`, which a class may override: nothing.
+    pub fn step_on(
+        &self,
+        level: &dyn Level,
+        pos: &BlockPos,
+        on_state: BlockState,
+        entity: &mut dyn EntityClass,
+    ) {
+        if let Some(step_on) = self.class.find(|class| class.step_on) {
+            step_on(self, level, pos, on_state, entity);
         }
     }
 }

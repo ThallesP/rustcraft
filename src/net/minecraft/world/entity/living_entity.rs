@@ -6,15 +6,19 @@
 //! an edge), climbing (`onClimbable`, `handleOnClimbable`), `jumpFromGround`, sprinting's speed
 //! modifier, and its overrides of `Entity`'s gravity, air drag, step height, speed factor and size.
 //! On the client, a living entity in the level pushes the local player (`pushEntities`,
-//! `isPushable`, `push`), and only travels where it's authoritative (`canSimulateMovement`).
-//! `LivingEntityClass` holds the methods its subclasses override (PORTING.md, "Entities").
+//! `isPushable`, `push`), and only travels where it's authoritative (`canSimulateMovement`), where
+//! the blocks it went through then act on it (`applyEffectsFromBlocks`, see `Entity`), and it
+//! climbs out of powder snow it can walk on. `LivingEntityClass` holds the methods its subclasses
+//! override (PORTING.md, "Entities").
 //!
 //! Not ported yet: health beyond its value, damage and death, effects (`hasEffect` is never true:
-//! no jump boost, slow falling, levitation or dolphin's grace), equipment and using items, riding
-//! (`travelRidden`, `floatInLiquidWhileRidden`), gliding (`travelFallFlying`, which panics),
-//! the cramming damage of `pushEntities` (the server's), the swim amount, the head's rotation
-//! (`lerpHeadTo`, `rotate_head`), the body's and the walk animation, which only rendering reads,
-//! and `applyEffectsFromBlocks` (see `Entity`).
+//! no jump boost, slow falling, levitation or dolphin's grace), equipment and using items (no
+//! leather boots on powder snow, no armor that keeps the cold out), riding (`travelRidden`,
+//! `floatInLiquidWhileRidden`), gliding (`travelFallFlying`, which panics), the cramming damage of
+//! `pushEntities` (the server's), the swim amount, the head's rotation (`lerpHeadTo`,
+//! `rotate_head`), the body's and the walk animation, which only rendering reads. Freezing's slow
+//! down and damage are the server's (`aiStep`'s `tryAddFrost`, which the client hears of through
+//! `update_attributes`).
 
 // Java's negated comparisons are kept as they are: they differ from the plain ones for NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -40,6 +44,7 @@ use crate::net::minecraft::world::entity::pose::Pose;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::ladder_block::LadderBlock;
+use crate::net::minecraft::world::level::block::powder_snow_block::PowderSnowBlock;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block::trap_door_block::{self, TrapDoorBlock};
@@ -566,6 +571,10 @@ pub fn ai_step(this: &mut (impl LivingEntityClass + Sized), level: &dyn Level) {
         this.travel(level, &input);
     }
 
+    if !level.is_client_side() || this.is_local_instance_authoritative() {
+        entity::apply_effects_from_blocks(this, level);
+    }
+
     // `pushEntities()`: what the client finds pushable by an entity is the local player alone
     // (`EntitySelector.pushableBy`), so the local player's own pushes nothing, and the level's
     // entities push it in their tick (`tick_in_level`).
@@ -602,6 +611,17 @@ pub fn push_entities(
     {
         this.do_push(level, player);
     }
+}
+
+/// `LivingEntity.isAlive()`: not removed, and with health left.
+pub fn is_alive(this: &(impl LivingEntityClass + ?Sized)) -> bool {
+    this.living_entity().get_health() > 0.0
+}
+
+/// `LivingEntity.canFreeze()`: not a spectator, and `Entity`'s. No armor keeps the cold out:
+/// equipment isn't ported.
+pub fn can_freeze(this: &(impl LivingEntityClass + ?Sized)) -> bool {
+    !this.is_spectator() && entity::can_freeze(this)
 }
 
 /// `LivingEntity.isPushable()` on the client: alive, and neither a spectator nor climbing (the
@@ -962,7 +982,8 @@ fn handle_relative_friction_and_calculate_movement(
     let movement = this.entity().get_delta_movement();
     if (this.entity().horizontal_collision || this.living_entity().jumping)
         && (this.on_climbable(level)
-            || this.entity().was_in_powder_snow && panic!("powder snow isn't ported"))
+            || this.entity().was_in_powder_snow
+                && PowderSnowBlock::can_entity_walk_on_powder_snow(this))
     {
         return Vec3::new(movement.x, 0.2, movement.z);
     }

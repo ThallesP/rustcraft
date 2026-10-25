@@ -1,8 +1,8 @@
 //! net/minecraft/world/level/material/WaterFluid.java
 //!
-//! `isSame` (still and flowing water are the same fluid), and what the client's animations ask:
-//! its sounds and particles (`animateTick`) and its drip (`getDripParticle`). Not ported yet: its
-//! ticking.
+//! `isSame` (still and flowing water are the same fluid), `entityInside` (putting the entity's
+//! fire out), and what the client's animations ask: its sounds and particles (`animateTick`) and
+//! its drip (`getDripParticle`). Not ported yet: its ticking.
 
 use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
@@ -11,6 +11,8 @@ use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
 use crate::net::minecraft::sounds::sound_events::SoundEvents;
 use crate::net::minecraft::sounds::sound_source::SoundSource;
 use crate::net::minecraft::util::random_source::RandomSource;
+use crate::net::minecraft::world::entity::inside_block_effect_applier::InsideBlockEffectApplier;
+use crate::net::minecraft::world::entity::inside_block_effect_type::InsideBlockEffectType;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 
@@ -51,4 +53,9 @@ pub fn animate_tick(
 /// `getDripParticle`.
 pub fn get_drip_particle() -> ParticleOptions {
     ParticleTypes::DRIPPING_WATER.into()
+}
+
+/// `entityInside(Level, BlockPos, Entity, InsideBlockEffectApplier)`.
+pub fn entity_inside(effect_applier: &mut dyn InsideBlockEffectApplier) {
+    effect_applier.apply(InsideBlockEffectType::EXTINGUISH);
 }
