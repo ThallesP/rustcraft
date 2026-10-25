@@ -1,0 +1,23 @@
+{
+  "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival", "tick_rate": 2},
+  "player": {"pos": [6.5, -56.0, 1.5], "y_rot": 0.0, "x_rot": 0.0},
+  "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
+  "setup": [
+    "fill 4 -63 3 8 -57 11 minecraft:glass strict",
+    "fill 5 -62 4 7 -57 10 minecraft:water strict",
+    "fill 5 -60 1 7 -57 2 minecraft:stone strict",
+    "setblock 6 -63 6 minecraft:soul_sand strict",
+    "fill 6 -62 6 6 -57 6 minecraft:bubble_column[drag=false] strict",
+    "setblock 6 -63 9 minecraft:magma_block strict",
+    "fill 6 -62 9 6 -57 9 minecraft:bubble_column[drag=true] strict"
+  ],
+  "steps": [
+    {"ticks": 18, "keys": ["forward"]},
+    {"ticks": 40, "keys": ["sneak"]},
+    {"ticks": 12, "keys": ["forward"]},
+    {"ticks": 40, "keys": []},
+    {"ticks": 26, "keys": ["forward"]},
+    {"ticks": 30, "keys": ["sneak"]},
+    {"ticks": 12, "keys": ["sneak", "back"]}
+  ]
+}

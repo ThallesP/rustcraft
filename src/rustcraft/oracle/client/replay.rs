@@ -1488,6 +1488,19 @@ mod tests {
         );
     }
 
+    /// Bubble columns under water: in from a ledge and down to the bottom, into the column over
+    /// soul sand, which pushes up, then over the one over magma and down into it, which drags
+    /// down, onto the magma, sneaking (it hurts otherwise); paced (the air under water). The
+    /// player starts out of the water: the server takes its air on its own ticks while it settles.
+    #[test]
+    fn bubble_columns() {
+        check_scenario(
+            "bubble-columns",
+            "11e3aa0c143b6c18d0ea58ca2288beb0",
+            "3d57e9962d4d843da2d98bc4ee80d53a",
+        );
+    }
+
     /// Sliding down the side of a honey wall, pressed against it. Live, the server's run differs
     /// from vanilla's in how often it sends the slide's particles (`entity_event` 53, on one of
     /// its ticks in five at random, from its level's random source), which no run can pin.
@@ -1497,6 +1510,19 @@ mod tests {
             "honey-slide",
             "ec93af904550c7e9d358d27abed9f80d",
             "c19d6c649b11eef4b5e7df38736f66ac",
+        );
+    }
+
+    /// Bubble columns reaching the water's surface: thrown out of the water over the one over soul
+    /// sand, again and again, then dragged down by the whirlpool over the one over magma, onto
+    /// the magma, sneaking; paced. Live, the server's run differs from vanilla's in the particles
+    /// it sends where an entity is at a column's top, at places from its level's random source.
+    #[test]
+    fn bubble_columns_top() {
+        check_scenario(
+            "bubble-columns-top",
+            "84faa72e3ff4d34f054f5fe645cac9fe",
+            "808ca7bea276afbede40d4b405c2ab1f",
         );
     }
 
