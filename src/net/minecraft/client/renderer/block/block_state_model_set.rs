@@ -1,6 +1,8 @@
 //! net/minecraft/client/renderer/block/BlockStateModelSet.java
 //!
-//! Not ported yet: `getParticleMaterial`, which comes with particles.
+//! The models are by state id, which `get` reads for every block a section compiles, where Java's
+//! map hashes the state: the same model for each state. Not ported yet: `getParticleMaterial`,
+//! which comes with particles.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,7 +12,7 @@ use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 
 /// Each block state's baked model, and the missing model for any other.
 pub struct BlockStateModelSet {
-    model_by_state: HashMap<BlockState, Arc<dyn BlockStateModel>>,
+    model_by_state: Vec<Option<Arc<dyn BlockStateModel>>>,
     missing_model: Arc<dyn BlockStateModel>,
 }
 
@@ -22,15 +24,24 @@ impl BlockStateModelSet {
         model_by_state: HashMap<BlockState, Arc<dyn BlockStateModel>>,
         missing_model: Arc<dyn BlockStateModel>,
     ) -> BlockStateModelSet {
+        let mut by_id = Vec::new();
+        for (state, model) in model_by_state {
+            let id = state.id() as usize;
+            if by_id.len() <= id {
+                by_id.resize(id + 1, None);
+            }
+            by_id[id] = Some(model);
+        }
         BlockStateModelSet {
-            model_by_state,
+            model_by_state: by_id,
             missing_model,
         }
     }
 
     pub fn get(&self, state: BlockState) -> &Arc<dyn BlockStateModel> {
         self.model_by_state
-            .get(&state)
+            .get(state.id() as usize)
+            .and_then(Option::as_ref)
             .unwrap_or(&self.missing_model)
     }
 
