@@ -48,6 +48,9 @@ jobs:
       # So do the falling blocks and items, which move themselves on the client too.
       - run: python3 tools/port_client.py capture entities-falling-blocks --accept-eula
       - run: python3 tools/port_client.py capture entities-items --accept-eula
+      # The server slows a freezing player down on its own clock (update_attributes), which powder-snow's replay takes
+      # from a capture too.
+      - run: python3 tools/port_client.py capture powder-snow --accept-eula
       # Every screen the port has, opened, drawn, ticked, sent a key and a scroll (TESTING.md, "The GUI"): a screen
       # whose drawing or input reaches back into a cell of the game that the frame holds panics, and fails this.
       - run: python3 tools/port_client.py capture screens --accept-eula
