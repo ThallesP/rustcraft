@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::com::mojang::blaze3d::platform::macos_util::MacosUtil;
 use crate::com::mojang::blaze3d::platform::window::Window;
 use crate::com::mojang::blaze3d::systems::render_system::RenderSystem;
 use crate::com::mojang::renderpearl::api::device::gpu_backend::GpuBackend;
@@ -287,6 +288,11 @@ impl Main {
         );
         let window = windowed.then(|| {
             let window = Window::new(&backend, width, height, "Minecraft* 26.3 (rustcraft)");
+            // Minecraft's constructor, once the window is made: the macOS options' defaults
+            // (`ctrlClickEmulatesRightClick` is asked for where `InputQuirks` emulates the right
+            // click, which is macOS).
+            MacosUtil::set_ctrl_click_emulates_right_click(false);
+            MacosUtil::set_fullscreen_menu_visibility(false);
             let surface = device.create_surface(window.handle());
             (window, surface)
         });

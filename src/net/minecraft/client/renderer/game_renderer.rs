@@ -977,6 +977,8 @@ impl GameRenderer {
         let terrain_pipelines = TerrainPipelines {
             multidraw: ChunkSectionLayer::VALUES
                 .map(|layer| self.pipelines.get(device, layer.pipeline(true))),
+            separate: ChunkSectionLayer::VALUES
+                .map(|layer| self.pipelines.get(device, layer.pipeline(false))),
         };
         let sky_pipelines = SkyPipelines {
             sky: self.pipelines.get(device, &RenderPipelines::get().SKY),

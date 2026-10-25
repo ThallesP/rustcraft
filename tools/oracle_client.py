@@ -12,6 +12,10 @@ in the formats from TESTING.md. Needs tools/setup_vanilla.py to have run, and xv
     python3 tools/oracle_client.py capture walk --accept-eula --ping   # the server list's ping, into oracle/walk-ping
     python3 tools/oracle_client.py check-determinism walk            # run twice, diff with oracle-diff
     python3 tools/oracle_client.py check-determinism walk --capture --accept-eula
+    python3 tools/oracle_client.py capture walk --accept-eula --gl-profile macos --out vanilla/26.3/oracle-gl41
+
+`--gl-profile macos` runs the client on llvmpipe restricted to what Apple's OpenGL 4.1 offers
+(oracle/gl-profiles.json, TESTING.md's "GL profiles"); port_client.py takes the same option.
 """
 
 import argparse
@@ -34,6 +38,8 @@ CLIENT_DIR = ROOT / "oracle" / "client"
 OPTIONS_FILE = CLIENT_DIR / "options.txt"
 SCENARIOS_DIR = ROOT / "oracle" / "scenarios"
 LAVAPIPE_ICD = Path("/usr/share/vulkan/icd.d/lvp_icd.json")
+# Mesa's environment for each GL profile both clients can run under (TESTING.md, "GL profiles").
+GL_PROFILES = json.loads((ROOT / "oracle" / "gl-profiles.json").read_text())
 SERVER_PORT = 25565
 PROXY_PORT = 25566
 # OracleGameTest prints this when it waits for the server's ready file.
@@ -62,8 +68,9 @@ def find_jdk():
     return ROOT / "vanilla" / "toolchain" / f"jdk-{major}"
 
 
-# Keep the game off the real desktop and GPU: X11 on Xvfb, llvmpipe for OpenGL, lavapipe for Vulkan, no audio device.
-def headless_env():
+# Keep the game off the real desktop and GPU: X11 on Xvfb, llvmpipe for OpenGL, lavapipe for Vulkan, no audio device,
+# and llvmpipe's OpenGL restricted to a GL profile's if there's one.
+def headless_env(gl_profile=None):
     env = dict(os.environ)
     env.pop("WAYLAND_DISPLAY", None)
     env["JAVA_HOME"] = str(find_jdk())
@@ -75,6 +82,8 @@ def headless_env():
     env["VK_DRIVER_FILES"] = str(LAVAPIPE_ICD)
     env["VK_ICD_FILENAMES"] = str(LAVAPIPE_ICD)
     env["ALSOFT_DRIVERS"] = "null"
+    if gl_profile is not None:
+        env.update(GL_PROFILES[gl_profile])
     return env
 
 
@@ -83,7 +92,7 @@ def expected_ticks(scenario):
     return sum(step.get("ticks", 0) for step in steps), [step["screenshot"] for step in steps if "screenshot" in step]
 
 
-def start(scenario, out_dir, server=None, server_ready=None, ping=False):
+def start(scenario, out_dir, server=None, server_ready=None, ping=False, gl_profile=None):
     """Starts the client replaying the scenario, joining `server` once `server_ready` exists if it's given.
 
     With `ping`, the client pings `server` the way the server list does instead, into `<out_dir>/<scenario>-ping`.
@@ -113,7 +122,7 @@ def start(scenario, out_dir, server=None, server_ready=None, ping=False):
     with open(log_path, "w") as log:
         # Its own process group, so stop() reaches the game under xvfb-run and Gradle.
         client = subprocess.Popen(
-            command, cwd=CLIENT_DIR, env=headless_env(), stdout=log, stderr=subprocess.STDOUT, start_new_session=True
+            command, cwd=CLIENT_DIR, env=headless_env(gl_profile), stdout=log, stderr=subprocess.STDOUT, start_new_session=True
         )
     return client, scenario_out
 
@@ -146,8 +155,8 @@ def finish(scenario, client, scenario_out, ping=False):
     return scenario_out
 
 
-def run(scenario, out_dir, server=None):
-    client, scenario_out = start(scenario, out_dir, server)
+def run(scenario, out_dir, server=None, gl_profile=None):
+    client, scenario_out = start(scenario, out_dir, server, gl_profile=gl_profile)
     try:
         return finish(scenario, client, scenario_out)
     finally:
@@ -179,13 +188,13 @@ def again_if_behind(attempt):
             print(f"{failure}: running it again ({remaining} more at most)")
 
 
-def capture(scenario, out_dir, accept_eula, compression_threshold=None, ping=False):
+def capture(scenario, out_dir, accept_eula, compression_threshold=None, ping=False, gl_profile=None):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run,
     again if a paced run fell behind the server's ticks."""
-    return again_if_behind(lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping))
+    return again_if_behind(lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping, gl_profile))
 
 
-def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, ping=False):
+def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, ping=False, gl_profile=None):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run.
 
     The client starts first and waits on the title screen: the server starts once it's up, and the client joins as soon
@@ -198,7 +207,7 @@ def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, pin
     seed = json.loads(scenario.read_text())["world"]["seed"]
     server_ready = logs / "server-ready"
 
-    client, scenario_out = start(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", server_ready, ping)
+    client, scenario_out = start(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", server_ready, ping, gl_profile)
     server = None
     proxy = None
     try:
@@ -236,9 +245,13 @@ def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, pin
     return scenario_out
 
 
-def check_determinism(scenario, with_capture, accept_eula):
+def check_determinism(scenario, with_capture, accept_eula, gl_profile=None):
     base = VERSION_DIR / "oracle-determinism"
-    runs = [capture(scenario, base / name, accept_eula) if with_capture else run(scenario, base / name) for name in ("a", "b")]
+    runs = [
+        capture(scenario, base / name, accept_eula, gl_profile=gl_profile) if with_capture
+        else run(scenario, base / name, gl_profile=gl_profile)
+        for name in ("a", "b")
+    ]
     diff = subprocess.run(["cargo", "run", "--quiet", "-p", "oracle-diff", "--", "dir", *runs], cwd=ROOT)
     if diff.returncode != 0:
         raise SystemExit(f"NOT deterministic: {runs[0]} and {runs[1]} differ")
@@ -252,25 +265,28 @@ def main():
     run_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     run_parser.add_argument("--out", type=Path, default=VERSION_DIR / "oracle", help="output directory (default: vanilla/<version>/oracle)")
     run_parser.add_argument("--server", help="join HOST:PORT instead of creating a singleplayer world")
+    run_parser.add_argument("--gl-profile", choices=sorted(GL_PROFILES), help="restrict llvmpipe's OpenGL to a profile's (TESTING.md)")
     capture_parser = commands.add_parser("capture", help="replay a scenario on a fresh vanilla server and capture its packets")
     capture_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     capture_parser.add_argument("--out", type=Path, default=VERSION_DIR / "oracle", help="output directory (default: vanilla/<version>/oracle)")
     capture_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
     capture_parser.add_argument("--compression-threshold", type=int, help="turn the server's compression on, from this packet size")
     capture_parser.add_argument("--ping", action="store_true", help="ping the server like the server list does instead of joining it")
+    capture_parser.add_argument("--gl-profile", choices=sorted(GL_PROFILES), help="restrict llvmpipe's OpenGL to a profile's (TESTING.md)")
     check_parser = commands.add_parser("check-determinism", help="replay a scenario twice and diff the runs")
     check_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     check_parser.add_argument("--capture", action="store_true", help="run on a vanilla server and compare packets too")
     check_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
+    check_parser.add_argument("--gl-profile", choices=sorted(GL_PROFILES), help="restrict llvmpipe's OpenGL to a profile's (TESTING.md)")
     args = parser.parse_args()
 
     scenario = resolve_scenario(args.scenario)
     if args.command == "run":
-        run(scenario, args.out, args.server)
+        run(scenario, args.out, args.server, args.gl_profile)
     elif args.command == "capture":
-        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping)
+        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping, args.gl_profile)
     else:
-        check_determinism(scenario, args.capture, args.accept_eula)
+        check_determinism(scenario, args.capture, args.accept_eula, args.gl_profile)
 
 
 if __name__ == "__main__":

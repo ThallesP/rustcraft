@@ -32,6 +32,9 @@ cargo run -p oracle-diff -- packets vanilla/26.3/oracle/walk-ping/capture.jsonl 
 cargo run -p oracle-diff -- dir vanilla/26.3/oracle/walk target/oracle/walk
 python3 tools/port_client.py soak --preset normal --accept-eula   # the live client on a generated world (below)
 python3 tools/port_client.py stall --accept-eula                  # the game thread stalled 40 s, still connected (below)
+python3 tools/oracle_client.py capture walk --accept-eula --gl-profile macos --out vanilla/26.3/oracle-gl41   # a Mac's OpenGL (below)
+python3 tools/port_client.py capture walk --accept-eula --gl-profile macos --out target/oracle-gl41
+cargo run -p oracle-diff -- dir --strict vanilla/26.3/oracle-gl41/walk target/oracle-gl41/walk
 ```
 
 Wrap the ones that start a server, a client or the proxy in `flock /tmp/rustcraft-oracle.lock`: they use fixed ports, and the machine is shared.
@@ -542,6 +545,18 @@ The port's screenshots come from its runs on a server: a scenario with screensho
 
 The digests need the driver vanilla's screenshots were taken on: Ubuntu 26.04's Mesa 26.0.8-1ubuntu0.3 (`mesa-libgallium`, `libgl1-mesa-dri`, `libglx-mesa0`, `libegl-mesa0`, `libgbm1`), its llvmpipe built on LLVM 21.1.8 (`libllvm21` 1:21.1.8-6ubuntu1), whose device the port logs as `llvmpipe (LLVM 21.1.8, 256 bits)`; another llvmpipe needn't rasterize and sample to the same bits (CI's runner's Mesa 25.2 gives other pixels). On another driver the frames only have to render. CI's `frames` job renders on the oracle's: an `ubuntu:26.04` container whose archive is snapshot.ubuntu.com's of 2026-10-23 (`apt-get update --snapshot 20261023T000000Z`), with those packages pinned to those versions, so a newer Mesa in Ubuntu's archive doesn't reach it; should the snapshot service go, Launchpad keeps every build of `mesa` 26.0.8-1ubuntu0.3 and `llvm-toolchain-21` 1:21.1.8-6ubuntu1 to install by hand. The job records the port's runs of the scenarios with screenshots it matches, then runs `tests/opengl_frame.rs` with `RUSTCRAFT_ORACLE_DRIVER=1`, which turns every skip into a failure: no `xvfb-run`, another driver, a missing capture or a missing run. The digests were checked in that container on this machine before CI ran them (`docker run` of the same packages, the binaries built here).
 
+## GL profiles: a Mac's OpenGL on llvmpipe
+
+A Mac's OpenGL isn't llvmpipe's: Apple's stops at 4.1 core, without most of the extensions vanilla's `GlDevice` and `GlHeuristics` look for, so every fallback they have runs there, and nowhere here. A GL profile runs both clients on llvmpipe restricted to a platform's OpenGL through Mesa's overrides, into references of its own; the default references stay as they are. `oracle/gl-profiles.json` holds each profile's environment, which `oracle_client.py` and `port_client.py` (`--gl-profile`) and `tests/opengl_frame.rs` read.
+
+`macos` is Apple's OpenGL 4.1: `MESA_GL_VERSION_OVERRIDE=4.1FC` (a forward-compatible 4.1 core context, what a Mac gives for the 3.3 core context vanilla asks for), `MESA_GLSL_VERSION_OVERRIDE=410`, and `MESA_EXTENSION_OVERRIDE` taking away each extension vanilla or the port looks for that a Mac lacks: `GL_ARB_buffer_storage`, `GL_ARB_clip_control`, `GL_ARB_multi_draw_indirect`, `GL_ARB_base_instance`, `GL_ARB_shader_draw_parameters`, `GL_KHR_debug`, `GL_ARB_debug_output`, `GL_ARB_direct_state_access` and `GL_ARB_vertex_attrib_binding`. The list is those checks against Apple's OpenGL capability tables: of what they look for, a Mac has `GL_EXT_texture_filter_anisotropic`, `GL_ARB_draw_indirect` and `GL_EXT_debug_label`. Two of Mesa's limits make the profile a little stricter than a Mac:
+- Mesa can't take away its always-on extensions one at a time (`KHR_debug`, `ARB_debug_output`, `ARB_direct_state_access`, `ARB_vertex_attrib_binding` and 40 more: "cannot be disabled"), and asking for one takes them all out of the list, `GL_EXT_debug_label` with them. Vanilla only labels with the debug options' labels on, which neither client turns on.
+- `GL_ARB_multi_draw_indirect` and `GL_ARB_draw_indirect` share one flag in Mesa, so `GL_ARB_draw_indirect` goes too: the device's indirect draw count is 0 where a Mac's is 1. Neither client draws indirectly without base instances (`LevelRenderer.multiDrawIndirectAvailable`), so the terrain draws one section at a time either way.
+
+Both clients then log `4.1 (Core Profile) Mesa 26.0.8-1ubuntu0.3` and `GL_EXT_texture_filter_anisotropic` alone, depth runs from -1 to 1 (`isZZeroToOne` false: no `glClipControl`, the projections' other depth range, the shaders without `RENDERPEARL_DEPTH_IS_ZERO_TO_ONE`), and the paths a Mac takes run: buffers made with `glBufferData`, vertex arrays set up with `glVertexAttribPointer` on each bind, the terrain through `DrawSeparate` (each layer's non-multidraw pipeline, a draw per section with its section's uniform block), no shader draw parameters, no debug output. What only a Mac shows: `isExplicitDepthRequired` (Apple's renderer name, which only the order-independent transparency's shaders read), the error `GlStateManager` drops after clears on macOS, and Apple's own rasterization, which no screenshot here predicts.
+
+Vanilla's runs under the profile are in `vanilla/26.3/oracle-gl41/`, recorded with `oracle_client.py capture <scenario> --accept-eula --gl-profile macos --out vanilla/26.3/oracle-gl41` (`walk-no-gui` and `walk`), and the port's in `target/oracle-gl41/` (`port_client.py capture <scenario> --accept-eula --gl-profile macos --out target/oracle-gl41`), compared with `oracle-diff dir --strict`.
+
 ## Soak: the live client on a generated world
 
 The scenarios' worlds are flat, with few kinds of blocks. `port_client.py soak` joins the port's live client (headless, straight to the server, no proxy) to a fresh `vanilla_server.py` world of a preset (`--preset normal`, seed 0 unless `--seed`, structures on), and takes the player around it: the spawn, plains, a forest, a desert and the caves under it, an ocean, a village and the caves under the spawn, `--seconds-per-stop` at each (20 by default). Each place comes from the server's `locate`, and its chunks are force-loaded until generated before the player goes there, so every block state, block entity and biome the server sends there reaches the client's chunk handling, light, collisions and tints. It exits 1 if the client exits early, leaves the server (a panic while handling a packet disconnects), or logs a panic or code that isn't ported, printing those lines with their counts and the end of the log (`target/soak/client.log`), and 0 otherwise, with each stop and where the server has the player at its end. At the end it stops the server first, so the client is disconnected and exits on its own, printing the packets it skipped as `Unported` by type, which the report lists, the most first: what to port next.
@@ -599,8 +614,8 @@ Vanilla does work the port doesn't do yet, and the numbers include it: entities 
 
 ## Where outputs go
 
-- Vanilla runs: `vanilla/<version>/oracle/<scenario>/`
-- Port runs: `target/oracle/<scenario>/`
+- Vanilla runs: `vanilla/<version>/oracle/<scenario>/`, and under the macOS GL profile `vanilla/<version>/oracle-gl41/<scenario>/`
+- Port runs: `target/oracle/<scenario>/`, and under the profile `target/oracle-gl41/<scenario>/`
 - The soak's client log: `target/soak/client.log`, which ends with the packets the client skipped as `Unported` (`Unported packet minecraft:…: N`), the soak's report listing them, the most first, the stall test's `target/stall/client.log`
 
 `oracle-diff dir A B` compares the trace, the capture and every screenshot that both directories have. Running vanilla twice and diffing the runs (`check-determinism`) checks that the oracle itself is deterministic. It has to be, or no comparison means anything.

@@ -46,6 +46,13 @@ its connection's own thread answers the keep-alives meanwhile, like vanilla's Ne
 
     flock /tmp/rustcraft-oracle.lock python3 tools/port_client.py stall --accept-eula
 
+`--gl-profile macos` renders the screenshots on llvmpipe restricted to what Apple's OpenGL 4.1
+offers, like `oracle_client.py --gl-profile macos` (TESTING.md, "GL profiles"), to compare with
+vanilla's run under the same profile:
+
+    flock /tmp/rustcraft-oracle.lock python3 tools/port_client.py capture walk --accept-eula --gl-profile macos --out target/oracle-gl41
+    cargo run -p oracle-diff -- dir --strict vanilla/26.3/oracle-gl41/walk target/oracle-gl41/walk
+
 `RUSTCRAFT_BINARY=path` runs that build of the port instead of building the tree's, so a long check
 can run on a build while the tree changes.
 
@@ -74,7 +81,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import oracle_client  # noqa: E402
 import vanilla_server  # noqa: E402
 from oracle_client import (  # noqa: E402
-    FELL_BEHIND, PROXY_PORT, SERVER_PORT, VERSION_DIR, again_if_behind, fell_behind, resolve_scenario, wait_for_line,
+    FELL_BEHIND, GL_PROFILES, PROXY_PORT, SERVER_PORT, VERSION_DIR, again_if_behind, fell_behind, resolve_scenario, wait_for_line,
 )
 from vanilla_server import OP_NAME  # noqa: E402
 
@@ -123,7 +130,7 @@ def has_screenshots(scenario):
     return any("screenshot" in step for step in json.loads(Path(scenario).read_text())["steps"])
 
 
-def run(scenario, out_dir, server, ping=False):
+def run(scenario, out_dir, server, ping=False, gl_profile=None):
     """Replays the scenario in the port, joining `server`, or pings it with `ping`."""
     scenario_out = out_dir / (f"{scenario.stem}-ping" if ping else scenario.stem)
     shutil.rmtree(scenario_out, ignore_errors=True)
@@ -141,6 +148,8 @@ def run(scenario, out_dir, server, ping=False):
         # (tests/opengl_frame.rs runs the same way).
         command = ["xvfb-run", "-a", *command]
         env.update(LIBGL_ALWAYS_SOFTWARE="1", GALLIUM_DRIVER="llvmpipe", SDL_VIDEO_DRIVER="x11")
+        if gl_profile is not None:
+            env.update(GL_PROFILES[gl_profile])
     log_path = scenario_out / "client.log"
     print(f"running {scenario_out.name} in the port (log: {log_path})")
     with open(log_path, "w") as log:
@@ -153,15 +162,15 @@ def run(scenario, out_dir, server, ping=False):
     return scenario_out
 
 
-def capture(scenario, out_dir, accept_eula, compression_threshold, ping=False):
+def capture(scenario, out_dir, accept_eula, compression_threshold, ping=False, gl_profile=None):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run,
     again if a paced run fell behind the server's ticks."""
     build_port()
     subprocess.run(["cargo", "build", "--quiet", "-p", "packet-proxy"], cwd=ROOT, check=True)
-    return again_if_behind(lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping))
+    return again_if_behind(lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping, gl_profile))
 
 
-def capture_once(scenario, out_dir, accept_eula, compression_threshold, ping=False):
+def capture_once(scenario, out_dir, accept_eula, compression_threshold, ping=False, gl_profile=None):
     """One run of `capture`."""
     logs = Path(tempfile.mkdtemp(prefix=f"port-{scenario.stem}-"))
     seed = json.loads(scenario.read_text())["world"]["seed"]
@@ -185,7 +194,7 @@ def capture_once(scenario, out_dir, accept_eula, compression_threshold, ping=Fal
         wait_for_line(logs / "proxy.log", "capturing to", proxy)
 
         try:
-            scenario_out = run(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", ping)
+            scenario_out = run(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", ping, gl_profile)
         except SystemExit:
             # Why the connection ended is often only in the server's or the proxy's log.
             for name in ("server.log", "proxy.log"):
@@ -668,6 +677,7 @@ def main():
     capture_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
     capture_parser.add_argument("--compression-threshold", type=int, help="turn the server's compression on, from this packet size")
     capture_parser.add_argument("--ping", action="store_true", help="ping the server like the server list does (--ping) instead of joining it")
+    capture_parser.add_argument("--gl-profile", choices=sorted(GL_PROFILES), help="render on llvmpipe restricted to a profile's OpenGL (TESTING.md)")
     check_parser = commands.add_parser("check-join", help="capture the port's run and compare its join phase with vanilla's (gate 1)")
     check_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     check_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
@@ -693,7 +703,7 @@ def main():
         return
     scenario = resolve_scenario(args.scenario)
     if args.command == "capture":
-        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping)
+        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping, args.gl_profile)
     elif not check_join(scenario, args.accept_eula, args.compression_threshold):
         raise SystemExit(1)
 

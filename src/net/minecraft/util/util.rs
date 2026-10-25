@@ -6,7 +6,7 @@
 //! which a block's description id is made with, checked by `Block`'s; `fixedSize` of a list,
 //! which `ExtraCodecs`' vectors read with, checked by their codecs' cases; and
 //! `parseAndValidateUntrustedUri`, which a click event's link is decoded with, checked by
-//! `java.net.URI`'s.
+//! `java.net.URI`'s; and `isAppleSiliconMac`, which `GlHeuristics` asks of the GL renderer.
 
 use crate::com::mojang::serialization::data_result::DataResult;
 use crate::java::net::uri::URI;
@@ -19,6 +19,12 @@ pub struct Util;
 const ALLOWED_UNTRUSTED_LINK_PROTOCOLS: [&str; 2] = ["http", "https"];
 
 impl Util {
+    /// Whether the GL renderer is Apple's own GPU (`Apple M1`): an Apple Silicon Mac, whatever
+    /// the build's architecture (an x86-64 build under Rosetta too).
+    pub fn is_apple_silicon_mac(renderer: &str) -> bool {
+        renderer.starts_with("Apple")
+    }
+
     /// The URI a string from outside (a text component's `open_url`) parses as, if its scheme is
     /// http or https in any case. `ExtraCodecs.UNTRUSTED_URI` decodes to it, and fails with the
     /// exception's message.

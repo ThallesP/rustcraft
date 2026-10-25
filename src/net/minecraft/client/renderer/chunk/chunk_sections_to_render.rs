@@ -1,10 +1,12 @@
 //! net/minecraft/client/renderer/chunk/ChunkSectionsToRender.java
 //!
-//! A frame's terrain draws, ready for the render passes: each layer's draw groups (sections that
-//! share a vertex buffer, drawn by one indirect multi-draw), the sections' positions as instance
-//! data, and the terrain's transform. Only `DrawIndirect`, the multi-draw path, is ported: it's
-//! the one llvmpipe takes (`LevelRenderer.multiDrawIndirectAvailable`). `DrawSeparate`, the
-//! wireframe pipelines and the order-independent transparency's passes (`renderOit`) aren't.
+//! A frame's terrain draws, ready for the render passes, and the terrain's transform. Its two
+//! subclasses are a `Kind`: `DrawIndirect`, each layer's draw groups (sections that share a vertex
+//! buffer, drawn by indirect multi-draws) with the sections' positions as instance data, which a
+//! device with indirect draws and base instances takes (`LevelRenderer.multiDrawIndirectAvailable`,
+//! llvmpipe); and `DrawSeparate`, a draw for each section's layer with its section's uniform
+//! block, which the others take (Apple's OpenGL 4.1). The wireframe pipelines and the
+//! order-independent transparency's passes (`renderOit`) aren't ported.
 
 use std::rc::Rc;
 
@@ -12,7 +14,7 @@ use crate::com::mojang::blaze3d::systems::render_system::AutoStorageIndexBuffer;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::GpuBuffer;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer_slice::GpuBufferSlice;
 use crate::com::mojang::renderpearl::api::commands::render_pass::{
-    INDIRECT_INDEXED_DRAW_SIZE, RenderPass,
+    self, Draw, INDIRECT_INDEXED_DRAW_SIZE, RenderPass,
 };
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::compiled_render_pipeline::CompiledRenderPipeline;
@@ -30,22 +32,36 @@ pub struct GpuMultiDrawIndexedIndirect {
     pub draw_count: i32,
 }
 
-/// `ChunkSectionsToRender.DrawIndirect`.
 pub struct ChunkSectionsToRender {
     max_indices_required: i32,
     terrain_transform_ubo: GpuBufferSlice,
-    /// Each layer's draw groups, by the layer's ordinal.
-    draw_groups_per_layer: [Vec<GpuMultiDrawIndexedIndirect>; 3],
-    chunk_section_infos: GpuBufferSlice,
+    kind: Kind,
 }
 
-/// What the terrain draws with: each layer's multi-draw pipeline, compiled.
+/// The subclass and its fields, each layer's by the layer's ordinal.
+enum Kind {
+    /// `DrawIndirect`.
+    DrawIndirect {
+        draw_groups_per_layer: [Vec<GpuMultiDrawIndexedIndirect>; 3],
+        chunk_section_infos: GpuBufferSlice,
+    },
+    /// `DrawSeparate`: each draw sets its section's block of `chunk_section_infos`.
+    DrawSeparate {
+        draws_per_layer: [Vec<Draw<[GpuBufferSlice]>>; 3],
+        chunk_section_infos: Vec<GpuBufferSlice>,
+    },
+}
+
+/// What the terrain draws with: each layer's pipelines, compiled, for multi-draws and for draws
+/// one at a time (`ChunkSectionLayer.pipeline`).
 pub struct TerrainPipelines {
     pub multidraw: [Rc<dyn CompiledRenderPipeline>; 3],
+    pub separate: [Rc<dyn CompiledRenderPipeline>; 3],
 }
 
 impl ChunkSectionsToRender {
-    pub fn new(
+    /// `new DrawIndirect(…)`.
+    pub fn draw_indirect(
         terrain_transform_ubo: GpuBufferSlice,
         draw_groups_per_layer: [Vec<GpuMultiDrawIndexedIndirect>; 3],
         max_indices_required: i32,
@@ -54,8 +70,27 @@ impl ChunkSectionsToRender {
         ChunkSectionsToRender {
             max_indices_required,
             terrain_transform_ubo,
-            draw_groups_per_layer,
-            chunk_section_infos,
+            kind: Kind::DrawIndirect {
+                draw_groups_per_layer,
+                chunk_section_infos,
+            },
+        }
+    }
+
+    /// `new DrawSeparate(…)`.
+    pub fn draw_separate(
+        terrain_transform_ubo: GpuBufferSlice,
+        draws_per_layer: [Vec<Draw<[GpuBufferSlice]>>; 3],
+        max_indices_required: i32,
+        chunk_section_infos: Vec<GpuBufferSlice>,
+    ) -> ChunkSectionsToRender {
+        ChunkSectionsToRender {
+            max_indices_required,
+            terrain_transform_ubo,
+            kind: Kind::DrawSeparate {
+                draws_per_layer,
+                chunk_section_infos,
+            },
         }
     }
 
@@ -105,37 +140,62 @@ impl ChunkSectionsToRender {
         default_index_type: IndexType,
         pipelines: &TerrainPipelines,
     ) {
-        render_pass.set_pipeline(&pipelines.multidraw[layer as usize]);
-        let max_draw_indirect_draw_count =
-            device.get_device_info().limits.max_draw_indirect_draw_count;
-        let draw_groups = &self.draw_groups_per_layer[layer as usize];
-        if !draw_groups.is_empty() {
-            render_pass.set_vertex_buffer(1, Some(&self.chunk_section_infos));
-        }
+        match &self.kind {
+            Kind::DrawIndirect {
+                draw_groups_per_layer,
+                chunk_section_infos,
+            } => {
+                render_pass.set_pipeline(&pipelines.multidraw[layer as usize]);
+                let max_draw_indirect_draw_count =
+                    device.get_device_info().limits.max_draw_indirect_draw_count;
+                let draw_groups = &draw_groups_per_layer[layer as usize];
+                if !draw_groups.is_empty() {
+                    render_pass.set_vertex_buffer(1, Some(chunk_section_infos));
+                }
 
-        for indirect_draw in draw_groups {
-            if indirect_draw.draw_count > 0 {
-                render_pass.set_vertex_buffer(0, Some(&indirect_draw.vertex_buffer));
-                let index_type = indirect_draw.index_type.unwrap_or(default_index_type);
-                let index_buffer = match &indirect_draw.index_buffer {
-                    Some(index_buffer) => &index_buffer.buffer,
-                    None => default_index_buffer.expect("the shared quad indices"),
-                };
-                render_pass.set_index_buffer(index_buffer, index_type);
-                let buffer = &indirect_draw.indirect_command_buffer.buffer;
-                let mut start_offset = indirect_draw.indirect_command_buffer.offset;
-                let mut remaining_draw_count = indirect_draw.draw_count;
-                while remaining_draw_count > 0 {
-                    let pass_draw_count = remaining_draw_count.min(max_draw_indirect_draw_count);
-                    let length = i64::from(pass_draw_count) * i64::from(INDIRECT_INDEXED_DRAW_SIZE);
-                    let pass_slice = GpuBufferSlice {
-                        buffer: Rc::clone(buffer),
-                        offset: start_offset,
-                        length,
-                    };
-                    render_pass.draw_indexed_indirect(&pass_slice, pass_draw_count);
-                    remaining_draw_count -= pass_draw_count;
-                    start_offset += length;
+                for indirect_draw in draw_groups {
+                    if indirect_draw.draw_count > 0 {
+                        render_pass.set_vertex_buffer(0, Some(&indirect_draw.vertex_buffer));
+                        let index_type = indirect_draw.index_type.unwrap_or(default_index_type);
+                        let index_buffer = match &indirect_draw.index_buffer {
+                            Some(index_buffer) => &index_buffer.buffer,
+                            None => default_index_buffer.expect("the shared quad indices"),
+                        };
+                        render_pass.set_index_buffer(index_buffer, index_type);
+                        let buffer = &indirect_draw.indirect_command_buffer.buffer;
+                        let mut start_offset = indirect_draw.indirect_command_buffer.offset;
+                        let mut remaining_draw_count = indirect_draw.draw_count;
+                        while remaining_draw_count > 0 {
+                            let pass_draw_count =
+                                remaining_draw_count.min(max_draw_indirect_draw_count);
+                            let length =
+                                i64::from(pass_draw_count) * i64::from(INDIRECT_INDEXED_DRAW_SIZE);
+                            let pass_slice = GpuBufferSlice {
+                                buffer: Rc::clone(buffer),
+                                offset: start_offset,
+                                length,
+                            };
+                            render_pass.draw_indexed_indirect(&pass_slice, pass_draw_count);
+                            remaining_draw_count -= pass_draw_count;
+                            start_offset += length;
+                        }
+                    }
+                }
+            }
+            Kind::DrawSeparate {
+                draws_per_layer,
+                chunk_section_infos,
+            } => {
+                render_pass.set_pipeline(&pipelines.separate[layer as usize]);
+                let draws = &draws_per_layer[layer as usize];
+                if !draws.is_empty() {
+                    render_pass::draw_multiple_indexed(
+                        render_pass,
+                        draws,
+                        default_index_buffer,
+                        default_index_buffer.map(|_| default_index_type),
+                        chunk_section_infos.as_slice(),
+                    );
                 }
             }
         }

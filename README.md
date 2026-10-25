@@ -45,7 +45,7 @@ Coverage on `main` today (counted from the code and its checks by the comparison
 - **Scenarios**: 22 in `oracle/scenarios/`. Offline, the 21 with replay tests (the walk, `hud-experience` and 19 physics scenarios) have vanilla's trace and packets from the marker, in CI. Live, 13 have their trace and packets identical and 5 pass `oracle-diff dir --strict` (`walk-no-gui`, `stairs`, `climbing`, `scaffolding`, `walls-and-panes`); the other 9 have no live run recorded.
 - **Screenshots**: 4 of vanilla's 6 pixel-identical (`walk-no-gui`'s two and the `walk`'s two, with the HUD, the hand and the block outline); `hud-experience`'s two differed only in the hand, 18,279 each, before it was ported, and haven't been run since.
 - **Blocks**: all 35,723 states have vanilla's ids, properties, shapes, light and render properties, and bake to vanilla's quads; the live client tours a generated world without a panic (`port_client.py soak`, in CI).
-- **The rest**: all 161 entity types, but no entity class's client side; all 192 pipelines; the HUD's bars and the experience level's text; none of vanilla's 127 `*Screen` classes drawn; no items, sound or interaction yet. Of the 90 rows below, 10 are done (some but for what they name), 37 partial, 42 not started and 1 not measured.
+- **The rest**: all 161 entity types, but no entity class's client side; all 192 pipelines; the HUD's bars and the experience level's text; none of vanilla's 127 `*Screen` classes drawn; no items, sound or interaction yet. Of the 91 rows below, 11 are done (some but for what they name), 42 partial, 37 not started and 1 not measured.
 
 **Checked by** says how the port is compared with the real game ([TESTING.md](TESTING.md)), and for a row not started, the check it's meant to get:
 - **goldens**: vanilla's own answers to the same calls, matched bit for bit;
@@ -106,7 +106,8 @@ Every step of the loop updates this table.
 | Entities | Each class's client side: other players (`RemotePlayer`, `player_info_update`), mobs by family, projectiles, vehicles, items, XP orbs, falling blocks, paintings, item frames, armor stands, displays; equipment (`set_equipment`), animations (`animate`), `entity_event`'s effects | Not started: each entity is a plain `Entity` of its type | traces | |
 | Rendering | Window (SDL3) and input | Partial: the window and OpenGL 3.3 core context made like vanilla's (LWJGL's own SDL3 build), the level drawn in it each frame; WASD, jump, sneak and sprint by their default keys, mouse look (a click grabs the mouse, Escape lets go), F1; resizing (`Window.onResize`/`onFramebufferResize`: the main target, the projection and the GUI's scale follow the framebuffer); no screens, key bindings or other keys yet; no fullscreen, VSync or frame rate limit | device as vanilla logs it, on llvmpipe; a frame resized from 427x241 to 854x480 (`--start-size`) | same driver, flags and extensions as the oracle's log; the resized frame is vanilla's walk spawn view, pixel for pixel |
 | Rendering | renderpearl with its OpenGL backend, shaders through shaderc and SPIRV-Cross | Partial: every pipeline of `RenderPipelines`, compiled through vanilla's own shaderc and SPIRV-Cross builds and linked into GL programs with their uniform blocks and samplers; the GL device, textures, samplers, buffers, vertex arrays, render passes that clear and draw (`FrontendRenderPass`, indexed and not, and indirect multi-draws), `BufferBuilder`, std140 uniform blocks, screenshots read back; no push constants or direct multi-draws yet | goldens (SPIR-V, reflection, bindings, GLSL); frames under Xvfb | SPIR-V and GLSL byte-identical for all 192 pipelines, all 192 link on llvmpipe; GUI fills pixel-exact against their known pixels |
-| Rendering | Metal backend (macOS) | Not started | draw stream checked against OpenGL's | |
+| Rendering | macOS: Apple's OpenGL 4.1, a Mac's natives | Partial: builds for both Apple targets (CI compiles them), loads the macOS natives from a Mac's classpath like LWJGL, and takes vanilla's fallbacks for what Apple's OpenGL lacks (no clip control: depth from -1 to 1; no base instance: terrain drawn a section at a time, `DrawSeparate`; mutable buffers; emulated vertex attribute binding); never run on a Mac yet (README's "Running on macOS"); `MacosUtil`'s menu items and `InputQuirks` not ported | goldens (the loader over the Mac jars), screenshots on llvmpipe restricted to Apple's OpenGL 4.1 (TESTING.md, "GL profiles") | |
+| Rendering | Metal backend (macOS) | Not started (a plan: PROGRESS.md, "backends") | draw stream checked against OpenGL's | |
 | Rendering | Vulkan backend | Not started | screenshots, against vanilla's Vulkan backend | |
 | Rendering | Resources, texture atlases, block models | Partial: the vanilla pack and the client's resource manager; PNGs decoded by LWJGL's own stb; the block atlas (sprite sources, `.mcmeta` animations and texture sections, `Stitcher`, `MipmapGenerator`, `TextureAtlas` drawn on the GPU) and the item atlas's sprites (with `paletted_permutations`); block models baked for every block state (model JSON through Gson's tree, parents and `#` textures, variants, multipart, weights, rotations, uvlock, `FaceBakery`, the missing model); no item models, other atlases or item atlas upload yet | goldens; atlas frames under Xvfb | all 3,964 textures decode to vanilla's pixels; the block atlas's layout and all 1,310 sprites' mip levels match vanilla's, and the GPU atlas's five levels are exactly those sprites drawn; every one of the 35,723 block states bakes to vanilla's quads, bit for bit |
 | Rendering | The level's frame: terrain, the sky disc, fog | Partial: the level drawn like vanilla's frame on llvmpipe: the camera at the player's eye, the culling frustum, the occlusion graph and its octree, sections compiled like `SectionCompiler` with the biomes' tints and drawn by indirect multi-draws, the lightmap, the sky disc, the atmospheric fog, all from the level's light and its environment attributes; translucent sections sorted again as the camera moves (`scheduleTranslucentResort`); the block atlas's animations ticked a frame with ticks; sections compiled again when the level's blocks, light or biomes change (`LevelExtractor`'s dirty marking from `Level.setBlock`, `enableChunkLight`, the biome and light packets and `onLightUpdate`); no block entities, clouds, weather or world border yet | goldens (vertex and index bytes, the camera's rotation, the frustum's culling, the attributes); screenshots of `walk-no-gui`, `sky-sunset`, `sky-night` and `sky-sunrise`, by their digests in CI too (its `frames` job renders on the oracle's Mesa); `block-update` | the four scenarios identical, live (`oracle-diff dir --strict` exits 0); `block-update`: the changed blocks show, faces around them lit differently (6,546 pixels, max delta 25) |
@@ -235,7 +236,7 @@ target/release/rustcraft --benchLevel target/bench/terrain/capture.jsonl        
 
 ## Getting started
 
-Needs Python 3.12+, Rust, about 2 GB of disk, and `xvfb` with Mesa's llvmpipe (`sudo apt install xvfb libgl1-mesa-dri`) for the oracle client and the port's OpenGL tests. The scripts download their own JDK.
+Needs Python 3.12+, Rust, about 2 GB of disk, and `xvfb` with Mesa's llvmpipe (`sudo apt install xvfb libgl1-mesa-dri`) for the oracle client and the port's OpenGL tests. The scripts download their own JDK, which running the port doesn't need. On a Mac, see "Running on macOS" below.
 
 ```sh
 python3 tools/setup_vanilla.py          # download, decompile (authlib too), fetch JOML's, Netty's and Guava's sources, run the data generator
@@ -266,3 +267,27 @@ The client takes vanilla's own options where they exist (`--username`, `--uuid`,
 | `tools/oracle-diff/` | Compares traces, packet captures and screenshots between two runs |
 | `tools/*.py` | Setup, golden recording, vanilla server and oracle client runners, and a check for ports of HotSpot's assembly |
 | `vanilla/` (gitignored) | Decompiled source, assets, data reports, jars, JDK, oracle outputs |
+
+## Running on macOS
+
+Nobody has run the port on a Mac yet, so the first run is a test: here is how to do it and what to send back. It builds for Apple Silicon and Intel Macs (CI compiles both), loads the macOS builds of vanilla's own natives (shaderc, SPIRV-Cross, SDL3 and stb, from the jars vanilla's launcher uses there), and renders through Apple's OpenGL 4.1, not Metal. That OpenGL lacks most of the extensions the renderer looks for, and the port takes vanilla's fallbacks for them, which this machine checks pixel for pixel against vanilla on llvmpipe restricted to what a Mac offers ([TESTING.md](TESTING.md), "GL profiles").
+
+You need:
+- Rust (`rustup`), Python 3.12 or newer, and git. python.org's Python needs its `Install Certificates.command` run once, or the downloads fail with `CERTIFICATE_VERIFY_FAILED`; Homebrew's works as it is.
+- A vanilla 26.3 server in offline mode (`online-mode=false` in its `server.properties`): the port can't log in with a Microsoft account yet. It can run on the Mac or anywhere else. `python3 tools/vanilla_server.py --accept-eula` runs one on port 25565 with the JDK `setup_vanilla.py` downloads (a flat world; add `--level-type minecraft:normal --generate-structures` for a generated one), and accepts Mojang's EULA (https://aka.ms/MinecraftEULA) for you.
+- No Java to run the port: `--no-jdk` instead of `--skip-decompile` below skips the JDK, which only the server, the golden tests and the oracle need.
+
+```sh
+python3 tools/setup_vanilla.py --skip-decompile           # client.jar, its resources, the libraries and macOS natives, a JDK
+python3 tools/vanilla_server.py --accept-eula             # in another terminal, if you have no server
+cargo run --release -- --server 127.0.0.1:25565 --username NAME 2>&1 | tee rustcraft.log
+```
+
+It opens a window (no flag needed; `--headless` runs without one). Click in it to grab the mouse, then look around and walk with W, A, S and D, jump with space, sneak with left shift, sprint with left control, hide the HUD with F1; Escape lets go of the mouse, and closing the window or Cmd+Q quits.
+
+What works: joining the server and staying in it, the world rendered (terrain, the sky at any time of day, fog, fluids), the HUD (hotbar, hearts, food, armor, air, experience) and the first-person hand, and walking, swimming and climbing with the mouse and keyboard, on Apple's OpenGL 4.1. What doesn't yet: any menu or screen (no title screen, pause menu, inventory or chat), items, entities other than still ones, clouds, sound, and a Metal backend. Cmd+W closes the window, where vanilla's menu hides that item.
+
+Please send back:
+- `cargo run --release -- --device-info`'s output: the driver, the extensions and the flags the renderer took from them;
+- `rustcraft.log`, the client's output from the run above;
+- a screenshot of the window (Cmd+Shift+4, then space, then click the window), and how it felt: the frame rate, the mouse, anything that looked wrong.

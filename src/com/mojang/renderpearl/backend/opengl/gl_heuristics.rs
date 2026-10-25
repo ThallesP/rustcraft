@@ -1,13 +1,14 @@
 //! com/mojang/renderpearl/backend/opengl/GlHeuristics.java
 //!
-//! `Util.getPlatform()` and `Util.isAarch64()` (GL on DirectX 12 for Windows on ARM) and
-//! `Util.isAppleSiliconMac` are what the port is built for.
+//! `Util.getPlatform()` and `Util.isAarch64()` (GL on DirectX 12 for Windows on ARM) are what the
+//! port is built for; `Util.isAppleSiliconMac` reads the renderer, like Java's.
 
 use crate::com::mojang::renderpearl::api::device::device_features::DeviceFeatures;
 use crate::com::mojang::renderpearl::api::device::device_info::DeviceInfo;
 use crate::com::mojang::renderpearl::api::device::device_limits::DeviceLimits;
 use crate::com::mojang::renderpearl::api::device::device_type::DeviceType;
 use crate::com::mojang::renderpearl::api::device::hints_and_workarounds::HintsAndWorkarounds;
+use crate::net::minecraft::util::util::Util;
 use glow::HasContext;
 
 const DEVICE_NAMES_THAT_IMPLY_CPU: [&str; 2] = ["mesa offscreen", "llvmpipe"];
@@ -147,7 +148,7 @@ impl GlHeuristics {
             hints_and_workarounds: HintsAndWorkarounds {
                 write_to_buffer_is_slow: self.is_gl_on_dx12,
                 anisotropy_has_known_issues: self.is_amd,
-                is_explicit_depth_required: cfg!(all(target_os = "macos", target_arch = "aarch64")),
+                is_explicit_depth_required: Util::is_apple_silicon_mac(&renderer),
                 multi_draw_indirect_has_known_issues: vendor_lower_case.contains("intel")
                     && !renderer_lower_case.contains("arc"),
             },

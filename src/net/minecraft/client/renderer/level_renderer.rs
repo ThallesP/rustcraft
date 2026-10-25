@@ -11,10 +11,12 @@
 //!
 //! Not ported yet: entities, block entities and their features (`FeatureRenderDispatcher`), the
 //! block outline and breaking, transient blocks, particles, gizmos, clouds, weather and the world
-//! border, the improved transparency (OIT) and the entity outline's post chain, `DrawSeparate`
-//! (terrain without multi-draw), wireframe, the chunk fade (`chunkSectionFadeInTime`, which the
-//! oracle sets to 0), and the multi-draw's ring buffers (`DynamicGpuData`), whose blocks each
-//! frame makes buffers of its own for.
+//! border, the improved transparency (OIT) and the entity outline's post chain, wireframe, the
+//! chunk fade (`chunkSectionFadeInTime`, which the oracle sets to 0), and the ring buffers of
+//! the terrain's blocks and commands (`DynamicGpuData`), which each frame makes buffers of its own
+//! for. `Minecraft.multiDrawIndirect`, the debug key's toggle `LevelExtractor` copies into the
+//! render state, stays on, so the terrain draws by multi-draws where the device can
+//! (`multi_draw_indirect_available`) and one section at a time where it can't.
 //! The sections' light and tints come through `lighting`, the level itself (`RenderRegionCache`).
 
 use std::collections::HashSet;
@@ -27,7 +29,7 @@ use crate::com::mojang::blaze3d::systems::render_system::{AutoStorageIndexBuffer
 use crate::com::mojang::blaze3d::vertex::pose_stack::PoseStack;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer::{self, GpuBuffer};
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer_slice::GpuBufferSlice;
-use crate::com::mojang::renderpearl::api::commands::render_pass::RenderPass;
+use crate::com::mojang::renderpearl::api::commands::render_pass::{Draw, RenderPass};
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::pipeline::index_type::IndexType;
 use crate::com::mojang::renderpearl::api::textures::address_mode::AddressMode;
@@ -65,6 +67,7 @@ use crate::net::minecraft::client::section_update_tracker::SectionUpdateTracker;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::util::argb::ARGB;
+use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::level::block::leaves_block::LeavesBlock;
 use crate::net::minecraft::world::level::dimension::dimension_type::Skybox;
@@ -406,8 +409,11 @@ impl LevelRenderer {
         }
         // "main".
         let terrain_matrix = Matrix4f::from_matrix4f(&camera_state.view_rotation_matrix);
-        let chunk_sections_to_render =
-            self.prepare_chunk_renders_indirect(device, &terrain_matrix, true, resources, options);
+        let chunk_sections_to_render = if LevelRenderer::multi_draw_indirect_available(device) {
+            self.prepare_chunk_renders_indirect(device, &terrain_matrix, true, resources, options)
+        } else {
+            self.prepare_chunk_renders(device, &terrain_matrix, true, resources, options)
+        };
         self.add_main_pass(
             device,
             &terrain_fog,
@@ -436,6 +442,17 @@ impl LevelRenderer {
                 empty_sections,
             );
         }
+    }
+
+    /// The constructor's `multiDrawIndirectAvailable`: indirect draws, base instances (which each
+    /// command's section is), and no known issues with them.
+    fn multi_draw_indirect_available(device: &dyn GpuDevice) -> bool {
+        let device_info = device.get_device_info();
+        device_info.limits.max_draw_indirect_draw_count > 0
+            && device_info.features.non_zero_first_instance
+            && !device_info
+                .hints_and_workarounds
+                .multi_draw_indirect_has_known_issues
     }
 
     fn reposition_camera(&mut self, camera_state: &CameraRenderState) {
@@ -653,6 +670,124 @@ impl LevelRenderer {
         largest_index_count
     }
 
+    /// `prepareChunkRenders`: a draw for each of the draw groups' draws, in their order, setting
+    /// its section's uniform block (the section info its command's base instance would have
+    /// pointed at) from a buffer of the sections' blocks, and the terrain's transform.
+    fn prepare_chunk_renders(
+        &self,
+        device: &dyn GpuDevice,
+        model_view_matrix: &Matrix4f,
+        respect_translucent_order: bool,
+        resources: &mut LevelResources<'_>,
+        options: &LevelRenderOptions,
+    ) -> ChunkSectionsToRender {
+        let mut draw_groups: [Vec<ChunkDrawGroup>; 3] = Default::default();
+        let mut section_infos = Vec::new();
+        let largest_index_count = self.extract_section_draw_groups(
+            respect_translucent_order,
+            &mut section_infos,
+            &mut draw_groups,
+            options,
+        );
+        let mut flatten_draws: [Vec<Draw<[GpuBufferSlice]>>; 3] = Default::default();
+        for layer in ChunkSectionLayer::VALUES {
+            let mut sorted_draw_groups: Vec<&ChunkDrawGroup> =
+                draw_groups[layer as usize].iter().collect();
+            if layer.translucent() && respect_translucent_order {
+                sorted_draw_groups.reverse();
+            }
+
+            for draw_group in sorted_draw_groups {
+                let mut sorted_draws: Vec<&IndexedDraw> = draw_group.draws.iter().collect();
+                if layer.translucent() && respect_translucent_order {
+                    sorted_draws.reverse();
+                }
+
+                for draw in sorted_draws {
+                    let section_info_data_index = draw.base_instance as usize;
+                    flatten_draws[layer as usize].push(Draw {
+                        slot: 0,
+                        vertex_buffer: Rc::clone(&draw_group.vertex_buffer),
+                        index_buffer: draw_group.index_buffer.clone(),
+                        index_type: draw_group.index_type,
+                        first_index: draw.first_index,
+                        index_count: draw.index_count,
+                        base_vertex: draw.base_vertex,
+                        uniform_uploader_consumer: Some(Box::new(
+                            move |section_ubos: &[GpuBufferSlice],
+                                  uploader: &mut dyn RenderPass| {
+                                uploader.set_uniform_slice(
+                                    "ChunkSection",
+                                    &section_ubos[section_info_data_index],
+                                );
+                            },
+                        )),
+                    });
+                }
+            }
+        }
+
+        let terrain_transform_ubo =
+            LevelRenderer::write_terrain_transform(device, model_view_matrix, resources);
+        // writeChunkSections: each section's block, std140, at the device's uniform offset
+        // alignment.
+        let block_size = Mth::round_toward_i32(
+            DynamicGpuData::CHUNK_SECTION_UBO_SIZE,
+            device.get_device_info().limits.min_uniform_offset_alignment,
+        ) as usize;
+        let mut blocks = vec![0; section_infos.len() * block_size];
+        for (block, (x, y, z, visibility)) in blocks.chunks_mut(block_size).zip(&section_infos) {
+            let mut builder = Std140Builder::on_stack(DynamicGpuData::CHUNK_SECTION_UBO_SIZE);
+            builder.put_ivec3(*x, *y, *z).put_float(*visibility);
+            let written = builder.get();
+            block[..written.len()].copy_from_slice(&written);
+        }
+        let chunk_section_infos = if blocks.is_empty() {
+            Vec::new()
+        } else {
+            let buffer = device.create_buffer_with_data(
+                Some("Chunk Sections UBO"),
+                gpu_buffer::USAGE_UNIFORM,
+                &blocks,
+            );
+            (0..section_infos.len())
+                .map(|index| {
+                    gpu_buffer::slice_range(&buffer, (index * block_size) as i64, block_size as i64)
+                })
+                .collect()
+        };
+        if largest_index_count != 0 {
+            resources
+                .quad_indices
+                .request_index_count(largest_index_count);
+        }
+
+        ChunkSectionsToRender::draw_separate(
+            terrain_transform_ubo,
+            flatten_draws,
+            largest_index_count,
+            chunk_section_infos,
+        )
+    }
+
+    /// `writeTerrainTransform`: the terrain's block, its model view and the block atlas's size.
+    fn write_terrain_transform(
+        device: &dyn GpuDevice,
+        model_view_matrix: &Matrix4f,
+        resources: &LevelResources<'_>,
+    ) -> GpuBufferSlice {
+        let terrain_transform = TerrainTransform {
+            model_view: Matrix4f::from_matrix4f(model_view_matrix),
+            texture_atlas_width: resources.block_atlas.get_width(0),
+            texture_atlas_height: resources.block_atlas.get_height(0),
+        };
+        gpu_buffer::slice(&device.create_buffer_with_data(
+            Some("Terrain Transform UBO"),
+            gpu_buffer::USAGE_UNIFORM,
+            &terrain_transform.write(),
+        ))
+    }
+
     /// `prepareChunkRendersIndirect`: the draw groups' commands in one buffer, the sections'
     /// positions in another, and the terrain's transform.
     fn prepare_chunk_renders_indirect(
@@ -665,8 +800,6 @@ impl LevelRenderer {
     ) -> ChunkSectionsToRender {
         let mut draw_groups: [Vec<ChunkDrawGroup>; 3] = Default::default();
         let mut section_infos = Vec::new();
-        let texture_atlas_width = resources.block_atlas.get_width(0);
-        let texture_atlas_height = resources.block_atlas.get_height(0);
         let largest_index_count = self.extract_section_draw_groups(
             respect_translucent_order,
             &mut section_infos,
@@ -739,16 +872,8 @@ impl LevelRenderer {
             }
         }
 
-        let terrain_transform = TerrainTransform {
-            model_view: Matrix4f::from_matrix4f(model_view_matrix),
-            texture_atlas_width,
-            texture_atlas_height,
-        };
-        let terrain_transform_ubo = gpu_buffer::slice(&device.create_buffer_with_data(
-            Some("Terrain Transform UBO"),
-            gpu_buffer::USAGE_UNIFORM,
-            &terrain_transform.write(),
-        ));
+        let terrain_transform_ubo =
+            LevelRenderer::write_terrain_transform(device, model_view_matrix, resources);
         // writeChunkSectionsInstanced: each section's position and visibility, std140.
         let mut infos = Vec::new();
         for (x, y, z, visibility) in &section_infos {
@@ -770,7 +895,7 @@ impl LevelRenderer {
                 .request_index_count(largest_index_count);
         }
 
-        ChunkSectionsToRender::new(
+        ChunkSectionsToRender::draw_indirect(
             terrain_transform_ubo,
             indirect_draws,
             largest_index_count,

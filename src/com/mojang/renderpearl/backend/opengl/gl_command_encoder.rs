@@ -10,7 +10,7 @@
 //! Java's frontend checks before a pass or a write (the render area, attachments' usage, sizes).
 //!
 //! Java's `GlStateManager` skips calls that wouldn't change GL's state; the port calls GL
-//! directly, which leaves the same state. `FrameBufferCache` is a list of framebuffers by their
+//! directly, which leaves the same state. Its clears drop the error macOS's driver can leave. `FrameBufferCache` is a list of framebuffers by their
 //! attachments here, and `DirectStateAccess`'s binds use the classic entry points, which do the
 //! same.
 
@@ -42,6 +42,7 @@ use crate::com::mojang::renderpearl::backend::opengl::uniform::Uniform;
 use crate::com::mojang::renderpearl::frontend::frontend_render_pass::FrontendRenderPass;
 use crate::org::joml::vector4f::Vector4f;
 use crate::org::lwjgl::sdl::sdl_video::{SDLVideo, SdlWindow};
+use crate::org::lwjgl::system::platform::Platform;
 use glow::HasContext;
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -106,6 +107,15 @@ impl GlCommandEncoder {
             !self.is_in_render_pass.get(),
             "Close the existing render pass before performing additional commands"
         );
+    }
+
+    /// What `GlStateManager` does after each `glClear` and `glClearBuffer` on macOS, whose driver
+    /// can leave an error there: it reads the error, dropping it.
+    fn drop_error_after_clear(&self) {
+        if Platform::get() == Platform::MACOSX {
+            // SAFETY: the device's context is current.
+            let _ = unsafe { self.gl.get_error() };
+        }
     }
 
     /// The frontend's `submitRenderPass`, then the backend's: the pass is over, and the default
@@ -594,6 +604,7 @@ impl CommandEncoder for GlCommandEncoder {
                         index as u32,
                         &[clear_value.x, clear_value.y, clear_value.z, clear_value.w],
                     );
+                    self.drop_error_after_clear();
                 }
             }
             if let Some(Some(clear_depth)) = descriptor
@@ -604,6 +615,7 @@ impl CommandEncoder for GlCommandEncoder {
                 self.gl.depth_mask(true);
                 self.gl
                     .clear_buffer_f32_slice(glow::DEPTH, 0, &[clear_depth as f32]);
+                self.drop_error_after_clear();
             }
             self.gl.viewport(0, 0, width, height);
             let draw_buffers: Vec<u32> = colors
@@ -807,6 +819,7 @@ impl CommandEncoder for GlCommandEncoder {
                     glow::FRAMEBUFFER,
                 );
                 self.gl.clear(glow::COLOR_BUFFER_BIT);
+                self.drop_error_after_clear();
             }
             self.gl.framebuffer_texture_2d(
                 glow::FRAMEBUFFER,
@@ -843,6 +856,7 @@ impl CommandEncoder for GlCommandEncoder {
             );
             self.gl
                 .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            self.drop_error_after_clear();
             self.gl.framebuffer_texture_2d(
                 glow::FRAMEBUFFER,
                 glow::COLOR_ATTACHMENT0,
@@ -877,6 +891,7 @@ impl CommandEncoder for GlCommandEncoder {
                 );
                 self.gl.draw_buffer(glow::NONE);
                 self.gl.clear(glow::DEPTH_BUFFER_BIT);
+                self.drop_error_after_clear();
             }
 
             self.gl.draw_buffer(glow::COLOR_ATTACHMENT0);

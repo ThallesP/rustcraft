@@ -1,0 +1,7 @@
+{
+  "macos": {
+    "MESA_GL_VERSION_OVERRIDE": "4.1FC",
+    "MESA_GLSL_VERSION_OVERRIDE": "410",
+    "MESA_EXTENSION_OVERRIDE": "-GL_ARB_buffer_storage -GL_ARB_clip_control -GL_ARB_multi_draw_indirect -GL_ARB_base_instance -GL_ARB_shader_draw_parameters -GL_KHR_debug -GL_ARB_debug_output -GL_ARB_direct_state_access -GL_ARB_vertex_attrib_binding"
+  }
+}
