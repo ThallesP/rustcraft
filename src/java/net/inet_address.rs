@@ -77,13 +77,16 @@ impl InetAddress {
     }
 
     /// `getnameinfo` with `NI_NAMEREQD`, Java's `Inet4AddressImpl.getHostByAddr` and its IPv6
-    /// counterpart.
+    /// counterpart. BSD's sockaddrs (macOS's) start with their own length, which Linux's don't
+    /// have.
     fn get_name_info(address: IpAddr) -> Option<String> {
         let socket_address = SocketAddr::new(address, 0);
         let mut host = [0 as libc::c_char; libc::NI_MAXHOST as usize];
         let result = match socket_address {
             SocketAddr::V4(v4) => {
                 let raw = libc::sockaddr_in {
+                    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+                    sin_len: size_of::<libc::sockaddr_in>() as u8,
                     sin_family: libc::AF_INET as libc::sa_family_t,
                     sin_port: 0,
                     sin_addr: libc::in_addr {
@@ -106,6 +109,8 @@ impl InetAddress {
             }
             SocketAddr::V6(v6) => {
                 let raw = libc::sockaddr_in6 {
+                    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+                    sin6_len: size_of::<libc::sockaddr_in6>() as u8,
                     sin6_family: libc::AF_INET6 as libc::sa_family_t,
                     sin6_port: 0,
                     sin6_flowinfo: 0,

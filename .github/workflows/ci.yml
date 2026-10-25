@@ -16,6 +16,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          # The port has to keep compiling for a Mac (the steps after clippy).
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       # Mojang's jars and libraries and the JDK only change with the pinned version. Goldens are
       # regenerated every run, so they stay out of the cache.
@@ -54,6 +56,10 @@ jobs:
       - run: python3 tools/hotspot_port_check.py
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # macOS, with no Mac to run on (the minutes of a macOS runner count ten times): Apple Silicon's build passes
+      # clippy, tests included, and Intel's compiles.
+      - run: cargo clippy --target aarch64-apple-darwin --workspace --all-targets -- -D warnings
+      - run: cargo check --target x86_64-apple-darwin --workspace
       # tests/opengl_frame.rs renders under xvfb-run. Xvfb's GLX visuals come from Mesa's dril, which asks the GPU's DRM
       # node for its configs through GBM; a machine without one (this runner, a container) gets dril's fixed list, which
       # has no sRGB-capable visual for the framebuffer vanilla asks for, so SDL finds no GLX visual. SDL's EGL path, on
