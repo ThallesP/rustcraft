@@ -11,6 +11,15 @@ be redistributed.
     python3 tools/setup_vanilla.py           # the version pinned in MINECRAFT_VERSION
     python3 tools/setup_vanilla.py 26.4      # another version, e.g. to diff an update
     python3 tools/setup_vanilla.py --skip-decompile   # just what the golden tests need (CI)
+    python3 tools/setup_vanilla.py --no-jdk  # just what running the port needs: no JDK, decompile or reports
+    python3 tools/setup_vanilla.py --skip-decompile --natives macos-arm64   # and a Mac's natives jars too
+
+It runs on Linux and macOS. The libraries are the ones Mojang's launcher puts on this platform's
+classpath (version.json's rules), listed in vanilla/<version>/classpath.txt, natives jars
+included; --natives also fetches another platform's (LWJGL's names: linux, macos, macos-arm64,
+windows…) and lists them in classpath-<platform>.txt, so the port's tests can check what that
+platform's loader would find. The JDK is Adoptium's for this platform; only the decompile, the
+data generator, the golden harness and the oracle need it, not the port.
 """
 
 import argparse
@@ -20,6 +29,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import zipfile
@@ -32,7 +42,7 @@ LIBRARIES_DIR = VANILLA_DIR / "libraries"
 PINNED_VERSION = (ROOT / "MINECRAFT_VERSION").read_text().strip()
 
 VERSION_MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-ADOPTIUM_URL = "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture={arch}&image_type=jdk&os=linux&vendor=eclipse"
+ADOPTIUM_URL = "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture={arch}&image_type=jdk&os={os}&vendor=eclipse"
 VINEFLOWER_VERSION = "1.12.0"
 VINEFLOWER_SHA256 = "1dfcfe974395734fa467ce620661c7623d05ba83670de0529b1fbd63ff548b9d"
 VINEFLOWER_URL = f"https://repo1.maven.org/maven2/org/vineflower/vineflower/{VINEFLOWER_VERSION}/vineflower-{VINEFLOWER_VERSION}.jar"
@@ -129,14 +139,47 @@ def resolve_version(version_id):
     return fetch_json(entry["url"])
 
 
-# Mojang's launcher rules: no rules means allowed, otherwise the last matching rule wins.
-def is_library_allowed(library):
+# LWJGL's names for the platforms vanilla ships natives jars for (`lwjgl-sdl-3.4.3-natives-macos-arm64.jar`),
+# with the launcher's name for the OS its rules match. A Mac's classpath holds both its jars, the
+# x64 one (`natives-macos`) and the arm64 one, and LWJGL finds its architecture's library in them.
+NATIVES_PLATFORMS = {
+    "linux": "linux",
+    "macos": "osx",
+    "macos-arm64": "osx",
+    "windows": "windows",
+    "windows-arm64": "windows",
+}
+
+
+def host_platform():
+    os_name = {"linux": "linux", "darwin": "osx", "win32": "windows"}[sys.platform]
+    arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "arm64", "arm64": "arm64"}[platform.machine().lower()]
+    return os_name, arch
+
+
+# Mojang's launcher rules: no rules means allowed, otherwise the last matching rule wins. A rule's
+# `arch` only ever names 32-bit x86, which no platform here is.
+def is_library_allowed(library, os_name):
     allowed = "rules" not in library
     for rule in library.get("rules", []):
-        os_name = rule.get("os", {}).get("name")
-        if os_name is None or os_name == "linux":
+        rule_os = rule.get("os", {})
+        if rule_os.get("name", os_name) == os_name and "arch" not in rule_os:
             allowed = rule["action"] == "allow"
     return allowed
+
+
+# Downloads the libraries the launcher puts on os_name's classpath, and lists them in a classpath file.
+def fetch_libraries(version, os_name, classpath_file):
+    libraries = []
+    for library in version["libraries"]:
+        if not is_library_allowed(library, os_name):
+            continue
+        artifact = library["downloads"]["artifact"]
+        path = LIBRARIES_DIR / artifact["path"]
+        download(artifact["url"], path, "sha1", artifact["sha1"])
+        libraries.append(path)
+    classpath_file.write_text("".join(f"{library}\n" for library in libraries))
+    return libraries
 
 
 def ensure_jdk(major):
@@ -145,15 +188,25 @@ def ensure_jdk(major):
     if java.exists():
         return java
 
-    arch = {"x86_64": "x64", "aarch64": "aarch64"}[platform.machine()]
-    package = fetch_json(ADOPTIUM_URL.format(major=major, arch=arch))[0]["binary"]["package"]
+    os_name, arch = host_platform()
+    if os_name == "windows":
+        raise SystemExit("no JDK download for Windows here: pass --no-jdk, or put a JDK in " + str(jdk_dir))
+    adoptium_os = {"linux": "linux", "osx": "mac"}[os_name]
+    adoptium_arch = {"x86_64": "x64", "arm64": "aarch64"}[arch]
+    package = fetch_json(ADOPTIUM_URL.format(major=major, arch=adoptium_arch, os=adoptium_os))[0]["binary"]["package"]
     archive = TOOLCHAIN_DIR / package["name"]
     download(package["link"], archive, "sha256", package["checksum"])
 
     with tarfile.open(archive) as tar:
         top_level = tar.getnames()[0].split("/")[0]
         tar.extractall(TOOLCHAIN_DIR, filter="data")
-    (TOOLCHAIN_DIR / top_level).rename(jdk_dir)
+    # macOS's JDK is a bundle, its home in Contents/Home: the tools read vanilla/toolchain/jdk-<major>/bin.
+    bundle_home = TOOLCHAIN_DIR / top_level / "Contents" / "Home"
+    if bundle_home.is_dir():
+        bundle_home.rename(jdk_dir)
+        shutil.rmtree(TOOLCHAIN_DIR / top_level)
+    else:
+        (TOOLCHAIN_DIR / top_level).rename(jdk_dir)
     archive.unlink()
     return java
 
@@ -218,6 +271,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("version", nargs="?", default=PINNED_VERSION, help=f"Minecraft version id (default: {PINNED_VERSION})")
     parser.add_argument("--skip-decompile", action="store_true", help="skip the slow decompile, e.g. in CI")
+    parser.add_argument(
+        "--no-jdk", action="store_true",
+        help="skip the JDK and what needs it (the decompile, the data generator): what running the port needs",
+    )
+    parser.add_argument(
+        "--natives", action="append", default=[], choices=sorted(NATIVES_PLATFORMS), metavar="PLATFORM",
+        help="also fetch another platform's libraries, listed in classpath-PLATFORM.txt (repeatable: "
+        + ", ".join(sorted(NATIVES_PLATFORMS)) + ")",
+    )
     args = parser.parse_args()
 
     version = resolve_version(args.version)
@@ -234,13 +296,14 @@ def main():
     download(downloads["client"]["url"], client_jar, "sha1", downloads["client"]["sha1"])
     download(downloads["server"]["url"], server_jar, "sha1", downloads["server"]["sha1"])
 
-    libraries = []
-    for library in filter(is_library_allowed, version["libraries"]):
-        artifact = library["downloads"]["artifact"]
-        path = LIBRARIES_DIR / artifact["path"]
-        download(artifact["url"], path, "sha1", artifact["sha1"])
-        libraries.append(path)
-    (version_dir / "classpath.txt").write_text("".join(f"{library}\n" for library in libraries))
+    os_name, _ = host_platform()
+    libraries = fetch_libraries(version, os_name, version_dir / "classpath.txt")
+    for natives in args.natives:
+        fetch_libraries(version, NATIVES_PLATFORMS[natives], version_dir / f"classpath-{natives}.txt")
+    extract_resources(client_jar, version_dir / "resources")
+    if args.no_jdk:
+        print(f"done: {version_dir} (no JDK: the port runs, the golden harness and the oracle need one)")
+        return
 
     java = ensure_jdk(version["javaVersion"]["majorVersion"])
     if not args.skip_decompile:
@@ -251,7 +314,6 @@ def main():
             if library["name"].rsplit(":", 1)[0] in DECOMPILED_LIBRARIES:
                 library_jar = LIBRARIES_DIR / library["downloads"]["artifact"]["path"]
                 decompile_library(java, ensure_vineflower(), library_jar, libraries, version_dir / "src")
-    extract_resources(client_jar, version_dir / "resources")
     run_data_generator(java, server_jar, version_dir)
     print(f"done: {version_dir}")
 

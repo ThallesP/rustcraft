@@ -4,7 +4,7 @@ use crate::org::lwjgl::system::shared_library_loader;
 use std::ffi::{CString, c_char};
 
 shared_library_loader::functions! {
-    "sdl", "libSDL3.so";
+    "sdl", "SDL3";
     SDL_SetHint: fn(*const c_char, *const c_char) -> bool;
 }
 

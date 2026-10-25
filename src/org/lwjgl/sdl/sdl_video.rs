@@ -10,7 +10,7 @@ pub type SdlWindow = *mut c_void;
 pub type SdlGlContext = *mut c_void;
 
 shared_library_loader::functions! {
-    "sdl", "libSDL3.so";
+    "sdl", "SDL3";
     SDL_GL_LoadLibrary: fn(*const c_char) -> bool;
     SDL_GL_UnloadLibrary: fn();
     SDL_GL_GetProcAddress: fn(*const c_char) -> *const c_void;

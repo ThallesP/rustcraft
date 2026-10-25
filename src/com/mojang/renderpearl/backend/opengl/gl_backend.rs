@@ -1,8 +1,10 @@
 //! com/mojang/renderpearl/backend/opengl/GlBackend.java
 //!
-//! LWJGL loads `libGL.so.1` as its OpenGL library on Linux, which `loadLibrary` hands SDL too.
-//! Java then checks SDL and LWJGL agree on `glGetError`'s address; the port has no other loader
-//! than SDL's, so there's nothing to compare.
+//! LWJGL loads its OpenGL library from `Configuration.OPENGL_LIBRARY_NAME_DEFAULTS` (`libGL.so.1`
+//! on Linux, the OpenGL framework on macOS, `opengl32.dll` on Windows), which `loadLibrary` hands
+//! SDL too. Java then checks SDL and LWJGL agree on `glGetError`'s address; the port has no other
+//! loader than SDL's, so there's nothing to compare. On Linux LWJGL 3.4.3 tries libglvnd's
+//! `libGLX.so.0` before `libGL.so.1`; both dispatch to the same driver.
 
 use crate::com::mojang::renderpearl::api::device::backend_creation_exception::{
     BackendCreationException, Reason,
@@ -13,6 +15,7 @@ use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::backend::opengl::gl_device::GlDevice;
 use crate::org::lwjgl::sdl::sdl_error::SDLError;
 use crate::org::lwjgl::sdl::sdl_video::{SDLVideo, SdlWindow};
+use crate::org::lwjgl::system::platform::Platform;
 
 #[derive(Default)]
 pub struct GlBackend {
@@ -22,7 +25,11 @@ pub struct GlBackend {
 
 const VERSION_MAJOR: i32 = 3;
 const VERSION_MINOR: i32 = 3;
-const LIBRARY: &str = "libGL.so.1";
+const LIBRARY: &str = match Platform::get() {
+    Platform::MACOSX => "/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL",
+    Platform::WINDOWS => "opengl32.dll",
+    Platform::FREEBSD | Platform::LINUX => "libGL.so.1",
+};
 
 impl GlBackend {
     pub fn new() -> GlBackend {

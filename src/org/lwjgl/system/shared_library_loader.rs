@@ -1,15 +1,19 @@
 //! org/lwjgl/system/SharedLibraryLoader.java (LWJGL 3.4.3)
 //!
-//! LWJGL finds a native library in its natives jar on the classpath (`lwjgl-shaderc-3.4.3-natives-
-//! linux.jar` holds `linux/x64/org/lwjgl/shaderc/libshaderc.so`), extracts it to a directory of
-//! its own and loads it. The port does the same with the jars vanilla's launcher downloaded, which
-//! `vanilla/<version>/classpath.txt` lists, so it runs the very same shaderc, SPIRV-Cross and SDL
-//! builds as the game. They're extracted to `target/natives/` and never committed.
+//! LWJGL finds a native library on the classpath at the path `Platform.mapLibraryPathBundled`
+//! gives it (`macos/arm64/org/lwjgl/shaderc/libshaderc.dylib`), extracts it to a directory of its
+//! own and loads it. The launcher puts each module's natives jars for the platform on the classpath
+//! (`lwjgl-shaderc-3.4.3-natives-linux.jar`; on a Mac both `-natives-macos.jar`, which holds
+//! `macos/x64/`, and `-natives-macos-arm64.jar`), and the class loader finds the path in the first
+//! jar that has it. The port does the same with the jars vanilla's launcher would put there, which
+//! `vanilla/<version>/classpath.txt` lists, so it runs the very same shaderc, SPIRV-Cross, SDL and
+//! stb builds as the game. They're extracted to `target/natives/` and never committed.
 //!
 //! The jars are zip files whose entries are deflated, read here through their central directory.
 //! A library already extracted is kept when its size and CRC-32 match the jar's entry. Each one is
 //! written to a temporary file and renamed into place, since test binaries load them in parallel.
 
+use crate::org::lwjgl::system::platform::{Architecture, Platform};
 use libloading::Library;
 use miniz_oxide::inflate::decompress_to_vec;
 use std::collections::BTreeMap;
@@ -25,8 +29,9 @@ const VERSION: &str = include_str!("../../../../MINECRAFT_VERSION");
 static LOADED: LazyLock<Mutex<BTreeMap<String, &'static Library>>> = LazyLock::new(Mutex::default);
 
 /// Declares a static table of a native library's C functions, looked up the first time one is
-/// called: `functions!("shaderc", "libshaderc.so"; shaderc_compiler_initialize: fn() -> Compiler; …)`.
-/// Each binding module wraps them in safe functions, like LWJGL's classes.
+/// called: `functions!("shaderc", "shaderc"; shaderc_compiler_initialize: fn() -> Compiler; …)`,
+/// the module and the library's name, which the platform maps (`libshaderc.so`). Each binding
+/// module wraps them in safe functions, like LWJGL's classes.
 macro_rules! functions {
     ($module:literal, $library:literal; $($name:ident: fn($($argument:ty),*) $(-> $result:ty)?;)*) => {
         #[allow(non_snake_case)]
@@ -50,36 +55,48 @@ macro_rules! functions {
 }
 pub(crate) use functions;
 
-/// Loads `library` (`libshaderc.so`) from LWJGL's natives jar for `module` (`shaderc`, whose jar
-/// is `lwjgl-shaderc-<version>-natives-linux.jar`), extracting it first.
-pub fn load(module: &str, library: &str) -> Result<&'static Library, String> {
+/// Loads the library `name` (`shaderc`) of LWJGL's `module` (`shaderc`) from its natives jar,
+/// extracting it first.
+pub fn load(module: &str, name: &str) -> Result<&'static Library, String> {
+    let file_name = Platform::get().map_library_name(name);
     let mut loaded = LOADED
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(library) = loaded.get(library) {
+    if let Some(library) = loaded.get(&file_name) {
         return Ok(library);
     }
 
-    let path = extract(module, library)?;
+    let path = extract(module, name)?;
     // SAFETY: the library is vanilla's own build of a C library with no initialisers that need
     // anything from the loading thread.
     let opened = unsafe { Library::new(&path) }
         .map_err(|error| format!("can't load {}: {error}", path.display()))?;
     let opened: &'static Library = Box::leak(Box::new(opened));
-    loaded.insert(library.to_owned(), opened);
+    loaded.insert(file_name, opened);
     Ok(opened)
 }
 
-/// Extracts `library` from `module`'s natives jar into `target/natives/`, unless it's there already.
-pub fn extract(module: &str, library: &str) -> Result<PathBuf, String> {
-    let jar = natives_jar(module)?;
-    let bytes = fs::read(&jar).map_err(|error| format!("can't read {}: {error}", jar.display()))?;
-    let entry_name = format!("linux/x64/org/lwjgl/{module}/{library}");
-    let entry = find_entry(&bytes, &entry_name)
-        .ok_or_else(|| format!("{} has no {entry_name}", jar.display()))?;
+/// Extracts the library `name` of `module` into `target/natives/`, unless it's there already.
+pub fn extract(module: &str, name: &str) -> Result<PathBuf, String> {
+    let classpath = classpath_file("classpath.txt");
+    let bundled = find_bundled(
+        &read_classpath(&classpath)?,
+        Platform::get(),
+        Architecture::current(),
+        module,
+        name,
+    )
+    .map_err(|error| format!("{} {error}", classpath.display()))?;
+    let Bundled {
+        jar,
+        bytes,
+        entry,
+        path: entry_name,
+        file_name,
+    } = bundled;
 
     let directory = Path::new(MANIFEST_DIR).join("target").join("natives");
-    let path = directory.join(library);
+    let path = directory.join(&file_name);
     if let Ok(existing) = fs::read(&path)
         && existing.len() as u64 == entry.size
         && crc32(&existing) == entry.crc32
@@ -93,42 +110,80 @@ pub fn extract(module: &str, library: &str) -> Result<PathBuf, String> {
     }
     fs::create_dir_all(&directory)
         .map_err(|error| format!("can't create {}: {error}", directory.display()))?;
-    let temporary = directory.join(format!("{library}.{}.tmp", std::process::id()));
+    let temporary = directory.join(format!("{file_name}.{}.tmp", std::process::id()));
     fs::write(&temporary, &contents)
         .and_then(|()| fs::rename(&temporary, &path))
         .map_err(|error| format!("can't write {}: {error}", path.display()))?;
     Ok(path)
 }
 
-/// The natives jar of `module` on vanilla's classpath.
-fn natives_jar(module: &str) -> Result<PathBuf, String> {
-    let classpath = Path::new(MANIFEST_DIR)
+/// A file of vanilla's version directory listing a classpath: `classpath.txt`, this platform's, or
+/// `classpath-macos-arm64.txt`, another's (`setup_vanilla.py --natives macos-arm64`).
+fn classpath_file(name: &str) -> PathBuf {
+    Path::new(MANIFEST_DIR)
         .join("vanilla")
         .join(VERSION.trim())
-        .join("classpath.txt");
-    let listed = fs::read_to_string(&classpath).map_err(|error| {
+        .join(name)
+}
+
+fn read_classpath(file: &Path) -> Result<Vec<PathBuf>, String> {
+    let listed = fs::read_to_string(file).map_err(|error| {
         format!(
             "can't read {}: {error}. Run `python3 tools/setup_vanilla.py` first.",
-            classpath.display()
+            file.display()
         )
     })?;
+    Ok(listed.lines().map(PathBuf::from).collect())
+}
+
+/// A library in a natives jar, read into memory.
+struct Bundled {
+    jar: PathBuf,
+    bytes: Vec<u8>,
+    entry: Entry,
+    /// The entry's name, `mapLibraryPathBundled`'s path.
+    path: String,
+    /// `mapLibraryName`'s: `libshaderc.dylib`.
+    file_name: String,
+}
+
+/// Finds the library `name` of `module` the way the class loader finds LWJGL's resource for
+/// `platform` and `architecture`: in the first of the module's natives jars on the classpath
+/// (`lwjgl-<module>-<version>-natives-…`) that has the bundled path.
+fn find_bundled(
+    classpath: &[PathBuf],
+    platform: Platform,
+    architecture: Architecture,
+    module: &str,
+    name: &str,
+) -> Result<Bundled, String> {
+    let file_name = platform.map_library_name(name);
+    let path =
+        platform.map_library_path_bundled(architecture, &format!("org/lwjgl/{module}/{file_name}"));
     let prefix = format!("lwjgl-{module}-");
-    listed
-        .lines()
-        .map(PathBuf::from)
-        .find(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.starts_with(&prefix) && name.ends_with("-natives-linux.jar")
-                })
-        })
-        .ok_or_else(|| {
-            format!(
-                "{} lists no natives jar for lwjgl-{module}",
-                classpath.display()
-            )
-        })
+    for jar in classpath {
+        let is_natives_jar = jar
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(&prefix) && name.contains("-natives-"));
+        if !is_natives_jar {
+            continue;
+        }
+        let bytes =
+            fs::read(jar).map_err(|error| format!("can't read {}: {error}", jar.display()))?;
+        if let Some(entry) = find_entry(&bytes, &path) {
+            return Ok(Bundled {
+                jar: jar.clone(),
+                bytes,
+                entry,
+                path,
+                file_name,
+            });
+        }
+    }
+    Err(format!(
+        "lists no natives jar of lwjgl-{module} with {path}"
+    ))
 }
 
 struct Entry {
@@ -232,15 +287,85 @@ mod tests {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
 
+    /// The libraries the port loads, by module and name, as their bindings name them.
+    const LIBRARIES: [(&str, &str); 4] = [
+        ("shaderc", "shaderc"),
+        ("spvc", "spirv-cross"),
+        ("sdl", "SDL3"),
+        ("stb", "lwjgl_stb"),
+    ];
+
     #[test]
     fn extracts_vanillas_natives() {
-        for (module, library) in [
-            ("shaderc", "libshaderc.so"),
-            ("spvc", "libspirv-cross.so"),
-            ("sdl", "libSDL3.so"),
+        for (module, name) in LIBRARIES {
+            let path = extract(module, name).unwrap();
+            let file_name = Platform::get().map_library_name(name);
+            assert!(path.ends_with(format!("target/natives/{file_name}")));
+        }
+    }
+
+    /// What a Mac's loader finds, in the jars vanilla's launcher puts on a Mac's classpath:
+    /// `setup_vanilla.py --natives macos-arm64 --natives macos` fetches them and writes their
+    /// classpaths, which CI does. The entries are the jars' (`unzip -l`), and each is a 64-bit
+    /// Mach-O dylib for its architecture, the Apple Silicon ones signed, since a Mac on ARM only
+    /// runs signed code. Nothing is loaded.
+    #[test]
+    fn finds_each_library_in_the_natives_jars_of_macos() {
+        const CPU_TYPE_X86_64: u32 = 0x0100_0007;
+        const CPU_TYPE_ARM64: u32 = 0x0100_000C;
+        const MH_DYLIB: u32 = 6;
+        const LC_CODE_SIGNATURE: u32 = 0x1D;
+        for (classifier, architecture, cpu_type) in [
+            ("macos-arm64", Architecture::ARM64, CPU_TYPE_ARM64),
+            ("macos", Architecture::X64, CPU_TYPE_X86_64),
         ] {
-            let path = extract(module, library).unwrap();
-            assert!(path.ends_with(format!("target/natives/{library}")));
+            let file = classpath_file(&format!("classpath-{classifier}.txt"));
+            if !file.exists() {
+                assert!(
+                    std::env::var_os("CI").is_none(),
+                    "CI fetches {classifier}'s natives, but {} is missing",
+                    file.display()
+                );
+                eprintln!(
+                    "skipped: no {}; `python3 tools/setup_vanilla.py --natives {classifier}` writes it",
+                    file.display()
+                );
+                continue;
+            }
+            let classpath = read_classpath(&file).unwrap();
+            let arch = architecture.lower_case_name();
+            for ((module, name), entry_name) in LIBRARIES.into_iter().zip([
+                format!("macos/{arch}/org/lwjgl/shaderc/libshaderc.dylib"),
+                format!("macos/{arch}/org/lwjgl/spvc/libspirv-cross.dylib"),
+                format!("macos/{arch}/org/lwjgl/sdl/libSDL3.dylib"),
+                format!("macos/{arch}/org/lwjgl/stb/liblwjgl_stb.dylib"),
+            ]) {
+                let bundled =
+                    find_bundled(&classpath, Platform::MACOSX, architecture, module, name).unwrap();
+                let jar_name = bundled.jar.file_name().unwrap().to_str().unwrap();
+                assert!(
+                    jar_name.starts_with(&format!("lwjgl-{module}-"))
+                        && jar_name.ends_with(&format!("-natives-{classifier}.jar")),
+                    "{jar_name}"
+                );
+                assert_eq!(bundled.path, entry_name);
+                assert_eq!(bundled.file_name, entry_name.rsplit('/').next().unwrap());
+
+                let contents = bundled.entry.read(&bundled.bytes).unwrap();
+                assert_eq!(contents.len() as u64, bundled.entry.size);
+                assert_eq!(crc32(&contents), bundled.entry.crc32);
+                assert_eq!(u32_at(&contents, 0), Some(0xFEED_FACF), "{entry_name}");
+                assert_eq!(u32_at(&contents, 4), Some(cpu_type), "{entry_name}");
+                assert_eq!(u32_at(&contents, 12), Some(MH_DYLIB), "{entry_name}");
+                let command_count = u32_at(&contents, 16).unwrap();
+                let mut offset = 32;
+                let mut signed = false;
+                for _ in 0..command_count {
+                    signed |= u32_at(&contents, offset) == Some(LC_CODE_SIGNATURE);
+                    offset += u32_at(&contents, offset + 4).unwrap() as usize;
+                }
+                assert_eq!(signed, architecture == Architecture::ARM64, "{entry_name}");
+            }
         }
     }
 }

@@ -68,7 +68,7 @@ impl SpvcReflectedResource {
 }
 
 shared_library_loader::functions! {
-    "spvc", "libspirv-cross.so";
+    "spvc", "spirv-cross";
     spvc_context_create: fn(*mut SpvcContext) -> SpvcResult;
     spvc_context_destroy: fn(SpvcContext);
     spvc_context_parse_spirv: fn(SpvcContext, *const u32, usize, *mut SpvcParsedIr) -> SpvcResult;

@@ -18,7 +18,7 @@ use std::sync::Once;
 pub(crate) const NO_ENV: *mut c_void = std::ptr::null_mut();
 
 shared_library_loader::functions! {
-    "stb", "liblwjgl_stb.so";
+    "stb", "lwjgl_stb";
     Java_org_lwjgl_stb_LibSTB_setupMalloc: fn(*mut c_void, *mut c_void, i64, i64, i64, i64, i64, i64);
 }
 

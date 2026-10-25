@@ -28,7 +28,8 @@ jobs:
             !vanilla/*/golden
             !vanilla/*/golden-classes
           key: vanilla-${{ hashFiles('MINECRAFT_VERSION', 'tools/setup_vanilla.py') }}
-      - run: python3 tools/setup_vanilla.py --skip-decompile
+      # A Mac's natives jars too, which the library loader's tests look for in a Mac's classpath.
+      - run: python3 tools/setup_vanilla.py --skip-decompile --natives macos-arm64 --natives macos
       # The chunk goldens decode the chunks a vanilla server sends a client joining the walk scenario's world. CI has no
       # oracle captures, so it records that server with the port's own client (the chunk bytes are the server's either
       # way), and the golden harness reads its capture instead of vanilla/<version>/oracle/walk/capture.jsonl. The

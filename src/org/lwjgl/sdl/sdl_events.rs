@@ -7,7 +7,7 @@
 use crate::org::lwjgl::system::shared_library_loader;
 
 shared_library_loader::functions! {
-    "sdl", "libSDL3.so";
+    "sdl", "SDL3";
     SDL_PollEvent: fn(*mut SdlEvent) -> bool;
 }
 

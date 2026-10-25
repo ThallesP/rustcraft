@@ -44,7 +44,7 @@ pub type ShadercIncludeResolve = unsafe extern "C" fn(
 pub type ShadercIncludeResultRelease = unsafe extern "C" fn(*mut c_void, *mut ShadercIncludeResult);
 
 shared_library_loader::functions! {
-    "shaderc", "libshaderc.so";
+    "shaderc", "shaderc";
     shaderc_compiler_initialize: fn() -> Compiler;
     shaderc_compiler_release: fn(Compiler);
     shaderc_compile_options_initialize: fn() -> CompileOptions;

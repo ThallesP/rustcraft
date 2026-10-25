@@ -4,7 +4,7 @@ use crate::org::lwjgl::system::shared_library_loader;
 use std::ffi::{CStr, c_char};
 
 shared_library_loader::functions! {
-    "sdl", "libSDL3.so";
+    "sdl", "SDL3";
     SDL_GetError: fn() -> *const c_char;
 }
 

@@ -10,7 +10,7 @@ use crate::org::lwjgl::system::shared_library_loader;
 use std::ffi::{CStr, c_char, c_int, c_void};
 
 shared_library_loader::functions! {
-    "stb", "liblwjgl_stb.so";
+    "stb", "lwjgl_stb";
     Java_org_lwjgl_stb_STBImage_nstbi_1load_1from_1memory__JIJJJI: fn(*mut c_void, *mut c_void, i64, c_int, i64, i64, i64, c_int) -> i64;
     Java_org_lwjgl_stb_STBImage_nstbi_1image_1free: fn(*mut c_void, *mut c_void, i64);
     Java_org_lwjgl_stb_STBImage_nstbi_1failure_1reason: fn(*mut c_void, *mut c_void) -> i64;
