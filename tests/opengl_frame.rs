@@ -9,6 +9,9 @@
 //! another driver the frames only have to render. With `RUSTCRAFT_ORACLE_DRIVER=1` (CI's job in
 //! the oracle's Ubuntu and Mesa) nothing is skipped: no `xvfb-run`, another driver, or a capture
 //! or live run missing fails the test.
+//!
+//! The same checks run on the macOS GL profile (`oracle/gl-profiles.json`, TESTING.md's "GL
+//! profiles"): llvmpipe restricted to Apple's OpenGL 4.1, against vanilla's run under it.
 
 use md5::{Digest, Md5};
 use std::path::{Path, PathBuf};
@@ -28,6 +31,14 @@ const ORACLE_DEVICE: [&str; 3] = [
      GL_EXT_texture_filter_anisotropic",
 ];
 const ORACLE_DRIVER: &str = "4.5 (Core Profile) Mesa 26.0.8-1ubuntu0.3";
+/// What vanilla logged on the oracle's driver under the macOS GL profile
+/// (`vanilla/26.3/oracle-gl41/*/client.log`): OpenGL 4.1, and of the extensions it looks for only
+/// the anisotropic filtering.
+const ORACLE_DEVICE_GL41: [&str; 3] = [
+    "backend OpenGL, using drivers: 4.1 (Core Profile) Mesa 26.0.8-1ubuntu0.3",
+    "device: llvmpipe (LLVM 21.1.8, 256 bits) (Mesa)",
+    "device extensions: GL_EXT_texture_filter_anisotropic",
+];
 
 /// Whether every pixel check must run here: `RUSTCRAFT_ORACLE_DRIVER=1`.
 fn strict() -> bool {
@@ -55,6 +66,26 @@ fn on_oracle_driver() -> bool {
 
 /// The binary under a fresh Xvfb with llvmpipe, or `None` without `xvfb-run`.
 fn run(arguments: &[&str]) -> Option<String> {
+    run_on(arguments, None)
+}
+
+/// Mesa's environment for a GL profile, the one `tools/oracle_client.py` and
+/// `tools/port_client.py` run both clients under (`--gl-profile`).
+fn gl_profile_env(name: &str) -> Vec<(String, String)> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/gl-profiles.json");
+    let profiles: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("the GL profiles"))
+            .expect("JSON");
+    profiles[name]
+        .as_object()
+        .unwrap_or_else(|| panic!("no GL profile {name}"))
+        .iter()
+        .map(|(key, value)| (key.clone(), value.as_str().expect("a string").to_owned()))
+        .collect()
+}
+
+/// `run` on llvmpipe restricted to a GL profile's OpenGL, if there's one.
+fn run_on(arguments: &[&str], gl_profile: Option<&str>) -> Option<String> {
     let found = Command::new("xvfb-run").arg("--help").output().is_ok();
     if !found {
         skip("no xvfb-run (sudo apt install xvfb)");
@@ -68,6 +99,7 @@ fn run(arguments: &[&str]) -> Option<String> {
         .env("LIBGL_ALWAYS_SOFTWARE", "1")
         .env("GALLIUM_DRIVER", "llvmpipe")
         .env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
+        .envs(gl_profile.map(gl_profile_env).unwrap_or_default())
         .output()
         .expect("runs xvfb-run");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -107,18 +139,8 @@ fn makes_the_device_vanilla_makes() {
         .iter()
         .map(|line| line.strip_prefix("Using graphics ").expect("a device line"))
         .collect();
-    let log = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("vanilla")
-        .join(include_str!("../MINECRAFT_VERSION").trim())
-        .join("oracle/walk/client.log");
-    if let Ok(log) = std::fs::read_to_string(&log) {
-        let vanilla: Vec<&str> = log
-            .lines()
-            .filter_map(|line| {
-                line.split_once("(Minecraft) Using graphics ")
-                    .map(|(_, rest)| rest)
-            })
-            .collect();
+    let log = vanilla_dir("oracle").join("walk/client.log");
+    if let Some(vanilla) = vanilla_device(&log) {
         assert_eq!(port, vanilla);
     } else if strict() {
         assert_eq!(port, ORACLE_DEVICE);
@@ -133,6 +155,63 @@ fn makes_the_device_vanilla_makes() {
         lines[3],
         "isZZeroToOne: true, shaderDrawParameters: true, isExplicitDepthRequired: false"
     );
+}
+
+/// The lines a vanilla run's log has about its device, if there's a log.
+fn vanilla_device(log: &Path) -> Option<Vec<String>> {
+    let log = std::fs::read_to_string(log).ok()?;
+    Some(
+        log.lines()
+            .filter_map(|line| {
+                line.split_once("(Minecraft) Using graphics ")
+                    .map(|(_, rest)| rest.to_owned())
+            })
+            .collect(),
+    )
+}
+
+/// A directory of vanilla's runs: `vanilla/<version>/oracle`.
+fn vanilla_dir(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("vanilla")
+        .join(include_str!("../MINECRAFT_VERSION").trim())
+        .join(name)
+}
+
+/// The device on the macOS GL profile, as vanilla makes it there: OpenGL 4.1, none of the
+/// extensions a Mac lacks, so depth from -1 to 1 and no shader draw parameters; vanilla's log of
+/// its run under the profile when this machine has one, the lines it logged on the oracle's
+/// driver with `RUSTCRAFT_ORACLE_DRIVER=1`.
+#[test]
+fn makes_the_device_vanilla_makes_on_the_macos_gl_profile() {
+    let Some(output) = run_on(&["--device-info"], Some("macos")) else {
+        return;
+    };
+    let lines: Vec<&str> = output.lines().collect();
+    assert!(
+        lines[0].contains("using drivers: 4.1 (Core Profile)"),
+        "not OpenGL 4.1: {output}"
+    );
+    assert_eq!(
+        lines[3],
+        "isZZeroToOne: false, shaderDrawParameters: false, isExplicitDepthRequired: false"
+    );
+    let port: Vec<&str> = lines[..3]
+        .iter()
+        .map(|line| line.strip_prefix("Using graphics ").expect("a device line"))
+        .collect();
+    let log = vanilla_dir("oracle-gl41").join("walk/client.log");
+    if let Some(vanilla) = vanilla_device(&log) {
+        assert_eq!(port, vanilla);
+    } else if strict() {
+        assert_eq!(port, ORACLE_DEVICE_GL41);
+    } else {
+        // Another Mesa's overrides may leave other extensions: the flags are what's checked.
+        eprintln!(
+            "no oracle client log at {}: checked the flags only",
+            log.display()
+        );
+    }
 }
 
 /// Every pipeline `ShaderManager.reload` compiles at startup, the required ones and the
@@ -157,11 +236,19 @@ fn read_png(path: &Path) -> (u32, u32, png::ColorType, Vec<u8>) {
 }
 
 fn screenshot(name: &str, arguments: &[&str]) -> Option<(u32, u32, png::ColorType, Vec<u8>)> {
+    screenshot_on(name, arguments, None)
+}
+
+fn screenshot_on(
+    name: &str,
+    arguments: &[&str],
+    gl_profile: Option<&str>,
+) -> Option<(u32, u32, png::ColorType, Vec<u8>)> {
     let path: PathBuf = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let path_text = path.to_str().expect("a UTF-8 path");
     let mut all = vec!["--screenshot", path_text];
     all.extend_from_slice(arguments);
-    run(&all)?;
+    run_on(&all, gl_profile)?;
     Some(read_png(&path))
 }
 
@@ -394,8 +481,12 @@ fn rgba_digest(pixels: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn vanilla_screenshot(scenario: &str, name: &str) -> &'static str {
-    VANILLA_SCREENSHOTS
+fn vanilla_screenshot(
+    screenshots: &'static [(&str, &str, &str)],
+    scenario: &str,
+    name: &str,
+) -> &'static str {
+    screenshots
         .iter()
         .find(|(listed, listed_name, _)| *listed == scenario && *listed_name == name)
         .map(|(_, _, digest)| *digest)
@@ -420,7 +511,18 @@ fn renders_the_walks_spawn_view_like_vanilla_after_a_resize() {
     render_the_walks_spawn_view("walk-spawn-resized.png", &["--start-size", "427x241"]);
 }
 
+/// The same view on the macOS GL profile, where the terrain draws one section at a time
+/// (`DrawSeparate`) with depth from -1 to 1: vanilla's under the profile.
+#[test]
+fn renders_the_walks_spawn_view_like_vanilla_on_the_macos_gl_profile() {
+    render_the_walks_spawn_view_on("walk-spawn-gl41.png", &[], Some("macos"));
+}
+
 fn render_the_walks_spawn_view(name: &str, more_arguments: &[&str]) {
+    render_the_walks_spawn_view_on(name, more_arguments, None);
+}
+
+fn render_the_walks_spawn_view_on(name: &str, more_arguments: &[&str], gl_profile: Option<&str>) {
     let capture = [
         std::env::var("RUSTCRAFT_CHUNK_CAPTURE")
             .ok()
@@ -442,7 +544,8 @@ fn render_the_walks_spawn_view(name: &str, more_arguments: &[&str]) {
         capture.to_str().expect("a UTF-8 path"),
     ];
     arguments.extend_from_slice(more_arguments);
-    let Some((width, height, color_type, pixels)) = screenshot(name, &arguments) else {
+    let Some((width, height, color_type, pixels)) = screenshot_on(name, &arguments, gl_profile)
+    else {
         return;
     };
     assert_eq!(
@@ -450,9 +553,13 @@ fn render_the_walks_spawn_view(name: &str, more_arguments: &[&str]) {
         (854, 480, png::ColorType::Rgba)
     );
     if on_oracle_driver() {
+        let screenshots = match gl_profile {
+            None => VANILLA_SCREENSHOTS,
+            Some(_) => VANILLA_SCREENSHOTS_GL41,
+        };
         assert_eq!(
             rgba_digest(&pixels),
-            vanilla_screenshot("walk-no-gui", "spawn")
+            vanilla_screenshot(screenshots, "walk-no-gui", "spawn")
         );
     }
 }
@@ -463,12 +570,43 @@ fn render_the_walks_spawn_view(name: &str, more_arguments: &[&str]) {
 /// screenshots are, their digests are checked to be the ones above.
 #[test]
 fn takes_vanillas_screenshots_on_a_server() {
+    takes_vanillas_screenshots("oracle", "", VANILLA_SCREENSHOTS);
+}
+
+/// Vanilla's screenshots on the macOS GL profile (`vanilla/26.3/oracle-gl41/`), by their digests:
+/// its default ones, bit for bit.
+const VANILLA_SCREENSHOTS_GL41: &[(&str, &str, &str)] = &[
+    ("walk-no-gui", "spawn", "a38fcf9081510059fb5d52b0f34716e9"),
+    (
+        "walk-no-gui",
+        "after-walk",
+        "7d2656aefedcf34c937e0b57f87101f5",
+    ),
+    ("walk", "spawn", "40f5b5f93bd28c499cf9d2ec70243fed"),
+    ("walk", "after-walk", "b4f2a3b57e31c51be4992e54dd84d878"),
+];
+
+/// The same on the macOS GL profile: the port's runs under it (`tools/port_client.py capture
+/// <scenario> --gl-profile macos --out target/oracle-gl41`) against vanilla's.
+#[test]
+fn takes_vanillas_screenshots_on_a_server_on_the_macos_gl_profile() {
+    takes_vanillas_screenshots(
+        "oracle-gl41",
+        " --gl-profile macos --out target/oracle-gl41",
+        VANILLA_SCREENSHOTS_GL41,
+    );
+}
+
+/// The port's screenshots in `target/<runs>/` against vanilla's in `vanilla/26.3/<runs>/`,
+/// `capture_options` being what `port_client.py capture` takes to record them.
+fn takes_vanillas_screenshots(
+    runs: &str,
+    capture_options: &str,
+    screenshots: &[(&str, &str, &str)],
+) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let vanilla_dir = root
-        .join("vanilla")
-        .join(include_str!("../MINECRAFT_VERSION").trim())
-        .join("oracle");
-    for &(scenario, name, digest) in VANILLA_SCREENSHOTS {
+    let vanilla_dir = vanilla_dir(runs);
+    for &(scenario, name, digest) in screenshots {
         let path = vanilla_dir.join(format!("{scenario}/screenshots/{name}.png"));
         if path.exists() {
             let (_, _, _, pixels) = read_png(&path);
@@ -483,11 +621,12 @@ fn takes_vanillas_screenshots_on_a_server() {
     if run(&["--device-info"]).is_none() || !on_oracle_driver() {
         return;
     }
-    for &(scenario, name, digest) in VANILLA_SCREENSHOTS {
-        let path = root.join(format!("target/oracle/{scenario}/screenshots/{name}.png"));
+    for &(scenario, name, digest) in screenshots {
+        let path = root.join(format!("target/{runs}/{scenario}/screenshots/{name}.png"));
         if !path.exists() {
             skip(&format!(
-                "no screenshot of the port's {scenario} (tools/port_client.py capture {scenario})"
+                "no screenshot of the port's {scenario} (tools/port_client.py capture \
+                 {scenario}{capture_options})"
             ));
             continue;
         }
@@ -497,7 +636,7 @@ fn takes_vanillas_screenshots_on_a_server() {
             rgba_digest(&pixels),
             digest,
             "the port's {scenario} {name} differs from vanilla's: oracle-diff image \
-             vanilla/26.3/oracle/{scenario}/screenshots/{name}.png {}",
+             vanilla/26.3/{runs}/{scenario}/screenshots/{name}.png {}",
             path.display()
         );
     }

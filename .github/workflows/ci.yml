@@ -111,6 +111,12 @@ jobs:
           for scenario in walk-no-gui walk sky-sunset sky-night sky-sunrise; do
             python3 tools/port_client.py capture "$scenario" --accept-eula
           done
+      # The walk's two again on the macOS GL profile, llvmpipe restricted to Apple's OpenGL 4.1 (TESTING.md, "GL
+      # profiles"), checked against vanilla's run under it.
+      - run: |
+          for scenario in walk-no-gui walk; do
+            python3 tools/port_client.py capture "$scenario" --accept-eula --gl-profile macos --out target/oracle-gl41
+          done
       - run: cargo test --release --test opengl_frame
         env:
           RUSTCRAFT_CHUNK_CAPTURE: ${{ github.workspace }}/target/oracle/walk-no-gui/capture.jsonl
@@ -119,4 +125,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: port-runs
-          path: target/oracle
+          path: |
+            target/oracle
+            target/oracle-gl41
