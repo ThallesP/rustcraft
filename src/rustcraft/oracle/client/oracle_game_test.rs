@@ -13,8 +13,10 @@
 //! step's `wait_for` is waited on like Java waits: after the step's last tick and its line, the
 //! network runs without the game ticking until the packets have come, then the client handles
 //! what's queued, before the next tick. A paced scenario's ticks each wait for their slot first
-//! (`ServerTicks`). Between ticks, the steps that come there run in order as each tick ends: a
-//! screenshot renders a frame at a partial tick of 1 and reads it back like
+//! (`ServerTicks`). Between ticks, the steps that come there run in order where Java's do, before
+//! the next tick (and its slot), once the frame after the last has drawn and the next has handled
+//! its packets, before the textures' tick: a screenshot, and a step's `screenshots_every` after so
+//! many of its ticks, renders a frame at a partial tick of 1 and reads it back like
 //! `OracleScreenshot.take`, into `<out>/<scenario>/screenshots/<name>.png`, when the client has a
 //! renderer (the runner makes one for a scenario with screenshots); a key is pressed and released
 //! through the keyboard handler, characters typed, the cursor moved, a mouse button clicked and
@@ -109,6 +111,8 @@ pub struct OracleGameTest {
     server_ticks: Option<ServerTicks>,
     /// The server the client joins once the title steps are done.
     server: Option<(ServerAddress, ServerData)>,
+    /// How many of the scenario's ticks the steps run last came after.
+    steps_run_after: Option<i32>,
 }
 
 impl OracleGameTest {
@@ -165,6 +169,7 @@ impl OracleGameTest {
                 block_updates_before: None,
                 server_ticks: None,
                 server: None,
+                steps_run_after: None,
             },
             outcome,
         )
@@ -379,11 +384,12 @@ impl OracleGameTest {
             .title
             .iter()
             .chain(&scenario.steps)
-            .any(|step| step.screenshot.is_some())
+            .any(|step| step.screenshot.is_some() || step.screenshots_every > 0)
     }
 
-    /// The steps that come after `ticks` of the scenario's ticks and before the next: screenshots
-    /// and input.
+    /// The steps that come after `ticks` of the scenario's ticks and before the next, in Java's
+    /// order: a tick step's own screenshot after so many of its ticks (`screenshots_every`, as a
+    /// screenshot step named by the tick), then the screenshots and input after it.
     fn steps_after(&self, ticks: i32) -> Vec<scenario::Step> {
         let mut elapsed = 0;
         let mut steps = Vec::new();
@@ -393,16 +399,30 @@ impl OracleGameTest {
                     steps.push(step.clone());
                 }
             } else {
+                let ran = ticks - elapsed;
+                if step.screenshots_every > 0
+                    && (1..=step.ticks).contains(&ran)
+                    && ran % step.screenshots_every == 0
+                {
+                    steps.push(scenario::Step {
+                        screenshot: Some(Scenario::tick_screenshot(ticks - 1)),
+                        ..scenario::Step::default()
+                    });
+                }
                 elapsed += step.ticks;
             }
         }
         steps
     }
 
-    /// The steps due after `ticks` ticks, in order: screenshots (`OracleScreenshot.take`, a frame
-    /// at a partial tick of 1, read back), and input as Fabric's test input gives it, each waiting
-    /// for its answer right after it.
+    /// The steps due after `ticks` ticks, once, in order: screenshots (`OracleScreenshot.take`, a
+    /// frame at a partial tick of 1, read back), and input as Fabric's test input gives it, each
+    /// waiting for its answer right after it.
     fn run_steps_between_ticks(&mut self, minecraft: &Minecraft, ticks: i32) {
+        if self.steps_run_after == Some(ticks) {
+            return;
+        }
+        self.steps_run_after = Some(ticks);
         for step in self.steps_after(ticks) {
             self.run_input_or_screenshot(minecraft, &step);
             if self.stage == Stage::Done {
@@ -718,6 +738,15 @@ impl OracleGameTest {
 
 impl TestDriver for OracleGameTest {
     fn before_tick(&mut self, minecraft: &Rc<Minecraft>) {
+        // The steps after the last tick, where Fabric parks the client before this one: after the
+        // last tick's frame and this frame's packets, and before a paced tick's slot, like Java's
+        // `replay` runs them before `ServerTicks.tick`.
+        if matches!(self.stage, Stage::Replaying | Stage::Leaving) {
+            self.run_steps_between_ticks(minecraft, self.replayed_ticks);
+            if self.stage == Stage::Done {
+                return;
+            }
+        }
         if let Some(server_ticks) = self.server_ticks.as_mut() {
             server_ticks.await_slot(minecraft);
         }
@@ -752,6 +781,8 @@ impl TestDriver for OracleGameTest {
                     // commands set the rest.
                     self.setup = OracleGameTest::setup_commands(&self.scenario, "@s");
                     if self.scenario.world.tick_rate > 0.0 {
+                        minecraft.options.borrow_mut().framerate_limit =
+                            ServerTicks::FRAMES_PER_SECOND;
                         let ticking_states = minecraft
                             .packet_processor()
                             .arrivals("minecraft:ticking_state");
@@ -947,10 +978,6 @@ impl TestDriver for OracleGameTest {
                     return;
                 }
                 self.replayed_ticks += 1;
-                self.run_steps_between_ticks(minecraft, self.replayed_ticks);
-                if self.stage == Stage::Done {
-                    return;
-                }
                 if self.replayed_ticks == self.scenario_ticks() {
                     self.next(Stage::Leaving);
                 }
@@ -994,6 +1021,57 @@ mod tests {
                 "tp @s 0.5 -60.0 0.5 0.0 0.0",
             ]
         );
+    }
+
+    #[test]
+    fn takes_the_screenshots_java_takes() {
+        let names = |test: &OracleGameTest, ticks: i32| -> Vec<String> {
+            test.steps_after(ticks)
+                .into_iter()
+                .filter_map(|step| step.screenshot)
+                .collect()
+        };
+        let scenario = Scenario::load(std::path::Path::new("oracle/scenarios/walk.json")).unwrap();
+        let test = test_of(scenario);
+        assert_eq!(names(&test, 0), ["spawn"]);
+        assert!(names(&test, 1).is_empty());
+        assert_eq!(names(&test, 76), ["after-walk"]);
+
+        // `expected_ticks` in tools/oracle_client.py lists the same frames for the oracle client: a
+        // step's `screenshots_every` counts from its first tick, and a frame comes after the tick
+        // it's named for.
+        let scenario =
+            Scenario::load(std::path::Path::new("oracle/scenarios/walk-video.json")).unwrap();
+        let test = test_of(scenario);
+        let frames: Vec<String> = (0..=159).flat_map(|ticks| names(&test, ticks)).collect();
+        assert_eq!(frames.len(), 36);
+        assert_eq!(frames[..3], ["tick-0037", "tick-0041", "tick-0043"]);
+        assert_eq!(
+            frames[11..15],
+            ["tick-0073", "tick-0074", "tick-0075", "tick-0076"]
+        );
+        assert_eq!(frames[22..24], ["tick-0103", "tick-0117"]);
+        assert_eq!(frames[35], "tick-0158");
+        assert_eq!(names(&test, 159), ["tick-0158"]);
+    }
+
+    /// The driver of a scenario, without a client: its schedule of screenshots.
+    fn test_of(scenario: Scenario) -> OracleGameTest {
+        OracleGameTest {
+            out_dir: std::path::PathBuf::new(),
+            scenario,
+            stage: super::Stage::WaitingForLevel,
+            ticks_in_stage: 0,
+            replayed_ticks: 0,
+            trace: None,
+            outcome: std::rc::Rc::new(std::cell::Cell::new(None)),
+            waiting_since: std::collections::HashMap::new(),
+            setup: Vec::new(),
+            block_updates_before: None,
+            server_ticks: None,
+            server: None,
+            steps_run_after: None,
+        }
     }
 
     #[test]

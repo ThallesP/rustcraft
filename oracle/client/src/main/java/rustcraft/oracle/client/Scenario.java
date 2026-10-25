@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
@@ -34,7 +35,8 @@ public record Scenario(String name, World world, Player player, Options options,
      * cursor}), a mouse button pressed and released where the cursor is ({@code click}), the wheel scrolled ({@code
      * scroll}) or a command sent ({@code command}, without its slash) between two ticks, or {@code ticks} ticks with
      * {@code keys} held and an optional fixed {@code look}, and the clientbound packet types to wait for after its last
-     * tick, or after the input ({@code waitFor}, TESTING.md).
+     * tick, or after the input ({@code waitFor}, TESTING.md), and a screenshot after every {@code screenshotsEvery}th of
+     * its ticks (0 for none), named by the tick ({@link #tickScreenshot}).
      */
     public record Step(
         int ticks,
@@ -48,8 +50,14 @@ public record Scenario(String name, World world, Player player, Options options,
         @Nullable String command,
         @Nullable String click,
         @Nullable Double scroll,
-        boolean blinkOn
+        boolean blinkOn,
+        int screenshotsEvery
     ) {}
+
+    /** The name of the screenshot taken after the scenario's tick (its trace line's {@code tick}). */
+    public static String tickScreenshot(int tick) {
+        return String.format(Locale.ROOT, "tick-%04d", tick);
+    }
 
     public static final Set<String> KEYS = Set.of("forward", "back", "left", "right", "jump", "sneak", "sprint", "attack", "use");
 
@@ -132,7 +140,7 @@ public record Scenario(String name, World world, Player player, Options options,
     private static Step parseStep(JsonObject step) {
         if (step.has("screenshot")) {
             boolean blinkOn = step.has("blink_on") && step.get("blink_on").getAsBoolean();
-            return new Step(0, Set.of(), null, step.get("screenshot").getAsString(), List.of(), null, null, null, null, null, null, blinkOn);
+            return new Step(0, Set.of(), null, step.get("screenshot").getAsString(), List.of(), null, null, null, null, null, null, blinkOn, 0);
         }
         // Packets that must each have come since the step began: after its last tick, or after its input.
         List<String> waitFor = new ArrayList<>();
@@ -147,27 +155,27 @@ public record Scenario(String name, World world, Player player, Options options,
             if (!PRESSABLE_KEYS.containsKey(key)) {
                 throw new IllegalArgumentException("unknown key '" + key + "', expected one of " + PRESSABLE_KEYS.keySet());
             }
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), key, null, null, null, null, null, false);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), key, null, null, null, null, null, false, 0);
         }
         if (step.has("type")) {
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, step.get("type").getAsString(), null, null, null, null, false);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, step.get("type").getAsString(), null, null, null, null, false, 0);
         }
         if (step.has("cursor")) {
             JsonArray cursor = step.getAsJsonArray("cursor");
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, new double[]{cursor.get(0).getAsDouble(), cursor.get(1).getAsDouble()}, null, null, null, false);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, new double[]{cursor.get(0).getAsDouble(), cursor.get(1).getAsDouble()}, null, null, null, false, 0);
         }
         if (step.has("scroll")) {
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, null, null, step.get("scroll").getAsDouble(), false);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, null, null, step.get("scroll").getAsDouble(), false, 0);
         }
         if (step.has("click")) {
             String button = step.get("click").getAsString();
             if (!MOUSE_BUTTONS.containsKey(button)) {
                 throw new IllegalArgumentException("unknown mouse button '" + button + "', expected one of " + MOUSE_BUTTONS.keySet());
             }
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, null, button, null, false);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, null, button, null, false, 0);
         }
         if (step.has("command")) {
-            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, step.get("command").getAsString(), null, null, false);
+            return new Step(0, Set.of(), null, null, List.copyOf(waitFor), null, null, null, step.get("command").getAsString(), null, null, false, 0);
         }
 
         Set<String> keys = new LinkedHashSet<>();
@@ -191,6 +199,11 @@ public record Scenario(String name, World world, Player player, Options options,
         if (!waitFor.isEmpty() && ticks < 1) {
             throw new IllegalArgumentException("a step that waits for packets needs a tick");
         }
-        return new Step(ticks, Set.copyOf(keys), look, null, List.copyOf(waitFor), null, null, null, null, null, null, false);
+        // A screenshot after every so many of the step's ticks, a video of it (TESTING.md).
+        int screenshotsEvery = step.has("screenshots_every") ? step.get("screenshots_every").getAsInt() : 0;
+        if (screenshotsEvery < 0) {
+            throw new IllegalArgumentException("screenshots_every can't be negative");
+        }
+        return new Step(ticks, Set.copyOf(keys), look, null, List.copyOf(waitFor), null, null, null, null, null, null, false, screenshotsEvery);
     }
 }

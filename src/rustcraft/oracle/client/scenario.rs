@@ -58,7 +58,7 @@ pub struct Options {
 /// cursor moved to a place in the window (`cursor`), a mouse button clicked (`click`), the wheel
 /// scrolled (`scroll`) or a command sent (`command`, without its slash) between two ticks, or `ticks` ticks with `keys` held and an optional fixed `look`, and
 /// optionally clientbound packets to wait for after its last tick, or after its input
-/// (`wait_for`, TESTING.md).
+/// (`wait_for`, TESTING.md), and a screenshot after every `screenshots_every`th of its ticks.
 #[derive(Clone, Debug, Default)]
 pub struct Step {
     pub ticks: i32,
@@ -79,6 +79,9 @@ pub struct Step {
     pub scroll: Option<f64>,
     /// A screenshot taken just after the focused edit box's cursor has come on (TESTING.md).
     pub blink_on: bool,
+    /// A screenshot after every so many of the step's ticks, each named by the tick it comes after
+    /// (`Scenario::tick_screenshot`); 0 for none.
+    pub screenshots_every: i32,
 }
 
 impl Step {
@@ -112,6 +115,12 @@ impl Scenario {
     /// The buttons a `click` step presses, by their SDL numbers (`InputConstants`'
     /// `MOUSE_BUTTON_` constants).
     pub const MOUSE_BUTTONS: [(&'static str, i32); 1] = [("left", 1)];
+
+    /// `Scenario.tickScreenshot`: the name of the screenshot taken after the scenario's tick (its
+    /// trace line's `tick`).
+    pub fn tick_screenshot(tick: i32) -> String {
+        format!("tick-{tick:04}")
+    }
 
     pub fn load(path: &Path) -> Result<Scenario, String> {
         let text = std::fs::read_to_string(path)
@@ -348,11 +357,20 @@ impl Scenario {
         if !wait_for.is_empty() && ticks < 1 {
             return Err("a step that waits for packets needs a tick".to_string());
         }
+        let screenshots_every = step
+            .get("screenshots_every")
+            .map(|value| value.as_i64().ok_or("screenshots_every isn't a number"))
+            .transpose()?
+            .unwrap_or(0) as i32;
+        if screenshots_every < 0 {
+            return Err("screenshots_every can't be negative".to_string());
+        }
         Ok(Step {
             ticks,
             keys,
             look,
             wait_for,
+            screenshots_every,
             ..Step::default()
         })
     }

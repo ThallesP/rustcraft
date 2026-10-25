@@ -87,9 +87,9 @@ use crate::rustcraft::bench;
 
 /// Something that drives the game from outside, like Fabric's client game tests drive vanilla
 /// (`tools/port_client.py`'s scenarios). Fabric runs at most one tick a frame and parks the client
-/// before it, after the frame's queued packets and tasks, for the test to act on it
-/// (`captureTicksPerFrame`, `postRunTasks`): that's `before_tick`. `after_tick` is called as the
-/// tick ends.
+/// before it, after the frame's queued packets and tasks and before the textures' tick, for the
+/// test to act on it (`captureTicksPerFrame`, `postRunTasks`): that's `before_tick`. `after_tick`
+/// is called as the tick ends.
 pub trait TestDriver {
     fn before_tick(&mut self, _minecraft: &Rc<Minecraft>) {}
 
@@ -503,6 +503,13 @@ impl Minecraft {
         }
         if advance_game_time {
             self.packet_processor.process_queued_packets();
+            // Where Fabric parks the client in a frame that ticks (`postRunTasks`, right after
+            // `runAllTasks`): before the textures' tick, so what the test does there (a screenshot,
+            // the animations started over) sees them as the last tick left them. A driver's frames
+            // run one tick at most.
+            if ticks_to_do > 0 {
+                self.drive(|driver, minecraft| driver.before_tick(minecraft));
+            }
             // `isLevelRunningNormally()`: the level's tick rate isn't ported, so it always runs.
             if ticks_to_do > 0
                 && let Some(game_renderer) = self.game_renderer.borrow_mut().as_mut()
@@ -510,7 +517,6 @@ impl Minecraft {
                 game_renderer.tick_textures();
             }
             for _ in 0..ticks_to_do.min(10) {
-                self.drive(|driver, minecraft| driver.before_tick(minecraft));
                 self.tick();
             }
         }

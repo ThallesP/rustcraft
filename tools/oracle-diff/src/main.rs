@@ -6,6 +6,7 @@ mod packets;
 mod screenshot;
 mod trace;
 mod value;
+mod video;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -19,6 +20,7 @@ const USAGE: &str = "usage:
   oracle-diff packets <A/capture.jsonl> <B/capture.jsonl> [--join] [--ignore name,...] [--no-default-ignore] [--ordered]
   oracle-diff image <A.png> <B.png> [--threshold N] [--heatmap out.png]
   oracle-diff dir <A> <B> [--threshold N] [--join] [--ignore name,...] [--no-default-ignore] [--ordered] [--heatmaps <dir>] [--strict]
+  oracle-diff video <A> [<B>] --out out.gif [--scale N]
 
   --join               compare only the join phase of each connection: the serverbound packets
                        before the scenario-start marker (as the join phase always is), and the
@@ -32,8 +34,12 @@ const USAGE: &str = "usage:
   --threshold          largest channel difference a pixel may have and still match (default 0)
   --heatmap(s)         where to write images marking the differing pixels
   --strict             in dir mode, a file only one side has counts as a difference
+  --out                in video mode, the GIF to write
+  --scale              in video mode, shrink the frames to 1/N of their size (default 1)
 
 dir compares trace.jsonl, capture.jsonl and screenshots/*.png in two scenario output dirs.
+video plays a scenario output dir's frames (screenshots/tick-NNNN.png, a step's screenshots_every)
+as a GIF in game time, or two dirs' side by side with the heatmap of where they differ.
 Exit status: 0 when everything compared matches, 1 when something differs, 2 on bad input.";
 
 #[derive(Default)]
@@ -46,11 +52,14 @@ struct Options {
     threshold: u8,
     heatmap: Option<PathBuf>,
     strict: bool,
+    out: Option<PathBuf>,
+    scale: u32,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
     let mut options = Options {
         default_ignore: true,
+        scale: 1,
         ..Options::default()
     };
     let mut args = args.peekable();
@@ -71,6 +80,14 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             }
             "--heatmap" | "--heatmaps" => options.heatmap = Some(PathBuf::from(value()?)),
             "--strict" => options.strict = true,
+            "--out" => options.out = Some(PathBuf::from(value()?)),
+            "--scale" => {
+                options.scale = value()?
+                    .parse()
+                    .ok()
+                    .filter(|scale| *scale > 0)
+                    .ok_or("--scale takes a whole number above 0")?;
+            }
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
             path => options.paths.push(PathBuf::from(path)),
         }
@@ -96,6 +113,9 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_default();
     let result = parse_options(args).and_then(|options| {
+        if command == "video" {
+            return write_video(&options);
+        }
         let [a, b] = options.paths.as_slice() else {
             return Err(format!("{command} takes two paths"));
         };
@@ -116,6 +136,18 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn write_video(options: &Options) -> Result<bool, String> {
+    let (a, b) = match options.paths.as_slice() {
+        [a] => (a, None),
+        [a, b] => (a, Some(b.as_path())),
+        _ => return Err("video takes one or two paths".to_string()),
+    };
+    let out = options.out.as_deref().ok_or("video needs --out")?;
+    let frames = video::write(a, b, out, options.scale)?;
+    println!("wrote {} ({frames} frames)", out.display());
+    Ok(true)
 }
 
 fn read_json_lines(path: &Path) -> Result<Vec<Value>, String> {

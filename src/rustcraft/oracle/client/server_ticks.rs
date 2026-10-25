@@ -27,6 +27,10 @@ pub struct ServerTicks {
 impl ServerTicks {
     /// What a run that fell behind fails with, which `tools/port_client.py` runs again.
     pub const FELL_BEHIND: &'static str = "fell behind the server's ticks";
+    /// The frame rate a paced client is held to, Java's `FRAMES_PER_SECOND`: it only ticks at the
+    /// slots, so it needs no more frames than this, and the frames llvmpipe draws at 120 a second
+    /// take the CPU the server's ticks and the client's own need to keep to the slots.
+    pub const FRAMES_PER_SECOND: i32 = 10;
 
     /// The ticks of a server at `tick_rate` ticks a second, one of which ended as a packet sent
     /// then came (`reference`): its slots are half a tick after that, plus whole ticks, from the

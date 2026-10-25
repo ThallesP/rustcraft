@@ -993,6 +993,17 @@ mod tests {
         );
     }
 
+    /// The walk as a video: a look around, then the walk with turns and jumps, paced
+    /// (TESTING.md, "Frames over time"); its frames are compared on the live run.
+    #[test]
+    fn walk_video() {
+        check_scenario(
+            "walk-video",
+            "49bcfe01512775c55045cbe6acd49294",
+            "a4d7616249aeea0fc701664a7f9cf526",
+        );
+    }
+
     /// The HUD's scenario: the walk's first ticks with five levels and three points of
     /// experience, which the HUD draws (its screenshots are compared on the live run).
     #[test]

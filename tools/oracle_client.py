@@ -97,11 +97,21 @@ def headless_env(gl_profile=None):
 
 
 def expected_ticks(scenario):
-    """The scenario's ticks, and every screenshot it takes, on the title screen and after the join."""
+    """The scenario's ticks, and every screenshot it takes, on the title screen and after the join: its screenshot
+    steps', and a step's `screenshots_every` frames, each named by the tick it comes after (`Scenario.tickScreenshot`)."""
     root = json.loads(scenario.read_text())
-    steps = root["steps"]
-    screenshots = [step["screenshot"] for step in root.get("title", []) + steps if "screenshot" in step]
-    return sum(step.get("ticks", 0) for step in steps), screenshots
+    screenshots = [step["screenshot"] for step in root.get("title", []) if "screenshot" in step]
+    ticks = 0
+    for step in root["steps"]:
+        if "screenshot" in step:
+            screenshots.append(step["screenshot"])
+            continue
+        every = step.get("screenshots_every", 0)
+        for i in range(step.get("ticks", 0)):
+            if every > 0 and (i + 1) % every == 0:
+                screenshots.append(f"tick-{ticks + i:04d}")
+        ticks += step.get("ticks", 0)
+    return ticks, screenshots
 
 
 def start(scenario, out_dir, server=None, server_ready=None, ping=False, gl_profile=None, backend="opengl"):

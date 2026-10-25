@@ -579,94 +579,163 @@ fn draws_the_block_atlas_from_vanillas_sprites() {
     }
 }
 
+/// Screenshots by scenario, each its name and the digest of its RGBA bytes.
+type Screenshots = &'static [(&'static str, &'static [(&'static str, &'static str)])];
+
 /// Vanilla's screenshots of the scenarios whose screenshots the port takes too, each by the
 /// digest of its RGBA bytes (`vanilla/26.3/oracle/<scenario>/screenshots/<name>.png`), which the
 /// oracle recorded on `ORACLE_DRIVER`.
-const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
-    ("walk-no-gui", "spawn", "a38fcf9081510059fb5d52b0f34716e9"),
+const VANILLA_SCREENSHOTS: Screenshots = &[
     (
         "walk-no-gui",
-        "after-walk",
-        "7d2656aefedcf34c937e0b57f87101f5",
+        &[
+            ("spawn", "a38fcf9081510059fb5d52b0f34716e9"),
+            ("after-walk", "7d2656aefedcf34c937e0b57f87101f5"),
+        ],
     ),
-    ("walk", "spawn", "40f5b5f93bd28c499cf9d2ec70243fed"),
-    ("walk", "after-walk", "b4f2a3b57e31c51be4992e54dd84d878"),
-    ("sky-sunset", "west", "c3f3c068f86e1c6960d345d041bf8c8e"),
-    ("sky-sunset", "east", "d2d52caf94690f2a6afd31f959fc81c6"),
-    ("sky-night", "zenith", "b216b4432026b50cd7733bb5bc18b25d"),
-    ("sky-night", "stars", "976de7b4bb8226cc5099e593b3415ea1"),
-    ("sky-sunrise", "east", "a8003efca04138403a4812fced227287"),
-    ("sky-sunrise", "up", "945a20075d656a90f21083e91d038dcf"),
-    ("pause-no-gui", "paused", "4350c9facc35752a7708ecba620d0ffb"),
+    (
+        "walk",
+        &[
+            ("spawn", "40f5b5f93bd28c499cf9d2ec70243fed"),
+            ("after-walk", "b4f2a3b57e31c51be4992e54dd84d878"),
+        ],
+    ),
+    // The walk as a video, a frame every 1 to 5 ticks (TESTING.md, "Frames over time").
+    (
+        "walk-video",
+        &[
+            ("tick-0037", "7ad0f5d0bb9d93bb3aa0508f3f727cfa"),
+            ("tick-0041", "57f862661b04434e553f690fcfd836ea"),
+            ("tick-0043", "a4caa6049a26be1b19c9a910a702b4f2"),
+            ("tick-0045", "e54add738fadad13a2cd105851e95577"),
+            ("tick-0047", "261b1ff8cefe9e272f6ca025daffbd0d"),
+            ("tick-0049", "73f94e5219da0404a10845911c72d763"),
+            ("tick-0053", "e51fe4ff803f40051edd7dc5a0fcd49d"),
+            ("tick-0056", "60d1d7de4ac7702235de4616782c4eff"),
+            ("tick-0059", "19fe6b0d0f559cc2307d573e9b1652cd"),
+            ("tick-0065", "f9cc1e675648730b93c80c1d0f4664e8"),
+            ("tick-0069", "e9036255525757cbe86f8fcba2a3c393"),
+            ("tick-0073", "9294143698d0ef5f9bc4296dc51dab19"),
+            ("tick-0074", "51ad85061a03897ba1db1dfdc9ee1a1c"),
+            ("tick-0075", "a571fccbdab98c0c2b82a25ae36d30b9"),
+            ("tick-0076", "dcf81c272a587bcd96918f37026f6843"),
+            ("tick-0079", "6198f71275305b2e0c02bf5443484090"),
+            ("tick-0082", "4c44a2da07417d76f1cb04279eaba662"),
+            ("tick-0085", "c77798088cc3fbef5d07a82712b93790"),
+            ("tick-0088", "74019358040fc01155b3ee907836cb31"),
+            ("tick-0091", "4d98b1e922064da85179a2f39804ae9c"),
+            ("tick-0094", "379c3199a20c1ac3576335c2c47fd9c0"),
+            ("tick-0099", "882bf29395ea3d1a2f6b75fd43fcea6e"),
+            ("tick-0103", "f79929cc75e1431be8bd9104608b1f7a"),
+            ("tick-0117", "1ffcdc9ce0f30fea8f2d56a49d24d387"),
+            ("tick-0123", "2edd4f1adb65d3e532f8744dddd16c05"),
+            ("tick-0128", "f42ccca3dc85b01c0a67ae40a17e0e66"),
+            ("tick-0134", "ff5714ea9a6f357c78b15a43978310db"),
+            ("tick-0136", "869cb98c0f27ced1a6deda213ce8751e"),
+            ("tick-0140", "e1bfe6d55ea214afabeac59c10bf0c23"),
+            ("tick-0144", "5061824764208c829fcb5967d437dd5d"),
+            ("tick-0146", "ed4cd28c09484c7bedc24d4ee176527f"),
+            ("tick-0148", "99c102f88125fc9a682381e9c921816e"),
+            ("tick-0150", "f23c2b12844573267699110bcd548d32"),
+            ("tick-0152", "a3f46106d42d918eb0dc81301ad705f6"),
+            ("tick-0155", "d361484070f5165c7a859434091ef959"),
+            ("tick-0158", "81a1514954d59e42806f3ecbae296791"),
+        ],
+    ),
+    (
+        "sky-sunset",
+        &[
+            ("west", "c3f3c068f86e1c6960d345d041bf8c8e"),
+            ("east", "d2d52caf94690f2a6afd31f959fc81c6"),
+        ],
+    ),
+    (
+        "sky-night",
+        &[
+            ("zenith", "b216b4432026b50cd7733bb5bc18b25d"),
+            ("stars", "976de7b4bb8226cc5099e593b3415ea1"),
+        ],
+    ),
+    (
+        "sky-sunrise",
+        &[
+            ("east", "a8003efca04138403a4812fced227287"),
+            ("up", "945a20075d656a90f21083e91d038dcf"),
+        ],
+    ),
     (
         "pause-no-gui",
-        "hovered",
-        "a2144669815c6349d67f9c0859546fd8",
+        &[
+            ("paused", "4350c9facc35752a7708ecba620d0ffb"),
+            ("hovered", "a2144669815c6349d67f9c0859546fd8"),
+            ("tooltip", "eba198826998737548b8c87258092d41"),
+            ("resumed", "2fc891762ababfe30cce0e7d8a4546a2"),
+        ],
     ),
     (
-        "pause-no-gui",
-        "tooltip",
-        "eba198826998737548b8c87258092d41",
+        "chat",
+        &[
+            ("tellraw", "5885a05cfc100e8e3687b5ee89990eee"),
+            ("open", "eb751402e1e34c662cb42898f0885ad5"),
+            ("feedback", "a74ffeed5795b07837f9518c105dad32"),
+            ("fading", "fbdf11cea5dbc46f2da297397b1f617d"),
+            ("faded", "217d29f7f3b67b6685884184540b1592"),
+        ],
     ),
-    (
-        "pause-no-gui",
-        "resumed",
-        "2fc891762ababfe30cce0e7d8a4546a2",
-    ),
-    ("chat", "tellraw", "5885a05cfc100e8e3687b5ee89990eee"),
-    ("chat", "open", "eb751402e1e34c662cb42898f0885ad5"),
-    ("chat", "feedback", "a74ffeed5795b07837f9518c105dad32"),
-    ("chat", "fading", "fbdf11cea5dbc46f2da297397b1f617d"),
-    ("chat", "faded", "217d29f7f3b67b6685884184540b1592"),
-    (
-        "options-no-gui",
-        "options",
-        "1d2e7be5274dcb3303aacbc66c2eff6e",
-    ),
-    ("options-no-gui", "fov", "76b0b7ca7fa3066abc290bcecad01091"),
     (
         "options-no-gui",
-        "telemetry",
-        "997b1fef94ee9bfb8edc2d501f2a7a24",
+        &[
+            ("options", "1d2e7be5274dcb3303aacbc66c2eff6e"),
+            ("fov", "76b0b7ca7fa3066abc290bcecad01091"),
+            ("telemetry", "997b1fef94ee9bfb8edc2d501f2a7a24"),
+            ("back", "079e0fe8327d3f0ac3f1db4d795bb8b6"),
+            ("resumed", "b928e0e01496f18eaf778f512dc28801"),
+        ],
     ),
-    ("options-no-gui", "back", "079e0fe8327d3f0ac3f1db4d795bb8b6"),
     (
-        "options-no-gui",
-        "resumed",
-        "b928e0e01496f18eaf778f512dc28801",
+        "title",
+        &[
+            ("title", "9add8dcab50423f6961ca787f820b88a"),
+            ("hovered", "d5651af788ea4ea835266ae26f09ce63"),
+            ("tooltip", "416a50e5d196cd9001cda54dcc3bf5da"),
+        ],
     ),
-    ("title", "title", "9add8dcab50423f6961ca787f820b88a"),
-    ("title", "hovered", "d5651af788ea4ea835266ae26f09ce63"),
-    ("title", "tooltip", "416a50e5d196cd9001cda54dcc3bf5da"),
-    ("screens", "title", "9add8dcab50423f6961ca787f820b88a"),
-    ("screens", "title-keys", "e7aabb6f6b177f64e57fd18a582040b2"),
-    ("screens", "chat", "d2c4293290b4cb0951eea1f9285ee969"),
-    ("screens", "chat-keys", "cc373f7aa2e3fbc200a0a8f0ed27d350"),
-    ("screens", "pause", "0d7577c28f9da3e0832fadb042cdc4d1"),
-    ("screens", "pause-keys", "7205f32b08e76e7643ef9eb81c27a280"),
-    ("screens", "options", "695d853b31bf19289085f01d9dc69205"),
     (
         "screens",
-        "options-keys",
-        "94c3e6335f3412357b602906156810fa",
+        &[
+            ("title", "9add8dcab50423f6961ca787f820b88a"),
+            ("title-keys", "e7aabb6f6b177f64e57fd18a582040b2"),
+            ("chat", "d2c4293290b4cb0951eea1f9285ee969"),
+            ("chat-keys", "cc373f7aa2e3fbc200a0a8f0ed27d350"),
+            ("pause", "0d7577c28f9da3e0832fadb042cdc4d1"),
+            ("pause-keys", "7205f32b08e76e7643ef9eb81c27a280"),
+            ("options", "695d853b31bf19289085f01d9dc69205"),
+            ("options-keys", "94c3e6335f3412357b602906156810fa"),
+            ("resumed", "d3e8dcceb4a4fd110b9cf110af5dc88e"),
+        ],
     ),
-    ("screens", "resumed", "d3e8dcceb4a4fd110b9cf110af5dc88e"),
 ];
+
+/// Every screenshot of a table of them: its scenario, its name and its digest.
+fn every_screenshot(
+    screenshots: Screenshots,
+) -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
+    screenshots.iter().flat_map(|&(scenario, screenshots)| {
+        screenshots
+            .iter()
+            .map(move |&(name, digest)| (scenario, name, digest))
+    })
+}
 
 fn rgba_digest(pixels: &[u8]) -> String {
     let digest: [u8; 16] = Md5::digest(pixels).into();
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn vanilla_screenshot(
-    screenshots: &'static [(&str, &str, &str)],
-    scenario: &str,
-    name: &str,
-) -> &'static str {
-    screenshots
-        .iter()
-        .find(|(listed, listed_name, _)| *listed == scenario && *listed_name == name)
-        .map(|(_, _, digest)| *digest)
+fn vanilla_screenshot(screenshots: Screenshots, scenario: &str, name: &str) -> &'static str {
+    every_screenshot(screenshots)
+        .find(|&(listed, listed_name, _)| listed == scenario && listed_name == name)
+        .map(|(_, _, digest)| digest)
         .unwrap_or_else(|| panic!("no digest of vanilla's {scenario} {name}"))
 }
 
@@ -720,7 +789,7 @@ fn render_the_walks_spawn_view_on(
     name: &str,
     more_arguments: &[&str],
     gl_profile: Option<&str>,
-    screenshots: &'static [(&str, &str, &str)],
+    screenshots: Screenshots,
 ) {
     let capture = [
         std::env::var("RUSTCRAFT_CHUNK_CAPTURE")
@@ -770,15 +839,21 @@ fn takes_vanillas_screenshots_on_a_server() {
 
 /// Vanilla's Vulkan backend's screenshots on lavapipe (`vanilla/26.3/oracle-vulkan/`), by their
 /// digests.
-const VANILLA_SCREENSHOTS_VULKAN: &[(&str, &str, &str)] = &[
-    ("walk-no-gui", "spawn", "a76d6cc27f4c9454c4115d8f7d18cdc7"),
+const VANILLA_SCREENSHOTS_VULKAN: Screenshots = &[
     (
         "walk-no-gui",
-        "after-walk",
-        "1e44d5e7883bc2e31ceeb6b6bd640c38",
+        &[
+            ("spawn", "a76d6cc27f4c9454c4115d8f7d18cdc7"),
+            ("after-walk", "1e44d5e7883bc2e31ceeb6b6bd640c38"),
+        ],
     ),
-    ("walk", "spawn", "36d810d13206383ad289d6e70121d162"),
-    ("walk", "after-walk", "b4d56f324f59f09a8654e66c429f54d0"),
+    (
+        "walk",
+        &[
+            ("spawn", "36d810d13206383ad289d6e70121d162"),
+            ("after-walk", "b4d56f324f59f09a8654e66c429f54d0"),
+        ],
+    ),
 ];
 
 /// The port's runs on Vulkan (`tools/port_client.py capture <scenario> --backend vulkan --out
@@ -794,15 +869,21 @@ fn takes_vanillas_screenshots_on_a_server_on_vulkan() {
 
 /// Vanilla's screenshots on the macOS GL profile (`vanilla/26.3/oracle-gl41/`), by their digests:
 /// its default ones, bit for bit.
-const VANILLA_SCREENSHOTS_GL41: &[(&str, &str, &str)] = &[
-    ("walk-no-gui", "spawn", "a38fcf9081510059fb5d52b0f34716e9"),
+const VANILLA_SCREENSHOTS_GL41: Screenshots = &[
     (
         "walk-no-gui",
-        "after-walk",
-        "7d2656aefedcf34c937e0b57f87101f5",
+        &[
+            ("spawn", "a38fcf9081510059fb5d52b0f34716e9"),
+            ("after-walk", "7d2656aefedcf34c937e0b57f87101f5"),
+        ],
     ),
-    ("walk", "spawn", "40f5b5f93bd28c499cf9d2ec70243fed"),
-    ("walk", "after-walk", "b4f2a3b57e31c51be4992e54dd84d878"),
+    (
+        "walk",
+        &[
+            ("spawn", "40f5b5f93bd28c499cf9d2ec70243fed"),
+            ("after-walk", "b4f2a3b57e31c51be4992e54dd84d878"),
+        ],
+    ),
 ];
 
 /// The same on the macOS GL profile: the port's runs under it (`tools/port_client.py capture
@@ -818,14 +899,10 @@ fn takes_vanillas_screenshots_on_a_server_on_the_macos_gl_profile() {
 
 /// The port's screenshots in `target/<runs>/` against vanilla's in `vanilla/26.3/<runs>/`,
 /// `capture_options` being what `port_client.py capture` takes to record them.
-fn takes_vanillas_screenshots(
-    runs: &str,
-    capture_options: &str,
-    screenshots: &[(&str, &str, &str)],
-) {
+fn takes_vanillas_screenshots(runs: &str, capture_options: &str, screenshots: Screenshots) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let vanilla_dir = vanilla_dir(runs);
-    for &(scenario, name, digest) in screenshots {
+    for (scenario, name, digest) in every_screenshot(screenshots) {
         let path = vanilla_dir.join(format!("{scenario}/screenshots/{name}.png"));
         if path.exists() {
             let (_, _, _, pixels) = read_png(&path);
@@ -840,7 +917,7 @@ fn takes_vanillas_screenshots(
     if run(&["--device-info"]).is_none() || !on_oracle_driver() {
         return;
     }
-    for &(scenario, name, digest) in screenshots {
+    for (scenario, name, digest) in every_screenshot(screenshots) {
         let path = root.join(format!("target/{runs}/{scenario}/screenshots/{name}.png"));
         if !path.exists() {
             skip(&format!(

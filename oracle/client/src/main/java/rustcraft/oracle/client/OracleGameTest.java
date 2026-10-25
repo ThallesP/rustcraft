@@ -364,6 +364,10 @@ public final class OracleGameTest implements FabricClientGameTest {
                         waitForPackets(waitingSince);
                         context.runOnClient(client -> client.packetProcessor().processQueuedPackets());
                     }
+                    if (step.screenshotsEvery() > 0 && (i + 1) % step.screenshotsEvery() == 0) {
+                        // Where the client is parked, before the next tick, like a screenshot step.
+                        OracleScreenshot.take(context, outDir.resolve("screenshots").resolve(Scenario.tickScreenshot(tick - 1) + ".png"));
+                    }
                 }
             }
         }
