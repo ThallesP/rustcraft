@@ -490,6 +490,11 @@ impl AbstractWidgetClass for EditBox {
         &self.widget
     }
 
+    /// `focusedTime`, which the cursor blinks from.
+    fn cursor_blink_start(&self) -> Option<i64> {
+        Some(self.focused_time)
+    }
+
     fn widget_mut(&mut self) -> &mut AbstractWidget {
         &mut self.widget
     }

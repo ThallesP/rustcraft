@@ -287,6 +287,8 @@ impl Main {
                 eprintln!("Can't render: {error}");
             }
         }
+        // Without a renderer, the fonts are laid out without a device.
+        minecraft.init_fonts_without_device();
 
         if title_steps {
             minecraft.set_screen(Some(TitleScreen::screen_ref(&minecraft, true)));

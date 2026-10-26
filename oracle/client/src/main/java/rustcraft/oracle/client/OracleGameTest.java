@@ -14,6 +14,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Function;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
@@ -25,6 +26,7 @@ import net.minecraft.client.CloudStatus;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -44,6 +46,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.server.network.EventLoopGroupHolder;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.gamerules.GameRules;
@@ -205,6 +208,37 @@ public final class OracleGameTest implements FabricClientGameTest {
     }
 
     /**
+     * A screenshot step: with {@code blinkOn}, once the focused edit box's cursor has just come on. It blinks by the
+     * wall clock, 300 ms on and 300 off from when the box got the focus ({@code TextCursorUtils.isCursorVisible}), so a
+     * screenshot taken in the first 100 ms of a shown half has it, with time to spare for the frame (TESTING.md).
+     */
+    private static void takeScreenshot(ClientGameTestContext context, Scenario.Step step, Path outDir) {
+        if (step.blinkOn()) {
+            Long start = context.computeOnClient(client -> client.gui.screen() != null && client.gui.screen().getFocused() instanceof EditBox box
+                ? focusedTime(box)
+                : null);
+            if (start == null) {
+                throw new AssertionError("screenshot " + step.screenshot() + ": no edit box has the focus");
+            }
+            while ((Util.getMillis() - start) % 600L >= 100L) {
+                LockSupport.parkNanos(1_000_000L);
+            }
+        }
+        OracleScreenshot.take(context, outDir.resolve("screenshots").resolve(step.screenshot() + ".png"));
+    }
+
+    /** {@code EditBox.focusedTime}, which its cursor blinks from (private, so read by reflection). */
+    private static long focusedTime(EditBox box) {
+        try {
+            Field field = EditBox.class.getDeclaredField("focusedTime");
+            field.setAccessible(true);
+            return field.getLong(box);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
      * The scenario's steps on the title screen before the client joins: ticks waited, screenshots, and input the way
      * the replay gives it (the cursor moved, a mouse button clicked, a key pressed, characters typed).
      */
@@ -212,7 +246,7 @@ public final class OracleGameTest implements FabricClientGameTest {
         TestInput input = context.getInput();
         for (Scenario.Step step : steps) {
             if (step.screenshot() != null) {
-                OracleScreenshot.take(context, outDir.resolve("screenshots").resolve(step.screenshot() + ".png"));
+                takeScreenshot(context, step, outDir);
             } else if (step.key() != null) {
                 int key = Scenario.PRESSABLE_KEYS.get(step.key());
                 input.holdKey(key);
@@ -225,6 +259,8 @@ public final class OracleGameTest implements FabricClientGameTest {
                 int button = Scenario.MOUSE_BUTTONS.get(step.click());
                 input.holdMouse(button);
                 input.releaseMouse(button);
+            } else if (step.scroll() != null) {
+                input.scroll(step.scroll());
             } else {
                 context.waitTicks(step.ticks());
             }
@@ -269,7 +305,7 @@ public final class OracleGameTest implements FabricClientGameTest {
         try (TraceWriter trace = new TraceWriter(outDir.resolve("trace.jsonl"))) {
             for (Scenario.Step step : scenario.steps()) {
                 if (step.screenshot() != null) {
-                    OracleScreenshot.take(context, outDir.resolve("screenshots").resolve(step.screenshot() + ".png"));
+                    takeScreenshot(context, step, outDir);
                     continue;
                 }
                 // An input step's answer, waited for right after it, before the next tick (TESTING.md).
@@ -293,6 +329,8 @@ public final class OracleGameTest implements FabricClientGameTest {
                     int button = Scenario.MOUSE_BUTTONS.get(step.click());
                     input.holdMouse(button);
                     input.releaseMouse(button);
+                } else if (step.scroll() != null) {
+                    input.scroll(step.scroll());
                 } else if (step.command() != null) {
                     context.runOnClient(client -> client.player.connection.sendCommand(step.command()));
                 } else {

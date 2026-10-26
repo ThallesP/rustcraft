@@ -614,6 +614,7 @@ const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
         "2fc891762ababfe30cce0e7d8a4546a2",
     ),
     ("chat", "tellraw", "5885a05cfc100e8e3687b5ee89990eee"),
+    ("chat", "open", "eb751402e1e34c662cb42898f0885ad5"),
     ("chat", "feedback", "a74ffeed5795b07837f9518c105dad32"),
     ("chat", "fading", "fbdf11cea5dbc46f2da297397b1f617d"),
     ("chat", "faded", "217d29f7f3b67b6685884184540b1592"),
@@ -637,6 +638,19 @@ const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
     ("title", "title", "9add8dcab50423f6961ca787f820b88a"),
     ("title", "hovered", "d5651af788ea4ea835266ae26f09ce63"),
     ("title", "tooltip", "416a50e5d196cd9001cda54dcc3bf5da"),
+    ("screens", "title", "9add8dcab50423f6961ca787f820b88a"),
+    ("screens", "title-keys", "e7aabb6f6b177f64e57fd18a582040b2"),
+    ("screens", "chat", "d2c4293290b4cb0951eea1f9285ee969"),
+    ("screens", "chat-keys", "cc373f7aa2e3fbc200a0a8f0ed27d350"),
+    ("screens", "pause", "0d7577c28f9da3e0832fadb042cdc4d1"),
+    ("screens", "pause-keys", "7205f32b08e76e7643ef9eb81c27a280"),
+    ("screens", "options", "695d853b31bf19289085f01d9dc69205"),
+    (
+        "screens",
+        "options-keys",
+        "94c3e6335f3412357b602906156810fa",
+    ),
+    ("screens", "resumed", "d3e8dcceb4a4fd110b9cf110af5dc88e"),
 ];
 
 fn rgba_digest(pixels: &[u8]) -> String {

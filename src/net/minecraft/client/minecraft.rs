@@ -133,8 +133,15 @@ pub struct Minecraft {
     block_colors: BlockColors,
     /// The window's size in pixels (`getWindow().getWidth()`), the renderer's when there's one.
     window_size: Cell<(i32, i32)>,
-    /// `font`, for a client without a renderer: the fonts laid out without pages on a device.
-    headless_font: OnceCell<Rc<Font>>,
+    /// `font` and `fontFilterFishy`, Java's fields: the game renderer's fonts, set as it's made
+    /// (`init_renderer`), or for a client without one the fonts laid out without pages on a
+    /// device, which have every glyph (`init_fonts_without_device`). Screens and the HUD read them
+    /// while the frame holds the game renderer, so they're never reached through it.
+    font: OnceCell<Rc<Font>>,
+    font_filter_fishy: OnceCell<Rc<Font>>,
+    /// Whether a test drives the game (`set_test_driver`), which stays true while the driver is
+    /// out of its cell running.
+    game_test: Cell<bool>,
     /// `missTime`.
     miss_time: Cell<i32>,
 }
@@ -171,7 +178,9 @@ impl Minecraft {
             sound_manager: Box::new(NoSound),
             block_colors: BlockColors::create_default(),
             window_size: Cell::new((854, 480)),
-            headless_font: OnceCell::new(),
+            font: OnceCell::new(),
+            font_filter_fishy: OnceCell::new(),
+            game_test: Cell::new(false),
             miss_time: Cell::new(0),
         })
     }
@@ -181,26 +190,38 @@ impl Minecraft {
         self.this.upgrade().expect("the game is alive")
     }
 
-    /// `font`: the game renderer's, or one laid out without a device for a client that has none.
+    /// `font`. A game made without `Main` (the offline replays) gets the fonts without a device
+    /// the first time it asks.
     pub fn font(&self) -> Rc<Font> {
-        if let Some(game_renderer) = self.game_renderer.borrow().as_ref() {
-            return Rc::clone(game_renderer.font());
-        }
-        Rc::clone(self.headless_font.get_or_init(|| {
-            let resources = GameRenderer::client_resources();
-            Rc::new(Font::new(
-                Rc::new(FontManager::load(None, &resources, &[])),
-                false,
-            ))
-        }))
+        self.init_fonts_without_device();
+        Rc::clone(self.font.get().expect("the fonts are made"))
     }
 
-    /// `fontFilterFishy`: the game renderer's, or the headless font, which has every glyph.
+    /// `fontFilterFishy`.
     pub fn font_filter_fishy(&self) -> Rc<Font> {
-        match self.game_renderer.borrow().as_ref() {
-            Some(game_renderer) => Rc::clone(game_renderer.font_filter_fishy()),
-            None => self.font(),
+        self.init_fonts_without_device();
+        Rc::clone(self.font_filter_fishy.get().expect("the fonts are made"))
+    }
+
+    /// The fonts of a client without a renderer: laid out without pages on a device, with every
+    /// glyph, the same font for both. Nothing once the fonts are made.
+    pub fn init_fonts_without_device(&self) {
+        if self.font.get().is_none() {
+            let resources = GameRenderer::client_resources();
+            let font = Rc::new(Font::new(
+                Rc::new(FontManager::load(None, &resources, &[])),
+                false,
+            ));
+            self.set_fonts(Rc::clone(&font), font);
         }
+    }
+
+    /// Panics where the fonts were made already: nothing may read them before they're set.
+    fn set_fonts(&self, font: Rc<Font>, font_filter_fishy: Rc<Font>) {
+        assert!(
+            self.font.set(font).is_ok() && self.font_filter_fishy.set(font_filter_fishy).is_ok(),
+            "the fonts are made once, before anything reads them"
+        );
     }
 
     /// The window's size in pixels.
@@ -428,7 +449,7 @@ impl Minecraft {
 
     /// Whether a test drives the game, as Fabric's client game tests drive vanilla's.
     pub fn is_game_test(&self) -> bool {
-        self.test_driver.borrow().is_some()
+        self.game_test.get()
     }
 
     /// `getDeltaTracker().getRealtimeDeltaTicks()`.
@@ -437,6 +458,7 @@ impl Minecraft {
     }
 
     pub fn set_test_driver(&self, driver: Box<dyn TestDriver>) {
+        self.game_test.set(true);
         *self.test_driver.borrow_mut() = Some(driver);
     }
 
@@ -784,6 +806,11 @@ impl Minecraft {
     ) {
         let target = game_renderer.main_render_target();
         self.window_size.set((target.width, target.height));
+        // Minecraft's constructor's `font` and `fontFilterFishy`, from the font manager.
+        self.set_fonts(
+            Rc::clone(game_renderer.font()),
+            Rc::clone(game_renderer.font_filter_fishy()),
+        );
         *self.game_renderer.borrow_mut() = Some(game_renderer);
         // `renderFrame`'s first configuration of the surface: the present mode vsync picks.
         if let Some((_, surface)) = &window {
@@ -873,6 +900,9 @@ impl Minecraft {
         let gui_scale = self.options.borrow().gui_scale;
         let game_mode = self.game_mode.borrow().clone();
         let font = std::rc::Rc::clone(game_renderer.font());
+        // What the HUD reads of the options, a copy: the options' cell isn't held while the
+        // screen draws, which may set an option (a slider applying its value).
+        let options = self.options.borrow().clone();
         let level_loading = self.screen().is_some_and(|screen| {
             screen
                 .try_borrow()
@@ -887,7 +917,7 @@ impl Minecraft {
                 can_hurt_player: game_mode.can_hurt_player(),
                 has_experience: game_mode.has_experience(),
                 is_hardcore: level.is_hardcore(),
-                options: &self.options.borrow(),
+                options: &options,
                 chat_focused: self.is_chat_focused(),
             }),
             _ => None,
@@ -964,6 +994,25 @@ impl Minecraft {
     /// `MouseHandler.onMove` at a place in the window.
     pub fn mouse_moved_to(&self, x: f64, y: f64) {
         self.mouse_handler.borrow_mut().on_move_to(x, y);
+    }
+
+    /// `MouseHandler.onScroll`: the wheel over the screen, at the options' defaults (not
+    /// `discreteMouseScroll`, a `mouseWheelSensitivity` of 1). Without a screen it turns the
+    /// hotbar's selection, which isn't ported, and SDL's wheel events don't come here yet.
+    pub fn mouse_scrolled(&self, xoffset: f64, yoffset: f64) {
+        if self.screen().is_none() {
+            return;
+        }
+        let window_size = self.window_size.get();
+        let gui_size = self.gui_scaled_size();
+        let (x, y) = {
+            let mouse_handler = self.mouse_handler.borrow();
+            (
+                mouse_handler.get_scaled_x_pos(window_size, gui_size),
+                mouse_handler.get_scaled_y_pos(window_size, gui_size),
+            )
+        };
+        self.with_screen(|screen| screen.mouse_scrolled(x, y, xoffset, yoffset));
     }
 
     /// `MouseHandler.onButton`: a click or a release over the screen.

@@ -55,8 +55,8 @@ pub struct Options {
 }
 
 /// Either a screenshot, a key pressed and released (`key`), characters typed (`type`), the
-/// cursor moved to a place in the window (`cursor`) or a command sent (`command`, without its
-/// slash) between two ticks, or `ticks` ticks with `keys` held and an optional fixed `look`, and
+/// cursor moved to a place in the window (`cursor`), a mouse button clicked (`click`), the wheel
+/// scrolled (`scroll`) or a command sent (`command`, without its slash) between two ticks, or `ticks` ticks with `keys` held and an optional fixed `look`, and
 /// optionally clientbound packets to wait for after its last tick, or after its input
 /// (`wait_for`, TESTING.md).
 #[derive(Clone, Debug, Default)]
@@ -75,15 +75,21 @@ pub struct Step {
     pub command: Option<String>,
     /// A mouse button pressed and released where the cursor is (`MOUSE_BUTTONS`).
     pub click: Option<String>,
+    /// The mouse wheel scrolled by this much where the cursor is.
+    pub scroll: Option<f64>,
+    /// A screenshot taken just after the focused edit box's cursor has come on (TESTING.md).
+    pub blink_on: bool,
 }
 
 impl Step {
-    /// Whether it's input between two ticks (a key, characters, the cursor, a click or a command).
+    /// Whether it's input between two ticks (a key, characters, the cursor, a click, the wheel or
+    /// a command).
     pub fn is_input(&self) -> bool {
         self.key.is_some()
             || self.r#type.is_some()
             || self.cursor.is_some()
             || self.click.is_some()
+            || self.scroll.is_some()
             || self.command.is_some()
     }
 }
@@ -221,6 +227,11 @@ impl Scenario {
         if let Some(screenshot) = step.get("screenshot") {
             return Ok(Step {
                 screenshot: Some(screenshot.as_str().unwrap_or_default().to_string()),
+                blink_on: step
+                    .get("blink_on")
+                    .map(|value| value.as_bool().ok_or("blink_on isn't a boolean"))
+                    .transpose()?
+                    .unwrap_or(false),
                 ..Step::default()
             });
         }
@@ -280,6 +291,13 @@ impl Scenario {
             }
             return Ok(Step {
                 click: Some(button.to_string()),
+                wait_for: wait_for.clone(),
+                ..Step::default()
+            });
+        }
+        if let Some(scroll) = step.get("scroll") {
+            return Ok(Step {
+                scroll: Some(scroll.as_f64().ok_or("scroll isn't a number")?),
                 wait_for: wait_for.clone(),
                 ..Step::default()
             });

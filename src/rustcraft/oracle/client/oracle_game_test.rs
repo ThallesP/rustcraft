@@ -31,6 +31,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::net::minecraft::client::gui::components::events::container_event_handler::ContainerEventHandler;
 use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
 use crate::net::minecraft::client::input::character_event::CharacterEvent;
 use crate::net::minecraft::client::input::key_event::KeyEvent;
@@ -47,6 +48,7 @@ use crate::net::minecraft::network::protocol::common::custom::discarded_payload:
 use crate::net::minecraft::network::protocol::common::serverbound_custom_payload_packet::ServerboundCustomPayloadPacket;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
+use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::rustcraft::oracle::client::scenario::{self, Scenario};
 use crate::rustcraft::oracle::client::server_ticks::ServerTicks;
@@ -447,6 +449,9 @@ impl OracleGameTest {
             minecraft.mouse_button(button, true);
             minecraft.mouse_button(button, false);
         }
+        if let Some(scroll) = step.scroll {
+            minecraft.mouse_scrolled(0.0, scroll);
+        }
         if let Some(command) = &step.command
             && let Some(connection) = minecraft.get_connection()
         {
@@ -463,8 +468,33 @@ impl OracleGameTest {
             return;
         }
         if let Some(name) = &step.screenshot {
+            if step.blink_on && !OracleGameTest::wait_for_cursor_blink_on(minecraft) {
+                self.fail(
+                    minecraft,
+                    format!("screenshot {name}: no edit box has the focus"),
+                );
+                return;
+            }
             self.take_screenshot(minecraft, name);
         }
+    }
+
+    /// Waits until the focused edit box's cursor has just come on: it blinks by the wall clock,
+    /// 300 ms on and 300 off from when the box got the focus (`TextCursorUtils.isCursorVisible`),
+    /// so a screenshot taken in the first 100 ms of a shown half has it, with time to spare for
+    /// the frame. Whether there's an edit box with the focus.
+    fn wait_for_cursor_blink_on(minecraft: &Minecraft) -> bool {
+        let start = minecraft.screen().and_then(|screen| {
+            let focused = screen.borrow().screen().get_focused()?;
+            focused.borrow().cursor_blink_start()
+        });
+        let Some(start) = start else {
+            return false;
+        };
+        while (Util::get_millis() - start) % 600 >= 100 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        true
     }
 
     fn take_screenshot(&mut self, minecraft: &Minecraft, name: &str) {

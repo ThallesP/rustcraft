@@ -315,6 +315,11 @@ pub trait AbstractWidgetClass: 'static {
     fn as_container(&mut self) -> Option<&mut dyn ContainerEventHandler> {
         None
     }
+
+    /// `GuiEventListener::cursor_blink_start`: an edit box's.
+    fn cursor_blink_start(&self) -> Option<i64> {
+        None
+    }
 }
 
 /// `extractRenderState`, which is final: hovered when the mouse is over it within the scissor, then
@@ -523,5 +528,9 @@ impl<W: AbstractWidgetClass> GuiEventListener for W {
 
     fn as_container(&mut self) -> Option<&mut dyn ContainerEventHandler> {
         AbstractWidgetClass::as_container(self)
+    }
+
+    fn cursor_blink_start(&self) -> Option<i64> {
+        AbstractWidgetClass::cursor_blink_start(self)
     }
 }

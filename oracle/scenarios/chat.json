@@ -9,6 +9,7 @@
     { "screenshot": "tellraw" },
     { "key": "t" },
     { "ticks": 1, "keys": [] },
+    { "screenshot": "open", "blink_on": true },
     { "type": "/list" },
     { "key": "enter", "wait_for": ["minecraft:system_chat"] },
     { "ticks": 1, "keys": [] },

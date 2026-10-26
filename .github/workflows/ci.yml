@@ -42,6 +42,11 @@ jobs:
       # The falls scenario waits for the server's answers to its landings, which its replay test takes from a capture
       # (TESTING.md, "The server's answers"): the port's own, here, whose trace and packets are checked too.
       - run: python3 tools/port_client.py capture falls --accept-eula
+      # Every screen the port has, opened, drawn, ticked, sent a key and a scroll (TESTING.md, "The GUI"): a screen
+      # whose drawing or input reaches back into a cell of the game that the frame holds panics, and fails this.
+      - run: python3 tools/port_client.py capture screens --accept-eula
+        env:
+          SDL_VIDEO_FORCE_EGL: "1"
       # The live client on a generated world (TESTING.md, "Soak"): teleports through biomes, a village and caves, failing on
       # any panic or unported code in the client's log. It renders every frame in a window under xvfb-run (`--render`), so
       # the renderer sees every block, biome and fluid there too.
@@ -108,7 +113,7 @@ jobs:
       - run: python3 tools/setup_vanilla.py --skip-decompile
       # The port's runs of the scenarios whose screenshots it matches, each on a fresh vanilla server.
       - run: |
-          for scenario in walk-no-gui walk sky-sunset sky-night sky-sunrise pause-no-gui chat options-no-gui title; do
+          for scenario in walk-no-gui walk sky-sunset sky-night sky-sunrise pause-no-gui chat options-no-gui title screens; do
             python3 tools/port_client.py capture "$scenario" --accept-eula
           done
       # The walk's two again on the macOS GL profile, llvmpipe restricted to Apple's OpenGL 4.1 (TESTING.md, "GL

@@ -94,4 +94,10 @@ pub trait GuiEventListener: TabOrderedElement {
     fn as_container(&mut self) -> Option<&mut dyn ContainerEventHandler> {
         None
     }
+
+    /// When an edit box's cursor started blinking (`EditBox.focusedTime`), which a scenario's
+    /// screenshot waits on; none for anything else.
+    fn cursor_blink_start(&self) -> Option<i64> {
+        None
+    }
 }
