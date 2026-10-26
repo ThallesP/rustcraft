@@ -3,10 +3,12 @@
 //! The vanilla pack as `ClientPackSource.createVanillaPackSource` builds it: the game jar's
 //! resources (`pushJarResources`), then a layer for the launcher's asset index. Java finds the
 //! jar's `assets/` and `data/` through `.mcassetsroot` files on the classpath; the port's jar is
-//! `vanilla/<version>/resources/`, the client jar unpacked (`tools/setup_vanilla.py`). The asset
-//! index (sounds and translations) isn't downloaded, so that layer has no path, as Java's has
-//! none when the directory doesn't exist. The builder is its own module's struct, with the two
-//! Java files' parts the client calls.
+//! `vanilla/<version>/resources/`, the client jar unpacked (`tools/setup_vanilla.py`). The game's
+//! asset layer is `vanilla/<version>/assets/`, the launcher's asset index's textures and fonts
+//! under their names (`external_asset_root`), which vanilla reads the same way when it's started
+//! without `--assetIndex`; where it hasn't been fetched, the layer has no path, as Java's has none
+//! when the directory doesn't exist. The builder is its own module's struct, with the two Java
+//! files' parts the client calls.
 
 use crate::net::minecraft::server::packs::fixed_path_pack_resources::{
     Builder as FixedPathBuilder, FixedPathPackResources,
@@ -39,6 +41,15 @@ impl VanillaPackResources {
             .push_layer()
             .push_asset_path(PackType::CLIENT_RESOURCES, external_asset_root)
             .build("vanilla")
+    }
+
+    /// `vanilla/<version>/assets/`: the asset index's objects the client reads, by name
+    /// (`GameConfig.FolderData.getExternalAssetSource` of a directory).
+    pub fn external_asset_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("vanilla")
+            .join(include_str!("../../../../../MINECRAFT_VERSION").trim())
+            .join("assets")
     }
 
     /// `vanilla/<version>/resources/`, the client jar unpacked.

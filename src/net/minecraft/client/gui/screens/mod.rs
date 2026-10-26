@@ -6,3 +6,4 @@ pub mod level_loading_screen;
 pub mod options;
 pub mod pause_screen;
 pub mod screen;
+pub mod title_screen;

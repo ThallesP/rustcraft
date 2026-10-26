@@ -9,10 +9,12 @@
 //! pixel.
 //!
 //! The strata after the blur a screen asks for draw after the depth is cleared and the level and
-//! the strata before are blurred (`processBlurEffect`, which the game renderer hands in).
+//! the strata before are blurred (`processBlurEffect`, which the game renderer hands in). The
+//! panorama a screen asks for is drawn first (`CubeMap`), its texture the game renderer's texture
+//! manager's.
 //!
-//! Not ported yet: items (`prepareItemElements` and the GUI's item atlas, `GuiItemAtlas`), pictures
-//! in pictures, and the panorama (`CubeMap`).
+//! Not ported yet: items (`prepareItemElements` and the GUI's item atlas, `GuiItemAtlas`) and
+//! pictures in pictures.
 
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -32,15 +34,19 @@ use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTexture
 use crate::com::mojang::renderpearl::api::vertex::vertex_format::VertexFormat;
 use crate::net::minecraft::client::gui::navigation::screen_rectangle::ScreenRectangle;
 use crate::net::minecraft::client::gui::render::texture_setup::TextureSetup;
+use crate::net::minecraft::client::renderer::cube_map::CubeMap;
 use crate::net::minecraft::client::renderer::dynamic_gpu_data::Transform;
 use crate::net::minecraft::client::renderer::game_renderer::Pipelines;
 use crate::net::minecraft::client::renderer::projection::Projection;
 use crate::net::minecraft::client::renderer::projection_matrix_buffer::ProjectionMatrixBuffer;
+use crate::net::minecraft::client::renderer::render_pipelines::RenderPipelines;
 use crate::net::minecraft::client::renderer::state::gui::glyph_render_state::GlyphRenderState;
 use crate::net::minecraft::client::renderer::state::gui::gui_element_render_state::GuiElementRenderState;
 use crate::net::minecraft::client::renderer::state::gui::gui_render_state::{
     GuiRenderState, TraverseRange,
 };
+use crate::net::minecraft::client::renderer::texture::texture_manager::TextureManager;
+use crate::net::minecraft::resources::identifier::Identifier;
 use crate::org::joml::matrix4f::Matrix4f;
 
 /// `StagedVertexBuffer`'s initial capacity for the GUI.
@@ -54,6 +60,8 @@ pub struct GuiRenderer {
     gui_projection: Projection,
     gui_projection_matrix_buffer: ProjectionMatrixBuffer,
     quad_indices: AutoStorageIndexBuffer,
+    /// `cubeMap`: the title screen's panorama.
+    cube_map: CubeMap,
 }
 
 /// `GuiRenderer.Draw` with its `StagedVertexBuffer.Draw`: the vertices its elements built.
@@ -118,7 +126,17 @@ impl GuiRenderer {
             gui_projection: Projection::new(),
             gui_projection_matrix_buffer: ProjectionMatrixBuffer::new(device, "gui"),
             quad_indices: RenderSystem::sequential_buffer(PrimitiveTopology::QUADS),
+            cube_map: CubeMap::new(
+                device,
+                Identifier::with_default_namespace("textures/gui/title/background/panorama"),
+            ),
         }
+    }
+
+    /// The panorama's cube, whose texture the game renderer registers
+    /// (`registerPanoramaTextures`).
+    pub fn cube_map(&self) -> &CubeMap {
+        &self.cube_map
     }
 
     /// `render`: prepare, draw, and the state reset for the next frame.
@@ -131,8 +149,23 @@ impl GuiRenderer {
         main_render_target: &MainTarget,
         window: GuiWindow,
         glyph_textures: &GlyphTextures,
+        texture_manager: &TextureManager,
         process_blur_effect: &mut dyn FnMut(&mut Pipelines),
     ) {
+        if let Some(panorama_render_state) = render_state.panorama_render_state {
+            let pipeline = pipelines.get(device, &RenderPipelines::get().PANORAMA);
+            let texture = texture_manager.get_texture(self.cube_map.location());
+            self.cube_map.render(
+                device,
+                &pipeline,
+                main_render_target,
+                &mut self.quad_indices,
+                texture,
+                (window.width, window.height),
+                10.0,
+                panorama_render_state.spin,
+            );
+        }
         self.prepare(render_state, glyph_textures);
         self.draw(
             device,

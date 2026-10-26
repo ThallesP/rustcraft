@@ -143,6 +143,31 @@ impl NativeImage {
         self.pixels[(x + y * self.width) as usize] as i32
     }
 
+    /// `copyRect(NativeImage, int, int, int, int, int, int, boolean, boolean)`: a rectangle of this
+    /// image into `target`, mirrored along x or y when asked.
+    #[allow(clippy::too_many_arguments)]
+    pub fn copy_rect_to(
+        &self,
+        target: &mut NativeImage,
+        source_x: i32,
+        source_y: i32,
+        target_x: i32,
+        target_y: i32,
+        size_x: i32,
+        size_y: i32,
+        swap_x: bool,
+        swap_y: bool,
+    ) {
+        for y in 0..size_y {
+            for x in 0..size_x {
+                let dx = if swap_x { size_x - 1 - x } else { x };
+                let dy = if swap_y { size_y - 1 - y } else { y };
+                let source = self.get_pixel_abgr(source_x + x, source_y + y);
+                target.set_pixel_abgr(target_x + dx, target_y + dy, source);
+            }
+        }
+    }
+
     /// The pixel as ARGB.
     pub fn get_pixel(&self, x: i32, y: i32) -> i32 {
         ARGB::from_abgr(self.get_pixel_abgr(x, y))

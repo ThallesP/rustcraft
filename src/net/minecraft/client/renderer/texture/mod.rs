@@ -1,5 +1,6 @@
 pub mod abstract_texture;
 pub mod atlas;
+pub mod cube_map_texture;
 pub mod dynamic_atlas_tree;
 pub mod dynamic_texture;
 pub mod mipmap_generator;

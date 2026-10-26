@@ -134,7 +134,8 @@ def build_port():
 
 def has_screenshots(scenario):
     """Whether the scenario takes screenshots, which the port renders."""
-    return any("screenshot" in step for step in json.loads(Path(scenario).read_text())["steps"])
+    root = json.loads(Path(scenario).read_text())
+    return any("screenshot" in step for step in root.get("title", []) + root["steps"])
 
 
 def run(scenario, out_dir, server, ping=False, gl_profile=None, backend="opengl"):

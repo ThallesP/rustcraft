@@ -15,6 +15,9 @@ pub struct Scenario {
     /// Commands that build the scenario's course, without their slash, sent before the player
     /// is put in place.
     pub setup: Vec<String>,
+    /// Steps on the title screen before the client joins (TESTING.md): ticks, screenshots, the
+    /// cursor.
+    pub title: Vec<Step>,
     pub steps: Vec<Step>,
 }
 
@@ -46,6 +49,9 @@ pub struct Options {
     pub render_distance: i32,
     /// Vanilla's F1 (`Hud.toggle`): no HUD, hand or crosshair.
     pub hide_gui: bool,
+    /// The accessibility option `hideSplashTexts`, for a scenario that shows the title screen,
+    /// whose splash is random.
+    pub hide_splash: bool,
 }
 
 /// Either a screenshot, a key pressed and released (`key`), characters typed (`type`), the
@@ -143,6 +149,17 @@ impl Scenario {
             );
         }
 
+        let mut title = Vec::new();
+        for step in root
+            .get("title")
+            .map(|title| title.as_array().ok_or("title isn't a list"))
+            .transpose()?
+            .into_iter()
+            .flatten()
+        {
+            title.push(Scenario::parse_step(step)?);
+        }
+
         let mut steps = Vec::new();
         for step in field(&root, "steps")?
             .as_array()
@@ -188,8 +205,14 @@ impl Scenario {
                     .map(|value| value.as_bool().ok_or("hide_gui isn't a boolean"))
                     .transpose()?
                     .unwrap_or(false),
+                hide_splash: options
+                    .get("hide_splash")
+                    .map(|value| value.as_bool().ok_or("hide_splash isn't a boolean"))
+                    .transpose()?
+                    .unwrap_or(false),
             },
             setup,
+            title,
             steps,
         })
     }

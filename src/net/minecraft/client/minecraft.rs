@@ -44,6 +44,7 @@ use crate::net::minecraft::client::gui::screens::disconnected_screen::Disconnect
 use crate::net::minecraft::client::gui::screens::level_loading_screen::LevelLoadingScreen;
 use crate::net::minecraft::client::gui::screens::pause_screen::PauseScreen;
 use crate::net::minecraft::client::gui::screens::screen::{self, ScreenRef};
+use crate::net::minecraft::client::gui::screens::title_screen::TitleScreen;
 use crate::net::minecraft::client::input::character_event::CharacterEvent;
 use crate::net::minecraft::client::input::key_event::KeyEvent;
 use crate::net::minecraft::client::input::mouse_button_event::MouseButtonEvent;
@@ -60,6 +61,7 @@ use crate::net::minecraft::client::particle::particle_engine::{NoParticles, Part
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
 use crate::net::minecraft::client::renderer::chunk::render_region_cache::LevelEnvironment;
 use crate::net::minecraft::client::renderer::game_renderer::{CameraEntityState, GameRenderer};
+use crate::net::minecraft::client::renderer::panorama::Panorama;
 use crate::net::minecraft::client::resources::server::downloaded_pack_source::DownloadedPackSource;
 use crate::net::minecraft::client::sounds::sound_manager::{NoSound, SoundManager};
 use crate::net::minecraft::client::user::User;
@@ -119,6 +121,8 @@ pub struct Minecraft {
     pub hud_hidden: Cell<bool>,
     pub mouse_handler: RefCell<MouseHandler>,
     pub gui: RefCell<Gui>,
+    /// `gameRenderer.panorama()`, which screens draw while the game renderer is borrowed.
+    pub panorama: RefCell<Panorama>,
     /// `downloadedPackSource`: the server's resource packs.
     pub downloaded_pack_source: RefCell<DownloadedPackSource>,
     /// `particleEngine`: what the level's particles are handed to, the render track's to come.
@@ -161,6 +165,7 @@ impl Minecraft {
             hud_hidden: Cell::new(false),
             mouse_handler: RefCell::new(MouseHandler::new()),
             gui: RefCell::new(Gui::new()),
+            panorama: RefCell::new(Panorama::new()),
             downloaded_pack_source: RefCell::new(DownloadedPackSource::new()),
             particle_engine: RefCell::new(Box::new(NoParticles)),
             sound_manager: Box::new(NoSound),
@@ -240,9 +245,11 @@ impl Minecraft {
 
         let screen = match screen {
             Some(screen) => Some(screen),
-            // The title screen, when there's no level, isn't ported yet; a dead player's death
-            // screen isn't either.
-            None if self.level.borrow().is_none() => None,
+            // The title screen when there's no level; a dead player's death screen isn't
+            // ported yet.
+            None if self.level.borrow().is_none() => {
+                Some(TitleScreen::screen_ref(&self.rc(), false))
+            }
             None => self.gui.borrow_mut().hud.chat.restore_chat_screen(),
         };
         {
@@ -417,6 +424,16 @@ impl Minecraft {
 
     pub fn packet_processor(&self) -> &Arc<PacketProcessor> {
         &self.packet_processor
+    }
+
+    /// Whether a test drives the game, as Fabric's client game tests drive vanilla's.
+    pub fn is_game_test(&self) -> bool {
+        self.test_driver.borrow().is_some()
+    }
+
+    /// `getDeltaTracker().getRealtimeDeltaTicks()`.
+    pub fn realtime_delta_ticks(&self) -> f32 {
+        self.delta_tracker.borrow().get_realtime_delta_ticks()
     }
 
     pub fn set_test_driver(&self, driver: Box<dyn TestDriver>) {
@@ -818,7 +835,29 @@ impl Minecraft {
             eye_y,
             &CameraEntityState::of(player.as_ref()),
         );
-        self.render_gui(game_renderer, level, player.as_ref(), partial_ticks);
+        self.render_gui(game_renderer, Some(level), player.as_ref(), partial_ticks);
+        true
+    }
+
+    /// `gameRenderer.render()` of a frame at `partial_ticks`: the level and the GUI, or the GUI
+    /// alone without a level. Whether there was a renderer to draw with.
+    pub fn render(&self, partial_ticks: f32) -> bool {
+        self.render_level(partial_ticks) || self.render_without_level(partial_ticks)
+    }
+
+    /// A frame without a level, `renderFrame` with `shouldRenderLevel` false: the main target
+    /// cleared and the screen over it (the title screen's panorama, the connect screen).
+    fn render_without_level(&self, partial_ticks: f32) -> bool {
+        let mut game_renderer = self.game_renderer.borrow_mut();
+        let Some(game_renderer) = game_renderer.as_mut() else {
+            return false;
+        };
+        if let Some((window, _)) = self.window.borrow().as_ref() {
+            game_renderer.follow_window_size(window.get_width(), window.get_height());
+        }
+        let options = GameRenderer::extract_options(&self.options.borrow(), self.hud_hidden.get());
+        game_renderer.render_frame_without_level(&options);
+        self.render_gui(game_renderer, None, None, partial_ticks);
         true
     }
 
@@ -827,7 +866,7 @@ impl Minecraft {
     fn render_gui(
         &self,
         game_renderer: &mut GameRenderer,
-        level: &ClientLevel,
+        level: Option<&ClientLevel>,
         player: Option<&LocalPlayer>,
         partial_ticks: f32,
     ) {
@@ -839,8 +878,8 @@ impl Minecraft {
                 .try_borrow()
                 .is_ok_and(|screen| screen.as_any().is::<LevelLoadingScreen>())
         });
-        let hud_context = match (player, game_mode.as_ref()) {
-            (Some(player), Some(game_mode)) if !level_loading => Some(HudContext {
+        let hud_context = match (level, player, game_mode.as_ref()) {
+            (Some(level), Some(player), Some(game_mode)) if !level_loading => Some(HudContext {
                 font: &font,
                 is_hidden: self.hud_hidden.get(),
                 player,
@@ -1123,7 +1162,10 @@ impl Minecraft {
             .delta_tracker
             .borrow()
             .get_game_time_delta_partial_tick(false);
-        if !self.render_level(partial_ticks) {
+        self.delta_tracker
+            .borrow_mut()
+            .advance_real_time(Util::get_millis());
+        if !self.render(partial_ticks) {
             return;
         }
         if let Some((_, surface)) = self.window.borrow().as_ref()

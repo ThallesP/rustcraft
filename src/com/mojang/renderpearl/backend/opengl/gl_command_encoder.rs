@@ -930,11 +930,16 @@ impl CommandEncoder for GlCommandEncoder {
         array_layer: i32,
     ) {
         self.check_not_in_render_pass();
-        assert!(
-            destination.get_usage() & gpu_texture::USAGE_CUBEMAP_COMPATIBLE == 0
-                && array_layer == 0,
-            "cubemaps aren't ported yet"
-        );
+        // A cube map's layer is its face (`CUBEMAP_TARGETS`).
+        let (bind_target, target) =
+            if destination.get_usage() & gpu_texture::USAGE_CUBEMAP_COMPATIBLE != 0 {
+                (
+                    glow::TEXTURE_CUBE_MAP,
+                    GlConst::CUBEMAP_TARGETS[(array_layer % 6) as usize],
+                )
+            } else {
+                (glow::TEXTURE_2D, glow::TEXTURE_2D)
+            };
         let format = destination.get_format();
         let texel_size = i64::from(format.block_size());
         let skip_texels = i64::from(source_x) + i64::from(source_y) * i64::from(source_width);
@@ -942,7 +947,7 @@ impl CommandEncoder for GlCommandEncoder {
         // SAFETY: the device's context is current, and the texture and buffer are its.
         unsafe {
             self.gl
-                .bind_texture(glow::TEXTURE_2D, Some(gl_texture(destination).id));
+                .bind_texture(bind_target, Some(gl_texture(destination).id));
             self.gl.bind_buffer(
                 glow::PIXEL_UNPACK_BUFFER,
                 Some(gl_buffer(&*source.buffer).handle),
@@ -956,7 +961,7 @@ impl CommandEncoder for GlCommandEncoder {
             self.gl
                 .pixel_store_i32(glow::UNPACK_ALIGNMENT, format.byte_alignment());
             self.gl.tex_sub_image_2d(
-                glow::TEXTURE_2D,
+                target,
                 mip_level,
                 destination_x,
                 destination_y,

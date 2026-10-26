@@ -1015,6 +1015,17 @@ mod tests {
         );
     }
 
+    /// The title screen's scenario: its steps come before the join, and the replay starts at
+    /// the scenario's first tick, the walk's start.
+    #[test]
+    fn title() {
+        check_scenario(
+            "title",
+            "8a16b0eb99d90962be228ae1a11012b0",
+            "d86af44f8b9e0a32d468e158eb9b9235",
+        );
+    }
+
     #[test]
     fn surface_concrete() {
         check_scenario(

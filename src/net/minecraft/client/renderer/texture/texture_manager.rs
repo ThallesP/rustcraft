@@ -1,8 +1,9 @@
 //! net/minecraft/client/renderer/texture/TextureManager.java
 //!
 //! The textures the game binds by location, each as the view and sampler its `AbstractTexture`
-//! has: the ones registered with it (the GUI atlas), and the ones loaded from the resources the
-//! first time they're asked for (`getTexture`'s `SimpleTexture`, the skins). A texture whose
+//! has: the ones registered with it (the GUI atlas, the panorama's `CubeMapTexture`, loaded as it's
+//! registered), and the ones loaded from the resources the first time they're asked for
+//! (`getTexture`'s `SimpleTexture`, the skins). A texture whose
 //! resource doesn't load is the missing texture's image, like Java's, which logs why. Not ported
 //! yet: the missing texture's own slot, tickable textures, the reload and the dumps.
 
@@ -12,6 +13,7 @@ use crate::com::mojang::blaze3d::systems::sampler_cache::SamplerCache;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::com::mojang::renderpearl::api::textures::gpu_sampler::GpuSampler;
 use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
+use crate::net::minecraft::client::renderer::texture::cube_map_texture::CubeMapTexture;
 use crate::net::minecraft::client::renderer::texture::simple_texture::SimpleTexture;
 use crate::net::minecraft::client::renderer::texture::texture_contents::TextureContents;
 use crate::net::minecraft::resources::identifier::Identifier;
@@ -47,6 +49,33 @@ impl TextureManager {
     ) {
         self.release(&location);
         self.by_path.push((location, texture_view, sampler));
+    }
+
+    /// `register(location, new CubeMapTexture(location))` and the reload's load: the cube map's
+    /// faces from the resources, or the missing texture's image where they don't load.
+    pub fn register_cube_map(
+        &mut self,
+        device: &dyn GpuDevice,
+        sampler_cache: &SamplerCache,
+        location: &Identifier,
+    ) {
+        let mut texture = CubeMapTexture::new(location.clone(), sampler_cache);
+        let resource_manager = self
+            .resource_manager
+            .as_ref()
+            .expect("a texture manager with resources");
+        let contents = match texture.load_contents(&**resource_manager) {
+            Ok(contents) => contents,
+            Err(error) => {
+                eprintln!("Failed to load texture {location} into slot {location}: {error}");
+                TextureContents::create_missing()
+            }
+        };
+        texture.apply(device, sampler_cache, contents);
+        let base = &texture.reloadable.base;
+        let view = base.get_texture_view().clone();
+        let sampler = Rc::clone(base.get_sampler());
+        self.register(location.clone(), view, sampler);
     }
 
     pub fn release(&mut self, location: &Identifier) {

@@ -262,6 +262,17 @@ impl Style {
         Style::check_empty_after_change(new_style, self.italic.is_some(), italic.is_some())
     }
 
+    /// `withUnderlined(Boolean)`.
+    pub fn with_underlined(&self, underlined: Option<bool>) -> Style {
+        if self.underlined == underlined {
+            return self.clone();
+        }
+        let mut new_style = self.clone();
+        new_style.is_empty_constant = false;
+        new_style.underlined = underlined;
+        Style::check_empty_after_change(new_style, self.underlined.is_some(), underlined.is_some())
+    }
+
     /// `withColor(ChatFormatting)`.
     pub fn with_color_formatting(&self, color: ChatFormatting) -> Style {
         self.with_color(TextColor::from_legacy_format(color))

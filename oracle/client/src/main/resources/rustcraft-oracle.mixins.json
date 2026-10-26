@@ -5,6 +5,7 @@
   "client": [
     "ChanneledNetworkAddonMixin",
     "ClientBrandRetrieverMixin",
+    "MinecraftModStatusMixin",
     "MinecraftTickMixin",
     "MinecraftTickTargetMixin",
     "PacketProcessorMixin"

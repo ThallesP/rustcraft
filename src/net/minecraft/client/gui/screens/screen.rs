@@ -7,9 +7,12 @@
 //! whose defaults are this module's functions. A screen's children are shared with its widget
 //! lists like Java's, and its `minecraft` is a weak reference, which the buttons' callbacks keep.
 //!
-//! Not ported yet: narration (the narrator's state, `updateNarrationState`), the panorama behind a
-//! screen without a level (the title screen's), click events' handling (`defaultHandleClickEvent`),
-//! item tooltips, dropped files, and the screen's executor.
+//! A screen without a level draws over the title screen's panorama, which a game driven by a test
+//! holds still: Fabric's client game tests do (their `ScreenMixin` holds it as `extractPanorama`
+//! begins), and so does the port's scenario driver.
+//!
+//! Not ported yet: narration (the narrator's state, `updateNarrationState`), click events' handling
+//! (`defaultHandleClickEvent`), item tooltips, dropped files, and the screen's executor.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -437,10 +440,29 @@ pub fn extract_background<S: ScreenClass + ?Sized>(
     if this.is_in_game_ui() {
         extract_transparent_background(this.screen(), graphics);
     } else {
-        // The panorama, when there's no level, comes with the title screen.
+        if this.screen().minecraft().level.borrow().is_none() {
+            extract_panorama(this.screen(), graphics, _a);
+        }
         extract_blurred_background(this.screen(), graphics);
         extract_menu_background(this.screen(), graphics);
     }
+}
+
+/// `extractPanorama`: the game's panorama, held still in a game a test drives.
+pub fn extract_panorama(screen: &Screen, graphics: &mut GuiGraphicsExtractor, _a: f32) {
+    let minecraft = screen.minecraft();
+    let mut panorama = minecraft.panorama.borrow_mut();
+    if minecraft.is_game_test() {
+        panorama.hold_spin();
+    }
+    let panorama_speed = minecraft.options.borrow().panorama_speed;
+    panorama.extract_render_state(
+        graphics,
+        screen.width,
+        screen.height,
+        minecraft.realtime_delta_ticks(),
+        panorama_speed,
+    );
 }
 
 /// `extractBlurredBackground`: the level blurred under the next strata, when the menu blur is on.

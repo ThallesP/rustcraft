@@ -1,8 +1,7 @@
 //! com/mojang/renderpearl/backend/opengl/GlConst.java
 //!
 //! Java's `toGl` overloads take their type's name (`to_gl_compare_op`), except `ShaderType`'s,
-//! which came first. `CUBEMAP_TARGETS` and the buffer usage flags come with cubemaps and mapped
-//! buffers.
+//! which came first. The buffer usage flags come with mapped buffers.
 
 use crate::com::mojang::renderpearl::api::gpu_format::GpuFormat::{self, *};
 use crate::com::mojang::renderpearl::api::pipeline::blend_factor::BlendFactor;
@@ -17,6 +16,16 @@ use crate::com::mojang::renderpearl::api::textures::address_mode::AddressMode;
 pub struct GlConst;
 
 impl GlConst {
+    /// `CUBEMAP_TARGETS`: a cube map's faces, by layer.
+    pub const CUBEMAP_TARGETS: [u32; 6] = [
+        glow::TEXTURE_CUBE_MAP_POSITIVE_X,
+        glow::TEXTURE_CUBE_MAP_NEGATIVE_X,
+        glow::TEXTURE_CUBE_MAP_POSITIVE_Y,
+        glow::TEXTURE_CUBE_MAP_NEGATIVE_Y,
+        glow::TEXTURE_CUBE_MAP_POSITIVE_Z,
+        glow::TEXTURE_CUBE_MAP_NEGATIVE_Z,
+    ];
+
     pub fn to_gl_compare_op(compare_op: CompareOp) -> u32 {
         match compare_op {
             CompareOp::ALWAYS_PASS => 519,

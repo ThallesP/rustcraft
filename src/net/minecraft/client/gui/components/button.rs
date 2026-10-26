@@ -1,11 +1,13 @@
 //! net/minecraft/client/gui/components/Button.java, with AbstractButton.java's state and code
 //!
 //! A button that calls its `OnPress` when pressed. Java's subclasses (`Button.Plain`, the sprite
-//! icon buttons, the friends button) differ in what they draw over their sprite and in a few
+//! icon buttons, the friends button, `PlainTextButton`) differ in what they draw over their sprite and in a few
 //! overrides, so they're `ButtonKind`'s variants, each with its class's own fields. The press
 //! hands the callback the widget, Java's `Button`, which is all a callback reads of it.
 //!
 //! Not ported yet: narration (`createNarration`), and the click's sound.
+
+use std::rc::Rc;
 
 use crate::net::minecraft::client::gui::components::abstract_button;
 use crate::net::minecraft::client::gui::components::abstract_widget::{
@@ -14,6 +16,7 @@ use crate::net::minecraft::client::gui::components::abstract_widget::{
 use crate::net::minecraft::client::gui::components::friends_button::FriendsButton;
 use crate::net::minecraft::client::gui::components::sprite_icon_button::SpriteIconButton;
 use crate::net::minecraft::client::gui::components::tooltip::Tooltip;
+use crate::net::minecraft::client::gui::font::Font;
 use crate::net::minecraft::client::gui::gui_graphics_extractor::{
     GuiGraphicsExtractor, HoveredTextEffects,
 };
@@ -21,6 +24,9 @@ use crate::net::minecraft::client::input::input_with_modifiers::InputWithModifie
 use crate::net::minecraft::client::input::key_event::KeyEvent;
 use crate::net::minecraft::client::input::mouse_button_event::MouseButtonEvent;
 use crate::net::minecraft::network::chat::component::Component;
+use crate::net::minecraft::network::chat::component_utils::ComponentUtils;
+use crate::net::minecraft::network::chat::style::Style;
+use crate::net::minecraft::util::mth::Mth;
 
 /// `Button.OnPress`.
 pub type OnPress = Box<dyn FnMut(&mut AbstractWidget)>;
@@ -43,6 +49,8 @@ pub enum ButtonKind {
     TextAndIcon(SpriteIconButton),
     /// `FriendsButton`, a centered icon with the count of friend requests.
     Friends(SpriteIconButton, FriendsButton),
+    /// `PlainTextButton`: its text alone, underlined while hovered or focused.
+    PlainText(PlainTextButton),
 }
 
 impl Button {
@@ -125,6 +133,22 @@ impl Button {
             ButtonKind::CenteredIcon(_) => SpriteIconButton::extract_centered_icon(self, graphics),
             ButtonKind::TextAndIcon(_) => SpriteIconButton::extract_text_and_icon(self, graphics),
             ButtonKind::Friends(_, _) => FriendsButton::extract_contents(self, graphics),
+            ButtonKind::PlainText(plain_text) => {
+                let message = if self.is_hovered_or_focused() {
+                    &plain_text.underlined_message
+                } else {
+                    &plain_text.message
+                };
+                let color = 16777215 | Mth::ceil_f32(self.widget.alpha * 255.0) << 24;
+                graphics.text_component(
+                    &plain_text.font,
+                    message,
+                    self.widget.get_x(),
+                    self.widget.get_y(),
+                    color,
+                    true,
+                );
+            }
         }
     }
 
@@ -134,7 +158,7 @@ impl Button {
             ButtonKind::CenteredIcon(icon)
             | ButtonKind::TextAndIcon(icon)
             | ButtonKind::Friends(icon, _) => Some(icon),
-            ButtonKind::Plain => None,
+            ButtonKind::Plain | ButtonKind::PlainText(_) => None,
         }
     }
 }
@@ -181,6 +205,43 @@ impl AbstractWidgetClass for Button {
         self.widget.visible
             && self.widget.active
             && !self.sprite_icon().is_some_and(|icon| icon.loading)
+    }
+}
+
+/// `PlainTextButton`'s fields.
+pub struct PlainTextButton {
+    font: Rc<Font>,
+    message: Component,
+    underlined_message: Component,
+}
+
+impl PlainTextButton {
+    /// `PlainTextButton(int, int, int, int, Component, OnPress, Font)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        message: Component,
+        on_press: OnPress,
+        font: Rc<Font>,
+    ) -> Button {
+        let underlined_message =
+            ComponentUtils::merge_styles(&message, &Style::EMPTY.with_underlined(Some(true)));
+        Button::new(
+            x,
+            y,
+            width,
+            height,
+            message.clone(),
+            on_press,
+            ButtonKind::PlainText(PlainTextButton {
+                font,
+                message,
+                underlined_message,
+            }),
+        )
     }
 }
 

@@ -80,6 +80,10 @@ pub struct Options {
     pub enable_vsync: bool,
     /// `menuBackgroundBlurriness()`: the menu blur's radius, 0 to 10.
     pub menu_background_blurriness: i32,
+    /// `panoramaSpeed()`: how fast the title screen's panorama turns.
+    pub panorama_speed: f64,
+    /// `hideSplashTexts()`: no splash on the title screen.
+    pub hide_splash_texts: bool,
     /// `chatOpacity()`, `chatLineSpacing()`, `chatWidth()`, `chatHeightFocused()`,
     /// `chatHeightUnfocused()` and `chatScale()`.
     pub chat_opacity: f64,
@@ -143,6 +147,8 @@ impl Options {
             framerate_limit: 120,
             enable_vsync: true,
             menu_background_blurriness: 5,
+            panorama_speed: 1.0,
+            hide_splash_texts: false,
             chat_opacity: 1.0,
             chat_line_spacing: 0.0,
             chat_width: 1.0,

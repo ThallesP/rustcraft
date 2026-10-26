@@ -38,6 +38,7 @@ use crate::net::minecraft::client::renderer::state::gui::blit_render_state::Blit
 use crate::net::minecraft::client::renderer::state::gui::colored_rectangle_render_state::ColoredRectangleRenderState;
 use crate::net::minecraft::client::renderer::state::gui::gui_render_state::GuiRenderState;
 use crate::net::minecraft::client::renderer::state::gui::gui_text_render_state::GuiTextRenderState;
+use crate::net::minecraft::client::renderer::state::gui::panorama_render_state::PanoramaRenderState;
 use crate::net::minecraft::client::renderer::state::gui::tiled_blit_render_state::TiledBlitRenderState;
 use crate::net::minecraft::client::renderer::texture::texture_atlas::TextureAtlas;
 use crate::net::minecraft::client::renderer::texture::texture_atlas_sprite::TextureAtlasSprite;
@@ -188,6 +189,12 @@ impl<'a> GuiGraphicsExtractor<'a> {
 
     pub fn blur_before_this_stratum(&mut self) {
         self.gui_render_state.blur_before_this_stratum();
+    }
+
+    /// The frame's `guiRenderState.panoramaRenderState`, which `Panorama` sets through the game in
+    /// Java and through the extractor's render state here.
+    pub fn set_panorama_render_state(&mut self, panorama_render_state: PanoramaRenderState) {
+        self.gui_render_state.panorama_render_state = Some(panorama_render_state);
     }
 
     /// `requestCursor`: the window's cursor shapes aren't ported, so it asks nothing.

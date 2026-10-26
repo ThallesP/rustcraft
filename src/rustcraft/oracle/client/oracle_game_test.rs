@@ -31,10 +31,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
 use crate::net::minecraft::client::input::character_event::CharacterEvent;
 use crate::net::minecraft::client::input::key_event::KeyEvent;
 use crate::net::minecraft::client::keyboard_handler::KeyAction;
 use crate::net::minecraft::client::minecraft::{Minecraft, TestDriver};
+use crate::net::minecraft::client::multiplayer::resolver::server_address::ServerAddress;
+use crate::net::minecraft::client::multiplayer::server_data::ServerData;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::renderer::game_renderer::RenderOptions;
 use crate::net::minecraft::core::section_pos::SectionPos;
@@ -52,6 +55,8 @@ use crate::rustcraft::oracle::client::trace_writer::{self, TraceWriter};
 /// Where the run is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
+    /// The scenario's title steps, the next one's index, on the title screen before joining.
+    Title(usize),
     WaitingForLevel,
     /// Every chunk within the render distance in the level, before the setup changes blocks.
     LoadingChunks,
@@ -99,6 +104,8 @@ pub struct OracleGameTest {
     block_updates_before: Option<i32>,
     /// A paced scenario's slots, once the server's ticks are known.
     server_ticks: Option<ServerTicks>,
+    /// The server the client joins once the title steps are done.
+    server: Option<(ServerAddress, ServerData)>,
 }
 
 impl OracleGameTest {
@@ -131,14 +138,20 @@ impl OracleGameTest {
             options.vignette = false;
             options.enable_vsync = false;
             options.gui_scale = scenario.options.gui_scale;
+            options.hide_splash_texts = scenario.options.hide_splash;
         }
         minecraft.hud_hidden.set(scenario.options.hide_gui);
         let outcome = Rc::new(Cell::new(Some(Outcome::Running)));
+        let stage = if scenario.title.is_empty() {
+            Stage::WaitingForLevel
+        } else {
+            Stage::Title(0)
+        };
         (
             OracleGameTest {
                 out_dir: out_dir.join(&scenario.name),
                 scenario,
-                stage: Stage::WaitingForLevel,
+                stage,
                 ticks_in_stage: 0,
                 replayed_ticks: 0,
                 trace: None,
@@ -147,6 +160,7 @@ impl OracleGameTest {
                 setup: Vec::new(),
                 block_updates_before: None,
                 server_ticks: None,
+                server: None,
             },
             outcome,
         )
@@ -206,6 +220,44 @@ impl OracleGameTest {
             java_to_string(f64::from(player.y_rot)),
             java_to_string(f64::from(player.x_rot)),
         )
+    }
+
+    /// Whether the scenario has steps on the title screen, after which the driver joins.
+    pub fn has_title_steps(&self) -> bool {
+        !self.scenario.title.is_empty()
+    }
+
+    /// The server to join once the title steps are done, which Java's `runMultiplayer` joins
+    /// from the title screen (`ConnectScreen.startConnecting`).
+    pub fn join_after_title(&mut self, address: ServerAddress, data: ServerData) {
+        self.server = Some((address, data));
+    }
+
+    /// The title steps from `index` on, each tick: ticks waited, then screenshots and input
+    /// between them, and the join once they're done. Whether they're done.
+    fn run_title_steps(&mut self, minecraft: &Rc<Minecraft>, index: usize) -> bool {
+        let mut index = index;
+        while let Some(step) = self.scenario.title.get(index).cloned() {
+            if step.screenshot.is_none() && !step.is_input() {
+                if self.ticks_in_stage < step.ticks {
+                    self.stage = Stage::Title(index);
+                    return false;
+                }
+                self.ticks_in_stage = 0;
+            } else {
+                self.run_input_or_screenshot(minecraft, &step);
+                if self.stage == Stage::Done {
+                    return false;
+                }
+            }
+            index += 1;
+            self.stage = Stage::Title(index);
+        }
+        if let Some((address, data)) = self.server.take() {
+            ConnectScreen::start_connecting(minecraft, &address, data);
+        }
+        self.next(Stage::WaitingForLevel);
+        true
     }
 
     fn next(&mut self, stage: Stage) {
@@ -318,7 +370,11 @@ impl OracleGameTest {
 
     /// Whether the scenario takes screenshots, which needs a renderer.
     pub fn has_screenshots(scenario: &Scenario) -> bool {
-        scenario.steps.iter().any(|step| step.screenshot.is_some())
+        scenario
+            .title
+            .iter()
+            .chain(&scenario.steps)
+            .any(|step| step.screenshot.is_some())
     }
 
     /// The steps that come after `ticks` of the scenario's ticks and before the next: screenshots
@@ -343,70 +399,76 @@ impl OracleGameTest {
     /// for its answer right after it.
     fn run_steps_between_ticks(&mut self, minecraft: &Minecraft, ticks: i32) {
         for step in self.steps_after(ticks) {
-            let answer_since: HashMap<String, i32> = step
-                .wait_for
-                .iter()
-                .map(|packet| {
-                    (
-                        packet.clone(),
-                        minecraft.packet_processor().arrivals(packet),
-                    )
-                })
-                .collect();
-            if let Some(key) = &step.key {
-                let scancode = Scenario::PRESSABLE_KEYS
-                    .iter()
-                    .find(|(name, _)| name == key)
-                    .map(|(_, scancode)| *scancode)
-                    .expect("a key the scenario checked");
-                let event = KeyEvent::of_scancode(scancode);
-                minecraft.key_press(&event, KeyAction::PRESS);
-                minecraft.key_press(&event, KeyAction::RELEASE);
-            }
-            if let Some(text) = &step.r#type {
-                // String.chars(): UTF-16 units.
-                for unit in text.encode_utf16() {
-                    minecraft.char_typed(&CharacterEvent::new(i32::from(unit)));
-                }
-            }
-            if let Some([x, y]) = step.cursor {
-                minecraft.mouse_moved_to(x, y);
-            }
-            if let Some(click) = &step.click {
-                let button = Scenario::MOUSE_BUTTONS
-                    .iter()
-                    .find(|(name, _)| name == click)
-                    .map(|(_, button)| *button)
-                    .expect("a button the scenario checked");
-                minecraft.mouse_button(button, true);
-                minecraft.mouse_button(button, false);
-            }
-            if let Some(command) = &step.command
-                && let Some(connection) = minecraft.get_connection()
-            {
-                connection.borrow().send_command(command);
-            }
-            if step.is_input()
-                && !answer_since.is_empty()
-                && !OracleGameTest::wait_for_answer(minecraft, &answer_since)
-            {
-                self.fail(
-                    minecraft,
-                    format!("timed out waiting for {:?}", step.wait_for),
-                );
+            self.run_input_or_screenshot(minecraft, &step);
+            if self.stage == Stage::Done {
                 return;
-            }
-            if let Some(name) = &step.screenshot {
-                self.take_screenshot(minecraft, name);
-                if self.stage == Stage::Done {
-                    return;
-                }
             }
         }
     }
 
+    /// A step between ticks: input as Fabric's test input gives it, waiting for its answer right
+    /// after it, or a screenshot (`OracleScreenshot.take`).
+    fn run_input_or_screenshot(&mut self, minecraft: &Minecraft, step: &scenario::Step) {
+        let answer_since: HashMap<String, i32> = step
+            .wait_for
+            .iter()
+            .map(|packet| {
+                (
+                    packet.clone(),
+                    minecraft.packet_processor().arrivals(packet),
+                )
+            })
+            .collect();
+        if let Some(key) = &step.key {
+            let scancode = Scenario::PRESSABLE_KEYS
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, scancode)| *scancode)
+                .expect("a key the scenario checked");
+            let event = KeyEvent::of_scancode(scancode);
+            minecraft.key_press(&event, KeyAction::PRESS);
+            minecraft.key_press(&event, KeyAction::RELEASE);
+        }
+        if let Some(text) = &step.r#type {
+            // String.chars(): UTF-16 units.
+            for unit in text.encode_utf16() {
+                minecraft.char_typed(&CharacterEvent::new(i32::from(unit)));
+            }
+        }
+        if let Some([x, y]) = step.cursor {
+            minecraft.mouse_moved_to(x, y);
+        }
+        if let Some(click) = &step.click {
+            let button = Scenario::MOUSE_BUTTONS
+                .iter()
+                .find(|(name, _)| name == click)
+                .map(|(_, button)| *button)
+                .expect("a button the scenario checked");
+            minecraft.mouse_button(button, true);
+            minecraft.mouse_button(button, false);
+        }
+        if let Some(command) = &step.command
+            && let Some(connection) = minecraft.get_connection()
+        {
+            connection.borrow().send_command(command);
+        }
+        if step.is_input()
+            && !answer_since.is_empty()
+            && !OracleGameTest::wait_for_answer(minecraft, &answer_since)
+        {
+            self.fail(
+                minecraft,
+                format!("timed out waiting for {:?}", step.wait_for),
+            );
+            return;
+        }
+        if let Some(name) = &step.screenshot {
+            self.take_screenshot(minecraft, name);
+        }
+    }
+
     fn take_screenshot(&mut self, minecraft: &Minecraft, name: &str) {
-        if !minecraft.render_level(1.0) {
+        if !minecraft.render(1.0) {
             return;
         }
         let image = minecraft
@@ -631,6 +693,11 @@ impl TestDriver for OracleGameTest {
         // stage whose condition already holds goes straight on to the next.
         loop {
             match self.stage {
+                Stage::Title(index) => {
+                    if !self.run_title_steps(minecraft, index) {
+                        return;
+                    }
+                }
                 Stage::WaitingForLevel => {
                     let loaded = minecraft.level.borrow().is_some()
                         && minecraft.player.borrow().is_some()

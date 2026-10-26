@@ -1,5 +1,7 @@
 //! net/minecraft/client/main/Main.java
 //!
+//! Without a server to join, a client with a window opens the title screen.
+//!
 //! Not ported yet: most options (the window's size and fullscreen, the game, assets and resource
 //! pack directories, the proxy, demo mode, the graphics backend, profiling, quick play into a
 //! singleplayer world or a realm, and the quick play log), bootstrapping the game's registries,
@@ -39,6 +41,7 @@ use crate::com::mojang::renderpearl::api::device::gpu_debug_options::GpuDebugOpt
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
+use crate::net::minecraft::client::gui::screens::title_screen::TitleScreen;
 use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::multiplayer::resolver::server_address::ServerAddress;
 use crate::net::minecraft::client::multiplayer::server_data::{self, ServerData};
@@ -179,23 +182,47 @@ impl Main {
             };
         }
 
-        let Some(server_address) = option_set
+        let server_address = option_set
             .value_of("quickPlayMultiplayer")
             .or(option_set.value_of("server"))
-            .map(str::to_string)
-        else {
-            eprintln!(
-                "Nothing to do: the port has no title screen yet, so it needs a server to join \
-                 (--server HOST:PORT or --quickPlayMultiplayer HOST:PORT)"
-            );
-            return 2;
-        };
+            .map(str::to_string);
         let windowed = option_set.has("window") || !option_set.has("headless");
+        let forced_graphics_api = match option_set.value_of("graphicsBackend") {
+            Some(value) => match PreferredGraphicsApi::value_of(value) {
+                Some(api) => Some(api),
+                None => {
+                    eprintln!("Cannot convert argument '{value}' of option ['graphicsBackend']");
+                    return -5;
+                }
+            },
+            None => None,
+        };
+        let Some(server_address) = server_address else {
+            if !windowed {
+                eprintln!(
+                    "Nothing to do: a client without a window needs a server to join \
+                     (--server HOST:PORT or --quickPlayMultiplayer HOST:PORT)"
+                );
+                return 2;
+            }
+            // The title screen, which joins a server from the server list.
+            let minecraft = Minecraft::new(user, Options::new());
+            if let Err(error) =
+                Main::init_renderer(&minecraft, true, (854, 480), forced_graphics_api)
+            {
+                eprintln!("Can't render: {error}");
+                return 1;
+            }
+            minecraft.set_screen(Some(TitleScreen::screen_ref(&minecraft, true)));
+            minecraft.run();
+            return 0;
+        };
 
         let minecraft = Minecraft::new(user, Options::new());
         let mut window_size = (854, 480);
         let mut needs_renderer = windowed;
         let mut outcome = None;
+        let mut title_steps = false;
         let mut server_data = ServerData::new(
             "Minecraft Server".to_string(),
             server_address.clone(),
@@ -212,10 +239,19 @@ impl Main {
             let out_dir = Path::new(option_set.value_of("oracleOut").unwrap_or("target/oracle"));
             window_size = (scenario.options.width, scenario.options.height);
             needs_renderer |= OracleGameTest::has_screenshots(&scenario);
-            let (driver, driver_outcome) = OracleGameTest::new(&minecraft, scenario, out_dir);
+            let (mut driver, driver_outcome) = OracleGameTest::new(&minecraft, scenario, out_dir);
+            server_data.name = "rustcraft oracle".to_string();
+            // Steps on the title screen first, then the driver joins, like Java's
+            // `runMultiplayer`.
+            if driver.has_title_steps() {
+                title_steps = true;
+                driver.join_after_title(
+                    ServerAddress::parse_string(Some(&server_address)),
+                    server_data.clone(),
+                );
+            }
             minecraft.set_test_driver(Box::new(driver));
             outcome = Some(driver_outcome);
-            server_data.name = "rustcraft oracle".to_string();
         } else if let Some(path) = option_set.value_of("bench") {
             let bench_options = match BenchOptions::load(Path::new(path)) {
                 Ok(bench_options) => bench_options,
@@ -245,18 +281,6 @@ impl Main {
 
         if needs_renderer {
             // A client that can't render still joins: its screenshots are what's missing.
-            let forced_graphics_api = match option_set.value_of("graphicsBackend") {
-                Some(value) => match PreferredGraphicsApi::value_of(value) {
-                    Some(api) => Some(api),
-                    None => {
-                        eprintln!(
-                            "Cannot convert argument '{value}' of option ['graphicsBackend']"
-                        );
-                        return -5;
-                    }
-                },
-                None => None,
-            };
             if let Err(error) =
                 Main::init_renderer(&minecraft, windowed, window_size, forced_graphics_api)
             {
@@ -264,11 +288,15 @@ impl Main {
             }
         }
 
-        ConnectScreen::start_connecting(
-            &minecraft,
-            &ServerAddress::parse_string(Some(&server_address)),
-            server_data,
-        );
+        if title_steps {
+            minecraft.set_screen(Some(TitleScreen::screen_ref(&minecraft, true)));
+        } else {
+            ConnectScreen::start_connecting(
+                &minecraft,
+                &ServerAddress::parse_string(Some(&server_address)),
+                server_data,
+            );
+        }
         minecraft.run();
         // What the client skipped, for the soak's report (`Unported`).
         for (r#type, count) in Unported::counts() {

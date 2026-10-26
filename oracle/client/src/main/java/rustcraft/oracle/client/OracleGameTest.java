@@ -152,6 +152,7 @@ public final class OracleGameTest implements FabricClientGameTest {
 
     private static void runMultiplayer(ClientGameTestContext context, Scenario scenario, Path outDir, String address) {
         waitForServer(context);
+        runTitleSteps(context, scenario.title(), outDir);
         context.runOnClient(client -> ConnectScreen.startConnecting(
             client.gui.screen(),
             client,
@@ -201,6 +202,33 @@ public final class OracleGameTest implements FabricClientGameTest {
         context.waitTicks(2);
         context.setScreen(TitleScreen::new);
         ticks.finish();
+    }
+
+    /**
+     * The scenario's steps on the title screen before the client joins: ticks waited, screenshots, and input the way
+     * the replay gives it (the cursor moved, a mouse button clicked, a key pressed, characters typed).
+     */
+    private static void runTitleSteps(ClientGameTestContext context, List<Scenario.Step> steps, Path outDir) {
+        TestInput input = context.getInput();
+        for (Scenario.Step step : steps) {
+            if (step.screenshot() != null) {
+                OracleScreenshot.take(context, outDir.resolve("screenshots").resolve(step.screenshot() + ".png"));
+            } else if (step.key() != null) {
+                int key = Scenario.PRESSABLE_KEYS.get(step.key());
+                input.holdKey(key);
+                input.releaseKey(key);
+            } else if (step.type() != null) {
+                input.typeChars(step.type());
+            } else if (step.cursor() != null) {
+                input.setCursorPos(step.cursor()[0], step.cursor()[1]);
+            } else if (step.click() != null) {
+                int button = Scenario.MOUSE_BUTTONS.get(step.click());
+                input.holdMouse(button);
+                input.releaseMouse(button);
+            } else {
+                context.waitTicks(step.ticks());
+            }
+        }
     }
 
     /**
@@ -397,6 +425,8 @@ public final class OracleGameTest implements FabricClientGameTest {
             options.vignette().set(false);
             // Otherwise joining a server shows the Social Interactions hint toast.
             options.joinedFirstServer = true;
+            // The title screen's splash is random, so a scenario that shows the title screen hides it.
+            options.hideSplashTexts().set(scenarioOptions.hideSplash());
             // F1 (keyToggleGui, Gui.handleKeybinds), for scenarios that compare the level alone.
             if (scenarioOptions.hideGui() != client.gui.hud.isHidden()) {
                 client.gui.hud.toggle();

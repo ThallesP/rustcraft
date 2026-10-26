@@ -44,7 +44,7 @@ impl ReloadableTexture {
         self.do_load(device, &contents.image);
     }
 
-    fn set_sampler(&mut self, sampler_cache: &SamplerCache, contents: &TextureContents) {
+    pub(crate) fn set_sampler(&mut self, sampler_cache: &SamplerCache, contents: &TextureContents) {
         let address_mode = if contents.clamp() {
             AddressMode::CLAMP_TO_EDGE
         } else {

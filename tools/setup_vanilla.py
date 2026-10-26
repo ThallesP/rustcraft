@@ -4,7 +4,8 @@
 Downloads the client and server jars plus the client's libraries, decompiles the
 client with Vineflower, adds the sources of the libraries the port translates too
 (JOML, Netty's buffers and Guava, or authlib and DataFixerUpper decompiled, since they
-publish no sources), extracts its bundled resources and runs the server's data generator.
+publish no sources), extracts its bundled resources, lays out the launcher's assets the
+client reads (below) and runs the server's data generator.
 Everything lands in vanilla/, which is gitignored: Mojang's code and assets can't
 be redistributed.
 
@@ -20,6 +21,12 @@ included; --natives also fetches another platform's (LWJGL's names: linux, macos
 windows…) and lists them in classpath-<platform>.txt, so the port's tests can check what that
 platform's loader would find. The JDK is Adoptium's for this platform; only the decompile, the
 data generator, the golden harness and the oracle need it, not the port.
+
+The launcher's asset index has some of the client's resources that the jar only has placeholders
+of (the title screen's panorama): vanilla/<version>/assets/ holds the index's textures under their
+names, the directory vanilla reads as its external asset source when it's started without
+--assetIndex. Its fonts (unifont, whose unihex provider the port hasn't got yet), sounds and other
+languages aren't fetched.
 """
 
 import argparse
@@ -249,6 +256,21 @@ def extract_resources(client_jar, resources_dir):
     partial.rename(resources_dir)
 
 
+# The asset index's objects the client reads, by name: what vanilla opens through IndexedAssetSource.
+ASSET_PREFIXES = ("minecraft/textures/",)
+
+
+def fetch_assets(version, assets_dir):
+    index_info = version["assetIndex"]
+    index_path = assets_dir.with_name("assets-index.json")
+    download(index_info["url"], index_path, "sha1", index_info["sha1"])
+    objects = json.loads(index_path.read_text())["objects"]
+    for name, info in sorted(objects.items()):
+        if name.startswith(ASSET_PREFIXES):
+            digest = info["hash"]
+            download(f"https://resources.download.minecraft.net/{digest[:2]}/{digest}", assets_dir / name, "sha1", digest)
+
+
 # The server jar is a bundler: it unpacks itself into the working directory, then runs bundlerMainClass.
 def run_data_generator(java, server_jar, version_dir):
     generated_dir = version_dir / "generated"
@@ -301,6 +323,7 @@ def main():
     for natives in args.natives:
         fetch_libraries(version, NATIVES_PLATFORMS[natives], version_dir / f"classpath-{natives}.txt")
     extract_resources(client_jar, version_dir / "resources")
+    fetch_assets(version, version_dir / "assets")
     if args.no_jdk:
         print(f"done: {version_dir} (no JDK: the port runs, the golden harness and the oracle need one)")
         return

@@ -16,14 +16,17 @@ import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
 /** The input both clients replay. The format is documented in TESTING.md. */
-public record Scenario(String name, World world, Player player, Options options, List<String> setup, List<Step> steps) {
+public record Scenario(String name, World world, Player player, Options options, List<String> setup, List<Step> title, List<Step> steps) {
     /** {@code tickRate} is the server's ticks a second, 0 for its own 20 and an unpaced client (ServerTicks). */
     public record World(long seed, String preset, long time, String gameMode, float tickRate) {}
 
     public record Player(double x, double y, double z, float yRot, float xRot) {}
 
-    /** {@code hideGui} is vanilla's F1 ({@code Hud.toggle}): no HUD, hand or crosshair. */
-    public record Options(int width, int height, int fov, int guiScale, int renderDistance, boolean hideGui) {}
+    /**
+     * {@code hideGui} is vanilla's F1 ({@code Hud.toggle}): no HUD, hand or crosshair. {@code hideSplash} is the
+     * accessibility option {@code hideSplashTexts}: the title screen's splash is random.
+     */
+    public record Options(int width, int height, int fov, int guiScale, int renderDistance, boolean hideGui, boolean hideSplash) {}
 
     /**
      * Either a screenshot, a key pressed and released ({@code key}), characters typed ({@code type}), the cursor moved
@@ -84,6 +87,14 @@ public record Scenario(String name, World world, Player player, Options options,
             }
         }
 
+        // Steps on the title screen before the client joins: ticks, screenshots and input (TESTING.md).
+        List<Step> title = new ArrayList<>();
+        if (root.has("title")) {
+            for (JsonElement element : root.getAsJsonArray("title")) {
+                title.add(parseStep(element.getAsJsonObject()));
+            }
+        }
+
         List<Step> steps = new ArrayList<>();
         for (JsonElement element : root.getAsJsonArray("steps")) {
             steps.add(parseStep(element.getAsJsonObject()));
@@ -105,9 +116,11 @@ public record Scenario(String name, World world, Player player, Options options,
                 options.get("fov").getAsInt(),
                 options.get("gui_scale").getAsInt(),
                 options.get("render_distance").getAsInt(),
-                options.has("hide_gui") && options.get("hide_gui").getAsBoolean()
+                options.has("hide_gui") && options.get("hide_gui").getAsBoolean(),
+                options.has("hide_splash") && options.get("hide_splash").getAsBoolean()
             ),
             List.copyOf(setup),
+            List.copyOf(title),
             List.copyOf(steps)
         );
     }

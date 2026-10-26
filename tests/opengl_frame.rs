@@ -634,6 +634,9 @@ const VANILLA_SCREENSHOTS: &[(&str, &str, &str)] = &[
         "resumed",
         "b928e0e01496f18eaf778f512dc28801",
     ),
+    ("title", "title", "9add8dcab50423f6961ca787f820b88a"),
+    ("title", "hovered", "d5651af788ea4ea835266ae26f09ce63"),
+    ("title", "tooltip", "416a50e5d196cd9001cda54dcc3bf5da"),
 ];
 
 fn rgba_digest(pixels: &[u8]) -> String {

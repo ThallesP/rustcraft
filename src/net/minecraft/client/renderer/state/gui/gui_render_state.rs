@@ -14,6 +14,7 @@
 use crate::net::minecraft::client::gui::navigation::screen_rectangle::ScreenRectangle;
 use crate::net::minecraft::client::renderer::state::gui::gui_element_render_state::GuiElementRenderState;
 use crate::net::minecraft::client::renderer::state::gui::gui_text_render_state::GuiTextRenderState;
+use crate::net::minecraft::client::renderer::state::gui::panorama_render_state::PanoramaRenderState;
 use crate::net::minecraft::client::renderer::state::gui::screen_area::ScreenArea;
 use crate::org::joml::vector4f::Vector4f;
 
@@ -23,6 +24,8 @@ pub struct GuiRenderState {
     first_stratum_after_blur: usize,
     current: usize,
     last_element_bounds: Option<ScreenRectangle>,
+    /// `panoramaRenderState`: the panorama the GUI draws under everything this frame, if any.
+    pub panorama_render_state: Option<PanoramaRenderState>,
     pub clear_color_override: Vector4f,
     pub is_hud_hidden: bool,
 }
@@ -60,6 +63,7 @@ impl GuiRenderState {
             first_stratum_after_blur: usize::MAX,
             current: 0,
             last_element_bounds: None,
+            panorama_render_state: None,
             clear_color_override: Vector4f::from_scalar(0.0),
             is_hud_hidden: false,
         };
@@ -252,6 +256,7 @@ impl GuiRenderState {
         self.strata.clear();
         self.first_stratum_after_blur = usize::MAX;
         self.next_stratum();
+        self.panorama_render_state = None;
         self.clear_color_override = Vector4f::from_scalar(0.0);
     }
 }

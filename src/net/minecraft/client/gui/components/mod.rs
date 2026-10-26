@@ -10,6 +10,7 @@ pub mod component_render_utils;
 pub mod edit_box;
 pub mod events;
 pub mod friends_button;
+pub mod logo_renderer;
 pub mod renderable;
 pub mod sprite_icon_button;
 pub mod string_widget;

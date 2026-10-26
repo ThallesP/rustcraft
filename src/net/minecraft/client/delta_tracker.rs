@@ -1,16 +1,17 @@
 //! net/minecraft/client/DeltaTracker.java
 //!
-//! Not ported yet: `getRealtimeDeltaTicks` and `advanceRealTime`. `Timer`'s target milliseconds per tick come from the
-//! level's tick rate manager (`Minecraft.getTickTargetMillis`), which isn't ported yet, so it's
-//! always the default 50.
+//! `Timer`'s target milliseconds per tick come from the level's tick rate manager
+//! (`Minecraft.getTickTargetMillis`), which isn't ported yet, so it's always the default 50.
 
 /// `DeltaTracker.Timer`: how many game ticks are due, from the milliseconds that went by.
 #[derive(Clone, Debug)]
 pub struct Timer {
     delta_ticks: f32,
     delta_tick_residual: f32,
+    realtime_delta_ticks: f32,
     paused_delta_tick_residual: f32,
     last_ms: i64,
+    last_ui_ms: i64,
     ms_per_tick: f32,
     paused: bool,
     frozen: bool,
@@ -21,8 +22,10 @@ impl Timer {
         Timer {
             delta_ticks: 0.0,
             delta_tick_residual: 0.0,
+            realtime_delta_ticks: 0.0,
             paused_delta_tick_residual: 0.0,
             last_ms: current_ms,
+            last_ui_ms: current_ms,
             ms_per_tick: 1000.0 / ticks_per_second,
             paused: false,
             frozen: false,
@@ -37,6 +40,17 @@ impl Timer {
         let ticks = self.delta_tick_residual as i32;
         self.delta_tick_residual -= ticks as f32;
         ticks
+    }
+
+    /// `advanceRealTime`: the ticks' worth of milliseconds since the last frame, whatever the
+    /// game's ticks did (the panorama's spin).
+    pub fn advance_real_time(&mut self, current_ms: i64) {
+        self.realtime_delta_ticks = (current_ms - self.last_ui_ms) as f32 / self.ms_per_tick;
+        self.last_ui_ms = current_ms;
+    }
+
+    pub fn get_realtime_delta_ticks(&self) -> f32 {
+        self.realtime_delta_ticks
     }
 
     /// When the next tick is due, in the clock's milliseconds: what the game waits for between

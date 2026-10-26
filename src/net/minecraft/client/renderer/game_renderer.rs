@@ -396,6 +396,13 @@ impl GameRenderer {
             Rc::clone(gui_atlas.get_sampler().expect("the atlas is uploaded")),
         );
         let overlay_texture = OverlayTexture::new(device, &sampler_cache);
+        // registerPanoramaTextures.
+        let gui_renderer = GuiRenderer::new(device);
+        texture_manager.register_cube_map(
+            device,
+            &sampler_cache,
+            gui_renderer.cube_map().location(),
+        );
 
         GameRenderer {
             device,
@@ -424,7 +431,7 @@ impl GameRenderer {
             celestials_atlas,
             texture_manager,
             gui_render_state: GuiRenderState::new(),
-            gui_renderer: GuiRenderer::new(device),
+            gui_renderer,
             ui_lightmap: UiLightmap::new(device),
             font,
             lighting: Lighting::new(device),
@@ -447,11 +454,11 @@ impl GameRenderer {
         }
     }
 
-    /// The client's resources: the vanilla pack's layers, without the launcher's asset index.
+    /// The client's resources: the vanilla pack's layers, the jar's and the launcher's assets'.
     pub fn client_resources() -> MultiPackResourceManager {
         let vanilla = VanillaPackResources::create_client_pack(
             &VanillaPackResources::vanilla_jar_root(),
-            std::path::Path::new("no-asset-index"),
+            &VanillaPackResources::external_asset_root(),
         );
         let layers = vanilla
             .resource_layers()
@@ -561,6 +568,7 @@ impl GameRenderer {
             main_render_target,
             window,
             &glyph_textures,
+            &self.texture_manager,
             &mut |pipelines| {
                 // processBlurEffect.
                 if let Some(blur_effect) = blur_effect.as_mut() {
@@ -1007,6 +1015,36 @@ impl GameRenderer {
         self.lightmap
             .render(device, &lightmap_pipeline, &self.lightmap_render_state);
         self.render_level(level, lighting, &level_options, &environment.sky, options);
+        self.fog_renderer_end_frame();
+        device.create_command_encoder().clear_depth_texture(
+            &**self.main_render_target.get_depth_texture().expect("depth"),
+            0.0,
+        );
+    }
+
+    /// `render` without a level (`shouldRenderLevel` false), before the GUI: the main target
+    /// cleared, the globals at game time 0, the fog's frame ended and the depth cleared again.
+    pub fn render_frame_without_level(&mut self, options: &RenderOptions) {
+        let device = self.device;
+        device
+            .create_command_encoder()
+            .clear_color_and_depth_textures(
+                &**self.main_render_target.get_color_texture().expect("color"),
+                &self.gui_render_state.clear_color_override,
+                &**self.main_render_target.get_depth_texture().expect("depth"),
+                0.0,
+            );
+        self.global_settings_uniform.update(
+            device,
+            self.main_render_target.width,
+            self.main_render_target.height,
+            options.glint_strength,
+            0,
+            0.0,
+            options.menu_background_blurriness,
+            &self.camera_render_state.pos,
+            options.use_rgss,
+        );
         self.fog_renderer_end_frame();
         device.create_command_encoder().clear_depth_texture(
             &**self.main_render_target.get_depth_texture().expect("depth"),
