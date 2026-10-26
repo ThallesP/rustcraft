@@ -147,7 +147,7 @@ Every step of the loop updates this table.
 | Services | Skins and capes: `SkinManager` fetching textures from Mojang's servers, `DefaultPlayerSkin` | Not started: the game profile's properties are kept (`GameProfile`, `PropertyMap`) | | |
 | Services | Realms (`com/mojang/realmsclient`, 28 screens) | Not started | | |
 | Services | Telemetry, social interactions, player reports, friends and presence (26.3's friends overlay), ban notices | Not started | | |
-| Performance | FPS, frame time, chunk-meshing throughput | Measured (`tools/bench.py`, `--benchLevel`; "Performance" below): the frame rate limiter and vsync like vanilla's, `UberGpuBuffer` and `TlsfAllocator`; sections compile on the render thread | benchmark scenarios `terrain` and `flat`, both clients, the same methods timed | on llvmpipe: the same frames/s (the driver's); startup 4 to 5 times faster, memory 2.5 to 3.8 times less, ticks 4 to 5 times faster, a section's compile 3 to 5 times faster; a new view settles slower (5 times vanilla's compiles, on the render thread) and chunks take twice as long on the game thread |
+| Performance | FPS, frame time, chunk-meshing throughput | Measured (`tools/bench.py`, `--benchLevel`; "Performance" below): the frame rate limiter and vsync like vanilla's, `UberGpuBuffer` and `TlsfAllocator`; sections compile on worker threads like vanilla's (`SectionTaskDynamicQueue`, cancelled tasks, `prioritizeChunkUpdates`) | benchmark scenarios `terrain` and `flat`, both clients, the same methods timed | on llvmpipe: the same frames/s (the driver's); startup 9 to 12 times faster, memory 2.5 to 3.8 times less, ticks 2 to 2.5 times faster, a section's compile 2.6 times faster on the terrain; as many compiles as vanilla while a view settles, and a chunk handled as fast (terrain) or faster (flat); the settle and the loading frames still behind or level |
 
 ### Physics scenarios
 
@@ -188,45 +188,63 @@ Not covered yet: slime and honey (bouncing and sliding), lava (whose damage come
 
 ## Performance
 
-Gate 5's benchmark (GOAL.md; TESTING.md, "Benchmark"): both clients on the same vanilla server's generated chunks, with the same options (854 by 480, render distance 12, no frame limit, no vsync), measured at the same methods. Vanilla is the unmodified 26.3 client jar with the launcher's JVM flags on JDK 25, timed by JFR's method tracing; the port is its release build of 9a62903.
+Gate 5's benchmark (GOAL.md; TESTING.md, "Benchmark"): both clients on the same vanilla server's generated chunks, with the same options (854 by 480, render distance 12, no frame limit, no vsync), measured at the same methods. Vanilla is the unmodified 26.3 client jar with the launcher's JVM flags on JDK 25, timed by JFR's method tracing; the port is its release build of the perf track's 2026-10-26 step (main's build before it, A/B in the same session, below; the flat session ran the same step before its last rebase onto main).
 
-**The machine:** a KVM guest on an AMD Ryzen 5 5600G, 10 vCPUs, 38 GB, Ubuntu 26.04. It has no GPU (`/dev/dri/card0` is `faux_driver`), so both clients draw with Mesa 26.0.8's llvmpipe (LLVM 21.1.8) under Xvfb, on the CPU. Six other agents shared it: the 1-minute load average was 15 to 46 during the runs below, which moves single runs a lot (the brackets). FPS here is the software rasterizer's, which takes most of either client's frame; what says something about the clients is their own CPU time, compiles, ticks, startup and memory. Real-GPU and Mac numbers are under "Needs Thalles" in PROGRESS.md.
+**The machine:** a KVM guest on an AMD Ryzen 5 5600G, 10 vCPUs, 38 GB, Ubuntu 26.04. It has no GPU (`/dev/dri/card0` is `faux_driver`), so both clients draw with Mesa 26.0.8's llvmpipe (LLVM 21.1.8) under Xvfb, on the CPU. Six other agents shared it: the 1-minute load average was 27 to 55 during the terrain runs below and 16 to 29 during the flat ones (it was 3 when the sessions were queued, and rose as the other tracks resumed), which moves single runs a lot (the brackets). FPS here is the software rasterizer's, which takes most of either client's frame; what says something about the clients is their own CPU time, compiles, ticks, startup and memory. Real-GPU and Mac numbers are under "Needs Thalles" in PROGRESS.md.
 
 The median of 3 runs of each client, smallest to largest in brackets. `terrain` is the normal preset of seed 0 from 160 blocks up, looking 25° down over the land; `flat` is the flat preset, standing on the grass.
 
 | | terrain: vanilla | terrain: port | flat: vanilla | flat: port |
 | --- | --- | --- | --- | --- |
-| Startup to joined (s) | 25.7 (21.1..45.5) | **6.1** (2.4..9.3) | 18.0 (17.4..53.4) | **3.3** (3.0..9.6) |
-| Held view: frames/s on llvmpipe | 3.9 (3.7..4.4) | 3.8 (0.9..4.1) | 25.6 (8.5..35.7) | 18.4 (11.9..24.4) |
-| Held view: render thread CPU per frame (ms) | 120 (115..127) | 116 (108..228) | 18.9 (16.0..22.4) | 21.7 (20.8..25.2) |
-| Held view: the port's render thread outside the driver (ms per frame) | | 13 (10..16) | | 3.8 (2.9..4.0) |
-| Held view: process CPU per frame (ms, llvmpipe's threads with it) | 406 (394..413) | 392 (376..528) | 74 (69..77) | 75 (75..81) |
-| Section compile, median (ms of wall time) | 8.3 (6.0..8.6), worker threads | **2.7** (2.2..4.4), render thread | 4.1 (2.6..4.6) | **0.75** (0.74..0.78) |
-| Loading: frames/s while the path's chunks come | **5.8** (5.2..8.8) | 1.2 (0.7..1.3) | 20.0 (18.5..20.5) | **23.5** (14.1..23.9) |
-| Loading: longest frame (ms) | **428** (324..445) | 2,271 (2,141..3,708) | 180 (154..343) | 171 (129..435) |
-| Teleport to the new view's last compile (s) | **7.4** (7.1..9.3) | 19.7 (18.5..20.0) | **1.9** (1.8..2.8) | 2.5 (2.4..2.8) |
-| Sections compiled meanwhile | **501** | 2,844 | **192** | 1,021 |
-| A chunk handled on the game thread, median (µs) | **80** (78..84) | 175 (165..182) | **59** (57..62) | 106 (106..114) |
-| Light updates per chunk (µs) | **202** (182..396) | 428 (383..568) | 90 (82..112) | 88 (78..91) |
-| Tick, median (ms) | 0.34 | **0.06** | 0.50 | **0.13** |
-| Resident memory at the end (MiB) | 2,101 (2,051..2,172) | **824** (824..836) | 1,622 (1,601..1,725) | **430** (428..433) |
+| Startup to joined (s) | 63.9 (46.8..78.0) | **7.0** (3.4..10.4) | 19.1 (14.1..32.6) | **1.6** (1.2..1.8) |
+| Held view: frames/s on llvmpipe | 2.7 (1.5..3.0) | 2.5 (1.7..2.7) | 17.4 (13.7..25.3) | 21.8 (13.5..22.1) |
+| Held view: render thread CPU per frame (ms) | 124 (118..126) | 118 (113..123) | 19.9 (18.5..21.6) | 21.2 (20.7..22.4) |
+| Held view: the port's render thread outside the driver (ms per frame) | | 10 (8..12) | | 3.3 (3.2..3.5) |
+| Held view: process CPU per frame (ms, llvmpipe's threads with it) | 413 (409..435) | 390 (387..405) | 74 (72..74) | 74 (72..75) |
+| Section compile, median (ms of wall time, worker threads) | 13.1 (8.6..14.1) | **5.0** (4.6..7.1) | 2.5 (2.4..5.5) | 2.8 (2.7..4.0) |
+| Loading: frames/s while the path's chunks come | 3.8 (3.1..4.7) | 3.6 (2.9..4.9) | **33.6** (10.9..36.9) | 16.9 (8.3..24.5) |
+| Loading: longest frame (ms) | 896 (529..1,357) | **599** (541..1,136) | **105** (94..306) | 259 (162..641) |
+| Teleport to the new view's last compile (s) | 11.5 (9.1..12.0) | 11.9 (7.7..13.9) | **1.5** (1.1..2.2) | 2.0 (1.3..3.6) |
+| Sections compiled meanwhile | 527 (492..540) | 503 (501..508) | 192 | 192 |
+| A chunk handled on the game thread, median (µs) | 85 (81..94) | 85 (83..87) | 55 (54..61) | **41** (40..43) |
+| Light updates per chunk (µs) | 427 (359..531) | 419 (369..429) | **59** (52..126) | 82 (78..366) |
+| Tick, median (ms) | 0.32 | **0.14** | 0.54 | **0.22** |
+| Resident memory at the end (MiB) | 2,073 (1,980..2,110) | **815** (746..888) | 1,675 (1,601..1,727) | **435** (432..437) |
 
 What it says:
-- **The frames are llvmpipe's.** About 85% of either client's render thread in the held view is the driver: on the terrain, 43% in llvmpipe's JIT-compiled vertex code and 40% in libgallium for the port, and the same libraries in the same shares for vanilla. The frame rates match within the noise (the flat ranges overlap; the flat vanilla runs had a load of 15, the port's 25). Of the port's render thread, 3.8 ms a frame on flat and 13 on the terrain are its own code and libc (where the driver's copies land too). Vanilla's own share can't be told apart here: perf doesn't name its JIT-compiled Java, so it lands with llvmpipe's.
-- **Where the port is ahead:** startup (4 to 5 times faster), memory (2.5 to 3.8 times less), ticks (4 to 5 times faster) and a section's compile (3 to 5 times faster; vanilla's run on worker threads beside the frames, the port's on the render thread).
-- **Where vanilla is ahead:** a new view settles sooner, because the port compiles every dirty section in the frame it's marked, and again whenever light or a neighbour marks it (5 to 6 times vanilla's compiles: vanilla's queue drops a task that hasn't started for the newer one), which on the terrain makes the loading frames seconds long. Handling a chunk on the game thread takes the port about twice vanilla's time. Both are the perf track's next steps (PROGRESS.md, "perf").
+- **The frames are llvmpipe's.** Most of either client's render thread in the held view is the driver (on the terrain, 114 of the port's 118 ms a frame and 107 of vanilla's 124), and the process's CPU a frame, llvmpipe's threads with it, is the same in both. The frame rates match within the noise. Of the port's render thread, 3.3 ms a frame on flat and 10 on the terrain are its own code and libc (where the driver's copies land too).
+- **Where the port is ahead:** startup (9 to 12 times faster), memory (2.5 to 3.8 times less), ticks (2 to 2.5 times faster), a section's compile on the terrain (2.6 times faster, both on worker threads now; on flat the two are level, a compile there being mostly the wait for a core), a chunk on flat (25% faster), and the terrain's longest loading frame.
+- **Level:** a new view compiles as many sections as vanilla's (the port compiled 5 to 6 times as many before this step); a chunk on the terrain, and the terrain's light, loading frames and settle, all within each other's ranges.
+- **Where vanilla is still ahead:** flat's loading frames and settle, and flat's light per chunk. In an earlier terrain session, at a lower load for vanilla's runs (16) than the port's (28), vanilla settled in 3.2 s and the port in 7.9, with 501 compiles each. The settle goes a step of the occlusion graph's walk a frame or two, so it's the loading frames', which on llvmpipe are mostly the driver's and the load's; what's left of the port's own is in PROGRESS.md, "perf".
 
-The offline benchmark, the terrain bench's join without a server or window (`rustcraft --benchLevel`: 637 chunks handled and lit, then all 12,792 of their sections compiled, every mesh's digest the same before and after each change; `perf stat` of the whole run, then the compiles' thread CPU time):
+The step's A/B, the terrain session above: main's build before it (compiles on the render thread) against this step's.
+
+| | before | after |
+| --- | --- | --- |
+| Sections compiled while the new view settles | 2,769 (2,599..3,424) | 503 (501..508) |
+| Teleport to the new view's last compile (s) | 19.8 (16.4..20.0) | 11.9 (7.7..13.9) |
+| Loading: frames/s | 1.85 (0.98..3.02) | 3.56 (2.93..4.89) |
+| Loading: longest frame (ms) | 1,580 (920..3,023) | 599 (541..1,136) |
+| A chunk handled on the game thread, median (µs) | 151 (134..166) | 85 (83..87) |
+| Light updates per chunk (µs) | 364 (313..404) | 419 (369..429) |
+
+The light's live time didn't move with the load this high (in the earlier session, 296 before and 244 after); offline it halved.
+
+The offline benchmark, the terrain bench's join without a server or window (`rustcraft --benchLevel`: 637 chunks handled and lit, then all 12,792 of their sections compiled, every mesh's digest the same before and after each change; `perf stat` of the whole run, then each part's thread CPU time):
 
 | Build | Instructions | Cycles | Compiles (s of CPU) |
 | --- | --- | --- | --- |
-| before this step's optimizations | 121.3 G | 55.8 G | 12.2 |
+| before the 2026-10-25 step's optimizations | 121.3 G | 55.8 G | 12.2 |
 | registry ids by key, tint layers by y | 107.7 G | 49.6 G | 10.8 |
 | + light maps hashed with `mix`, shapes borrowed, the region's section decoded | 88.7 G | 40.1 G | 8.4 |
 | + models by state id | 85.2 G | | |
-| `--profile dist` (fat LTO, one codegen unit) of the build before | −2.9% | −7 to −10% | −9 to −14% |
+| main before this step | 85.6 G | 44.4 G | 8.0 to 9.8 |
+| + `fillFrom` by palette, `ResourceKey`'s shared names, the light's sets hashed and faces borrowed | 73.4 G | 37.3 G | 6.9 to 7.5 |
+| `--profile dist` (fat LTO, one codegen unit) of the 2026-10-25 build | −2.9% | −7 to −10% | −9 to −14% |
 
-The uber buffers, A/B in the terrain session: the build before `UberGpuBuffer` packed every layer into one buffer again whenever a mesh came or went, 0.43 frames/s and 1,551 ms of render thread a frame in the held view (1,207 of them in the kernel), 1,742 MiB resident; the port above, 3.8, 116 and 824.
+The same runs' other parts: chunks handled in 104 to 108 ms before this step and 45 to 56 after, their light worked out in 68 to 91 ms before and 32 to 37 after. The render thread's part of a compile (the region made with its copies of the level's light, biomes and tints, and the tints given back) is 16 to 25 µs, which `--benchLevel` prints too.
+
+The uber buffers, A/B in the 2026-10-25 terrain session: the build before `UberGpuBuffer` packed every layer into one buffer again whenever a mesh came or went, 0.43 frames/s and 1,551 ms of render thread a frame in the held view (1,207 of them in the kernel), 1,742 MiB resident; with it, 3.8, 116 and 824.
 
 To reproduce (each line holds the oracle lock while it runs; a session of 3 runs of both clients takes about 25 minutes):
 
