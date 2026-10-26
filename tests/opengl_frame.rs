@@ -18,8 +18,12 @@
 use md5::{Digest, Md5};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rustcraft");
+
+/// The binary's runs so far, naming each one's stderr file.
+static RUNS: AtomicUsize = AtomicUsize::new(0);
 
 /// The lines vanilla logged about its device on the oracle machine
 /// (`vanilla/26.3/oracle/*/client.log`): Mesa 26.0.8-1ubuntu0.3's llvmpipe on LLVM 21.1.8, the
@@ -113,9 +117,24 @@ fn run_on(arguments: &[&str], gl_profile: Option<&str>) -> Option<String> {
         skip("no lavapipe (sudo apt install mesa-vulkan-drivers)");
         return None;
     }
+    // The binary's log goes to its stderr and its answer to stdout. Some xvfb-runs (Ubuntu
+    // 24.04's) run the command with `2>&1`, which would put the log into the answer, so the
+    // binary's stderr goes to a file of its own, whichever xvfb-run this is.
+    let stderr_path = std::env::temp_dir().join(format!(
+        "rustcraft-opengl-frame-{}-{}.stderr",
+        std::process::id(),
+        RUNS.fetch_add(1, Ordering::Relaxed)
+    ));
     let output = Command::new("xvfb-run")
-        .args(["-a", "-s", "-screen 0 1920x1080x24 -nolisten tcp", BINARY])
+        .args(["-a", "-s", "-screen 0 1920x1080x24 -nolisten tcp"])
+        .args([
+            "sh",
+            "-c",
+            r#"exec "$0" "$@" 2>"$RUSTCRAFT_TEST_STDERR""#,
+            BINARY,
+        ])
         .args(arguments)
+        .env("RUSTCRAFT_TEST_STDERR", &stderr_path)
         .env_remove("WAYLAND_DISPLAY")
         .env("SDL_VIDEO_DRIVER", "x11")
         .env("LIBGL_ALWAYS_SOFTWARE", "1")
@@ -127,9 +146,11 @@ fn run_on(arguments: &[&str], gl_profile: Option<&str>) -> Option<String> {
         .output()
         .expect("runs xvfb-run");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&stderr_path);
     assert!(
         output.status.success(),
-        "rustcraft {arguments:?} failed:\n{stdout}\n{}",
+        "rustcraft {arguments:?} failed:\n{stdout}\n{stderr}\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
     Some(stdout)
