@@ -1435,7 +1435,7 @@ public final class Golden {
         Path outputDir = Path.of(args[0]);
         Files.createDirectories(outputDir);
         List<String> only = Arrays.asList(args).subList(1, args.length);
-        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), BiomeSuites.suites(), RegistrySuites.suites(), BlockEntitySuites.suites(), LevelSuites.suites(), ParticleSuites.suites(), PlayerSuites.suites(), ModelSuites.suites(), AttributeSuites.suites(), EntityModelSuites.suites(), GuiSuites.suites(), GsonSuites.suites(), FontSuites.suites(), BrigadierSuites.suites(), SnbtSuites.suites(), SelectorSuites.suites(), ItemSuites.suites(), BlockEntityTickSuites.suites()).flatMap(List::stream).toList()) {
+        for (Suite suite : Stream.of(SUITES, NbtSuites.suites(), RenderSuites.suites(), BlockSuites.suites(), ChunkSuites.suites(), ShapeSuites.suites(), LevelChunkSuites.suites(), LightSuites.suites(), BiomeSuites.suites(), RegistrySuites.suites(), BlockEntitySuites.suites(), LevelSuites.suites(), ParticleSuites.suites(), PlayerSuites.suites(), ModelSuites.suites(), AttributeSuites.suites(), EntityModelSuites.suites(), GuiSuites.suites(), GsonSuites.suites(), FontSuites.suites(), BrigadierSuites.suites(), SnbtSuites.suites(), SelectorSuites.suites(), ItemSuites.suites(), BlockEntityTickSuites.suites(), VulkanSuites.suites()).flatMap(List::stream).toList()) {
             if (!only.isEmpty() && !only.contains(suite.name())) {
                 continue;
             }

@@ -19,6 +19,7 @@ pub mod option_instance;
 pub mod options;
 pub mod particle;
 pub mod player;
+pub mod preferred_graphics_api;
 pub mod renderer;
 pub mod resources;
 pub mod rotating_section_storage;

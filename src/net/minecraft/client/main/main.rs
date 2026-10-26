@@ -37,7 +37,6 @@ use crate::com::mojang::blaze3d::systems::render_system::RenderSystem;
 use crate::com::mojang::renderpearl::api::device::gpu_backend::GpuBackend;
 use crate::com::mojang::renderpearl::api::device::gpu_debug_options::GpuDebugOptions;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
-use crate::com::mojang::renderpearl::backend::opengl::gl_backend::GlBackend;
 use crate::java::util::uuid::UUID;
 use crate::net::minecraft::client::gui::screens::connect_screen::ConnectScreen;
 use crate::net::minecraft::client::minecraft::Minecraft;
@@ -45,6 +44,7 @@ use crate::net::minecraft::client::multiplayer::resolver::server_address::Server
 use crate::net::minecraft::client::multiplayer::server_data::{self, ServerData};
 use crate::net::minecraft::client::multiplayer::server_status_pinger::ServerStatusPinger;
 use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::preferred_graphics_api::PreferredGraphicsApi;
 use crate::net::minecraft::client::renderer::game_renderer::GameRenderer;
 use crate::net::minecraft::client::user::User;
 use crate::net::minecraft::core::uuid_util::UUIDUtil;
@@ -65,7 +65,7 @@ struct OptionSet {
 
 impl OptionSet {
     /// The options that take a value, which is the next argument.
-    const WITH_ARGUMENT: [&'static str; 15] = [
+    const WITH_ARGUMENT: [&'static str; 16] = [
         "username",
         "uuid",
         "accessToken",
@@ -81,6 +81,7 @@ impl OptionSet {
         "bench",
         "benchOut",
         "benchLevel",
+        "graphicsBackend",
     ];
 
     fn parse(args: &[String]) -> Result<OptionSet, String> {
@@ -119,6 +120,9 @@ impl OptionSet {
             .and_then(|(_, value)| value.as_deref())
     }
 }
+
+/// A backend with the device it made.
+pub type BackendAndDevice = (Box<dyn GpuBackend>, Box<dyn GpuDevice>);
 
 impl Main {
     /// Runs the client with the command line's arguments, and returns the exit status.
@@ -241,7 +245,21 @@ impl Main {
 
         if needs_renderer {
             // A client that can't render still joins: its screenshots are what's missing.
-            if let Err(error) = Main::init_renderer(&minecraft, windowed, window_size) {
+            let forced_graphics_api = match option_set.value_of("graphicsBackend") {
+                Some(value) => match PreferredGraphicsApi::value_of(value) {
+                    Some(api) => Some(api),
+                    None => {
+                        eprintln!(
+                            "Cannot convert argument '{value}' of option ['graphicsBackend']"
+                        );
+                        return -5;
+                    }
+                },
+                None => None,
+            };
+            if let Err(error) =
+                Main::init_renderer(&minecraft, windowed, window_size, forced_graphics_api)
+            {
                 eprintln!("Can't render: {error}");
             }
         }
@@ -277,17 +295,32 @@ impl Main {
         minecraft: &Minecraft,
         windowed: bool,
         (width, height): (i32, i32),
+        forced_graphics_api: Option<PreferredGraphicsApi>,
     ) -> Result<(), String> {
         RenderSystem::init_backend_system();
-        let mut backend = GlBackend::new();
-        backend.load_library().map_err(|error| error.to_string())?;
-        let device: &'static dyn GpuDevice = Box::leak(
-            backend
-                .create_device(&GpuDebugOptions::default())
-                .map_err(|error| error.to_string())?,
+        // `Options.glDebugVerbosity`'s default: the driver's errors.
+        let debug_options = GpuDebugOptions {
+            log_level: 1,
+            ..GpuDebugOptions::default()
+        };
+        let (backend, device) = Main::create_backend(forced_graphics_api, &debug_options)?;
+        let device: &'static dyn GpuDevice = Box::leak(device);
+        let info = device.get_device_info();
+        eprintln!(
+            "Using graphics backend {}, using drivers: {}",
+            info.backend_name, info.driver_info
         );
+        eprintln!(
+            "Using graphics device: {} ({})",
+            info.name, info.vendor_name
+        );
+        eprintln!(
+            "Using graphics device extensions: {}",
+            info.underlying_extensions.join(", ")
+        );
+        let backend: &'static dyn GpuBackend = Box::leak(backend);
         let window = windowed.then(|| {
-            let window = Window::new(&backend, width, height, "Minecraft* 26.3 (rustcraft)");
+            let window = Window::new(backend, width, height, "Minecraft* 26.3 (rustcraft)");
             // Minecraft's constructor, once the window is made: the macOS options' defaults
             // (`ctrlClickEmulatesRightClick` is asked for where `InputQuirks` emulates the right
             // click, which is macOS).
@@ -301,6 +334,47 @@ impl Main {
         });
         minecraft.init_renderer(GameRenderer::new(device, width, height), window);
         Ok(())
+    }
+
+    /// `Minecraft`'s constructor's backend: the first of the preferred API's backends that loads
+    /// its library and makes a device, the API the launch argument forces or the options' default.
+    pub fn create_backend(
+        forced_graphics_api: Option<PreferredGraphicsApi>,
+        debug_options: &GpuDebugOptions,
+    ) -> Result<BackendAndDevice, String> {
+        if let Some(forced_graphics_api) = forced_graphics_api {
+            eprintln!(
+                "Graphics backend forced to {} by launch argument, in-game preferred graphics backend setting is ignored",
+                forced_graphics_api.get_serialized_name()
+            );
+        }
+        let preferred_graphics_backend =
+            forced_graphics_api.unwrap_or(PreferredGraphicsApi::DEFAULT);
+        let mut error_msg_builder = "No supported graphics backend was found.".to_owned();
+        for mut backend_to_try in preferred_graphics_backend.get_backends_to_try() {
+            let mut library_loaded = false;
+            let device = backend_to_try.load_library().and_then(|()| {
+                library_loaded = true;
+                backend_to_try.create_device(debug_options)
+            });
+            match device {
+                Ok(device) => return Ok((backend_to_try, device)),
+                Err(exception) => {
+                    eprintln!(
+                        "Failed to create backend {}: {exception}",
+                        backend_to_try.get_name()
+                    );
+                    error_msg_builder.push_str(&format!(
+                        "\n\n- Tried {}: \n  {exception}",
+                        backend_to_try.get_name()
+                    ));
+                    if library_loaded {
+                        backend_to_try.unload_library();
+                    }
+                }
+            }
+        }
+        Err(error_msg_builder)
     }
 
     /// `--ping`: what the server list does for one server, ticking the pinger until the pong

@@ -3,7 +3,8 @@
 //! Render passes and their draws, clearing textures, writing buffers and textures, copying a
 //! texture into a buffer and presenting. GL runs commands as they're issued, so `submit` only has
 //! to wait for the GPU before running the copies' callbacks, which Java queues as fenced tasks
-//! for `RenderSystem` to run once their fence signals.
+//! for `RenderSystem` to run once their fence signals (Java's submit also waits for the frame
+//! before last's fence, which only paces the frames).
 //!
 //! The encoder is also the API's `CommandEncoder` until the frontend's `FrontendCommandEncoder`
 //! is ported, so it makes each render pass a `FrontendRenderPass` around its own, and checks what
@@ -479,10 +480,16 @@ impl GlCommandEncoder {
 }
 
 impl CommandEncoder for GlCommandEncoder {
+    /// Waits for the GPU when a copy's callback is waiting for it, and runs the callbacks; with
+    /// none, there's nothing to wait for (the frame submits each time round, like Java's).
     fn submit(&self) {
+        let tasks: Vec<Box<dyn FnOnce()>> = self.fenced_tasks.borrow_mut().drain(..).collect();
+        if tasks.is_empty() {
+            return;
+        }
         // SAFETY: the device's context is current.
         unsafe { self.gl.finish() };
-        for task in self.fenced_tasks.borrow_mut().drain(..) {
+        for task in tasks {
             task();
         }
     }

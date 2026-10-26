@@ -5,3 +5,8 @@ pub enum FilterMode {
     NEAREST,
     LINEAR,
 }
+
+impl FilterMode {
+    /// `values()`.
+    pub const VALUES: [FilterMode; 2] = [FilterMode::NEAREST, FilterMode::LINEAR];
+}

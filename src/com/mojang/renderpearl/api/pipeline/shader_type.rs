@@ -9,6 +9,11 @@ pub enum ShaderType {
     FRAGMENT,
 }
 
+impl ShaderType {
+    /// `values()`.
+    pub const VALUES: [ShaderType; 2] = [ShaderType::VERTEX, ShaderType::FRAGMENT];
+}
+
 use ShaderType::*;
 
 impl ShaderType {

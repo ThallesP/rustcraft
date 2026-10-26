@@ -8,3 +8,4 @@ pub mod sdl_init;
 pub mod sdl_keyboard;
 pub mod sdl_mouse;
 pub mod sdl_video;
+pub mod sdl_vulkan;

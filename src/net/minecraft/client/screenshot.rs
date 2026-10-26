@@ -6,12 +6,14 @@
 //! block's red, green and blue. Saving to the screenshots folder (`grab`) comes with the key
 //! binding.
 //!
-//! Java's callback runs when the copy's fence signals, which `RenderSystem` checks each frame;
-//! here it runs when the encoder submits, which `take_screenshot` does.
+//! Java's callback runs when the copy's fence signals, which `RenderSystem` checks each frame (on
+//! Vulkan, when the encoder's destruction queue comes round to the copy's submit again, two
+//! submits on); here `take_screenshot` submits until it has run: once on GL, twice on Vulkan.
 
 use crate::com::mojang::blaze3d::pipeline::render_target::RenderTarget;
 use crate::com::mojang::blaze3d::platform::native_image::NativeImage;
 use crate::com::mojang::renderpearl::api::buffers::gpu_buffer;
+use crate::com::mojang::renderpearl::api::commands::command_encoder::CommandEncoder;
 use crate::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use crate::net::minecraft::util::argb::ARGB;
 use std::cell::RefCell;
@@ -21,6 +23,17 @@ pub struct Screenshot;
 
 impl Screenshot {
     pub const SCREENSHOT_DIR: &str = "screenshots";
+
+    /// Submits until a copy's callback has run (`done`), three times at most: a backend runs it
+    /// once the GPU is done with the copy, at most two submits on.
+    pub fn submit_until(encoder: &dyn CommandEncoder, done: impl Fn() -> bool) {
+        for _ in 0..3 {
+            encoder.submit();
+            if done() {
+                return;
+            }
+        }
+    }
 
     /// Panics where Java throws for a target without a color texture, or a size the factor
     /// doesn't divide.
@@ -99,7 +112,7 @@ impl Screenshot {
             }),
             0,
         );
-        encoder.submit();
+        Screenshot::submit_until(encoder, || image.borrow().is_some());
         image.borrow_mut().take().expect("the copy's callback ran")
     }
 }

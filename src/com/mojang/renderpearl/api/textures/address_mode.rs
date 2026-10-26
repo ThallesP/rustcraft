@@ -5,3 +5,8 @@ pub enum AddressMode {
     REPEAT,
     CLAMP_TO_EDGE,
 }
+
+impl AddressMode {
+    /// `values()`.
+    pub const VALUES: [AddressMode; 2] = [AddressMode::REPEAT, AddressMode::CLAMP_TO_EDGE];
+}

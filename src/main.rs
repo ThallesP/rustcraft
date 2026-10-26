@@ -44,13 +44,13 @@ use rustcraft::com::mojang::blaze3d::vertex::vertex_consumer::VertexConsumer;
 use rustcraft::com::mojang::renderpearl::api::buffers::gpu_buffer;
 use rustcraft::com::mojang::renderpearl::api::commands::render_pass::RenderArea;
 use rustcraft::com::mojang::renderpearl::api::commands::render_pass_descriptor::RenderPassDescriptor;
-use rustcraft::com::mojang::renderpearl::api::device::gpu_backend::GpuBackend;
 use rustcraft::com::mojang::renderpearl::api::device::gpu_debug_options::GpuDebugOptions;
 use rustcraft::com::mojang::renderpearl::api::device::gpu_device::GpuDevice;
 use rustcraft::com::mojang::renderpearl::api::pipeline::compiled_render_pipeline::CompiledRenderPipeline;
 use rustcraft::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
-use rustcraft::com::mojang::renderpearl::backend::opengl::gl_backend::GlBackend;
 use rustcraft::com::mojang::renderpearl::frontend::shaders::pipeline_builder::PipelineBuilder;
+use rustcraft::net::minecraft::client::main::main::Main;
+use rustcraft::net::minecraft::client::preferred_graphics_api::PreferredGraphicsApi;
 use rustcraft::net::minecraft::client::renderer::dynamic_gpu_data::Transform;
 use rustcraft::net::minecraft::client::renderer::projection::Projection;
 use rustcraft::net::minecraft::client::renderer::projection_matrix_buffer::ProjectionMatrixBuffer;
@@ -86,6 +86,8 @@ enum Mode {
 
 struct Arguments {
     mode: Mode,
+    /// `--graphicsBackend`, Main's option.
+    graphics_backend: Option<PreferredGraphicsApi>,
     capture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     start_size: Option<(i32, i32)>,
@@ -134,6 +136,7 @@ fn parse_arguments() -> Result<Arguments, String> {
     let mut capture = None;
     let mut screenshot = None;
     let mut start_size = None;
+    let mut graphics_backend = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().ok_or(format!("{argument} needs a value"));
@@ -150,6 +153,12 @@ fn parse_arguments() -> Result<Arguments, String> {
             "--render-scenario" => mode = Some(Mode::RenderScenario(PathBuf::from(value()?))),
             "--capture" => capture = Some(PathBuf::from(value()?)),
             "--window" => mode = Some(Mode::Window),
+            "--graphicsBackend" => {
+                let value = value()?;
+                graphics_backend = Some(PreferredGraphicsApi::value_of(&value).ok_or(format!(
+                    "--graphicsBackend takes default, opengl or vulkan, not {value}"
+                ))?);
+            }
             "--dump-atlas" => mode = Some(Mode::DumpAtlas(PathBuf::from(value()?))),
             "--size" => {
                 let size = value()?;
@@ -198,6 +207,7 @@ fn parse_arguments() -> Result<Arguments, String> {
         }
     }
     Ok(Arguments {
+        graphics_backend,
         mode: mode
             .ok_or("pass --device-info, --compile-pipelines, --screenshot PATH or --window")?,
         capture,
@@ -598,6 +608,8 @@ fn render_scenario(
             },
         );
         game_renderer.render_gui(options.gui_scale);
+        // The frame's commands submitted, as `Minecraft.renderFrame` does each frame.
+        game_renderer.device().create_command_encoder().submit();
         ticks += 1;
         if ticks > OracleGameTest::LOAD_TIMEOUT_TICKS {
             return Err("the player never landed".to_string());
@@ -618,15 +630,11 @@ fn render_scenario(
 
 fn run(arguments: Arguments) -> Result<(), String> {
     RenderSystem::init_backend_system();
-    let mut backend = GlBackend::new();
-    backend.load_library().map_err(|error| error.to_string())?;
     let debug_options = GpuDebugOptions {
         log_level: 1,
         ..GpuDebugOptions::default()
     };
-    let device = backend
-        .create_device(&debug_options)
-        .map_err(|error| error.to_string())?;
+    let (backend, device) = Main::create_backend(arguments.graphics_backend, &debug_options)?;
     let info = device.get_device_info();
     let mut gui = if arguments.fills.is_empty() {
         None
@@ -706,7 +714,7 @@ fn run(arguments: Arguments) -> Result<(), String> {
         }
         Mode::Window => {
             let window = Window::new(
-                &backend,
+                &*backend,
                 arguments.width,
                 arguments.height,
                 "Minecraft* 26.3 (rustcraft)",
@@ -729,6 +737,7 @@ fn run(arguments: Arguments) -> Result<(), String> {
                         .get_color_texture_view()
                         .expect("the main target has color"),
                 );
+                device.create_command_encoder().submit();
                 surface.present();
                 frame += 1;
             }

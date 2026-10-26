@@ -1087,7 +1087,8 @@ impl Minecraft {
         }
     }
 
-    /// `renderFrame`'s render: a frame of the level, presented to the window if there's one.
+    /// `renderFrame`'s render: a frame of the level, blitted to the window if there's one, the
+    /// frame's commands submitted, then the window's image presented.
     fn render_frame(&self) {
         self.follow_window_size();
         let partial_ticks = self
@@ -1107,7 +1108,10 @@ impl Minecraft {
                     .expect("the main target has color"),
             );
             bench::mark(bench::Kind::Submit);
+            game_renderer.device().create_command_encoder().submit();
             surface.present();
+        } else if let Some(game_renderer) = self.game_renderer.borrow().as_ref() {
+            game_renderer.device().create_command_encoder().submit();
         }
     }
 

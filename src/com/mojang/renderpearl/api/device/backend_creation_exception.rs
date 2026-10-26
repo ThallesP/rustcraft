@@ -18,6 +18,19 @@ impl BackendCreationException {
         }
     }
 
+    /// `BackendCreationException(message, reason, missingCapabilities)`.
+    pub fn with_missing_capabilities(
+        message: String,
+        reason: Reason,
+        missing_capabilities: Vec<String>,
+    ) -> BackendCreationException {
+        BackendCreationException {
+            message,
+            reason,
+            missing_capabilities,
+        }
+    }
+
     pub fn get_reason(&self) -> Reason {
         self.reason
     }

@@ -32,6 +32,7 @@ use crate::net::minecraft::client::renderer::texture::sprite_contents::{
 };
 use crate::net::minecraft::client::renderer::texture::sprite_loader::Preparations;
 use crate::net::minecraft::client::renderer::texture::texture_atlas_sprite::TextureAtlasSprite;
+use crate::net::minecraft::client::screenshot::Screenshot;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::util::mth::Mth;
 use std::cell::RefCell;
@@ -510,7 +511,7 @@ impl TextureAtlas {
                 * i64::from(texture.get_width(level))
                 * i64::from(texture.get_height(level));
         }
-        encoder.submit();
+        Screenshot::submit_until(encoder, || !images.borrow().is_empty());
         images.take()
     }
 

@@ -12,6 +12,20 @@ pub enum PrimitiveTopology {
     QUADS,
 }
 
+impl PrimitiveTopology {
+    /// `values()`.
+    pub const VALUES: [PrimitiveTopology; 8] = [
+        PrimitiveTopology::LINES,
+        PrimitiveTopology::DEBUG_LINES,
+        PrimitiveTopology::DEBUG_LINE_STRIP,
+        PrimitiveTopology::POINTS,
+        PrimitiveTopology::TRIANGLES,
+        PrimitiveTopology::TRIANGLE_STRIP,
+        PrimitiveTopology::TRIANGLE_FAN,
+        PrimitiveTopology::QUADS,
+    ];
+}
+
 use PrimitiveTopology::*;
 
 // Each constant's `primitiveLength`, `primitiveStride` and `connectedPrimitives`.

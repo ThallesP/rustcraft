@@ -35,6 +35,9 @@ python3 tools/port_client.py stall --accept-eula                  # the game thr
 python3 tools/oracle_client.py capture walk --accept-eula --gl-profile macos --out vanilla/26.3/oracle-gl41   # a Mac's OpenGL (below)
 python3 tools/port_client.py capture walk --accept-eula --gl-profile macos --out target/oracle-gl41
 cargo run -p oracle-diff -- dir --strict vanilla/26.3/oracle-gl41/walk target/oracle-gl41/walk
+python3 tools/oracle_client.py capture walk --accept-eula --backend vulkan --out vanilla/26.3/oracle-vulkan   # vanilla's Vulkan backend (below)
+python3 tools/port_client.py capture walk --accept-eula --backend vulkan --out target/oracle-vulkan
+cargo run -p oracle-diff -- dir --strict vanilla/26.3/oracle-vulkan/walk target/oracle-vulkan/walk
 ```
 
 Wrap the ones that start a server, a client or the proxy in `flock /tmp/rustcraft-oracle.lock`: they use fixed ports, and the machine is shared.
@@ -569,6 +572,14 @@ Both clients then log `4.1 (Core Profile) Mesa 26.0.8-1ubuntu0.3` and `GL_EXT_te
 
 Vanilla's runs under the profile are in `vanilla/26.3/oracle-gl41/`, recorded with `oracle_client.py capture <scenario> --accept-eula --gl-profile macos --out vanilla/26.3/oracle-gl41` (`walk-no-gui` and `walk`), and the port's in `target/oracle-gl41/` (`port_client.py capture <scenario> --accept-eula --gl-profile macos --out target/oracle-gl41`), compared with `oracle-diff dir --strict`. Vanilla's screenshots under the profile are its default ones, bit for bit: neither the depth range nor drawing the terrain a section at a time moves a pixel of these views. `tests/opengl_frame.rs` checks the device's lines on the profile, the walk's spawn view rendered offline under it, and the port's runs' screenshots, by vanilla's digests under the profile (`VANILLA_SCREENSHOTS_GL41`); CI's `frames` job records the port's two runs under it.
 
+## Backends: vanilla's Vulkan on lavapipe
+
+Vanilla 26.3 has a Vulkan backend of its own (`com/mojang/renderpearl/backend/vulkan/`), which `--graphicsBackend vulkan` picks (it falls back to OpenGL when Vulkan fails, so a run checks its log says `Using graphics backend Vulkan`). Both clients run it on Mesa's lavapipe under Xvfb, the Vulkan side of the same Mesa (`mesa-vulkan-drivers` 26.0.8-1ubuntu0.3, the loader `libvulkan1` 1.4.341), through SDL's `VK_KHR_xlib_surface`: `oracle_client.py --backend vulkan` passes the oracle client `-Poracle.backend=vulkan` (`oracle/client/build.gradle`), and `port_client.py --backend vulkan` the port `--graphicsBackend vulkan`, each with `VK_DRIVER_FILES` set to lavapipe's ICD. Vanilla's runs are in `vanilla/26.3/oracle-vulkan/` (`walk-no-gui`, `walk`), the port's in `target/oracle-vulkan/`, compared with `oracle-diff dir --strict`; the default references stay as they are.
+
+Vanilla's Vulkan frames are their own reference: they differ from its GL frames by the two drivers' rasterizers (`walk-no-gui`'s spawn in 5,441 pixels, by at most 2). On Vulkan a copy's callback isn't a fenced task but runs when the encoder's destruction queue comes round to the copy's submit again, two submits on, so the oracle client's screenshot submits (nothing) while it waits for the readback there (`OracleScreenshot`); its GL path is unchanged. Two vanilla runs of `walk-no-gui` on Vulkan (`check-determinism --capture --backend vulkan`) match; a first one differed from them by a `player_info_update`, the server's 601-tick latency update coming before the end of a run that took longer, so the reference is the first of the two (`oracle-determinism/a`).
+
+`tests/opengl_frame.rs` runs its checks on the Vulkan backend too (skipping where lavapipe isn't installed): the device's lines against vanilla's Vulkan log (`ORACLE_DEVICE_VULKAN` with `RUSTCRAFT_ORACLE_DRIVER=1`), every pipeline compiled from vanilla's SPIR-V, the cleared frames, the readback's orientation, the GUI fills, the walk's spawn view rendered offline, and the port's live runs' screenshots, by vanilla's Vulkan digests (`VANILLA_SCREENSHOTS_VULKAN`). CI's `frames` job installs lavapipe at the snapshot's version and records the port's two runs on it. `VulkanConst`'s tables have goldens (`VulkanSuites`: every enum constant, usage and write mask, 2,992 cases).
+
 ## Soak: the live client on a generated world
 
 The scenarios' worlds are flat, with few kinds of blocks. `port_client.py soak` joins the port's live client (headless, straight to the server, no proxy) to a fresh `vanilla_server.py` world of a preset (`--preset normal`, seed 0 unless `--seed`, structures on), and takes the player around it: the spawn, plains, a forest, a desert and the caves under it, an ocean, a village and the caves under the spawn, `--seconds-per-stop` at each (20 by default). Each place comes from the server's `locate`, and its chunks are force-loaded until generated before the player goes there, so every block state, block entity and biome the server sends there reaches the client's chunk handling, light, collisions and tints. It exits 1 if the client exits early, leaves the server (a panic while handling a packet disconnects), or logs a panic or code that isn't ported, printing those lines with their counts and the end of the log (`target/soak/client.log`), and 0 otherwise, with each stop and where the server has the player at its end. At the end it stops the server first, so the client is disconnected and exits on its own, printing the packets it skipped as `Unported` by type, which the report lists, the most first: what to port next.
@@ -626,8 +637,8 @@ Vanilla does work the port doesn't do yet, and the numbers include it: entities 
 
 ## Where outputs go
 
-- Vanilla runs: `vanilla/<version>/oracle/<scenario>/`, and under the macOS GL profile `vanilla/<version>/oracle-gl41/<scenario>/`
-- Port runs: `target/oracle/<scenario>/`, and under the profile `target/oracle-gl41/<scenario>/`
+- Vanilla runs: `vanilla/<version>/oracle/<scenario>/`, under the macOS GL profile `vanilla/<version>/oracle-gl41/<scenario>/`, on Vulkan `vanilla/<version>/oracle-vulkan/<scenario>/`
+- Port runs: `target/oracle/<scenario>/`, under the profile `target/oracle-gl41/<scenario>/`, on Vulkan `target/oracle-vulkan/<scenario>/`
 - The soak's client log: `target/soak/client.log`, which ends with the packets the client skipped as `Unported` (`Unported packet minecraft:…: N`), the soak's report listing them, the most first, the stall test's `target/stall/client.log`
 
 `oracle-diff dir A B` compares the trace, the capture and every screenshot that both directories have. Running vanilla twice and diffing the runs (`check-determinism`) checks that the oracle itself is deterministic. It has to be, or no comparison means anything.

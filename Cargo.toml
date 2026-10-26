@@ -9,6 +9,7 @@ description = "Minecraft Java Edition client, ported to Rust"
 publish = false
 
 [dependencies]
+ash = { version = "0.38", default-features = false, features = ["std", "debug"] }
 flate2 = "1"
 glow = "0.17"
 libc = "0.2"

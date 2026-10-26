@@ -26,6 +26,16 @@ pub enum PresentMode {
 }
 
 impl PresentMode {
+    /// `values()`.
+    pub const VALUES: [PresentMode; 4] = [
+        PresentMode::IMMEDIATE,
+        PresentMode::MAILBOX,
+        PresentMode::FIFO,
+        PresentMode::FIFO_RELAXED,
+    ];
+}
+
+impl PresentMode {
     const PRESENT_MODES_VSYNC: [PresentMode; 1] = [PresentMode::FIFO];
     const PRESENT_MODES_NO_VSYNC: [PresentMode; 3] = [
         PresentMode::IMMEDIATE,

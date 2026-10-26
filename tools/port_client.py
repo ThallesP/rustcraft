@@ -53,6 +53,13 @@ vanilla's run under the same profile:
     flock /tmp/rustcraft-oracle.lock python3 tools/port_client.py capture walk --accept-eula --gl-profile macos --out target/oracle-gl41
     cargo run -p oracle-diff -- dir --strict vanilla/26.3/oracle-gl41/walk target/oracle-gl41/walk
 
+`--backend vulkan` runs the port on its Vulkan backend (`--graphicsBackend vulkan`) on Mesa's
+lavapipe, like `oracle_client.py --backend vulkan`, to compare with vanilla's Vulkan run
+(TESTING.md, "Backends"):
+
+    flock /tmp/rustcraft-oracle.lock python3 tools/port_client.py capture walk --accept-eula --backend vulkan --out target/oracle-vulkan
+    cargo run -p oracle-diff -- dir --strict vanilla/26.3/oracle-vulkan/walk target/oracle-vulkan/walk
+
 `RUSTCRAFT_BINARY=path` runs that build of the port instead of building the tree's, so a long check
 can run on a build while the tree changes.
 
@@ -81,7 +88,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import oracle_client  # noqa: E402
 import vanilla_server  # noqa: E402
 from oracle_client import (  # noqa: E402
-    FELL_BEHIND, GL_PROFILES, PROXY_PORT, SERVER_PORT, VERSION_DIR, again_if_behind, fell_behind, resolve_scenario, wait_for_line,
+    BACKENDS, FELL_BEHIND, GL_PROFILES, LAVAPIPE_ICD, PROXY_PORT, SERVER_PORT, VERSION_DIR, again_if_behind, fell_behind, resolve_scenario, wait_for_line,
 )
 from vanilla_server import OP_NAME  # noqa: E402
 
@@ -130,7 +137,7 @@ def has_screenshots(scenario):
     return any("screenshot" in step for step in json.loads(Path(scenario).read_text())["steps"])
 
 
-def run(scenario, out_dir, server, ping=False, gl_profile=None):
+def run(scenario, out_dir, server, ping=False, gl_profile=None, backend="opengl"):
     """Replays the scenario in the port, joining `server`, or pings it with `ping`."""
     scenario_out = out_dir / (f"{scenario.stem}-ping" if ping else scenario.stem)
     shutil.rmtree(scenario_out, ignore_errors=True)
@@ -138,7 +145,7 @@ def run(scenario, out_dir, server, ping=False, gl_profile=None):
 
     command = [
         PORT_BINARY, "--quickPlayMultiplayer", server, "--username", "rustcraft", "--headless",
-        "--oracleScenario", scenario, "--oracleOut", out_dir,
+        "--oracleScenario", scenario, "--oracleOut", out_dir, "--graphicsBackend", backend,
     ]
     env = dict(os.environ)
     if ping:
@@ -148,6 +155,7 @@ def run(scenario, out_dir, server, ping=False, gl_profile=None):
         # (tests/opengl_frame.rs runs the same way).
         command = ["xvfb-run", "-a", *command]
         env.update(LIBGL_ALWAYS_SOFTWARE="1", GALLIUM_DRIVER="llvmpipe", SDL_VIDEO_DRIVER="x11")
+        env.update(VK_DRIVER_FILES=str(LAVAPIPE_ICD), VK_ICD_FILENAMES=str(LAVAPIPE_ICD))
         if gl_profile is not None:
             env.update(GL_PROFILES[gl_profile])
     log_path = scenario_out / "client.log"
@@ -162,15 +170,17 @@ def run(scenario, out_dir, server, ping=False, gl_profile=None):
     return scenario_out
 
 
-def capture(scenario, out_dir, accept_eula, compression_threshold, ping=False, gl_profile=None):
+def capture(scenario, out_dir, accept_eula, compression_threshold, ping=False, gl_profile=None, backend="opengl"):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run,
     again if a paced run fell behind the server's ticks."""
     build_port()
     subprocess.run(["cargo", "build", "--quiet", "-p", "packet-proxy"], cwd=ROOT, check=True)
-    return again_if_behind(lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping, gl_profile))
+    return again_if_behind(
+        lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping, gl_profile, backend)
+    )
 
 
-def capture_once(scenario, out_dir, accept_eula, compression_threshold, ping=False, gl_profile=None):
+def capture_once(scenario, out_dir, accept_eula, compression_threshold, ping=False, gl_profile=None, backend="opengl"):
     """One run of `capture`."""
     logs = Path(tempfile.mkdtemp(prefix=f"port-{scenario.stem}-"))
     seed = json.loads(scenario.read_text())["world"]["seed"]
@@ -194,7 +204,7 @@ def capture_once(scenario, out_dir, accept_eula, compression_threshold, ping=Fal
         wait_for_line(logs / "proxy.log", "capturing to", proxy)
 
         try:
-            scenario_out = run(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", ping, gl_profile)
+            scenario_out = run(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", ping, gl_profile, backend)
         except SystemExit:
             # Why the connection ended is often only in the server's or the proxy's log.
             for name in ("server.log", "proxy.log"):
@@ -678,6 +688,7 @@ def main():
     capture_parser.add_argument("--compression-threshold", type=int, help="turn the server's compression on, from this packet size")
     capture_parser.add_argument("--ping", action="store_true", help="ping the server like the server list does (--ping) instead of joining it")
     capture_parser.add_argument("--gl-profile", choices=sorted(GL_PROFILES), help="render on llvmpipe restricted to a profile's OpenGL (TESTING.md)")
+    capture_parser.add_argument("--backend", choices=BACKENDS, default="opengl", help="the port's graphics backend (default: opengl; TESTING.md)")
     check_parser = commands.add_parser("check-join", help="capture the port's run and compare its join phase with vanilla's (gate 1)")
     check_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     check_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
@@ -703,7 +714,7 @@ def main():
         return
     scenario = resolve_scenario(args.scenario)
     if args.command == "capture":
-        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping, args.gl_profile)
+        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping, args.gl_profile, args.backend)
     elif not check_join(scenario, args.accept_eula, args.compression_threshold):
         raise SystemExit(1)
 

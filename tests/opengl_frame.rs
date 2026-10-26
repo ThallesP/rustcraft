@@ -11,7 +11,9 @@
 //! or live run missing fails the test.
 //!
 //! The same checks run on the macOS GL profile (`oracle/gl-profiles.json`, TESTING.md's "GL
-//! profiles"): llvmpipe restricted to Apple's OpenGL 4.1, against vanilla's run under it.
+//! profiles"): llvmpipe restricted to Apple's OpenGL 4.1, against vanilla's run under it. And on
+//! the Vulkan backend (`--graphicsBackend vulkan`) on Mesa's lavapipe, against vanilla's own
+//! Vulkan backend's run there (TESTING.md's "Backends").
 
 use md5::{Digest, Md5};
 use std::path::{Path, PathBuf};
@@ -39,6 +41,22 @@ const ORACLE_DEVICE_GL41: [&str; 3] = [
     "device: llvmpipe (LLVM 21.1.8, 256 bits) (Mesa)",
     "device extensions: GL_EXT_texture_filter_anisotropic",
 ];
+
+/// What vanilla's Vulkan backend logged on the oracle's lavapipe
+/// (`vanilla/26.3/oracle-vulkan/*/client.log`): the extensions the instance (I) and the device (D)
+/// were made with, in their `HashSet`'s order.
+const ORACLE_DEVICE_VULKAN: [&str; 3] = [
+    "backend Vulkan, using drivers: 1.4.335 llvmpipe Mesa 26.0.8-1ubuntu0.3 (LLVM 21.1.8)",
+    "device: llvmpipe (LLVM 21.1.8, 256 bits) (0x10005)",
+    "device extensions: VK_EXT_calibrated_timestamps (D), VK_KHR_synchronization2 (D), \
+     VK_EXT_multi_draw (D), VK_EXT_vertex_attribute_divisor (D), VK_KHR_swapchain (D), \
+     VK_KHR_surface (I), VK_KHR_push_descriptor (D), VK_KHR_xlib_surface (I), VK_EXT_debug_utils (I), \
+     VK_KHR_dynamic_rendering (D)",
+];
+/// The binary's arguments for its Vulkan backend.
+const VULKAN: &[&str] = &["--graphicsBackend", "vulkan"];
+/// Mesa's lavapipe, the Vulkan driver `tools/oracle_client.py` runs vanilla on.
+const LAVAPIPE_ICD: &str = "/usr/share/vulkan/icd.d/lvp_icd.json";
 
 /// Whether every pixel check must run here: `RUSTCRAFT_ORACLE_DRIVER=1`.
 fn strict() -> bool {
@@ -91,6 +109,10 @@ fn run_on(arguments: &[&str], gl_profile: Option<&str>) -> Option<String> {
         skip("no xvfb-run (sudo apt install xvfb)");
         return None;
     }
+    if arguments.contains(&"vulkan") && !Path::new(LAVAPIPE_ICD).exists() {
+        skip("no lavapipe (sudo apt install mesa-vulkan-drivers)");
+        return None;
+    }
     let output = Command::new("xvfb-run")
         .args(["-a", "-s", "-screen 0 1920x1080x24 -nolisten tcp", BINARY])
         .args(arguments)
@@ -99,6 +121,8 @@ fn run_on(arguments: &[&str], gl_profile: Option<&str>) -> Option<String> {
         .env("LIBGL_ALWAYS_SOFTWARE", "1")
         .env("GALLIUM_DRIVER", "llvmpipe")
         .env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
+        .env("VK_DRIVER_FILES", LAVAPIPE_ICD)
+        .env("VK_ICD_FILENAMES", LAVAPIPE_ICD)
         .envs(gl_profile.map(gl_profile_env).unwrap_or_default())
         .output()
         .expect("runs xvfb-run");
@@ -214,11 +238,56 @@ fn makes_the_device_vanilla_makes_on_the_macos_gl_profile() {
     }
 }
 
+/// The Vulkan device as vanilla's Vulkan backend makes it on lavapipe: its lines as vanilla's log
+/// of its run there has them when this machine has one, the lines it logged on the oracle's
+/// driver with `RUSTCRAFT_ORACLE_DRIVER=1`; depth from 0 to 1 and the shader draw parameters,
+/// whatever the driver.
+#[test]
+fn makes_the_device_vanilla_makes_on_vulkan() {
+    let Some(output) = run(&["--device-info", VULKAN[0], VULKAN[1]]) else {
+        return;
+    };
+    let lines: Vec<&str> = output.lines().collect();
+    assert!(
+        lines[0].starts_with("Using graphics backend Vulkan"),
+        "not Vulkan: {output}"
+    );
+    assert_eq!(
+        lines[3],
+        "isZZeroToOne: true, shaderDrawParameters: true, isExplicitDepthRequired: false"
+    );
+    let port: Vec<&str> = lines[..3]
+        .iter()
+        .map(|line| line.strip_prefix("Using graphics ").expect("a device line"))
+        .collect();
+    let log = vanilla_dir("oracle-vulkan").join("walk/client.log");
+    if let Some(vanilla) = vanilla_device(&log) {
+        assert_eq!(port, vanilla);
+    } else if strict() {
+        assert_eq!(port, ORACLE_DEVICE_VULKAN);
+    } else {
+        eprintln!(
+            "no oracle client log at {}: checked the flags only",
+            log.display()
+        );
+    }
+}
+
 /// Every pipeline `ShaderManager.reload` compiles at startup, the required ones and the
 /// optional ones, compiles and links on llvmpipe from the GLSL vanilla hands the driver.
 #[test]
 fn compiles_every_pipeline_vanilla_compiles() {
-    let Some(output) = run(&["--compile-pipelines"]) else {
+    compiles_every_pipeline_vanilla_compiles_on(&[]);
+}
+
+/// The same on Vulkan, from the SPIR-V itself.
+#[test]
+fn compiles_every_pipeline_vanilla_compiles_on_vulkan() {
+    compiles_every_pipeline_vanilla_compiles_on(VULKAN);
+}
+
+fn compiles_every_pipeline_vanilla_compiles_on(backend: &[&str]) {
+    let Some(output) = run(&[&["--compile-pipelines"], backend].concat()) else {
         return;
     };
     assert_eq!(output.trim(), "compiled 192 of 192 pipelines");
@@ -256,8 +325,19 @@ fn screenshot_on(
 /// pixel the clear color with its alpha made opaque.
 #[test]
 fn reads_back_a_cleared_frame_like_vanillas_screenshots() {
+    reads_back_a_cleared_frame_on("", &[]);
+}
+
+#[test]
+fn reads_back_a_cleared_frame_like_vanillas_screenshots_on_vulkan() {
+    reads_back_a_cleared_frame_on("vulkan-", VULKAN);
+}
+
+fn reads_back_a_cleared_frame_on(prefix: &str, backend: &[&str]) {
     // GuiRenderState.clearColorOverride's default, transparent black.
-    let Some((width, height, color_type, pixels)) = screenshot("default-clear.png", &[]) else {
+    let Some((width, height, color_type, pixels)) =
+        screenshot(&format!("{prefix}default-clear.png"), backend)
+    else {
         return;
     };
     assert_eq!(
@@ -275,8 +355,8 @@ fn reads_back_a_cleared_frame_like_vanillas_screenshots() {
     // The loading overlay's brand background (LoadingOverlay.LOGO_BACKGROUND_COLOR), at a size
     // whose rows aren't a multiple of 8 pixels.
     let (width, height, _, pixels) = screenshot(
-        "brand-clear.png",
-        &["--size", "427x241", "--clear", "FFEF323D"],
+        &format!("{prefix}brand-clear.png"),
+        &[&["--size", "427x241", "--clear", "FFEF323D"], backend].concat(),
     )
     .expect("ran before");
     assert_eq!((width, height), (427, 241));
@@ -293,9 +373,19 @@ fn reads_back_a_cleared_frame_like_vanillas_screenshots() {
 /// readback's flip puts at the image's lower left, as vanilla's screenshots show GL's frames.
 #[test]
 fn reads_back_frames_the_right_way_up() {
+    reads_back_frames_the_right_way_up_on("", &[]);
+}
+
+/// On Vulkan, whose framebuffer's first row is the render area's origin's too: the same image.
+#[test]
+fn reads_back_frames_the_right_way_up_on_vulkan() {
+    reads_back_frames_the_right_way_up_on("vulkan-", VULKAN);
+}
+
+fn reads_back_frames_the_right_way_up_on(prefix: &str, backend: &[&str]) {
     let Some((width, height, _, pixels)) = screenshot(
-        "quadrant.png",
-        &["--size", "320x240", "--quadrant", "FF0000FF"],
+        &format!("{prefix}quadrant.png"),
+        &[&["--size", "320x240", "--quadrant", "FF0000FF"], backend].concat(),
     ) else {
         return;
     };
@@ -321,6 +411,15 @@ fn reads_back_frames_the_right_way_up() {
 /// Later fills cover earlier ones, as `GuiRenderer` draws them in order.
 #[test]
 fn draws_gui_fills_exactly() {
+    draws_gui_fills_exactly_on("", &[]);
+}
+
+#[test]
+fn draws_gui_fills_exactly_on_vulkan() {
+    draws_gui_fills_exactly_on("vulkan-", VULKAN);
+}
+
+fn draws_gui_fills_exactly_on(prefix: &str, backend: &[&str]) {
     // In GUI pixels at scale 2, as GuiGraphicsExtractor.fill takes them: the second fill's corners
     // come the other way round, which fill swaps, and the last is transparent over everything.
     let fills = [
@@ -338,7 +437,10 @@ fn draws_gui_fills_exactly() {
         arguments.push("--fill");
         arguments.push(fill);
     }
-    let Some((width, height, _, pixels)) = screenshot("gui-fills.png", &arguments) else {
+    arguments.extend_from_slice(backend);
+    let Some((width, height, _, pixels)) =
+        screenshot(&format!("{prefix}gui-fills.png"), &arguments)
+    else {
         return;
     };
     assert_eq!((width, height), (320, 240));
@@ -552,14 +654,36 @@ fn renders_the_walks_spawn_view_like_vanilla_after_a_resize() {
 /// (`DrawSeparate`) with depth from -1 to 1: vanilla's under the profile.
 #[test]
 fn renders_the_walks_spawn_view_like_vanilla_on_the_macos_gl_profile() {
-    render_the_walks_spawn_view_on("walk-spawn-gl41.png", &[], Some("macos"));
+    render_the_walks_spawn_view_on(
+        "walk-spawn-gl41.png",
+        &[],
+        Some("macos"),
+        VANILLA_SCREENSHOTS_GL41,
+    );
+}
+
+/// The same view on Vulkan: vanilla's Vulkan backend's on lavapipe, which differs from its GL
+/// frame in a few thousand pixels by at most 2, the two drivers' rasterizers' own.
+#[test]
+fn renders_the_walks_spawn_view_like_vanilla_on_vulkan() {
+    render_the_walks_spawn_view_on(
+        "walk-spawn-vulkan.png",
+        VULKAN,
+        None,
+        VANILLA_SCREENSHOTS_VULKAN,
+    );
 }
 
 fn render_the_walks_spawn_view(name: &str, more_arguments: &[&str]) {
-    render_the_walks_spawn_view_on(name, more_arguments, None);
+    render_the_walks_spawn_view_on(name, more_arguments, None, VANILLA_SCREENSHOTS);
 }
 
-fn render_the_walks_spawn_view_on(name: &str, more_arguments: &[&str], gl_profile: Option<&str>) {
+fn render_the_walks_spawn_view_on(
+    name: &str,
+    more_arguments: &[&str],
+    gl_profile: Option<&str>,
+    screenshots: &'static [(&str, &str, &str)],
+) {
     let capture = [
         std::env::var("RUSTCRAFT_CHUNK_CAPTURE")
             .ok()
@@ -590,10 +714,6 @@ fn render_the_walks_spawn_view_on(name: &str, more_arguments: &[&str], gl_profil
         (854, 480, png::ColorType::Rgba)
     );
     if on_oracle_driver() {
-        let screenshots = match gl_profile {
-            None => VANILLA_SCREENSHOTS,
-            Some(_) => VANILLA_SCREENSHOTS_GL41,
-        };
         assert_eq!(
             rgba_digest(&pixels),
             vanilla_screenshot(screenshots, "walk-no-gui", "spawn")
@@ -608,6 +728,30 @@ fn render_the_walks_spawn_view_on(name: &str, more_arguments: &[&str], gl_profil
 #[test]
 fn takes_vanillas_screenshots_on_a_server() {
     takes_vanillas_screenshots("oracle", "", VANILLA_SCREENSHOTS);
+}
+
+/// Vanilla's Vulkan backend's screenshots on lavapipe (`vanilla/26.3/oracle-vulkan/`), by their
+/// digests.
+const VANILLA_SCREENSHOTS_VULKAN: &[(&str, &str, &str)] = &[
+    ("walk-no-gui", "spawn", "a76d6cc27f4c9454c4115d8f7d18cdc7"),
+    (
+        "walk-no-gui",
+        "after-walk",
+        "1e44d5e7883bc2e31ceeb6b6bd640c38",
+    ),
+    ("walk", "spawn", "36d810d13206383ad289d6e70121d162"),
+    ("walk", "after-walk", "b4d56f324f59f09a8654e66c429f54d0"),
+];
+
+/// The port's runs on Vulkan (`tools/port_client.py capture <scenario> --backend vulkan --out
+/// target/oracle-vulkan`) against vanilla's Vulkan runs.
+#[test]
+fn takes_vanillas_screenshots_on_a_server_on_vulkan() {
+    takes_vanillas_screenshots(
+        "oracle-vulkan",
+        " --backend vulkan --out target/oracle-vulkan",
+        VANILLA_SCREENSHOTS_VULKAN,
+    );
 }
 
 /// Vanilla's screenshots on the macOS GL profile (`vanilla/26.3/oracle-gl41/`), by their digests:

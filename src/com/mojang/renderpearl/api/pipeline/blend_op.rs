@@ -8,3 +8,14 @@ pub enum BlendOp {
     MIN,
     MAX,
 }
+
+impl BlendOp {
+    /// `values()`.
+    pub const VALUES: [BlendOp; 5] = [
+        BlendOp::ADD,
+        BlendOp::SUBTRACT,
+        BlendOp::REVERSE_SUBTRACT,
+        BlendOp::MIN,
+        BlendOp::MAX,
+    ];
+}

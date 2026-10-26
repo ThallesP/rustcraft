@@ -10,9 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Xvfb and Mesa's llvmpipe (GLX and EGL), which tests/opengl_frame.rs renders with, like the oracle client; gdb for the
-      # stall check's thread dump when the client hangs.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 gdb
+      # Xvfb and Mesa's llvmpipe (GLX and EGL), which tests/opengl_frame.rs renders with, like the oracle client, and its
+      # lavapipe with the Vulkan loader for the Vulkan backend's; gdb for the stall check's thread dump when the client hangs.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 mesa-vulkan-drivers libvulkan1 gdb
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -72,8 +72,8 @@ jobs:
           SDL_VIDEO_FORCE_EGL: "1"
 
   # The frames' pixels, on the driver vanilla's screenshots were taken on: Ubuntu 26.04 with Mesa 26.0.8-1ubuntu0.3's
-  # llvmpipe on LLVM 21.1.8 (TESTING.md, "Screenshots"). Ubuntu's archive is read as snapshot.ubuntu.com froze it on
-  # 2026-10-23, and the packages that render are pinned to the oracle machine's versions, so a later Mesa in the archive
+  # llvmpipe on LLVM 21.1.8, and its lavapipe for the Vulkan backend's (TESTING.md, "Screenshots", "Backends"). Ubuntu's
+  # archive is read as snapshot.ubuntu.com froze it on 2026-10-23, and the packages that render are pinned to the oracle machine's versions, so a later Mesa in the archive
   # changes nothing here. RUSTCRAFT_ORACLE_DRIVER=1 makes tests/opengl_frame.rs check every digest it has, failing
   # where it can't: the offline spawn view, and the screenshots of the port's live runs below.
   frames:
@@ -92,7 +92,7 @@ jobs:
           apt-get install -y --no-install-recommends --snapshot "$SNAPSHOT" \
             git curl gcc libc6-dev python3 zstd xauth xvfb=2:21.1.22-1ubuntu1.3 libgl1 libegl1 \
             mesa-libgallium="$MESA" libgl1-mesa-dri="$MESA" libglx-mesa0="$MESA" libegl-mesa0="$MESA" \
-            libgbm1="$MESA" libllvm21=1:21.1.8-6ubuntu1
+            libgbm1="$MESA" libllvm21=1:21.1.8-6ubuntu1 mesa-vulkan-drivers="$MESA" libvulkan1=1.4.341.0-1
         env:
           DEBIAN_FRONTEND: noninteractive
       - uses: actions/checkout@v7
@@ -117,6 +117,11 @@ jobs:
           for scenario in walk-no-gui walk; do
             python3 tools/port_client.py capture "$scenario" --accept-eula --gl-profile macos --out target/oracle-gl41
           done
+      # And on the Vulkan backend on lavapipe, checked against vanilla's Vulkan backend's runs (TESTING.md, "Backends").
+      - run: |
+          for scenario in walk-no-gui walk; do
+            python3 tools/port_client.py capture "$scenario" --accept-eula --backend vulkan --out target/oracle-vulkan
+          done
       - run: cargo test --release --test opengl_frame
         env:
           RUSTCRAFT_CHUNK_CAPTURE: ${{ github.workspace }}/target/oracle/walk-no-gui/capture.jsonl
@@ -128,3 +133,4 @@ jobs:
           path: |
             target/oracle
             target/oracle-gl41
+            target/oracle-vulkan

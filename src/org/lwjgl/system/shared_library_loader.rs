@@ -288,11 +288,12 @@ mod tests {
     }
 
     /// The libraries the port loads, by module and name, as their bindings name them.
-    const LIBRARIES: [(&str, &str); 4] = [
+    const LIBRARIES: [(&str, &str); 5] = [
         ("shaderc", "shaderc"),
         ("spvc", "spirv-cross"),
         ("sdl", "SDL3"),
         ("stb", "lwjgl_stb"),
+        ("vma", "lwjgl_vma"),
     ];
 
     #[test]
@@ -308,7 +309,8 @@ mod tests {
     /// `setup_vanilla.py --natives macos-arm64 --natives macos` fetches them and writes their
     /// classpaths, which CI does. The entries are the jars' (`unzip -l`), and each is a 64-bit
     /// Mach-O dylib for its architecture, the Apple Silicon ones signed, since a Mac on ARM only
-    /// runs signed code. Nothing is loaded.
+    /// runs signed code. Nothing is loaded. With them, the Vulkan loader LWJGL loads on a Mac:
+    /// MoltenVK, from `lwjgl-vulkan`'s natives.
     #[test]
     fn finds_each_library_in_the_natives_jars_of_macos() {
         const CPU_TYPE_X86_64: u32 = 0x0100_0007;
@@ -334,11 +336,14 @@ mod tests {
             }
             let classpath = read_classpath(&file).unwrap();
             let arch = architecture.lower_case_name();
-            for ((module, name), entry_name) in LIBRARIES.into_iter().zip([
+            let libraries = LIBRARIES.into_iter().chain([("vulkan", "MoltenVK")]);
+            for ((module, name), entry_name) in libraries.zip([
                 format!("macos/{arch}/org/lwjgl/shaderc/libshaderc.dylib"),
                 format!("macos/{arch}/org/lwjgl/spvc/libspirv-cross.dylib"),
                 format!("macos/{arch}/org/lwjgl/sdl/libSDL3.dylib"),
                 format!("macos/{arch}/org/lwjgl/stb/liblwjgl_stb.dylib"),
+                format!("macos/{arch}/org/lwjgl/vma/liblwjgl_vma.dylib"),
+                format!("macos/{arch}/org/lwjgl/vulkan/libMoltenVK.dylib"),
             ]) {
                 let bundled =
                     find_bundled(&classpath, Platform::MACOSX, architecture, module, name).unwrap();
