@@ -76,8 +76,7 @@ use crate::net::minecraft::client::renderer::extract::level_extractor::LevelExtr
 use crate::net::minecraft::client::resources::sounds::entity_bound_sound_instance::EntityBoundSoundInstance;
 use crate::net::minecraft::client::resources::sounds::simple_sound_instance::SimpleSoundInstance;
 use crate::net::minecraft::client::sounds::sound_manager::{SoundInstance, SoundManager};
-use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::core::block_pos::MutableBlockPos;
+use crate::net::minecraft::core::block_pos::{BlockPos, MutableBlockPos};
 use crate::net::minecraft::core::cursor3d::Cursor3D;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::holder::Holder;
@@ -107,8 +106,7 @@ use crate::net::minecraft::world::attribute::environment_attribute_system::Envir
 use crate::net::minecraft::world::attribute::environment_attributes::EnvironmentAttributes;
 use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
 use crate::net::minecraft::world::entity::mover_type::MoverType;
-use crate::net::minecraft::world::level::biome::biome::Biome;
-use crate::net::minecraft::world::level::biome::biome::Precipitation;
+use crate::net::minecraft::world::level::biome::biome::{Biome, Precipitation};
 use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
 use crate::net::minecraft::world::level::biome::biome_resolver::BiomeResolver;
 use crate::net::minecraft::world::level::biome::biomes::Biomes;
@@ -139,6 +137,7 @@ use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLigh
 use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::push_reaction::PushReaction;
+use crate::net::minecraft::world::level::redstone::collecting_neighbor_updater::CollectingNeighborUpdater;
 use crate::net::minecraft::world::level::storage::level_data::RespawnData;
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
@@ -188,6 +187,8 @@ pub struct ClientLevel {
     /// `Level.blockEntityTickers` and the pending ones, which the chunks add to, and
     /// `levelData`'s game time, which they read.
     block_entity_tickers: Rc<SharedLevelState>,
+    /// `Level.neighborUpdater`, with the client's limit of chained updates.
+    neighbor_updater: CollectingNeighborUpdater,
 }
 
 /// The player as a block entity's ticker finds it among the level's entities (Java's
@@ -750,6 +751,7 @@ impl ClientLevel {
             ticking_entities: EntityTickList::new(),
             level_extractor,
             block_entity_tickers,
+            neighbor_updater: CollectingNeighborUpdater::new(1000000),
         }
     }
 
@@ -1543,13 +1545,15 @@ impl ClientLevel {
 
     /// `Level.setBlock`: whether the chunk took the state, and the renderer told of the change
     /// (`setBlocksDirty`, and `sendBlockUpdated` with `Block.UPDATE_CLIENTS` but not
-    /// `UPDATE_INVISIBLE`). The neighbour and shape updates aren't ported.
+    /// `UPDATE_INVISIBLE`), and unless the shape is known (`UPDATE_KNOWN_SHAPE`) the neighbours'
+    /// shapes updated. `UPDATE_NEIGHBORS`' `updateNeighborsAt` and `updatePOIOnBlockStateChange`
+    /// do nothing on the client.
     pub fn set_block(
         &mut self,
         pos: &BlockPos,
         block_state: BlockState,
         update_flags: i32,
-        _update_limit: i32,
+        update_limit: i32,
     ) -> bool {
         if !self.is_in_valid_bounds(pos) {
             return false;
@@ -1578,8 +1582,58 @@ impl ClientLevel {
             if (update_flags & 2) != 0 && (update_flags & 4) == 0 {
                 self.send_block_updated(pos, old_state, block_state, update_flags);
             }
+
+            if (update_flags & 16) == 0 && update_limit > 0 {
+                let neighbour_update_flags = update_flags & -34;
+                old_state.update_indirect_neighbour_shapes(
+                    self,
+                    pos,
+                    neighbour_update_flags,
+                    update_limit - 1,
+                );
+                block_state.update_neighbour_shapes(
+                    self,
+                    pos,
+                    neighbour_update_flags,
+                    update_limit - 1,
+                );
+                block_state.update_indirect_neighbour_shapes(
+                    self,
+                    pos,
+                    neighbour_update_flags,
+                    update_limit - 1,
+                );
+            }
         }
         true
+    }
+
+    /// `Level.neighborUpdater`.
+    pub fn neighbor_updater(&self) -> &CollectingNeighborUpdater {
+        &self.neighbor_updater
+    }
+
+    /// `neighborShapeChanged(direction, pos, neighborPos, neighborState, updateFlags,
+    /// updateLimit)`: the block at `pos` told its neighbour that way is now `neighbor_state`,
+    /// through the neighbour updater.
+    pub fn neighbor_shape_changed(
+        &mut self,
+        direction: Direction,
+        pos: &BlockPos,
+        neighbor_pos: &BlockPos,
+        neighbor_state: BlockState,
+        update_flags: i32,
+        update_limit: i32,
+    ) {
+        CollectingNeighborUpdater::shape_update(
+            self,
+            direction,
+            neighbor_state,
+            pos,
+            neighbor_pos,
+            update_flags,
+            update_limit,
+        );
     }
 
     /// `Level.removeBlock(pos, movedByPiston)`: the block there replaced by its fluid alone, with

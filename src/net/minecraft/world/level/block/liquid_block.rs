@@ -13,11 +13,11 @@
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
-use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
-use crate::net::minecraft::world::level::block::state::block_behaviour::RenderShape;
+use crate::net::minecraft::world::level::block::state::block_behaviour::{Properties, RenderShape};
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
@@ -35,6 +35,7 @@ pub struct LiquidBlock {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(LiquidBlock::update_shape),
     skip_rendering: Some(LiquidBlock::skip_rendering),
     get_render_shape: Some(LiquidBlock::get_render_shape),
     propagates_skylight_down: Some(LiquidBlock::propagates_skylight_down),
@@ -164,5 +165,33 @@ impl LiquidBlock {
 
     fn get_render_shape(_block: &BlockData, _state: BlockState) -> RenderShape {
         RenderShape::INVISIBLE
+    }
+}
+
+impl LiquidBlock {
+    /// `updateShape`: its parent's. The ticks it schedules (its fluid's, and a bubble column's
+    /// below) go nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

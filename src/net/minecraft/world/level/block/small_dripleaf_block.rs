@@ -8,9 +8,10 @@
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::double_plant_block::{self, DoublePlantBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
@@ -21,6 +22,7 @@ use crate::net::minecraft::world::level::block::state::properties::double_block_
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block::vegetation_block::VegetationBlock;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
@@ -31,6 +33,9 @@ use std::sync::LazyLock;
 pub struct SmallDripleafBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    can_survive: Some(SmallDripleafBlock::can_survive),
+    may_place_on: Some(SmallDripleafBlock::may_place_on),
+    update_shape: Some(SmallDripleafBlock::update_shape),
     get_shape: Some(SmallDripleafBlock::get_shape),
     get_max_vertical_offset: Some(SmallDripleafBlock::get_max_vertical_offset),
     get_fluid_state: Some(SmallDripleafBlock::get_fluid_state),
@@ -104,5 +109,69 @@ impl SmallDripleafBlock {
 
     fn get_max_vertical_offset(_block: &BlockData) -> f32 {
         0.1
+    }
+}
+
+impl SmallDripleafBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
+    }
+}
+
+impl SmallDripleafBlock {
+    /// `mayPlaceOn`: on what supports small dripleaf, or under still water where its parent's would
+    /// stand.
+    fn may_place_on(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_SMALL_DRIPLEAF)
+            || level
+                .get_fluid_state(&pos.above())
+                .is_source_of_type(Fluids::WATER)
+                && VegetationBlock::super_may_place_on(block, &CLASS, state, level, pos)
+    }
+}
+
+impl SmallDripleafBlock {
+    /// `canSurvive`: the upper half as its parent has it; the lower half on what it may be
+    /// placed on.
+    fn can_survive(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        if state.get_value(DoublePlantBlock::HALF) == DoubleBlockHalf::UPPER {
+            return VegetationBlock::super_can_survive(block, &CLASS, state, level, pos);
+        }
+
+        let below_pos = pos.below();
+        let below_state = level.get_block_state(&below_pos);
+        VegetationBlock::may_place_on(block, below_state, level, &below_pos)
     }
 }

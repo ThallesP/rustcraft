@@ -3,13 +3,14 @@
 //! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
 //! of its behaviour.
 //!
-//! Of its behaviour, its shape (a dot, with lines toward its sides and up the ones it climbs), and
-//! its specks (`animateTick`) are ported.
+//! Of its behaviour, its shape (a dot, with lines toward its sides and up the ones it climbs), its
+//! specks (`animateTick`), and its connections (`updateShape`, `updateIndirectNeighbourShapes`,
+//! `getConnectionState`, `canSurvive`) are ported. Its power (`updatePowerStrength`, its
+//! evaluators, its signals) is the server's.
 
-use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
+use crate::net::minecraft::client::multiplayer::client_level::{ClientLevel, LevelWithEffects};
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::core::direction::Direction;
-use crate::net::minecraft::core::direction::Plane;
+use crate::net::minecraft::core::direction::{Direction, Plane};
 use crate::net::minecraft::core::particles::dust_particle_options::DustParticleOptions;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::mth::Mth;
@@ -17,6 +18,7 @@ use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
@@ -25,6 +27,7 @@ use crate::net::minecraft::world::level::block::state::properties::integer_prope
 use crate::net::minecraft::world::level::block::state::properties::redstone_side::RedstoneSide;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block::trap_door_block;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::phys::shapes::collision_context::CollisionContext;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
@@ -34,9 +37,16 @@ use std::sync::LazyLock;
 pub struct RedstoneWireBlock {
     /// `shapes`, by state index.
     shapes: Vec<VoxelShape>,
+    /// `crossState`: unpowered, a side each way.
+    cross_state: BlockState,
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(RedstoneWireBlock::update_shape),
+    update_indirect_neighbour_shapes: Some(RedstoneWireBlock::update_indirect_neighbour_shapes),
+    can_survive: Some(RedstoneWireBlock::can_survive),
+    is_signal_source: Some(RedstoneWireBlock::is_signal_source),
+    should_redstone_wire_connect_to: Some(RedstoneWireBlock::should_redstone_wire_connect_to_this),
     animate_tick: Some(RedstoneWireBlock::animate_tick),
     get_shape: Some(RedstoneWireBlock::get_shape),
     ..BlockClass::new(
@@ -77,7 +87,16 @@ impl RedstoneWireBlock {
                 .set_value(RedstoneWireBlock::POWER, 0),
         );
         let shapes = RedstoneWireBlock::make_shapes(&block);
-        block.set_fields(RedstoneWireBlock { shapes });
+        let cross_state = block
+            .default_block_state()
+            .set_value(RedstoneWireBlock::NORTH, RedstoneSide::SIDE)
+            .set_value(RedstoneWireBlock::EAST, RedstoneSide::SIDE)
+            .set_value(RedstoneWireBlock::SOUTH, RedstoneSide::SIDE)
+            .set_value(RedstoneWireBlock::WEST, RedstoneSide::SIDE);
+        block.set_fields(RedstoneWireBlock {
+            shapes,
+            cross_state,
+        });
         block
     }
 
@@ -263,3 +282,297 @@ static COLORS: LazyLock<[i32; 16]> = LazyLock::new(|| {
 });
 
 impl RedstoneWireBlock {}
+
+impl RedstoneWireBlock {
+    /// `PROPERTY_BY_DIRECTION.get(direction)`, for a horizontal direction.
+    fn property_by_direction(direction: Direction) -> &'static EnumProperty<RedstoneSide> {
+        RedstoneWireBlock::PROPERTY_BY_DIRECTION
+            .iter()
+            .find(|(candidate, _)| *candidate == direction)
+            .map(|(_, property)| *property)
+            .expect("a horizontal direction")
+    }
+
+    /// `getConnectionState(level, state, pos)`: its sides as its neighbours have them, a dot
+    /// staying a dot, and a line through it where only one side of an axis connects (or a
+    /// cross where none does).
+    fn get_connection_state(
+        block: &BlockData,
+        level: &dyn BlockGetter,
+        state: BlockState,
+        pos: &BlockPos,
+    ) -> BlockState {
+        let was_dot = RedstoneWireBlock::is_dot(state);
+        let mut state = RedstoneWireBlock::get_missing_connections(
+            level,
+            block.default_block_state().set_value(
+                RedstoneWireBlock::POWER,
+                state.get_value(RedstoneWireBlock::POWER),
+            ),
+            pos,
+        );
+        if was_dot && RedstoneWireBlock::is_dot(state) {
+            return state;
+        }
+
+        let north = state.get_value(RedstoneWireBlock::NORTH).is_connected();
+        let south = state.get_value(RedstoneWireBlock::SOUTH).is_connected();
+        let east = state.get_value(RedstoneWireBlock::EAST).is_connected();
+        let west = state.get_value(RedstoneWireBlock::WEST).is_connected();
+        let north_south_empty = !north && !south;
+        let east_west_empty = !east && !west;
+        if !west && north_south_empty {
+            state = state.set_value(RedstoneWireBlock::WEST, RedstoneSide::SIDE);
+        }
+
+        if !east && north_south_empty {
+            state = state.set_value(RedstoneWireBlock::EAST, RedstoneSide::SIDE);
+        }
+
+        if !north && east_west_empty {
+            state = state.set_value(RedstoneWireBlock::NORTH, RedstoneSide::SIDE);
+        }
+
+        if !south && east_west_empty {
+            state = state.set_value(RedstoneWireBlock::SOUTH, RedstoneSide::SIDE);
+        }
+
+        state
+    }
+
+    /// `getMissingConnections(level, state, pos)`: each side not yet connected as its neighbour
+    /// has it.
+    fn get_missing_connections(
+        level: &dyn BlockGetter,
+        mut state: BlockState,
+        pos: &BlockPos,
+    ) -> BlockState {
+        let can_connect_up = !level
+            .get_block_state(&pos.above())
+            .is_redstone_conductor_at(level, pos);
+
+        for direction in Plane::HORIZONTAL.iterator() {
+            let property = RedstoneWireBlock::property_by_direction(direction);
+            if !state.get_value(property).is_connected() {
+                let side_connection = RedstoneWireBlock::get_connecting_side_up(
+                    level,
+                    pos,
+                    direction,
+                    can_connect_up,
+                );
+                state = state.set_value(property, side_connection);
+            }
+        }
+
+        state
+    }
+
+    /// `updateShape`: air (which a client leaves) when what's below can't hold it; its sides
+    /// worked out again for what's above; the side that way as its neighbour has it, or all of
+    /// them when that changes whether it connects.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        _random: &mut dyn RandomSource,
+    ) -> BlockState {
+        if direction_to_neighbour == Direction::DOWN {
+            return if !RedstoneWireBlock::can_survive_on(level, neighbour_pos, neighbour_state) {
+                Blocks::AIR.default_block_state()
+            } else {
+                state
+            };
+        }
+
+        if direction_to_neighbour == Direction::UP {
+            return RedstoneWireBlock::get_connection_state(block, level, state, pos);
+        }
+
+        let property = RedstoneWireBlock::property_by_direction(direction_to_neighbour);
+        let side_connection =
+            RedstoneWireBlock::get_connecting_side(level, pos, direction_to_neighbour);
+        if side_connection.is_connected() == state.get_value(property).is_connected()
+            && !RedstoneWireBlock::is_cross(state)
+        {
+            state.set_value(property, side_connection)
+        } else {
+            RedstoneWireBlock::get_connection_state(
+                block,
+                level,
+                block
+                    .fields::<RedstoneWireBlock>()
+                    .cross_state
+                    .set_value(
+                        RedstoneWireBlock::POWER,
+                        state.get_value(RedstoneWireBlock::POWER),
+                    )
+                    .set_value(property, side_connection),
+                pos,
+            )
+        }
+    }
+
+    /// `isCross(state)`: connected every way.
+    fn is_cross(state: BlockState) -> bool {
+        state.get_value(RedstoneWireBlock::NORTH).is_connected()
+            && state.get_value(RedstoneWireBlock::SOUTH).is_connected()
+            && state.get_value(RedstoneWireBlock::EAST).is_connected()
+            && state.get_value(RedstoneWireBlock::WEST).is_connected()
+    }
+
+    /// `isDot(state)`: connected no way.
+    fn is_dot(state: BlockState) -> bool {
+        !state.get_value(RedstoneWireBlock::NORTH).is_connected()
+            && !state.get_value(RedstoneWireBlock::SOUTH).is_connected()
+            && !state.get_value(RedstoneWireBlock::EAST).is_connected()
+            && !state.get_value(RedstoneWireBlock::WEST).is_connected()
+    }
+
+    /// `updateIndirectNeighbourShapes`: for each side it goes, where the block that way isn't
+    /// wire, the wire below and above that block is told of the block beside it.
+    fn update_indirect_neighbour_shapes(
+        block: &BlockData,
+        state: BlockState,
+        level: &mut ClientLevel,
+        pos: &BlockPos,
+        update_flags: i32,
+        update_limit: i32,
+    ) {
+        for direction in Plane::HORIZONTAL.iterator() {
+            let value = state.get_value(RedstoneWireBlock::property_by_direction(direction));
+            let side_pos = pos.relative(direction);
+            if value != RedstoneSide::NONE
+                && !std::ptr::eq(&*level.get_block_state(&side_pos).get_block(), block)
+            {
+                for block_pos in [side_pos.below(), side_pos.above()] {
+                    if std::ptr::eq(&*level.get_block_state(&block_pos).get_block(), block) {
+                        let neighbor_pos = block_pos.relative(direction.get_opposite());
+                        let neighbor_state = level.get_block_state(&neighbor_pos);
+                        level.neighbor_shape_changed(
+                            direction.get_opposite(),
+                            &block_pos,
+                            &neighbor_pos,
+                            neighbor_state,
+                            update_flags,
+                            update_limit,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// `getConnectingSide(level, pos, direction)`: as `get_connecting_side_up` has it, climbing
+    /// unless a conductor is above it.
+    fn get_connecting_side(
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction: Direction,
+    ) -> RedstoneSide {
+        let can_connect_up = !level
+            .get_block_state(&pos.above())
+            .is_redstone_conductor_at(level, pos);
+        RedstoneWireBlock::get_connecting_side_up(level, pos, direction, can_connect_up)
+    }
+
+    /// `getConnectingSide(level, pos, direction, canConnectUp)`: up the block that way to wire
+    /// on top of it (side, over a face that isn't sturdy), along to what it joins there or to
+    /// wire below it, or none.
+    fn get_connecting_side_up(
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction: Direction,
+        can_connect_up: bool,
+    ) -> RedstoneSide {
+        let relative_pos = pos.relative(direction);
+        let relative_state = level.get_block_state(&relative_pos);
+        if can_connect_up {
+            let is_placeable_above = relative_state
+                .get_block()
+                .is_instance_of(&trap_door_block::CLASS)
+                || RedstoneWireBlock::can_survive_on(level, &relative_pos, relative_state);
+            if is_placeable_above
+                && RedstoneWireBlock::should_connect_to(level, &relative_pos.above())
+            {
+                if relative_state.is_face_sturdy(level, &relative_pos, direction.get_opposite()) {
+                    return RedstoneSide::UP;
+                }
+
+                return RedstoneSide::SIDE;
+            }
+        }
+
+        if !RedstoneWireBlock::should_connect_to_from(
+            relative_state,
+            level,
+            &relative_pos,
+            Some(direction),
+        ) && (relative_state.is_redstone_conductor_at(level, &relative_pos)
+            || !RedstoneWireBlock::should_connect_to(level, &relative_pos.below()))
+        {
+            RedstoneSide::NONE
+        } else {
+            RedstoneSide::SIDE
+        }
+    }
+
+    /// `canSurvive`: on what can hold it.
+    fn can_survive(
+        _block: &BlockData,
+        _state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        let below = pos.below();
+        let below_state = level.get_block_state(&below);
+        RedstoneWireBlock::can_survive_on(level, &below, below_state)
+    }
+
+    /// `canSurviveOn(level, relativePos, relativeState)`: a sturdy top, or a hopper.
+    fn can_survive_on(
+        level: &dyn BlockGetter,
+        relative_pos: &BlockPos,
+        relative_state: BlockState,
+    ) -> bool {
+        relative_state.is_face_sturdy(level, relative_pos, Direction::UP)
+            || relative_state.is(Blocks::HOPPER)
+    }
+
+    /// `shouldConnectTo(level, pos)`: to what's there, from above or below.
+    fn should_connect_to(level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        RedstoneWireBlock::should_connect_to_from(level.get_block_state(pos), level, pos, None)
+    }
+
+    /// `shouldConnectTo(state, level, pos, direction)`: the state's
+    /// `shouldRedstoneWireConnectTo`.
+    fn should_connect_to_from(
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction: Option<Direction>,
+    ) -> bool {
+        state.should_redstone_wire_connect_to(level, pos, direction)
+    }
+
+    /// `shouldRedstoneWireConnectTo`: wire joins wire.
+    fn should_redstone_wire_connect_to_this(
+        _block: &BlockData,
+        _state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _direction: Option<Direction>,
+    ) -> bool {
+        true
+    }
+
+    /// `isSignalSource`: `shouldSignal`, which only the server's `getBlockSignal` turns off for a
+    /// moment.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
+    }
+}

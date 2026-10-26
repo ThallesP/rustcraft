@@ -8,9 +8,8 @@
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
-use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::face_attached_horizontal_directional_block::{
     self, FaceAttachedHorizontalDirectionalBlock,
@@ -35,6 +34,7 @@ pub struct ButtonBlock {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(ButtonBlock::is_signal_source),
     get_shape: Some(ButtonBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.ButtonBlock",
@@ -116,5 +116,12 @@ impl ButtonBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         block.fields::<ButtonBlock>().shapes[state.index() as usize].clone()
+    }
+}
+
+impl ButtonBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

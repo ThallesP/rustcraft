@@ -5,6 +5,8 @@
 //! Of its behaviour, `getFluidState` and its shape are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -21,6 +23,7 @@ use std::sync::LazyLock;
 pub struct SeagrassBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(SeagrassBlock::may_place_on),
     get_shape: Some(SeagrassBlock::get_shape),
     get_fluid_state: Some(SeagrassBlock::get_fluid_state),
     ..BlockClass::new(
@@ -61,5 +64,18 @@ impl SeagrassBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl SeagrassBlock {
+    /// `mayPlaceOn`: on a sturdy top that may hold seagrass.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        state.is_face_sturdy(level, pos, Direction::UP)
+            && !state.is_tag(BlockTags::CANNOT_SUPPORT_SEAGRASS)
     }
 }

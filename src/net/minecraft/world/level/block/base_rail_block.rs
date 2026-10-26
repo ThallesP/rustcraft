@@ -6,6 +6,8 @@
 //! Of its behaviour, `getFluidState` and its shape (flat, or half a block on a slope) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -26,6 +28,7 @@ use std::sync::LazyLock;
 pub struct BaseRailBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(BaseRailBlock::update_shape),
     get_shape: Some(BaseRailBlock::get_shape),
     get_fluid_state: Some(BaseRailBlock::get_fluid_state),
     ..BlockClass::new(
@@ -83,5 +86,33 @@ impl BaseRailBlock {
             .find(|property| property.get_name() == "shape")
             .expect("a rail has a shape");
         RailShape::from_comparable(state.get_comparable(*property))
+    }
+}
+
+impl BaseRailBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

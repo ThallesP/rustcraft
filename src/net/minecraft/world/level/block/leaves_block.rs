@@ -49,6 +49,7 @@ pub struct LeavesBlockFields {
 static CUTOUT_LEAVES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(LeavesBlock::update_shape),
     animate_tick: Some(LeavesBlock::animate_tick),
     skip_rendering: Some(LeavesBlock::skip_rendering),
     get_light_dampening: Some(LeavesBlock::get_light_dampening),
@@ -197,5 +198,23 @@ impl LeavesBlock {
                 ParticleTypes::DRIPPING_WATER.into(),
             );
         }
+    }
+}
+
+impl LeavesBlock {
+    /// `updateShape`: the state as it is. The ticks it schedules (the water's when it's
+    /// waterlogged, its own when its distance may have changed) go nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        _direction_to_neighbour: Direction,
+        _neighbour_pos: &BlockPos,
+        _neighbour_state: BlockState,
+        _random: &mut dyn RandomSource,
+    ) -> BlockState {
+        state
     }
 }

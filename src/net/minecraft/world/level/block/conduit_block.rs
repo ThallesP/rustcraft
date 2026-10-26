@@ -6,10 +6,11 @@
 //! Of its behaviour, `getFluidState` and its shape are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
-use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
 use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
@@ -31,6 +32,7 @@ use std::sync::LazyLock;
 pub struct ConduitBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(ConduitBlock::update_shape),
     get_ticker: Some(ConduitBlock::get_ticker),
     get_shape: Some(ConduitBlock::get_shape),
     get_fluid_state: Some(ConduitBlock::get_fluid_state),
@@ -107,6 +109,34 @@ impl ConduitBlock {
             r#type,
             BlockEntityTypes::CONDUIT,
             ConduitBlockEntity::client_tick,
+        )
+    }
+}
+
+impl ConduitBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
         )
     }
 }

@@ -8,6 +8,7 @@ use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
@@ -17,10 +18,13 @@ use crate::net::minecraft::world::level::block::state::state_holder::StateHolder
 
 pub struct DetectorRailBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.DetectorRailBlock",
-    &base_rail_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(DetectorRailBlock::is_signal_source),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.DetectorRailBlock",
+        &base_rail_block::CLASS,
+    )
+};
 
 impl DetectorRailBlock {
     pub const SHAPE: &'static EnumProperty<RailShape> = BlockStateProperties::RAIL_SHAPE_STRAIGHT;
@@ -57,5 +61,12 @@ impl DetectorRailBlock {
             DetectorRailBlock::POWERED,
             BaseRailBlock::WATERLOGGED,
         ]);
+    }
+}
+
+impl DetectorRailBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

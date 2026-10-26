@@ -20,6 +20,7 @@ use std::sync::LazyLock;
 pub struct MushroomBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(MushroomBlock::may_place_on),
     get_shape: Some(MushroomBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.MushroomBlock",
@@ -52,5 +53,17 @@ impl MushroomBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl MushroomBlock {
+    /// `mayPlaceOn`: on a solid block.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_solid_render()
     }
 }

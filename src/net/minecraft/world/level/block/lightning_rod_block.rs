@@ -13,7 +13,7 @@ use crate::net::minecraft::util::particle_utils::ParticleUtils;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::util::valueproviders::uniform_int::UniformInt;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::directional_block::DirectionalBlock;
 use crate::net::minecraft::world::level::block::rod_block::{self, RodBlock};
@@ -23,6 +23,7 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::levelgen::heightmap::Types;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
@@ -30,6 +31,8 @@ use crate::net::minecraft::world::level::material::fluids::Fluids;
 pub struct LightningRodBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(LightningRodBlock::is_signal_source),
+    update_shape: Some(LightningRodBlock::update_shape),
     animate_tick: Some(LightningRodBlock::animate_tick),
     get_fluid_state: Some(LightningRodBlock::get_fluid_state),
     ..BlockClass::new(
@@ -110,5 +113,40 @@ impl LightningRodBlock {
                 UniformInt::of(1, 2),
             );
         }
+    }
+}
+
+impl LightningRodBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
+    }
+}
+
+impl LightningRodBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

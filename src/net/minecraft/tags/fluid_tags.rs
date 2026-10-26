@@ -16,6 +16,7 @@ pub struct FluidTags;
 impl FluidTags {
     pub const WATER: FluidTagKey = FluidTagKey("water");
     pub const LAVA: FluidTagKey = FluidTagKey("lava");
+    pub const SUPPORTS_LILY_PAD: FluidTagKey = FluidTagKey("supports_lily_pad");
 }
 
 impl Fluids {

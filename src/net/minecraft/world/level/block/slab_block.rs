@@ -8,6 +8,8 @@
 use std::sync::LazyLock;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -32,6 +34,7 @@ static SHAPE_TOP: LazyLock<VoxelShape> = LazyLock::new(|| Block::column(16.0, 8.
 pub struct SlabBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(SlabBlock::update_shape),
     use_shape_for_light_occlusion: Some(SlabBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(SlabBlock::get_fluid_state),
     get_shape: Some(SlabBlock::get_shape),
@@ -95,5 +98,33 @@ impl SlabBlock {
     /// `useShapeForLightOcclusion`: all but a double slab.
     fn use_shape_for_light_occlusion(_block: &BlockData, state: BlockState) -> bool {
         state.get_value(SlabBlock::TYPE) != SlabType::DOUBLE
+    }
+}
+
+impl SlabBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

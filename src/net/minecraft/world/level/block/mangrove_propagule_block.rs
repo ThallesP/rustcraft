@@ -7,9 +7,9 @@
 //! offset) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::sapling_block::{self, SaplingBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
@@ -29,6 +29,7 @@ use std::sync::LazyLock;
 pub struct MangrovePropaguleBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(MangrovePropaguleBlock::may_place_on),
     get_shape: Some(MangrovePropaguleBlock::get_shape),
     get_fluid_state: Some(MangrovePropaguleBlock::get_fluid_state),
     ..BlockClass::new(
@@ -110,5 +111,17 @@ impl MangrovePropaguleBlock {
             4
         };
         SHAPE_PER_AGE[age as usize].r#move(&state.get_offset(pos))
+    }
+}
+
+impl MangrovePropaguleBlock {
+    /// `mayPlaceOn`: on what supports a mangrove propagule.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_MANGROVE_PROPAGULE)
     }
 }

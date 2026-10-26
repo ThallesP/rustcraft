@@ -7,9 +7,8 @@
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
-use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -26,6 +25,7 @@ use std::sync::LazyLock;
 pub struct DaylightDetectorBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(DaylightDetectorBlock::is_signal_source),
     get_shape: Some(DaylightDetectorBlock::get_shape),
     use_shape_for_light_occlusion: Some(DaylightDetectorBlock::use_shape_for_light_occlusion),
     ..BlockClass::new(
@@ -88,5 +88,12 @@ impl DaylightDetectorBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl DaylightDetectorBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

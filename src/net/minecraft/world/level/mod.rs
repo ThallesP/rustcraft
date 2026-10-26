@@ -26,5 +26,6 @@ pub mod light_layer;
 pub mod lighting;
 pub mod material;
 pub mod moon_phase;
+pub mod redstone;
 pub mod spawn_data;
 pub mod storage;

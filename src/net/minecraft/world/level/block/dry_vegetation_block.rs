@@ -6,6 +6,7 @@
 
 use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -22,6 +23,7 @@ use std::sync::LazyLock;
 pub struct DryVegetationBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(DryVegetationBlock::may_place_on),
     animate_tick: Some(DryVegetationBlock::animate_tick),
     get_shape: Some(DryVegetationBlock::get_shape),
     ..BlockClass::new(
@@ -68,5 +70,17 @@ impl DryVegetationBlock {
         random: &mut dyn RandomSource,
     ) {
         AmbientDesertBlockSoundsPlayer::play_ambient_dead_bush_sounds(level, pos, random);
+    }
+}
+
+impl DryVegetationBlock {
+    /// `mayPlaceOn`: on what supports dry vegetation.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_DRY_VEGETATION)
     }
 }

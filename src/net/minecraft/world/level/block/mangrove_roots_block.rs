@@ -3,8 +3,9 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
 
-use crate::net::minecraft::core::direction::Axis;
-use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::{Axis, Direction};
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -15,12 +16,14 @@ use crate::net::minecraft::world::level::block::state::properties::block_state_p
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 
 pub struct MangroveRootsBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(MangroveRootsBlock::update_shape),
     skip_rendering: Some(MangroveRootsBlock::skip_rendering),
     get_fluid_state: Some(MangroveRootsBlock::get_fluid_state),
     ..BlockClass::new(
@@ -80,5 +83,33 @@ impl MangroveRootsBlock {
         direction: Direction,
     ) -> bool {
         neighbor_state.is(Blocks::MANGROVE_ROOTS) && direction.get_axis() == Axis::Y
+    }
+}
+
+impl MangroveRootsBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

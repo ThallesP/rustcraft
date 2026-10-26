@@ -3,10 +3,12 @@
 //! Its properties and its default state, and its block event (`triggerEvent`), which the server
 //! sends when it plays: the client's note particle, and the sound's seed from the level's random
 //! (the sound itself is the server's to send: a client's `playSeededSound` plays only for its own
-//! player). Not ported yet: the rest of its behaviour.
+//! player), and its instrument from the blocks above and below it (`updateShape`). Not ported yet:
+//! the rest of its behaviour.
 
 use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
 use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::util::random_source::RandomSource;
@@ -23,10 +25,12 @@ use crate::net::minecraft::world::level::block::state::properties::integer_prope
 use crate::net::minecraft::world::level::block::state::properties::note_block_instrument::NoteBlockInstrument;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 
 pub struct NoteBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(NoteBlock::update_shape),
     trigger_event: Some(NoteBlock::trigger_event),
     ..BlockClass::new("net.minecraft.world.level.block.NoteBlock", &block::CLASS)
 };
@@ -103,6 +107,60 @@ impl NoteBlock {
         match &level.level.get_block_entity(&pos.above())?.data {
             BlockEntityData::Skull(head) => head.get_note_block_sound().cloned(),
             _ => None,
+        }
+    }
+}
+
+impl NoteBlock {
+    /// `setInstrument(level, position, state)`: a head's above it, or the block's below it (a
+    /// harp under a head).
+    fn set_instrument(
+        level: &dyn BlockGetter,
+        position: &BlockPos,
+        state: BlockState,
+    ) -> BlockState {
+        let instrument_above = level.get_block_state(&position.above()).instrument();
+        if instrument_above.works_above_note_block() {
+            return state.set_value(NoteBlock::INSTRUMENT, instrument_above);
+        }
+
+        let instrument_below = level.get_block_state(&position.below()).instrument();
+        let new_below = if instrument_below.works_above_note_block() {
+            NoteBlockInstrument::HARP
+        } else {
+            instrument_below
+        };
+        state.set_value(NoteBlock::INSTRUMENT, new_below)
+    }
+
+    /// `updateShape`: its instrument again, for what's above or below it; its parent's for the
+    /// rest.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        let neighbor_direction_sets_instrument = direction_to_neighbour.get_axis() == Axis::Y;
+        if neighbor_direction_sets_instrument {
+            NoteBlock::set_instrument(level, pos, state)
+        } else {
+            Block::super_update_shape(
+                block,
+                &CLASS,
+                state,
+                level,
+                pos,
+                direction_to_neighbour,
+                neighbour_pos,
+                neighbour_state,
+                random,
+            )
         }
     }
 }

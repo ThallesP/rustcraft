@@ -5,9 +5,10 @@
 //! Of its behaviour, `getFluidState` and its shape are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::double_plant_block::{self, DoublePlantBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
@@ -24,6 +25,7 @@ use std::sync::LazyLock;
 pub struct TallSeagrassBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(TallSeagrassBlock::may_place_on),
     get_shape: Some(TallSeagrassBlock::get_shape),
     get_fluid_state: Some(TallSeagrassBlock::get_fluid_state),
     ..BlockClass::new(
@@ -70,5 +72,18 @@ impl TallSeagrassBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl TallSeagrassBlock {
+    /// `mayPlaceOn`: on a sturdy top that may hold seagrass.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        state.is_face_sturdy(level, pos, Direction::UP)
+            && !state.is_tag(BlockTags::CANNOT_SUPPORT_SEAGRASS)
     }
 }

@@ -7,10 +7,11 @@
 //! shapes (half a block) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
-use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -28,6 +29,7 @@ use std::sync::LazyLock;
 pub struct SculkShriekerBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(SculkShriekerBlock::update_shape),
     get_collision_shape: Some(SculkShriekerBlock::get_collision_shape),
     get_occlusion_shape: Some(SculkShriekerBlock::get_occlusion_shape),
     use_shape_for_light_occlusion: Some(SculkShriekerBlock::use_shape_for_light_occlusion),
@@ -108,5 +110,33 @@ impl SculkShriekerBlock {
 
     fn get_occlusion_shape(_block: &BlockData, _state: BlockState) -> VoxelShape {
         SHAPE_COLLISION.clone()
+    }
+}
+
+impl SculkShriekerBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

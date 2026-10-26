@@ -8,6 +8,7 @@
 use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
@@ -15,11 +16,13 @@ use crate::net::minecraft::world::level::block::block::{
 use crate::net::minecraft::world::level::block::flower_block::{self, FlowerBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::phys::shapes::collision_context;
 
 pub struct WitherRoseBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(WitherRoseBlock::may_place_on),
     animate_tick: Some(WitherRoseBlock::animate_tick),
     ..BlockClass::new(
         "net.minecraft.world.level.block.WitherRoseBlock",
@@ -63,5 +66,17 @@ impl WitherRoseBlock {
                 level.add_particle(ParticleTypes::SMOKE, px, py, pz, 0.0, 0.0, 0.0);
             }
         }
+    }
+}
+
+impl WitherRoseBlock {
+    /// `mayPlaceOn`: on what supports a wither rose.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_WITHER_ROSE)
     }
 }

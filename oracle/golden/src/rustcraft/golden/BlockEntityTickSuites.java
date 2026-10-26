@@ -102,7 +102,7 @@ final class BlockEntityTickSuites {
     }
 
     static List<Suite> suites() {
-        return List.of(new OpenHashMapSuite(), new BlockEventPacketSuite(), new TickSuite(), new LevelSuites.ClientLevelSuite());
+        return List.of(new OpenHashMapSuite(), new BlockEventPacketSuite(), new TickSuite(), new NeighborUpdateSuite(), new LevelSuites.ClientLevelSuite());
     }
 
     private static JsonElement bits(final float value) {
@@ -664,6 +664,162 @@ final class BlockEntityTickSuites {
             .stream()
             .filter(tags -> tags.key() == Registries.FLUID)
             .forEach(net.minecraft.core.Registry.PendingTags::apply);
+    }
+
+    /**
+     * The client's shape updates (TESTING.md, "Shape updates"): {@code programs}, each a level as {@code TickSuite}'s over
+     * the walk's chunks, its random seeded, and {@code setBlock}s on and above its grass with the flags and limit each has,
+     * the states drawn from the blocks whose {@code updateShape} the port has; every other program first fills most of the
+     * space with blocks set knowing their shapes (flags 18), in states that needn't agree with their neighbours, so the
+     * changes after set off long chains of updates. A program is {@code [levelSeed, ops]}, an op
+     * {@code [x, y, z, state, flags, limit]}; its result a line for each op, the blocks around that changed ({@code [x, y,
+     * z, state]}, x, then z, then y), then the program's {@code updateShape}s: each block's around, for each neighbour
+     * ({@code Direction} order) where the state it gives isn't the block's ({@code [x, y, z, direction, state]}), then the
+     * level random's next long.
+     */
+    static final class NeighborUpdateSuite implements Suite {
+        /** Where the ops set blocks, and around it the blocks a change can reach. */
+        private static final int MIN_X = -3;
+        private static final int MIN_Y = -61;
+        private static final int MIN_Z = -3;
+        private static final int SIZE_XZ = 7;
+        private static final int SIZE_Y = 5;
+        private static final int MARGIN = 2;
+
+        private static final Block[] BLOCKS = {
+            Blocks.OAK_FENCE, Blocks.NETHER_BRICK_FENCE, Blocks.COBBLESTONE_WALL, Blocks.MOSSY_STONE_BRICK_WALL, Blocks.IRON_BARS,
+            Blocks.GLASS_PANE, Blocks.STAINED_GLASS_PANE.pick(DyeColor.WHITE), Blocks.OAK_STAIRS, Blocks.STONE_STAIRS,
+            Blocks.OAK_FENCE_GATE, Blocks.OAK_DOOR, Blocks.IRON_DOOR, Blocks.REDSTONE_WIRE, Blocks.REPEATER, Blocks.OBSERVER, Blocks.TALL_GRASS,
+            Blocks.SUNFLOWER, Blocks.SHORT_GRASS, Blocks.DANDELION, Blocks.DEAD_BUSH, Blocks.WITHER_ROSE, Blocks.SMALL_DRIPLEAF,
+            Blocks.OAK_SLAB, Blocks.OAK_TRAPDOOR, Blocks.BARRIER, Blocks.LIGHT, Blocks.STONE, Blocks.DIRT, Blocks.GRASS_BLOCK,
+            Blocks.GLASS, Blocks.OAK_LEAVES, Blocks.WATER,
+            Blocks.CARVED_PUMPKIN, Blocks.OAK_LOG, Blocks.BROWN_MUSHROOM_BLOCK, Blocks.NOTE_BLOCK, Blocks.HOPPER, Blocks.SAND,
+            Blocks.SNOW_BLOCK, Blocks.SKELETON_SKULL, Blocks.SHULKER_BOX, Blocks.TARGET, Blocks.DAYLIGHT_DETECTOR
+        };
+
+        @Override
+        public String name() {
+            return net.minecraft.world.level.redstone.CollectingNeighborUpdater.class.getName();
+        }
+
+        @Override
+        public void write(final GoldenWriter writer) throws IOException {
+            sun.misc.Unsafe unsafe;
+            Minecraft minecraft;
+            try {
+                Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+                theUnsafe.setAccessible(true);
+                unsafe = (sun.misc.Unsafe)theUnsafe.get(null);
+                minecraft = (Minecraft)unsafe.allocateInstance(Minecraft.class);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+            ShapeSuites.BlockStateShapeSuite.bindBlockTags();
+            bindFluidTags();
+
+            Random random = new Random(0x5ba9e0dL);
+            for (int program = 0; program < 64; program++) {
+                long levelSeed = random.nextLong();
+                Level level = TickSuite.level(unsafe, minecraft, levelSeed, 0L);
+                JsonArray ops = new JsonArray();
+                JsonArray results = new JsonArray();
+                // Half the programs first fill most of the space above the grass with blocks that know their shapes (as
+                // the server's chunks bring them), the connecting ones most, in states that needn't agree, so a change
+                // sets off long chains of updates.
+                if (program % 2 == 0) {
+                    for (int y = MIN_Y + 1; y < MIN_Y + SIZE_Y; y++) {
+                        for (int z = MIN_Z; z < MIN_Z + SIZE_XZ; z++) {
+                            for (int x = MIN_X; x < MIN_X + SIZE_XZ; x++) {
+                                if (random.nextInt(5) < 3) {
+                                    Block block = random.nextInt(3) == 0 ? BLOCKS[random.nextInt(BLOCKS.length)] : CONNECTING[random.nextInt(CONNECTING.length)];
+                                    set(level, new BlockPos(x, y, z), randomState(random, block), 18, 512, ops, results);
+                                }
+                            }
+                        }
+                    }
+                }
+                int count = 24 + random.nextInt(24);
+                for (int op = 0; op < count; op++) {
+                    BlockPos pos = new BlockPos(MIN_X + random.nextInt(SIZE_XZ), MIN_Y + random.nextInt(SIZE_Y), MIN_Z + random.nextInt(SIZE_XZ));
+                    BlockState state = random.nextInt(6) == 0 ? Blocks.AIR.defaultBlockState() : randomState(random, BLOCKS[random.nextInt(BLOCKS.length)]);
+                    int flags = switch (random.nextInt(8)) {
+                        case 0 -> 11;
+                        case 1 -> 18;
+                        case 2 -> 67;
+                        case 3 -> 131;
+                        default -> 3;
+                    };
+                    int limit = random.nextInt(8) == 0 ? random.nextInt(4) : 512;
+                    set(level, pos, state, flags, limit, ops, results);
+                }
+
+                JsonArray shapes = new JsonArray();
+                forEach((index, at) -> {
+                    BlockState state = level.getBlockState(at);
+                    for (Direction direction : Direction.values()) {
+                        BlockPos neighbourPos = at.relative(direction);
+                        BlockState updated = state.updateShape(level, level, at, direction, neighbourPos, level.getBlockState(neighbourPos), level.getRandom());
+                        if (updated != state) {
+                            shapes.add(ChunkSuites.array(at.getX(), at.getY(), at.getZ(), direction.ordinal(), Block.getId(updated)));
+                        }
+                    }
+                });
+                results.add(shapes);
+                results.add(level.getRandom().nextLong());
+                writer.result("programs", ChunkSuites.array(levelSeed, ops), results, null);
+            }
+        }
+
+        /** The blocks whose shapes depend most on their neighbours'. */
+        private static final Block[] CONNECTING = {
+            Blocks.OAK_FENCE, Blocks.NETHER_BRICK_FENCE, Blocks.COBBLESTONE_WALL, Blocks.IRON_BARS, Blocks.GLASS_PANE,
+            Blocks.OAK_STAIRS, Blocks.STONE_STAIRS, Blocks.OAK_FENCE_GATE, Blocks.REDSTONE_WIRE, Blocks.REDSTONE_WIRE,
+            Blocks.OAK_DOOR, Blocks.TALL_GRASS, Blocks.BROWN_MUSHROOM_BLOCK, Blocks.NOTE_BLOCK
+        };
+
+        private static BlockState randomState(final Random random, final Block block) {
+            List<BlockState> states = block.getStateDefinition().getPossibleStates();
+            return states.get(random.nextInt(states.size()));
+        }
+
+        /** An op: the block set, and what changed around it. */
+        private static void set(
+            final Level level, final BlockPos pos, final BlockState state, final int flags, final int limit, final JsonArray ops, final JsonArray results
+        ) {
+            ops.add(ChunkSuites.array(pos.getX(), pos.getY(), pos.getZ(), Block.getId(state), flags, limit));
+            int[] before = states(level);
+            level.setBlock(pos, state, flags, limit);
+            int[] after = states(level);
+            JsonArray changes = new JsonArray();
+            forEach((index, at) -> {
+                if (before[index] != after[index]) {
+                    changes.add(ChunkSuites.array(at.getX(), at.getY(), at.getZ(), after[index]));
+                }
+            });
+            results.add(changes);
+        }
+
+        private interface Visitor {
+            void visit(int index, BlockPos pos);
+        }
+
+        /** Each block around where the ops set blocks, x, then z, then y. */
+        private static void forEach(final Visitor visitor) {
+            int index = 0;
+            for (int y = MIN_Y - MARGIN; y < MIN_Y + SIZE_Y + MARGIN; y++) {
+                for (int z = MIN_Z - MARGIN; z < MIN_Z + SIZE_XZ + MARGIN; z++) {
+                    for (int x = MIN_X - MARGIN; x < MIN_X + SIZE_XZ + MARGIN; x++) {
+                        visitor.visit(index++, new BlockPos(x, y, z));
+                    }
+                }
+            }
+        }
+
+        private static int[] states(final Level level) {
+            int[] states = new int[(SIZE_XZ + 2 * MARGIN) * (SIZE_XZ + 2 * MARGIN) * (SIZE_Y + 2 * MARGIN)];
+            forEach((index, at) -> states[index] = Block.getId(level.getBlockState(at)));
+            return states;
+        }
     }
 
     static final class TickSuite implements Suite {

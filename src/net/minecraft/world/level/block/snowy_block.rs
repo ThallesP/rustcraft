@@ -6,6 +6,7 @@
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -57,6 +58,7 @@ impl SnowyBlock {
 
 impl SnowyBlock {
     /// `updateShape`: snowy from what's above it.
+    #[allow(clippy::too_many_arguments)]
     fn update_shape(
         _block: &BlockData,
         state: BlockState,
@@ -65,6 +67,7 @@ impl SnowyBlock {
         direction_to_neighbour: Direction,
         _neighbour_pos: &BlockPos,
         neighbour_state: BlockState,
+        _random: &mut dyn RandomSource,
     ) -> BlockState {
         if direction_to_neighbour == Direction::UP {
             state.set_value(

@@ -4,9 +4,9 @@
 //! states tick. Not ported yet: its behaviour.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -30,6 +30,7 @@ pub struct CropBlockFields {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(CropBlock::may_place_on),
     get_shape: Some(CropBlock::get_shape),
     is_randomly_ticking: Some(CropBlock::is_randomly_ticking),
     ..BlockClass::new(
@@ -97,5 +98,17 @@ impl CropBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPES[state.get_value(block.fields::<CropBlockFields>().age_property) as usize].clone()
+    }
+}
+
+impl CropBlock {
+    /// `mayPlaceOn`: on what supports crops.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_CROPS)
     }
 }

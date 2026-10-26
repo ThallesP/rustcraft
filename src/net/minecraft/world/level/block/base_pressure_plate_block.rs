@@ -25,6 +25,7 @@ use std::sync::LazyLock;
 pub struct BasePressurePlateBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(BasePressurePlateBlock::is_signal_source),
     get_shape: Some(BasePressurePlateBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.BasePressurePlateBlock",
@@ -70,5 +71,12 @@ impl BasePressurePlateBlock {
         } else {
             0
         }
+    }
+}
+
+impl BasePressurePlateBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

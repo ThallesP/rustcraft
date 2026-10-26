@@ -5,13 +5,15 @@
 //! (inner corners), turned to face each way, and upside down for the top half. Not ported yet: the
 //! rest of its behaviour, and its constructor's `baseState`.
 //!
-//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine.
+//! Of its behaviour, `useShapeForLightOcclusion` is ported, for the light engine, and
+//! `updateShape`, its shape from the stairs around it (`getStairsShape`).
 
 use std::sync::LazyLock;
 
 use crate::com::mojang::math::octahedral_group::OctahedralGroup;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -69,6 +71,7 @@ static SHAPES: LazyLock<StairShapes> = LazyLock::new(|| {
 pub struct StairBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(StairBlock::update_shape),
     use_shape_for_light_occlusion: Some(StairBlock::use_shape_for_light_occlusion),
     get_fluid_state: Some(StairBlock::get_fluid_state),
     get_shape: Some(StairBlock::get_shape),
@@ -158,5 +161,99 @@ impl StairBlock {
     /// `useShapeForLightOcclusion`.
     fn use_shape_for_light_occlusion(_block: &BlockData, _state: BlockState) -> bool {
         true
+    }
+}
+
+impl StairBlock {
+    /// `updateShape`: its shape from the stairs around it, for a neighbour sideways; its
+    /// parent's up and down. The water's tick it schedules when it's waterlogged goes nowhere on
+    /// the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        if direction_to_neighbour.get_axis().is_horizontal() {
+            state.set_value(
+                StairBlock::SHAPE,
+                StairBlock::get_stairs_shape(state, level, pos),
+            )
+        } else {
+            Block::super_update_shape(
+                block,
+                &CLASS,
+                state,
+                level,
+                pos,
+                direction_to_neighbour,
+                neighbour_pos,
+                neighbour_state,
+                random,
+            )
+        }
+    }
+
+    /// `getStairsShape(state, level, pos)`: an outer corner with a stair across it behind, an
+    /// inner one with a stair across it in front, else straight.
+    fn get_stairs_shape(state: BlockState, level: &dyn BlockGetter, pos: &BlockPos) -> StairsShape {
+        let facing = state.get_value(StairBlock::FACING);
+        let behind_state = level.get_block_state(&pos.relative(facing));
+        if StairBlock::is_stairs(behind_state)
+            && state.get_value(StairBlock::HALF) == behind_state.get_value(StairBlock::HALF)
+        {
+            let behind_facing = behind_state.get_value(StairBlock::FACING);
+            if behind_facing.get_axis() != state.get_value(StairBlock::FACING).get_axis()
+                && StairBlock::can_take_shape(state, level, pos, behind_facing.get_opposite())
+            {
+                if behind_facing == facing.get_counter_clock_wise() {
+                    return StairsShape::OUTER_LEFT;
+                }
+
+                return StairsShape::OUTER_RIGHT;
+            }
+        }
+
+        let front_state = level.get_block_state(&pos.relative(facing.get_opposite()));
+        if StairBlock::is_stairs(front_state)
+            && state.get_value(StairBlock::HALF) == front_state.get_value(StairBlock::HALF)
+        {
+            let front_facing = front_state.get_value(StairBlock::FACING);
+            if front_facing.get_axis() != state.get_value(StairBlock::FACING).get_axis()
+                && StairBlock::can_take_shape(state, level, pos, front_facing)
+            {
+                if front_facing == facing.get_counter_clock_wise() {
+                    return StairsShape::INNER_LEFT;
+                }
+
+                return StairsShape::INNER_RIGHT;
+            }
+        }
+
+        StairsShape::STRAIGHT
+    }
+
+    /// `canTakeShape(state, level, pos, neighbour)`: unless the stair that way faces and sits
+    /// as this one does.
+    fn can_take_shape(
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        neighbour: Direction,
+    ) -> bool {
+        let neighbor_state = level.get_block_state(&pos.relative(neighbour));
+        !StairBlock::is_stairs(neighbor_state)
+            || neighbor_state.get_value(StairBlock::FACING) != state.get_value(StairBlock::FACING)
+            || neighbor_state.get_value(StairBlock::HALF) != state.get_value(StairBlock::HALF)
+    }
+
+    /// `isStairs(state)`.
+    pub fn is_stairs(state: BlockState) -> bool {
+        state.get_block().is_instance_of(&CLASS)
     }
 }

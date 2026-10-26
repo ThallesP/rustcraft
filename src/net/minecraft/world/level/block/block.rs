@@ -4,7 +4,9 @@
 //! definition and default state, `BLOCK_STATE_REGISTRY` with `getId` and `stateById`, the
 //! getters of what `BlockBehaviour` copied (`getFriction`, `getExplosionResistance`…),
 //! `toString`, and the shapes' helpers (`box`, `column`, `boxZ`, `cube`, `isShapeFullBlock`,
-//! `getShapeForEachState`: the player track's). Not ported yet: every behaviour method
+//! `getShapeForEachState`: the player track's), and what shape updates use (`updateOrDestroy`,
+//! `updateFromNeighbourShapes`, `isExceptionForConnection`, and the dispatch of `updateShape`,
+//! `canSurvive` and the like to each class's). Not ported yet: the other behaviour methods
 //! (`playerDestroy`, `fallOn`, `getStateForPlacement`…), `shouldRenderFace`, `asItem`, `getName`
 //! and `withPropertiesOf`, which come with what calls them.
 //!
@@ -20,11 +22,13 @@ use std::any::Any;
 use std::fmt;
 use std::ops::Deref;
 
-use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
-use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
+use crate::net::minecraft::client::multiplayer::client_level::{
+    ClientLevel, LevelTicking, LevelWithEffects,
+};
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::id_mapper::IdMapper;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks, REGISTRY};
 use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
@@ -82,7 +86,9 @@ pub type TriggerEventMethod =
     fn(&BlockData, BlockState, &mut LevelTicking<'_>, &BlockPos, i32, i32) -> bool;
 
 /// A class's `updateShape`: the state, given that its neighbour that way is now the neighbour's
-/// state. Java's random isn't passed: no override ported draws from it.
+/// state, with the level's random. Java also hands it the level's scheduled ticks, which on the
+/// client go nowhere (`BlackholeTickAccess`), so they aren't passed: an override's
+/// `scheduleTick` is left out, and only what it draws from the random for one is kept.
 pub type UpdateShapeMethod = fn(
     &BlockData,
     BlockState,
@@ -91,7 +97,22 @@ pub type UpdateShapeMethod = fn(
     Direction,
     &BlockPos,
     BlockState,
+    &mut dyn RandomSource,
 ) -> BlockState;
+
+/// A class's `canSurvive`, or `VegetationBlock`'s `mayPlaceOn`: whether its block's state can stay
+/// at a position of a level (for `mayPlaceOn`, on the state there).
+pub type PositionStatePredicate = fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos) -> bool;
+
+/// A class's `shouldRedstoneWireConnectTo`: whether wire beside its block's state, that way (none
+/// for wire above or below), joins it.
+pub type ShouldRedstoneWireConnectToMethod =
+    fn(&BlockData, BlockState, &dyn BlockGetter, &BlockPos, Option<Direction>) -> bool;
+
+/// A class's `updateIndirectNeighbourShapes`: the shape updates its block sends past its six
+/// neighbours, through the level.
+pub type UpdateIndirectNeighbourShapesMethod =
+    fn(&BlockData, BlockState, &mut ClientLevel, &BlockPos, i32, i32);
 
 /// A class's `getTicker(level, state, type)` on the client, an `EntityBlock`'s: what its block
 /// entity of the type does each tick there, if anything.
@@ -150,6 +171,18 @@ pub struct BlockClass {
     /// `updateShape(…)`, if it overrides it and the override is ported (`UPDATE_SHAPE_CLASSES`
     /// names those that override it in Java).
     pub update_shape: Option<UpdateShapeMethod>,
+    /// `updateIndirectNeighbourShapes(...)`, if it overrides it.
+    pub update_indirect_neighbour_shapes: Option<UpdateIndirectNeighbourShapesMethod>,
+    /// `canSurvive(BlockState, LevelReader, BlockPos)`, if it overrides it and the override is
+    /// ported (`CAN_SURVIVE_CLASSES` names those that override it in Java).
+    pub can_survive: Option<PositionStatePredicate>,
+    /// `VegetationBlock.mayPlaceOn(BlockState, BlockGetter, BlockPos)`, if it overrides it and
+    /// the override is ported (`MAY_PLACE_ON_CLASSES` names those that override it in Java).
+    pub may_place_on: Option<PositionStatePredicate>,
+    /// `isSignalSource(BlockState)`, if it overrides it.
+    pub is_signal_source: Option<fn(&BlockData, BlockState) -> bool>,
+    /// `shouldRedstoneWireConnectTo(...)`, if it overrides it.
+    pub should_redstone_wire_connect_to: Option<ShouldRedstoneWireConnectToMethod>,
 }
 
 impl BlockClass {
@@ -181,6 +214,11 @@ impl BlockClass {
             trigger_event: None,
             get_ticker: None,
             update_shape: None,
+            update_indirect_neighbour_shapes: None,
+            can_survive: None,
+            may_place_on: None,
+            is_signal_source: None,
+            should_redstone_wire_connect_to: None,
         }
     }
 
@@ -203,16 +241,6 @@ impl BlockClass {
         self.parent.and_then(|parent| parent.find(method))
     }
 }
-
-/// `BlockBehaviour.UPDATE_SHAPE_ORDER`.
-const UPDATE_SHAPE_ORDER: [Direction; 6] = [
-    Direction::WEST,
-    Direction::EAST,
-    Direction::NORTH,
-    Direction::SOUTH,
-    Direction::DOWN,
-    Direction::UP,
-];
 
 /// The classes that override `updateShape` in Java, by binary name: where the port has no
 /// override, `update_shape` says it isn't ported.
@@ -326,6 +354,97 @@ const UPDATE_SHAPE_CLASSES: [&str; 109] = [
     "net.minecraft.world.level.block.WallTorchBlock",
     "net.minecraft.world.level.block.WaterloggedTransparentBlock",
     "net.minecraft.world.level.block.piston.PistonHeadBlock",
+];
+
+/// The classes that override `canSurvive` in Java, by binary name: where the port has no
+/// override, `can_survive` says it isn't ported.
+const CAN_SURVIVE_CLASSES: [&str; 62] = [
+    "net.minecraft.world.level.block.AmethystClusterBlock",
+    "net.minecraft.world.level.block.BambooSaplingBlock",
+    "net.minecraft.world.level.block.BambooStalkBlock",
+    "net.minecraft.world.level.block.BannerBlock",
+    "net.minecraft.world.level.block.BaseCoralPlantTypeBlock",
+    "net.minecraft.world.level.block.BaseCoralWallFanBlock",
+    "net.minecraft.world.level.block.BasePressurePlateBlock",
+    "net.minecraft.world.level.block.BaseRailBlock",
+    "net.minecraft.world.level.block.BaseTorchBlock",
+    "net.minecraft.world.level.block.BellBlock",
+    "net.minecraft.world.level.block.BigDripleafBlock",
+    "net.minecraft.world.level.block.BigDripleafStemBlock",
+    "net.minecraft.world.level.block.BubbleColumnBlock",
+    "net.minecraft.world.level.block.CactusBlock",
+    "net.minecraft.world.level.block.CakeBlock",
+    "net.minecraft.world.level.block.CandleBlock",
+    "net.minecraft.world.level.block.CandleCakeBlock",
+    "net.minecraft.world.level.block.CarpetBlock",
+    "net.minecraft.world.level.block.CeilingHangingSignBlock",
+    "net.minecraft.world.level.block.ChorusFlowerBlock",
+    "net.minecraft.world.level.block.ChorusPlantBlock",
+    "net.minecraft.world.level.block.CocoaBlock",
+    "net.minecraft.world.level.block.CropBlock",
+    "net.minecraft.world.level.block.DiodeBlock",
+    "net.minecraft.world.level.block.DoorBlock",
+    "net.minecraft.world.level.block.DoublePlantBlock",
+    "net.minecraft.world.level.block.FaceAttachedHorizontalDirectionalBlock",
+    "net.minecraft.world.level.block.FarmlandBlock",
+    "net.minecraft.world.level.block.FireBlock",
+    "net.minecraft.world.level.block.FrogspawnBlock",
+    "net.minecraft.world.level.block.GrindstoneBlock",
+    "net.minecraft.world.level.block.GrowingPlantBlock",
+    "net.minecraft.world.level.block.HangingMossBlock",
+    "net.minecraft.world.level.block.HangingRootsBlock",
+    "net.minecraft.world.level.block.LadderBlock",
+    "net.minecraft.world.level.block.LanternBlock",
+    "net.minecraft.world.level.block.LeafLitterBlock",
+    "net.minecraft.world.level.block.MangrovePropaguleBlock",
+    "net.minecraft.world.level.block.MossyCarpetBlock",
+    "net.minecraft.world.level.block.MultifaceBlock",
+    "net.minecraft.world.level.block.MushroomBlock",
+    "net.minecraft.world.level.block.PathBlock",
+    "net.minecraft.world.level.block.RedstoneWallTorchBlock",
+    "net.minecraft.world.level.block.RedstoneWireBlock",
+    "net.minecraft.world.level.block.ScaffoldingBlock",
+    "net.minecraft.world.level.block.SeaPickleBlock",
+    "net.minecraft.world.level.block.ShelfMushroomBlock",
+    "net.minecraft.world.level.block.SmallDripleafBlock",
+    "net.minecraft.world.level.block.SnowLayerBlock",
+    "net.minecraft.world.level.block.SoulFireBlock",
+    "net.minecraft.world.level.block.SpeleothemBlock",
+    "net.minecraft.world.level.block.SporeBlossomBlock",
+    "net.minecraft.world.level.block.StandingSignBlock",
+    "net.minecraft.world.level.block.SugarCaneBlock",
+    "net.minecraft.world.level.block.TallSeagrassBlock",
+    "net.minecraft.world.level.block.TripWireHookBlock",
+    "net.minecraft.world.level.block.VegetationBlock",
+    "net.minecraft.world.level.block.VineBlock",
+    "net.minecraft.world.level.block.WallBannerBlock",
+    "net.minecraft.world.level.block.WallSignBlock",
+    "net.minecraft.world.level.block.WallTorchBlock",
+    "net.minecraft.world.level.block.piston.PistonHeadBlock",
+];
+
+/// The classes that override `VegetationBlock.mayPlaceOn` in Java, by binary name: where the port
+/// has no override, `VegetationBlock::may_place_on` says it isn't ported.
+pub(crate) const MAY_PLACE_ON_CLASSES: [&str; 19] = [
+    "net.minecraft.world.level.block.AttachedStemBlock",
+    "net.minecraft.world.level.block.AzaleaBlock",
+    "net.minecraft.world.level.block.CactusFlowerBlock",
+    "net.minecraft.world.level.block.CropBlock",
+    "net.minecraft.world.level.block.DryVegetationBlock",
+    "net.minecraft.world.level.block.LilyPadBlock",
+    "net.minecraft.world.level.block.MangrovePropaguleBlock",
+    "net.minecraft.world.level.block.MushroomBlock",
+    "net.minecraft.world.level.block.NetherFungusBlock",
+    "net.minecraft.world.level.block.NetherRootsBlock",
+    "net.minecraft.world.level.block.NetherSproutsBlock",
+    "net.minecraft.world.level.block.NetherWartBlock",
+    "net.minecraft.world.level.block.PitcherCropBlock",
+    "net.minecraft.world.level.block.SeaPickleBlock",
+    "net.minecraft.world.level.block.SeagrassBlock",
+    "net.minecraft.world.level.block.SmallDripleafBlock",
+    "net.minecraft.world.level.block.StemBlock",
+    "net.minecraft.world.level.block.TallSeagrassBlock",
+    "net.minecraft.world.level.block.WitherRoseBlock",
 ];
 
 /// `Block` itself.
@@ -487,6 +606,16 @@ impl Block {
     /// How many blocks a field of `Blocks` holding one takes.
     pub(crate) const COUNT: u16 = 1;
 
+    /// `BlockBehaviour.UPDATE_SHAPE_ORDER`.
+    pub const UPDATE_SHAPE_ORDER: [Direction; 6] = [
+        Direction::WEST,
+        Direction::EAST,
+        Direction::NORTH,
+        Direction::SOUTH,
+        Direction::DOWN,
+        Direction::UP,
+    ];
+
     /// `animateTick(BlockState, Level, BlockPos, RandomSource)`: its class's, or `Block`'s, which
     /// does nothing.
     pub fn animate_tick(
@@ -544,18 +673,75 @@ impl Block {
         direction_to_neighbour: Direction,
         neighbour_pos: &BlockPos,
         neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
     ) -> BlockState {
-        let mut class = Some(self.class());
+        Block::update_shape_from(
+            self.class(),
+            self,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
+    }
+
+    /// `super.updateShape(...)` from `class`'s override: its parent's, or `BlockBehaviour`'s.
+    #[allow(clippy::too_many_arguments)]
+    pub fn super_update_shape(
+        block: &BlockData,
+        class: &'static BlockClass,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        match class.parent {
+            Some(parent) => Block::update_shape_from(
+                parent,
+                block,
+                state,
+                level,
+                pos,
+                direction_to_neighbour,
+                neighbour_pos,
+                neighbour_state,
+                random,
+            ),
+            None => state,
+        }
+    }
+
+    /// The `updateShape` nearest `class` up its chain.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape_from(
+        class: &'static BlockClass,
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        let mut class = Some(class);
         while let Some(current) = class {
             if let Some(update_shape) = current.update_shape {
                 return update_shape(
-                    self,
+                    block,
                     state,
                     level,
                     pos,
                     direction_to_neighbour,
                     neighbour_pos,
                     neighbour_state,
+                    random,
                 );
             }
             if UPDATE_SHAPE_CLASSES.contains(&current.name) {
@@ -567,26 +753,117 @@ impl Block {
         state
     }
 
-    /// `updateFromNeighbourShapes`: the state as each neighbour, in `UPDATE_SHAPE_ORDER`, has it
-    /// update its shape.
-    pub fn update_from_neighbour_shapes(
+    /// `canSurvive(state, level, pos)`: its class's, or `BlockBehaviour`'s, true. A class whose
+    /// override isn't ported says so and answers true.
+    pub fn can_survive(&self, state: BlockState, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        let mut class = Some(self.class());
+        while let Some(current) = class {
+            if let Some(can_survive) = current.can_survive {
+                return can_survive(self, state, level, pos);
+            }
+            if CAN_SURVIVE_CLASSES.contains(&current.name) {
+                eprintln!("{}.canSurvive isn't ported", current.name);
+                return true;
+            }
+            class = current.parent;
+        }
+        true
+    }
+
+    /// `isSignalSource(state)`: its class's, or `BlockBehaviour`'s, false.
+    pub fn is_signal_source(&self, state: BlockState) -> bool {
+        self.class()
+            .find(|class| class.is_signal_source)
+            .is_some_and(|is_signal_source| is_signal_source(self, state))
+    }
+
+    /// `shouldRedstoneWireConnectTo(state, level, pos, direction)`: its class's, or
+    /// `BlockBehaviour`'s, a signal source's beside it.
+    pub fn should_redstone_wire_connect_to(
+        &self,
         state: BlockState,
         level: &dyn BlockGetter,
         pos: &BlockPos,
+        direction: Option<Direction>,
+    ) -> bool {
+        match self
+            .class()
+            .find(|class| class.should_redstone_wire_connect_to)
+        {
+            Some(should_redstone_wire_connect_to) => {
+                should_redstone_wire_connect_to(self, state, level, pos, direction)
+            }
+            None => state.is_signal_source() && direction.is_some(),
+        }
+    }
+
+    /// `updateIndirectNeighbourShapes(state, level, pos, updateFlags, updateLimit)`: its class's,
+    /// or `BlockBehaviour`'s, none.
+    pub fn update_indirect_neighbour_shapes(
+        &self,
+        state: BlockState,
+        level: &mut ClientLevel,
+        pos: &BlockPos,
+        update_flags: i32,
+        update_limit: i32,
+    ) {
+        if let Some(update_indirect_neighbour_shapes) = self
+            .class()
+            .find(|class| class.update_indirect_neighbour_shapes)
+        {
+            update_indirect_neighbour_shapes(self, state, level, pos, update_flags, update_limit);
+        }
+    }
+
+    /// `updateFromNeighbourShapes(state, level, pos)`: the state as each neighbour, in
+    /// `UPDATE_SHAPE_ORDER`, has it update its shape, with the level's random.
+    pub fn update_from_neighbour_shapes(
+        state: BlockState,
+        level: &ClientLevel,
+        pos: &BlockPos,
     ) -> BlockState {
         let mut new_state = state;
-        for direction in UPDATE_SHAPE_ORDER {
+        for direction in Block::UPDATE_SHAPE_ORDER {
             let neighbour_pos = pos.relative(direction);
+            let neighbour_state = level.get_block_state(&neighbour_pos);
             new_state = new_state.get_block().update_shape(
                 new_state,
                 level,
                 pos,
                 direction,
                 &neighbour_pos,
-                level.get_block_state(&neighbour_pos),
+                neighbour_state,
+                &mut *level.get_random(),
             );
         }
         new_state
+    }
+
+    /// `updateOrDestroy(blockState, newState, level, blockPos, updateFlags, updateLimit)`: the new
+    /// state set, unless it's air, which only a server destroys the block for.
+    pub fn update_or_destroy(
+        block_state: BlockState,
+        new_state: BlockState,
+        level: &mut ClientLevel,
+        block_pos: &BlockPos,
+        update_flags: i32,
+        update_limit: i32,
+    ) {
+        if new_state != block_state && !new_state.is_air() {
+            level.set_block(block_pos, new_state, update_flags & -33, update_limit);
+        }
+    }
+
+    /// `isExceptionForConnection(state)`: what fences, walls and panes don't join to however
+    /// sturdy its face.
+    pub fn is_exception_for_connection(state: BlockState) -> bool {
+        state.class_is_leaves()
+            || state.is(Blocks::BARRIER)
+            || state.is(Blocks::CARVED_PUMPKIN)
+            || state.is(Blocks::JACK_O_LANTERN)
+            || state.is(Blocks::MELON)
+            || state.is(Blocks::PUMPKIN)
+            || state.is_tag(BlockTags::SHULKER_BOXES)
     }
 
     /// `super.animateTick(...)` from `class`'s override: its parent's, if one overrides it.

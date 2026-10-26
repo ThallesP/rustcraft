@@ -6,9 +6,9 @@
 //! Of its behaviour, `getFluidState` and its shape (by how many pickles) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -28,6 +28,7 @@ use std::sync::LazyLock;
 pub struct SeaPickleBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(SeaPickleBlock::may_place_on),
     get_shape: Some(SeaPickleBlock::get_shape),
     get_fluid_state: Some(SeaPickleBlock::get_fluid_state),
     ..BlockClass::new(
@@ -104,5 +105,21 @@ impl SeaPickleBlock {
             4 => SHAPE_FOUR.clone(),
             _ => SHAPE_ONE.clone(),
         }
+    }
+}
+
+impl SeaPickleBlock {
+    /// `mayPlaceOn`: on anything with a top face to collide with, or a sturdy top.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        !state
+            .get_collision_shape(level, pos)
+            .get_face_shape(Direction::UP)
+            .is_empty()
+            || state.is_face_sturdy(level, pos, Direction::UP)
     }
 }

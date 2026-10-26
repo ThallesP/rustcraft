@@ -6,6 +6,7 @@
 
 use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::particles::block_particle_option::BlockParticleOption;
 use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
 use crate::net::minecraft::tags::block_tags::BlockTags;
@@ -21,6 +22,7 @@ use crate::net::minecraft::world::level::block_getter::BlockGetter;
 pub struct FallingBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(FallingBlock::update_shape),
     animate_tick: Some(FallingBlock::animate_tick),
     ..BlockClass::new(
         "net.minecraft.world.level.block.FallingBlock",
@@ -64,5 +66,32 @@ impl FallingBlock {
     /// replaced.
     pub fn is_free(state: BlockState) -> bool {
         state.is_air() || state.is_tag(BlockTags::FIRE) || state.liquid() || state.can_be_replaced()
+    }
+}
+
+impl FallingBlock {
+    /// `updateShape`: its parent's. The tick it schedules for itself goes nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

@@ -6,10 +6,10 @@
 //! Of its behaviour, `getFluidState` and its shape (along its axis) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::core::direction::Axis;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::core::direction::{Axis, Direction};
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::rotated_pillar_block::{self, RotatedPillarBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
@@ -29,6 +29,7 @@ use std::sync::LazyLock;
 pub struct ChainBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(ChainBlock::update_shape),
     get_shape: Some(ChainBlock::get_shape),
     get_fluid_state: Some(ChainBlock::get_fluid_state),
     ..BlockClass::new(
@@ -92,5 +93,33 @@ impl ChainBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         Shapes::get(&SHAPES, state.get_value(BlockStateProperties::AXIS)).clone()
+    }
+}
+
+impl ChainBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

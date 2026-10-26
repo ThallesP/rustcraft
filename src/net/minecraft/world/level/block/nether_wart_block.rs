@@ -6,9 +6,9 @@
 //! Of its behaviour, which states tick and its shape (taller as it grows) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -25,6 +25,7 @@ use std::sync::LazyLock;
 pub struct NetherWartBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(NetherWartBlock::may_place_on),
     get_shape: Some(NetherWartBlock::get_shape),
     is_randomly_ticking: Some(NetherWartBlock::is_randomly_ticking),
     ..BlockClass::new(
@@ -80,5 +81,17 @@ impl NetherWartBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPES[state.get_value(NetherWartBlock::AGE) as usize].clone()
+    }
+}
+
+impl NetherWartBlock {
+    /// `mayPlaceOn`: on what supports nether wart.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_NETHER_WART)
     }
 }

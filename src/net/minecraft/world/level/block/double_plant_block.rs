@@ -3,13 +3,17 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour.
 //!
-//! Of its behaviour, `getSeed` (the lower half's, for both) is ported.
+//! Of its behaviour, `getSeed` (the lower half's, for both), `updateShape` and `canSurvive` are
+//! ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
@@ -18,10 +22,13 @@ use crate::net::minecraft::world::level::block::state::properties::enum_property
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block::vegetation_block::{self, VegetationBlock};
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 
 pub struct DoublePlantBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(DoublePlantBlock::update_shape),
+    can_survive: Some(DoublePlantBlock::can_survive),
     get_seed: Some(DoublePlantBlock::get_seed),
     ..BlockClass::new(
         "net.minecraft.world.level.block.DoublePlantBlock",
@@ -72,5 +79,65 @@ impl DoublePlantBlock {
             };
         #[allow(deprecated)]
         Mth::get_seed(pos.get_x(), pos.below_steps(steps).get_y(), pos.get_z())
+    }
+}
+
+impl DoublePlantBlock {
+    /// `updateShape`: air (which a client leaves) when its other half is gone, or the lower half
+    /// can't stay; its parent's otherwise.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        let half = state.get_value(DoublePlantBlock::HALF);
+        if direction_to_neighbour.get_axis() != Axis::Y
+            || (half == DoubleBlockHalf::LOWER) != (direction_to_neighbour == Direction::UP)
+            || std::ptr::eq(&*neighbour_state.get_block(), block)
+                && neighbour_state.get_value(DoublePlantBlock::HALF) != half
+        {
+            if half == DoubleBlockHalf::LOWER
+                && direction_to_neighbour == Direction::DOWN
+                && !state.can_survive(level, pos)
+            {
+                Blocks::AIR.default_block_state()
+            } else {
+                Block::super_update_shape(
+                    block,
+                    &CLASS,
+                    state,
+                    level,
+                    pos,
+                    direction_to_neighbour,
+                    neighbour_pos,
+                    neighbour_state,
+                    random,
+                )
+            }
+        } else {
+            Blocks::AIR.default_block_state()
+        }
+    }
+
+    /// `canSurvive`: the upper half on its lower half; the lower half as its parent has it.
+    fn can_survive(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        if state.get_value(DoublePlantBlock::HALF) != DoubleBlockHalf::UPPER {
+            return VegetationBlock::super_can_survive(block, &CLASS, state, level, pos);
+        }
+
+        let below_state = level.get_block_state(&pos.below());
+        std::ptr::eq(&*below_state.get_block(), block)
+            && below_state.get_value(DoublePlantBlock::HALF) == DoubleBlockHalf::LOWER
     }
 }

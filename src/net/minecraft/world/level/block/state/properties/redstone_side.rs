@@ -1,6 +1,4 @@
 //! net/minecraft/world/level/block/state/properties/RedstoneSide.java
-//!
-//! Not ported yet: `isConnected`.
 
 use std::fmt;
 
@@ -22,6 +20,11 @@ impl RedstoneSide {
 
     pub fn values() -> [RedstoneSide; 3] {
         RedstoneSide::VALUES
+    }
+
+    /// `isConnected()`: anything but none.
+    pub fn is_connected(&self) -> bool {
+        *self != RedstoneSide::NONE
     }
 }
 

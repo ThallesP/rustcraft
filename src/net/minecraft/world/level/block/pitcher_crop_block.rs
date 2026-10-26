@@ -7,9 +7,9 @@
 //! halves; the lower part to collide with) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::double_plant_block::{self, DoublePlantBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
@@ -32,6 +32,7 @@ pub struct PitcherCropBlock {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(PitcherCropBlock::may_place_on),
     get_shape: Some(PitcherCropBlock::get_shape),
     get_collision_shape: Some(PitcherCropBlock::get_collision_shape),
     is_randomly_ticking: Some(PitcherCropBlock::is_randomly_ticking),
@@ -129,5 +130,17 @@ impl PitcherCropBlock {
         } else {
             Shapes::empty()
         }
+    }
+}
+
+impl PitcherCropBlock {
+    /// `mayPlaceOn`: on what supports crops.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_CROPS)
     }
 }

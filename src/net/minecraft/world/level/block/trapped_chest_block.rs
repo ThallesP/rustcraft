@@ -7,13 +7,17 @@ use crate::net::minecraft::world::level::block::block::{
 };
 use crate::net::minecraft::world::level::block::chest_block::{self, ChestBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 
 pub struct TrappedChestBlock;
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.TrappedChestBlock",
-    &chest_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(TrappedChestBlock::is_signal_source),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.TrappedChestBlock",
+        &chest_block::CLASS,
+    )
+};
 
 impl TrappedChestBlock {
     pub fn new(properties: Properties) -> BlockData {
@@ -30,5 +34,12 @@ impl TrappedChestBlock {
         definition: CreateBlockStateDefinition,
     ) -> BlockData {
         ChestBlock::new_with(properties, class, definition)
+    }
+}
+
+impl TrappedChestBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

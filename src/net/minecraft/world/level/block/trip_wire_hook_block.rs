@@ -27,6 +27,7 @@ use std::sync::LazyLock;
 pub struct TripWireHookBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(TripWireHookBlock::is_signal_source),
     get_shape: Some(TripWireHookBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.TripWireHookBlock",
@@ -85,5 +86,12 @@ impl TripWireHookBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         Shapes::get(&SHAPES, state.get_value(TripWireHookBlock::FACING)).clone()
+    }
+}
+
+impl TripWireHookBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

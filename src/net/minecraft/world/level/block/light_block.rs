@@ -7,12 +7,13 @@
 //! nothing to anyone else), its render shape (invisible) and its shade brightness are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::references::block_item_ids::BlockItemIds;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
-use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
-use crate::net::minecraft::world::level::block::state::block_behaviour::RenderShape;
+use crate::net::minecraft::world::level::block::state::block_behaviour::{Properties, RenderShape};
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
@@ -29,6 +30,7 @@ use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 pub struct LightBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(LightBlock::update_shape),
     get_shape: Some(LightBlock::get_shape),
     get_render_shape: Some(LightBlock::get_render_shape),
     get_shade_brightness: Some(LightBlock::get_shade_brightness),
@@ -119,5 +121,33 @@ impl LightBlock {
         _pos: &BlockPos,
     ) -> f32 {
         1.0
+    }
+}
+
+impl LightBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

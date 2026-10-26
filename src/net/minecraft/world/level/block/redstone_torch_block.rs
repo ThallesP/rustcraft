@@ -23,6 +23,7 @@ use crate::net::minecraft::world::level::block::state::state_holder::StateHolder
 pub struct RedstoneTorchBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(RedstoneTorchBlock::is_signal_source),
     animate_tick: Some(RedstoneTorchBlock::animate_tick),
     ..BlockClass::new(
         "net.minecraft.world.level.block.RedstoneTorchBlock",
@@ -76,5 +77,12 @@ impl RedstoneTorchBlock {
             let z = f64::from(pos.get_z()) + 0.5 + (random.next_double() - 0.5) * 0.2;
             level.add_particle(DustParticleOptions::REDSTONE, x, y, z, 0.0, 0.0, 0.0);
         }
+    }
+}
+
+impl RedstoneTorchBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

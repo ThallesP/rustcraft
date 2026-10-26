@@ -61,6 +61,15 @@ impl CrossCollisionBlock {
         (Direction::WEST, CrossCollisionBlock::WEST),
     ];
 
+    /// `PROPERTY_BY_DIRECTION.get(direction)`, for a horizontal direction.
+    pub fn property_by_direction(direction: Direction) -> &'static BooleanProperty {
+        CrossCollisionBlock::PROPERTY_BY_DIRECTION
+            .iter()
+            .find(|(candidate, _)| *candidate == direction)
+            .map(|(_, property)| *property)
+            .expect("a horizontal direction")
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with(
         post_width: f32,

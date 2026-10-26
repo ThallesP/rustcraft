@@ -63,6 +63,21 @@ impl BlockTags {
         TagKey("triggers_ambient_dried_ghast_block_sounds");
     pub const REQUIRED_FOR_POPLAR_LEAF_AMBIENCE: TagKey =
         TagKey("required_for_poplar_leaf_ambience");
+    pub const SHULKER_BOXES: TagKey = TagKey("shulker_boxes");
+    pub const WOODEN_FENCES: TagKey = TagKey("wooden_fences");
+    pub const WALL_POST_OVERRIDE: TagKey = TagKey("wall_post_override");
+    pub const SUPPORTS_VEGETATION: TagKey = TagKey("supports_vegetation");
+    pub const SUPPORTS_DRY_VEGETATION: TagKey = TagKey("supports_dry_vegetation");
+    pub const SUPPORT_OVERRIDE_CACTUS_FLOWER: TagKey = TagKey("support_override_cactus_flower");
+    pub const SUPPORTS_LILY_PAD: TagKey = TagKey("supports_lily_pad");
+    pub const SUPPORTS_MANGROVE_PROPAGULE: TagKey = TagKey("supports_mangrove_propagule");
+    pub const SUPPORTS_NETHER_WART: TagKey = TagKey("supports_nether_wart");
+    pub const SUPPORTS_CROPS: TagKey = TagKey("supports_crops");
+    pub const SUPPORTS_NETHER_SPROUTS: TagKey = TagKey("supports_nether_sprouts");
+    pub const CANNOT_SUPPORT_SEAGRASS: TagKey = TagKey("cannot_support_seagrass");
+    pub const SUPPORTS_SMALL_DRIPLEAF: TagKey = TagKey("supports_small_dripleaf");
+    pub const SUPPORTS_AZALEA: TagKey = TagKey("supports_azalea");
+    pub const SUPPORTS_WITHER_ROSE: TagKey = TagKey("supports_wither_rose");
 }
 
 /// Each tag's blocks by registered name, resolved as they're first asked for.

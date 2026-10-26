@@ -9,9 +9,8 @@
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
-use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
@@ -30,6 +29,7 @@ use std::sync::LazyLock;
 pub struct LecternBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(LecternBlock::is_signal_source),
     get_shape: Some(LecternBlock::get_shape),
     get_collision_shape: Some(LecternBlock::get_collision_shape),
     get_occlusion_shape: Some(LecternBlock::get_occlusion_shape),
@@ -126,5 +126,12 @@ impl LecternBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         Shapes::get(&SHAPES, state.get_value(HorizontalDirectionalBlock::FACING)).clone()
+    }
+}
+
+impl LecternBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

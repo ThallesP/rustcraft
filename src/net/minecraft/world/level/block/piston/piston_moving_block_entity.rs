@@ -300,7 +300,14 @@ impl PistonMovingBlockEntity {
                     Block::update_from_neighbour_shapes(entity.moved_state, &*level.level, pos);
                 if new_state.is_air() {
                     level.level.set_block(pos, entity.moved_state, 340, 512);
-                    // `Block.updateOrDestroy`: a client destroys nothing.
+                    Block::update_or_destroy(
+                        entity.moved_state,
+                        new_state,
+                        level.level,
+                        pos,
+                        3,
+                        512,
+                    );
                 } else {
                     if new_state.has_property(BlockStateProperties::WATERLOGGED)
                         && new_state.get_value(BlockStateProperties::WATERLOGGED)

@@ -1,6 +1,6 @@
 //! net/minecraft/world/level/block/state/properties/NoteBlockInstrument.java
 //!
-//! Not ported yet: `getSoundEvent`, `isTunable`, `hasCustomSound`, `worksAboveNoteBlock`.
+//! Not ported yet: `getSoundEvent`.
 
 use std::fmt;
 
@@ -84,6 +84,11 @@ impl NoteBlockInstrument {
     /// `hasCustomSound()`: a player's head's (`Type.CUSTOM`), whose sound the head names.
     pub fn has_custom_sound(&self) -> bool {
         *self == NoteBlockInstrument::CUSTOM_HEAD
+    }
+
+    /// `worksAboveNoteBlock()`: a head's instrument, not a base block's.
+    pub fn works_above_note_block(&self) -> bool {
+        !self.is_tunable()
     }
 }
 

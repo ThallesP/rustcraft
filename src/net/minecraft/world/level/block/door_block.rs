@@ -3,15 +3,17 @@
 //! Only what decides its blocks' states so far: its properties and its default state. Not ported
 //! yet: its behaviour, and its constructor's `type`.
 //!
-//! Of its behaviour, its shape (three sixteenths thick, swung toward its hinge when it's open) and
-//! `getSeed` (the lower half's, for both) are ported.
+//! Of its behaviour, its shape (three sixteenths thick, swung toward its hinge when it's open),
+//! `getSeed` (the lower half's, for both), `updateShape` and `canSurvive` are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -31,6 +33,8 @@ use std::sync::LazyLock;
 pub struct DoorBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(DoorBlock::update_shape),
+    can_survive: Some(DoorBlock::can_survive),
     get_shape: Some(DoorBlock::get_shape),
     get_seed: Some(DoorBlock::get_seed),
     ..BlockClass::new("net.minecraft.world.level.block.DoorBlock", &block::CLASS)
@@ -110,5 +114,68 @@ impl DoorBlock {
         };
         #[allow(deprecated)]
         Mth::get_seed(pos.get_x(), pos.below_steps(steps).get_y(), pos.get_z())
+    }
+}
+
+impl DoorBlock {
+    /// `updateShape`: from its other half, which it goes with (or air, which a client leaves,
+    /// when that's gone); air when the lower half has lost what holds it up; its parent's
+    /// otherwise.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        let half = state.get_value(DoorBlock::HALF);
+        if direction_to_neighbour.get_axis() != Axis::Y
+            || (half == DoubleBlockHalf::LOWER) != (direction_to_neighbour == Direction::UP)
+        {
+            if half == DoubleBlockHalf::LOWER
+                && direction_to_neighbour == Direction::DOWN
+                && !state.can_survive(level, pos)
+            {
+                Blocks::AIR.default_block_state()
+            } else {
+                Block::super_update_shape(
+                    block,
+                    &CLASS,
+                    state,
+                    level,
+                    pos,
+                    direction_to_neighbour,
+                    neighbour_pos,
+                    neighbour_state,
+                    random,
+                )
+            }
+        } else if neighbour_state.get_block().is_instance_of(&CLASS)
+            && neighbour_state.get_value(DoorBlock::HALF) != half
+        {
+            neighbour_state.set_value(DoorBlock::HALF, half)
+        } else {
+            Blocks::AIR.default_block_state()
+        }
+    }
+
+    /// `canSurvive`: the lower half on a sturdy top, the upper half on the door's lower half.
+    fn can_survive(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        let below = pos.below();
+        let below_state = level.get_block_state(&below);
+        if state.get_value(DoorBlock::HALF) == DoubleBlockHalf::LOWER {
+            below_state.is_face_sturdy(level, &below, Direction::UP)
+        } else {
+            std::ptr::eq(&*below_state.get_block(), block)
+        }
     }
 }

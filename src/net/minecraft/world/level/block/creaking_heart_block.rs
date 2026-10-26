@@ -7,8 +7,7 @@
 
 use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::core::direction::Axis;
-use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::sounds::sound_events::SoundEvents;
 use crate::net::minecraft::sounds::sound_source::SoundSource;
 use crate::net::minecraft::tags::block_tags::BlockTags;
@@ -16,7 +15,7 @@ use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::attribute::environment_attributes::EnvironmentAttributes;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -31,6 +30,7 @@ use crate::net::minecraft::world::level::block_getter::BlockGetter;
 pub struct CreakingHeartBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(CreakingHeartBlock::update_shape),
     animate_tick: Some(CreakingHeartBlock::animate_tick),
     ..BlockClass::new(
         "net.minecraft.world.level.block.CreakingHeartBlock",
@@ -110,5 +110,32 @@ impl CreakingHeartBlock {
                 .get_block_state(&pos.relative(dir))
                 .is_tag(BlockTags::PALE_OAK_LOGS)
         })
+    }
+}
+
+impl CreakingHeartBlock {
+    /// `updateShape`: its parent's. The tick it schedules for itself goes nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

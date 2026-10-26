@@ -5,6 +5,7 @@
 //! Of its behaviour, its shape (a bush on a stem) is ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -20,6 +21,7 @@ use std::sync::LazyLock;
 pub struct AzaleaBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(AzaleaBlock::may_place_on),
     get_shape: Some(AzaleaBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.AzaleaBlock",
@@ -57,5 +59,17 @@ impl AzaleaBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl AzaleaBlock {
+    /// `mayPlaceOn`: on what supports azalea.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_AZALEA)
     }
 }

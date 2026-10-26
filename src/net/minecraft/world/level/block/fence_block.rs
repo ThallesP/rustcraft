@@ -3,15 +3,20 @@
 //! What decides its blocks' states (its properties and its default state), the sizes its
 //! parent's shapes are made with (4, 16, 4, 16 and 24 sixteenths), and its occlusion shapes (a
 //! post 2 sixteenths wide, with arms from 6 to 15 sixteenths up), which the light engine and face
-//! culling read. Not ported yet: the rest of its behaviour.
+//! culling read, and `updateShape` with what it joins (`connectsTo`). Not ported yet: the rest of
+//! its behaviour.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::cross_collision_block::{
     self, CrossCollisionBlock,
 };
+use crate::net::minecraft::world::level::block::fence_gate_block::{self, FenceGateBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
@@ -23,6 +28,7 @@ use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 pub struct FenceBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(FenceBlock::update_shape),
     get_visual_shape: Some(FenceBlock::get_visual_shape),
     get_occlusion_shape: Some(FenceBlock::get_occlusion_shape),
     ..BlockClass::new(
@@ -98,5 +104,68 @@ impl FenceBlock {
         context: &dyn CollisionContext,
     ) -> VoxelShape {
         state.get_shape_in(level, pos, context)
+    }
+}
+
+impl FenceBlock {
+    /// `connectsTo(state, faceSolid, direction)`: whether it joins a neighbour that way, whose
+    /// face toward it is solid or not: a fence of its kind (wooden or not), a gate across that
+    /// way, or a solid face, unless the neighbour is one fences don't join.
+    pub fn connects_to(
+        block: &BlockData,
+        state: BlockState,
+        face_solid: bool,
+        direction: Direction,
+    ) -> bool {
+        let same_fence = FenceBlock::is_same_fence(block, state);
+        let gate = state.get_block().is_instance_of(&fence_gate_block::CLASS)
+            && FenceGateBlock::connects_to_direction(state, direction);
+        !Block::is_exception_for_connection(state) && face_solid || same_fence || gate
+    }
+
+    /// `isSameFence(state)`: a fence, wooden if this one is.
+    fn is_same_fence(block: &BlockData, state: BlockState) -> bool {
+        state.is_tag(BlockTags::FENCES)
+            && state.is_tag(BlockTags::WOODEN_FENCES)
+                == block.default_block_state().is_tag(BlockTags::WOODEN_FENCES)
+    }
+
+    /// `updateShape`: joined to its neighbour that way or not, sideways; its parent's up and down.
+    /// The water's tick it schedules when it's waterlogged goes nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        if direction_to_neighbour.get_axis().is_horizontal() {
+            let opposite = direction_to_neighbour.get_opposite();
+            state.set_value(
+                CrossCollisionBlock::property_by_direction(direction_to_neighbour),
+                FenceBlock::connects_to(
+                    block,
+                    neighbour_state,
+                    neighbour_state.is_face_sturdy(level, neighbour_pos, opposite),
+                    opposite,
+                ),
+            )
+        } else {
+            Block::super_update_shape(
+                block,
+                &CLASS,
+                state,
+                level,
+                pos,
+                direction_to_neighbour,
+                neighbour_pos,
+                neighbour_state,
+                random,
+            )
+        }
     }
 }

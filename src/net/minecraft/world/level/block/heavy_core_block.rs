@@ -6,6 +6,8 @@
 //! Of its behaviour, `getFluidState` and its shape are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -25,6 +27,7 @@ use std::sync::LazyLock;
 pub struct HeavyCoreBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(HeavyCoreBlock::update_shape),
     get_shape: Some(HeavyCoreBlock::get_shape),
     get_fluid_state: Some(HeavyCoreBlock::get_fluid_state),
     ..BlockClass::new(
@@ -86,5 +89,33 @@ impl HeavyCoreBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl HeavyCoreBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 }

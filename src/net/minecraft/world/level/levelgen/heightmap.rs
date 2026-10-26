@@ -291,7 +291,9 @@ mod tests {
                     .by_id(state)
                     .expect("a state the registry has");
                 let pos = BlockPos::new(x, y, z);
-                let changed = level.set_block(&pos, state, 3, 512);
+                // The golden sets the chunk's state alone (`LevelChunk.setBlockState`): its shape
+                // known, so no neighbour's changes with it.
+                let changed = level.set_block(&pos, state, 19, 512);
                 let actual = if changed {
                     json!(heights(&level, x, z))
                 } else {

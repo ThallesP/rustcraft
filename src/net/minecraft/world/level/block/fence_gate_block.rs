@@ -4,13 +4,15 @@
 //! yet: its behaviour, and its constructor's `type`.
 //!
 //! Of its behaviour, its shapes (lower in a wall; a fence's height to collide with and to hold
-//! things up while it's closed, nothing while it's open; its posts to occlude) are ported.
+//! things up while it's closed, nothing while it's open; its posts to occlude) and `updateShape`
+//! (in a wall or not) are ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
-use crate::net::minecraft::core::direction::Axis;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::core::direction::{Axis, Direction};
+use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::horizontal_directional_block::{
     self, HorizontalDirectionalBlock,
@@ -31,6 +33,7 @@ use std::sync::LazyLock;
 pub struct FenceGateBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(FenceGateBlock::update_shape),
     get_shape: Some(FenceGateBlock::get_shape),
     get_block_support_shape: Some(FenceGateBlock::get_block_support_shape),
     get_collision_shape: Some(FenceGateBlock::get_collision_shape),
@@ -171,5 +174,61 @@ impl FenceGateBlock {
             &SHAPE_OCCLUSION
         };
         Shapes::get(shapes, FenceGateBlock::axis(state)).clone()
+    }
+}
+
+impl FenceGateBlock {
+    /// `connectsToDirection(state, direction)`: whether it's across that way, so a fence or wall
+    /// there joins it.
+    pub fn connects_to_direction(state: BlockState, direction: Direction) -> bool {
+        state
+            .get_value(HorizontalDirectionalBlock::FACING)
+            .get_axis()
+            == direction.get_clock_wise().get_axis()
+    }
+
+    /// `isWall(state)`.
+    fn is_wall(state: BlockState) -> bool {
+        state.is_tag(BlockTags::WALLS)
+    }
+
+    /// `updateShape`: in a wall when a wall is beside it on either side along its span; its
+    /// parent's for the other neighbours.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        let axis = direction_to_neighbour.get_axis();
+        if state
+            .get_value(HorizontalDirectionalBlock::FACING)
+            .get_clock_wise()
+            .get_axis()
+            != axis
+        {
+            return Block::super_update_shape(
+                block,
+                &CLASS,
+                state,
+                level,
+                pos,
+                direction_to_neighbour,
+                neighbour_pos,
+                neighbour_state,
+                random,
+            );
+        }
+
+        let in_wall = FenceGateBlock::is_wall(neighbour_state)
+            || FenceGateBlock::is_wall(
+                level.get_block_state(&pos.relative(direction_to_neighbour.get_opposite())),
+            );
+        state.set_value(FenceGateBlock::IN_WALL, in_wall)
     }
 }

@@ -6,9 +6,9 @@
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
-use crate::net::minecraft::world::level::block::block::Block;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::directional_block::{self, DirectionalBlock};
@@ -31,6 +31,7 @@ pub struct PistonHeadBlock;
 
 pub static CLASS: BlockClass = BlockClass {
     update_shape: Some(PistonHeadBlock::update_shape),
+    can_survive: Some(PistonHeadBlock::can_survive_method),
     get_shape: Some(PistonHeadBlock::get_shape),
     use_shape_for_light_occlusion: Some(PistonHeadBlock::use_shape_for_light_occlusion),
     ..BlockClass::new(
@@ -139,6 +140,7 @@ impl PistonHeadBlock {
         direction_to_neighbour: Direction,
         _neighbour_pos: &BlockPos,
         _neighbour_state: BlockState,
+        _random: &mut dyn RandomSource,
     ) -> BlockState {
         if direction_to_neighbour.get_opposite() == state.get_value(DirectionalBlock::FACING)
             && !PistonHeadBlock::can_survive(state, level, pos)
@@ -147,6 +149,16 @@ impl PistonHeadBlock {
         } else {
             state
         }
+    }
+
+    /// `canSurvive`, as its class's.
+    fn can_survive_method(
+        _block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> bool {
+        PistonHeadBlock::can_survive(state, level, pos)
     }
 
     /// `canSurvive`: its base behind it, or a moving piston moving its way.

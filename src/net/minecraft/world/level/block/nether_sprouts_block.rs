@@ -5,6 +5,7 @@
 //! Of its behaviour, its shape is ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
@@ -19,6 +20,7 @@ use std::sync::LazyLock;
 pub struct NetherSproutsBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    may_place_on: Some(NetherSproutsBlock::may_place_on),
     get_shape: Some(NetherSproutsBlock::get_shape),
     ..BlockClass::new(
         "net.minecraft.world.level.block.NetherSproutsBlock",
@@ -51,5 +53,17 @@ impl NetherSproutsBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl NetherSproutsBlock {
+    /// `mayPlaceOn`: on what supports nether sprouts.
+    fn may_place_on(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+    ) -> bool {
+        state.is_tag(BlockTags::SUPPORTS_NETHER_SPROUTS)
     }
 }

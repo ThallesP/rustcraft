@@ -4,14 +4,16 @@
 //! parent's shapes are made with (2, 16, 2, 16 and 16 sixteenths). Not ported yet: the rest of its
 //! behaviour.
 //!
-//! Of its behaviour, its visual shape (nothing) and `skipRendering` (between bars joined to each
-//! other, and above and below bars) are ported.
+//! Of its behaviour, its visual shape (nothing), `skipRendering` (between bars joined to each
+//! other, and above and below bars) and `updateShape` with what it joins (`attachsTo`) are
+//! ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::cross_collision_block::{
     self, CrossCollisionBlock,
@@ -28,6 +30,7 @@ use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 pub struct IronBarsBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(IronBarsBlock::update_shape),
     get_visual_shape: Some(IronBarsBlock::get_visual_shape),
     skip_rendering: Some(IronBarsBlock::skip_rendering),
     ..BlockClass::new(
@@ -120,5 +123,56 @@ impl IronBarsBlock {
             }
         }
         false
+    }
+}
+
+impl IronBarsBlock {
+    /// `attachsTo(state, faceSolid)`: whether it joins a neighbour whose face toward it is solid
+    /// or not: bars or panes, a wall, or a solid face, unless the neighbour is one they don't
+    /// join.
+    pub fn attachs_to(state: BlockState, face_solid: bool) -> bool {
+        !Block::is_exception_for_connection(state) && face_solid
+            || state.get_block().is_instance_of(&CLASS)
+            || state.is_tag(BlockTags::WALLS)
+    }
+
+    /// `updateShape`: joined to its neighbour that way or not, sideways; its parent's up and down.
+    /// The water's tick it schedules when it's waterlogged goes nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        if direction_to_neighbour.get_axis().is_horizontal() {
+            state.set_value(
+                CrossCollisionBlock::property_by_direction(direction_to_neighbour),
+                IronBarsBlock::attachs_to(
+                    neighbour_state,
+                    neighbour_state.is_face_sturdy(
+                        level,
+                        neighbour_pos,
+                        direction_to_neighbour.get_opposite(),
+                    ),
+                ),
+            )
+        } else {
+            Block::super_update_shape(
+                block,
+                &CLASS,
+                state,
+                level,
+                pos,
+                direction_to_neighbour,
+                neighbour_pos,
+                neighbour_state,
+                random,
+            )
+        }
     }
 }

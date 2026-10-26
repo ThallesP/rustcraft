@@ -33,13 +33,14 @@ use std::sync::{Arc, OnceLock};
 
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 
-use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
+use crate::net::minecraft::client::multiplayer::client_level::{ClientLevel, LevelTicking};
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::registries::registries::Registries;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::item::dye_color::DyeColor;
 use crate::net::minecraft::world::level::block::block::{Block, BlockClass, BlockData};
@@ -840,6 +841,89 @@ impl BlockState {
         b1: i32,
     ) -> bool {
         self.get_block().trigger_event(*self, level, pos, b0, b1)
+    }
+
+    /// `updateNeighbourShapes(level, pos, updateFlags, updateLimit)`: each neighbour, in
+    /// `UPDATE_SHAPE_ORDER`, told this state is now beside it.
+    pub fn update_neighbour_shapes(
+        &self,
+        level: &mut ClientLevel,
+        pos: &BlockPos,
+        update_flags: i32,
+        update_limit: i32,
+    ) {
+        for direction in Block::UPDATE_SHAPE_ORDER {
+            let block_pos = pos.relative(direction);
+            level.neighbor_shape_changed(
+                direction.get_opposite(),
+                &block_pos,
+                pos,
+                *self,
+                update_flags,
+                update_limit,
+            );
+        }
+    }
+
+    /// `canSurvive(level, pos)`: its block's.
+    pub fn can_survive(&self, level: &dyn BlockGetter, pos: &BlockPos) -> bool {
+        self.get_block().can_survive(*self, level, pos)
+    }
+
+    /// `isSignalSource()`: its block's.
+    pub fn is_signal_source(&self) -> bool {
+        self.get_block().is_signal_source(*self)
+    }
+
+    /// `shouldRedstoneWireConnectTo(level, pos, direction)`: its block's.
+    pub fn should_redstone_wire_connect_to(
+        &self,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction: Option<Direction>,
+    ) -> bool {
+        self.get_block()
+            .should_redstone_wire_connect_to(*self, level, pos, direction)
+    }
+
+    /// `updateIndirectNeighbourShapes(level, pos, updateFlags, updateLimit)`: its block's.
+    pub fn update_indirect_neighbour_shapes(
+        &self,
+        level: &mut ClientLevel,
+        pos: &BlockPos,
+        update_flags: i32,
+        update_limit: i32,
+    ) {
+        self.get_block().update_indirect_neighbour_shapes(
+            *self,
+            level,
+            pos,
+            update_flags,
+            update_limit,
+        );
+    }
+
+    /// `updateShape(level, ticks, pos, directionToNeighbour, neighbourPos, neighbourState,
+    /// random)`: its block's.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_shape(
+        &self,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        self.get_block().update_shape(
+            *self,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
     }
 
     /// `shouldChangedStateKeepBlockEntity(oldState)`: whether a block becoming this one keeps the

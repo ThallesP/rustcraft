@@ -13,9 +13,8 @@ use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::abstract_chest_block::{self, AbstractChestBlock};
 use crate::net::minecraft::world::level::block::base_entity_block;
-use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
 use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
@@ -39,6 +38,7 @@ use std::sync::LazyLock;
 pub struct EnderChestBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(EnderChestBlock::update_shape),
     get_ticker: Some(EnderChestBlock::get_ticker),
     animate_tick: Some(EnderChestBlock::animate_tick),
     get_shape: Some(EnderChestBlock::get_shape),
@@ -141,6 +141,34 @@ impl EnderChestBlock {
             r#type,
             BlockEntityTypes::ENDER_CHEST,
             EnderChestBlockEntity::lid_animate_tick,
+        )
+    }
+}
+
+impl EnderChestBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
         )
     }
 }

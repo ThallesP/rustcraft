@@ -11,9 +11,8 @@ use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::particles::dust_particle_options::DustParticleOptions;
 use crate::net::minecraft::util::random_source::RandomSource;
-use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::face_attached_horizontal_directional_block::{
     self, FaceAttachedHorizontalDirectionalBlock,
@@ -37,6 +36,7 @@ pub struct LeverBlock {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    is_signal_source: Some(LeverBlock::is_signal_source),
     animate_tick: Some(LeverBlock::animate_tick),
     get_shape: Some(LeverBlock::get_shape),
     ..BlockClass::new(
@@ -160,5 +160,12 @@ impl LeverBlock {
             0.0,
             0.0,
         );
+    }
+}
+
+impl LeverBlock {
+    /// `isSignalSource`: it is one.
+    fn is_signal_source(_block: &BlockData, _state: BlockState) -> bool {
+        true
     }
 }

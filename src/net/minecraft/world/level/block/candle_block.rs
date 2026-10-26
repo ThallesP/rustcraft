@@ -9,12 +9,13 @@
 //! ported.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::abstract_candle_block::{
     self, AbstractCandleBlock,
 };
-use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -34,6 +35,7 @@ use std::sync::LazyLock;
 pub struct CandleBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(CandleBlock::update_shape),
     get_shape: Some(CandleBlock::get_shape),
     get_fluid_state: Some(CandleBlock::get_fluid_state),
     ..BlockClass::new(
@@ -142,4 +144,32 @@ static PARTICLE_OFFSETS: LazyLock<[Vec<Vec3>; 4]> = LazyLock::new(|| {
 /// `getParticleOffsets`: the wicks of its candles.
 pub(crate) fn particle_offsets(state: BlockState) -> &'static [Vec3] {
     &PARTICLE_OFFSETS[(state.get_value(CandleBlock::CANDLES) - 1) as usize]
+}
+
+impl CandleBlock {
+    /// `updateShape`: its parent's. The water's tick it schedules when it's waterlogged goes
+    /// nowhere on the client.
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        Block::super_update_shape(
+            block,
+            &CLASS,
+            state,
+            level,
+            pos,
+            direction_to_neighbour,
+            neighbour_pos,
+            neighbour_state,
+            random,
+        )
+    }
 }

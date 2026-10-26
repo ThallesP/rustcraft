@@ -11,8 +11,9 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::particles::dust_particle_options::DustParticleOptions;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::block::{
-    BlockClass, BlockData, CreateBlockStateDefinition,
+    Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::diode_block::{self, DiodeBlock};
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
@@ -22,10 +23,13 @@ use crate::net::minecraft::world::level::block::state::properties::boolean_prope
 use crate::net::minecraft::world::level::block::state::properties::integer_property::IntegerProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 
 pub struct RepeaterBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(RepeaterBlock::update_shape),
+    should_redstone_wire_connect_to: Some(RepeaterBlock::should_redstone_wire_connect_to),
     animate_tick: Some(RepeaterBlock::animate_tick),
     ..BlockClass::new(
         "net.minecraft.world.level.block.RepeaterBlock",
@@ -104,6 +108,56 @@ impl RepeaterBlock {
                 0.0,
                 0.0,
             );
+        }
+    }
+}
+
+impl RepeaterBlock {
+    /// `shouldRedstoneWireConnectTo`: wire in front of it or behind it joins it.
+    fn should_redstone_wire_connect_to(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        direction: Option<Direction>,
+    ) -> bool {
+        let repeater_direction = state.get_value(HorizontalDirectionalBlock::FACING);
+        direction == Some(repeater_direction)
+            || direction == Some(repeater_direction.get_opposite())
+    }
+}
+
+impl RepeaterBlock {
+    /// `updateShape`: air (which a client leaves) when what's below can't hold it; its parent's
+    /// otherwise. Whether it's locked by the diodes beside it is the server's to work out
+    /// (`!level.isClientSide()`).
+    #[allow(clippy::too_many_arguments)]
+    fn update_shape(
+        block: &BlockData,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+        random: &mut dyn RandomSource,
+    ) -> BlockState {
+        if direction_to_neighbour == Direction::DOWN
+            && !DiodeBlock::can_survive_on(level, neighbour_pos, neighbour_state)
+        {
+            Blocks::AIR.default_block_state()
+        } else {
+            Block::super_update_shape(
+                block,
+                &CLASS,
+                state,
+                level,
+                pos,
+                direction_to_neighbour,
+                neighbour_pos,
+                neighbour_state,
+                random,
+            )
         }
     }
 }
