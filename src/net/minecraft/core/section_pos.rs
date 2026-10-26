@@ -164,6 +164,15 @@ impl SectionPos {
         ChunkPos::new(self.x(), self.z())
     }
 
+    /// `center()`: the block 8 in from the section's lowest corner on each axis.
+    pub fn center(&self) -> BlockPos {
+        BlockPos::new(
+            self.min_block_x() + 8,
+            self.min_block_y() + 8,
+            self.min_block_z() + 8,
+        )
+    }
+
     /// `asLong(int, int, int)`: x in the top 22 bits, z in the next 22, y in the low 20.
     pub fn as_long_xyz(x: i32, y: i32, z: i32) -> i64 {
         let mut node = 0i64;

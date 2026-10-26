@@ -21,6 +21,7 @@ use crate::net::minecraft::client::minecraft::Minecraft;
 use crate::net::minecraft::client::option_instance::{
     IntRange, OptionField, OptionInstance, ValueSet,
 };
+use crate::net::minecraft::client::prioritize_chunk_updates::PrioritizeChunkUpdates;
 use crate::net::minecraft::network::chat::component::Component;
 use crate::net::minecraft::network::chat::contents::translatable_contents::TranslationArgument;
 use crate::net::minecraft::server::level::client_information::ClientInformation;
@@ -92,6 +93,8 @@ pub struct Options {
     pub chat_height_focused: f64,
     pub chat_height_unfocused: f64,
     pub chat_scale: f64,
+    /// `prioritizeChunkUpdates()`: which dirty sections compile on the render thread.
+    pub prioritize_chunk_updates: PrioritizeChunkUpdates,
 }
 
 impl Default for Options {
@@ -155,6 +158,7 @@ impl Options {
             chat_height_focused: 1.0,
             chat_height_unfocused: ChatComponent::default_unfocused_pct(),
             chat_scale: 1.0,
+            prioritize_chunk_updates: PrioritizeChunkUpdates::NONE,
         }
     }
 

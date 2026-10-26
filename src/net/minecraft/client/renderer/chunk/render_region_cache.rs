@@ -1,8 +1,10 @@
 //! net/minecraft/client/renderer/chunk/RenderRegionCache.java
 //!
 //! The section copies a frame's compiles share, by section, so each section is copied once
-//! however many regions read it. `lighting` is what the regions ask the level for besides blocks
-//! (`RenderSectionRegion`): the level itself, which a test can stand in for.
+//! however many regions read it: its blocks (`SectionCopy`), and its light and biomes
+//! (`SectionLevelCopy`), which the port's regions copy with the blocks (`RenderSectionRegion`).
+//! `create_region_over` makes a region whose light and tints a level answers itself, which a test
+//! stands in for the level with.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,7 +12,9 @@ use std::sync::Arc;
 use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
-use crate::net::minecraft::client::renderer::chunk::render_section_region::RenderSectionRegion;
+use crate::net::minecraft::client::renderer::chunk::render_section_region::{
+    RenderSectionRegion, SectionLevelCopy,
+};
 use crate::net::minecraft::client::renderer::chunk::section_copy::SectionCopy;
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::registries::registries::Registries;
@@ -24,6 +28,7 @@ use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAcces
 #[derive(Default)]
 pub struct RenderRegionCache {
     section_copy_cache: HashMap<i64, Arc<SectionCopy>>,
+    level_copy_cache: HashMap<i64, Arc<SectionLevelCopy>>,
 }
 
 impl RenderRegionCache {
@@ -31,51 +36,55 @@ impl RenderRegionCache {
         RenderRegionCache::default()
     }
 
-    pub fn create_region<'a>(
+    /// The region around the section, with copies of the level's light, biomes and cached tints
+    /// there.
+    pub fn create_region(&mut self, level: &ClientLevel, section_node: i64) -> RenderSectionRegion {
+        let (min_x, min_y, min_z) = RenderRegionCache::min_section(section_node);
+        let sections = self.copy_sections(level, section_node);
+        let level_sections = RenderRegionCache::region_nodes(section_node)
+            .map(|(x, y, z)| {
+                Arc::clone(
+                    self.level_copy_cache
+                        .entry(SectionPos::as_long_xyz(x, y, z))
+                        .or_insert_with(|| Arc::new(SectionLevelCopy::new(level, x, y, z))),
+                )
+            })
+            .collect();
+        RenderSectionRegion::new(level, min_x, min_y, min_z, sections, level_sections)
+    }
+
+    /// The region around the section, whose light and tints `lighting` answers.
+    pub fn create_region_over<'a>(
         &mut self,
         level: &ClientLevel,
         lighting: &'a dyn BlockAndTintGetter,
         section_node: i64,
-    ) -> RenderSectionRegion<'a> {
-        let section_x = SectionPos::x_of(section_node);
-        let section_y = SectionPos::y_of(section_node);
-        let section_z = SectionPos::z_of(section_node);
-        let min_section_x = section_x - 1;
-        let min_section_y = section_y - 1;
-        let min_section_z = section_z - 1;
-        let mut region_sections: Vec<Option<Arc<SectionCopy>>> = vec![None; 27];
+    ) -> RenderSectionRegion<&'a dyn BlockAndTintGetter> {
+        let (min_x, min_y, min_z) = RenderRegionCache::min_section(section_node);
+        let sections = self.copy_sections(level, section_node);
+        RenderSectionRegion::over(lighting, min_x, min_y, min_z, sections)
+    }
 
-        for region_section_z in min_section_z..=section_z + 1 {
-            for region_section_y in min_section_y..=section_y + 1 {
-                for region_section_x in min_section_x..=section_x + 1 {
-                    let index = RenderSectionRegion::index(
-                        min_section_x,
-                        min_section_y,
-                        min_section_z,
-                        region_section_x,
-                        region_section_y,
-                        region_section_z,
-                    );
-                    region_sections[index] = Some(self.get_section_data_copy(
-                        level,
-                        region_section_x,
-                        region_section_y,
-                        region_section_z,
-                    ));
-                }
-            }
-        }
-
-        RenderSectionRegion::new(
-            lighting,
-            min_section_x,
-            min_section_y,
-            min_section_z,
-            region_sections
-                .into_iter()
-                .map(|section| section.expect("every section of the region is copied"))
-                .collect(),
+    fn min_section(section_node: i64) -> (i32, i32, i32) {
+        (
+            SectionPos::x_of(section_node) - 1,
+            SectionPos::y_of(section_node) - 1,
+            SectionPos::z_of(section_node) - 1,
         )
+    }
+
+    /// The region's 27 sections in `RenderSectionRegion.index`'s order: x, then y, then z.
+    fn region_nodes(section_node: i64) -> impl Iterator<Item = (i32, i32, i32)> {
+        let (min_x, min_y, min_z) = RenderRegionCache::min_section(section_node);
+        (min_z..=min_z + 2).flat_map(move |z| {
+            (min_y..=min_y + 2).flat_map(move |y| (min_x..=min_x + 2).map(move |x| (x, y, z)))
+        })
+    }
+
+    fn copy_sections(&mut self, level: &ClientLevel, section_node: i64) -> Vec<Arc<SectionCopy>> {
+        RenderRegionCache::region_nodes(section_node)
+            .map(|(x, y, z)| self.get_section_data_copy(level, x, y, z))
+            .collect()
     }
 
     fn get_section_data_copy(

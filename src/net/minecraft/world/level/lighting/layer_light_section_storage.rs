@@ -30,6 +30,7 @@ use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::data_layer_storage_map::{
     DataLayerStorageMapClass, SharedDataLayer,
 };
+use crate::net::minecraft::world::level::lighting::layer_light_event_listener::SectionLight;
 
 /// What a layer's storage keeps of its sections.
 pub struct LayerLightSectionStorage<M> {
@@ -237,6 +238,9 @@ pub trait LayerLightSectionStorageClass:
 
     /// The light the game sees at a block.
     fn get_light_value(&self, block_node: i64) -> i32;
+
+    /// What `get_light_value` reads in the section, copied (`LayerLightEventListener`).
+    fn copy_section_light(&self, section_node: i64) -> SectionLight;
 
     fn on_node_added(&mut self, _section_node: i64) {}
 

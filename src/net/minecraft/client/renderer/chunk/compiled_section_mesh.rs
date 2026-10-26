@@ -45,11 +45,8 @@ impl CompiledSectionMesh {
                 index_type: mesh.draw_state().index_type,
                 has_custom_index_buffer: mesh.index_buffer().is_some(),
             });
-            pending_buffers.push((
-                layer,
-                mesh.vertex_buffer().to_vec(),
-                mesh.index_buffer().map(<[u8]>::to_vec),
-            ));
+            let (vertices, indices) = mesh.into_buffers();
+            pending_buffers.push((layer, vertices, indices));
         }
         CompiledSectionMesh {
             visibility_set: results.visibility_set,

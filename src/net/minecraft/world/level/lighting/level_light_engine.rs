@@ -24,7 +24,7 @@ use crate::net::minecraft::world::level::level_height_accessor::{
 use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::block_light_engine::BlockLightEngine;
 use crate::net::minecraft::world::level::lighting::layer_light_event_listener::{
-    DummyLightLayerEventListener, LayerLightEventListener,
+    DummyLightLayerEventListener, LayerLightEventListener, SectionLight,
 };
 use crate::net::minecraft::world::level::lighting::layer_light_section_storage::SectionType;
 use crate::net::minecraft::world::level::lighting::light_engine::{
@@ -247,6 +247,10 @@ impl<E: LightEngineClass> LayerLightEventListener for E {
 
     fn get_light_value(&self, pos: &BlockPos) -> i32 {
         LightEngine::get_light_value(self, pos)
+    }
+
+    fn copy_section_light(&self, section_node: i64) -> SectionLight {
+        LightEngine::copy_section_light(self, section_node)
     }
 }
 

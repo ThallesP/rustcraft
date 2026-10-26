@@ -6,6 +6,11 @@
 //! cells, its latest chunk one for all. Its source, Java's function of the level, is a parameter
 //! of `get_color`, since the level owns the cache. A chunk's layers are by y in a table that grows
 //! to the ys asked for, where Java's array map searches its layers in turn: the same layers.
+//!
+//! A section compile on another thread reads a copy of its column's layers (`copy_layers`), taken
+//! with the section's blocks, works out the tints the copy lacks the way `get_color` would, and
+//! gives them back (`give_back`) unless the chunk's tints were dropped since the copy, which the
+//! cache counts (`invalidations`): what a compile run when its copy was taken would have cached.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -16,7 +21,12 @@ use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 
 const MAX_CACHE_ENTRIES: usize = 256;
-const BLOCKS_PER_LAYER: usize = 16 * 16;
+pub const BLOCKS_PER_LAYER: usize = 16 * 16;
+/// How many chunks' last drops `invalidated_at` keeps before it forgets them all.
+const MAX_INVALIDATED_CHUNKS: usize = 4096;
+
+/// A chunk's layers at consecutive ys, by y from the first: none where the cache has none.
+pub type TintLayers = Vec<Option<Box<[i32; BLOCKS_PER_LAYER]>>>;
 
 /// The tints worked out so far.
 #[derive(Default)]
@@ -25,6 +35,11 @@ pub struct BlockTintCache {
     /// Java's `Long2ObjectLinkedOpenHashMap`, in the order its chunks came.
     cache: RefCell<HashMap<i64, Rc<CacheData>>>,
     order: RefCell<VecDeque<i64>>,
+    /// How many times tints were dropped, when each chunk's last were (by that count), and when
+    /// all of them last were: a chunk's copy is as of the count when it was taken.
+    invalidations: Cell<u64>,
+    invalidated_at: RefCell<HashMap<i64, u64>>,
+    cleared_at: Cell<u64>,
 }
 
 impl BlockTintCache {
@@ -67,9 +82,17 @@ impl BlockTintCache {
 
     /// Drops the chunk's tints and its neighbours', whose blends reach into it.
     pub fn invalidate_for_chunk(&self, chunk_x: i32, chunk_z: i32) {
+        let invalidations = self.invalidations.get() + 1;
+        self.invalidations.set(invalidations);
+        let mut invalidated_at = self.invalidated_at.borrow_mut();
+        if invalidated_at.len() >= MAX_INVALIDATED_CHUNKS {
+            invalidated_at.clear();
+            self.cleared_at.set(invalidations);
+        }
         for offset_x in -1..=1 {
             for offset_z in -1..=1 {
                 let key = ChunkPos::pack_xz(chunk_x + offset_x, chunk_z + offset_z);
+                invalidated_at.insert(key, invalidations);
                 if let Some(removed) = self.cache.borrow_mut().remove(&key) {
                     self.order.borrow_mut().retain(|&kept| kept != key);
                     removed.invalidate();
@@ -79,11 +102,82 @@ impl BlockTintCache {
     }
 
     pub fn invalidate_all(&self) {
+        let invalidations = self.invalidations.get() + 1;
+        self.invalidations.set(invalidations);
+        self.invalidated_at.borrow_mut().clear();
+        self.cleared_at.set(invalidations);
         for cache_data in self.cache.borrow().values() {
             cache_data.invalidate();
         }
         self.cache.borrow_mut().clear();
         self.order.borrow_mut().clear();
+    }
+
+    /// The count of drops a copy of the chunk's tints taken now is as of.
+    fn generation(&self, key: i64) -> u64 {
+        self.invalidated_at
+            .borrow()
+            .get(&key)
+            .copied()
+            .unwrap_or(0)
+            .max(self.cleared_at.get())
+    }
+
+    /// The chunk's layers at `count` ys from `min_y`, as the cache has them, and the count of
+    /// drops they're as of, for `give_back`. Makes no chunk or layer the cache hasn't got.
+    pub fn copy_layers(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        min_y: i32,
+        count: usize,
+    ) -> (u64, TintLayers) {
+        let key = ChunkPos::pack_xz(chunk_x, chunk_z);
+        let layers = match self.cache.borrow().get(&key) {
+            Some(cache_data) if !cache_data.is_invalidated() => {
+                let cache = cache_data.cache.borrow();
+                (0..count)
+                    .map(|i| {
+                        let index = min_y + i as i32 - cache.min_y;
+                        (index >= 0)
+                            .then(|| cache.by_y.get(index as usize).cloned().flatten())
+                            .flatten()
+                    })
+                    .collect()
+            }
+            _ => vec![None; count],
+        };
+        (self.generation(key), layers)
+    }
+
+    /// Tints worked out over a copy of the chunk's layers (`copy_layers`'), put where the cache
+    /// has none, unless the chunk's tints were dropped since the copy.
+    pub fn give_back(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        min_y: i32,
+        generation: u64,
+        layers: TintLayers,
+    ) {
+        let key = ChunkPos::pack_xz(chunk_x, chunk_z);
+        if self.generation(key) != generation || layers.iter().all(Option::is_none) {
+            return;
+        }
+
+        let cache = self.find_or_create_chunk_cache(chunk_x, chunk_z);
+        for (i, given) in layers.iter().enumerate() {
+            let Some(given) = given else {
+                continue;
+            };
+            cache.get_layer(min_y + i as i32, |layer| {
+                for (cached, &given) in layer.iter_mut().zip(given.iter()) {
+                    if *cached == -1 {
+                        *cached = given;
+                    }
+                }
+            });
+        }
     }
 
     fn find_or_create_chunk_cache(&self, x: i32, z: i32) -> Rc<CacheData> {

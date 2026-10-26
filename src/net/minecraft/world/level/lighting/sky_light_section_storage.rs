@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::it::unimi::dsi::fastutil::hash_common::BuildMixHasher;
 use crate::net::minecraft::core::block_pos::BlockPos;
@@ -19,6 +20,7 @@ use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::data_layer_storage_map::{
     DataLayerStorageMap, DataLayerStorageMapClass, SharedDataLayer,
 };
+use crate::net::minecraft::world::level::lighting::layer_light_event_listener::SectionLight;
 use crate::net::minecraft::world::level::lighting::layer_light_section_storage::{
     LayerLightSectionStorage, LayerLightSectionStorageClass,
 };
@@ -82,6 +84,33 @@ impl SkyLightSectionStorage {
         }
     }
 
+    /// What `get_light_value` reads in the section's visible layers: its layer below its
+    /// column's top, the bottom of the next one up where it stores none, and full above the top.
+    fn copy_visible_section_light(&self, mut section_node: i64) -> SectionLight {
+        let sections = &self.visible_section_data;
+        let mut section_y = SectionPos::y_of(section_node);
+        let top_section = sections.top_section(SectionPos::get_zero_node(section_node));
+        if top_section == sections.current_lowest_y || section_y >= top_section {
+            return SectionLight::Uniform(15);
+        }
+
+        if let Some(layer) = LayerLightSectionStorage::get_data_layer_in(sections, section_node) {
+            return SectionLight::Layer(Arc::new(layer.borrow().copy()));
+        }
+        loop {
+            section_y += 1;
+            if section_y >= top_section {
+                return SectionLight::Uniform(15);
+            }
+
+            section_node = SectionPos::offset_i64(section_node, Direction::UP);
+            if let Some(layer) = LayerLightSectionStorage::get_data_layer_in(sections, section_node)
+            {
+                return SectionLight::BottomOf(Arc::new(layer.borrow().copy()));
+            }
+        }
+    }
+
     /// The layer of a section below a column's top: the bottom of the next stored layer up,
     /// repeated.
     fn repeat_first_layer(data: &DataLayer) -> DataLayer {
@@ -126,6 +155,10 @@ impl LayerLightSectionStorageClass for SkyLightSectionStorage {
 
     fn get_light_value(&self, block_node: i64) -> i32 {
         self.get_light_value_updating(block_node, false)
+    }
+
+    fn copy_section_light(&self, section_node: i64) -> SectionLight {
+        self.copy_visible_section_light(section_node)
     }
 
     /// A column's top rises to the section, and the lowest section falls to it.

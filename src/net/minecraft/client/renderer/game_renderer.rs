@@ -54,7 +54,7 @@ use crate::net::minecraft::client::gui::render::gui_renderer::{
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::local_player::LocalPlayer;
-use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
+use crate::net::minecraft::client::prioritize_chunk_updates::PrioritizeChunkUpdates;
 use crate::net::minecraft::client::renderer::block::block_state_model_set::BlockStateModelSet;
 use crate::net::minecraft::client::renderer::block::fluid_state_model_set::FluidStateModelSet;
 use crate::net::minecraft::client::renderer::chunk::chunk_section_layer::ChunkSectionLayer;
@@ -147,6 +147,7 @@ pub struct RenderOptions {
     pub hide_gui: bool,
     /// `menuBackgroundBlurriness()`, the menu blur's radius the globals hand the shaders.
     pub menu_background_blurriness: i32,
+    pub prioritize_chunk_updates: PrioritizeChunkUpdates,
 }
 
 /// What the frame reads of the environment at the camera: Java asks the camera's
@@ -617,6 +618,7 @@ impl GameRenderer {
             use_rgss: options.texture_filtering_rgss,
             hide_gui: hud_hidden,
             menu_background_blurriness: options.get_menu_background_blurriness(),
+            prioritize_chunk_updates: options.prioritize_chunk_updates,
         }
     }
 
@@ -921,14 +923,12 @@ impl GameRenderer {
     }
 
     /// A frame of the level, at `partial_ticks` (`delta_ticks` since the last): `extract`, then
-    /// `render`. `lighting` is the level's light and tints, and `environment` what its
-    /// environment attributes read of it; the player's eye is at `eye_y`, and its hands are drawn
+    /// `render`. `environment` is what the level's environment attributes read of it; the player's eye is at `eye_y`, and its hands are drawn
     /// in front of the level.
     #[allow(clippy::too_many_arguments)]
     pub fn render_level_frame(
         &mut self,
         level: &ClientLevel,
-        lighting: &dyn BlockAndTintGetter,
         environment: &dyn LayerLevel,
         player: Option<&LocalPlayer>,
         options: &RenderOptions,
@@ -967,6 +967,7 @@ impl GameRenderer {
             cutout_leaves: options.cutout_leaves,
             chunk_section_fade_in_time: options.chunk_section_fade_in_time,
             fov: options.fov,
+            prioritize_chunk_updates: options.prioritize_chunk_updates,
         };
         self.level_renderer.extract_sections(
             level,
@@ -1014,7 +1015,7 @@ impl GameRenderer {
         let lightmap_pipeline = self.pipelines.get(device, &RenderPipelines::get().LIGHTMAP);
         self.lightmap
             .render(device, &lightmap_pipeline, &self.lightmap_render_state);
-        self.render_level(level, lighting, &level_options, &environment.sky, options);
+        self.render_level(level, &level_options, &environment.sky, options);
         self.fog_renderer_end_frame();
         device.create_command_encoder().clear_depth_texture(
             &**self.main_render_target.get_depth_texture().expect("depth"),
@@ -1061,7 +1062,6 @@ impl GameRenderer {
     fn render_level(
         &mut self,
         level: &ClientLevel,
-        lighting: &dyn BlockAndTintGetter,
         level_options: &LevelRenderOptions,
         sky_state: &SkyRenderState,
         options: &RenderOptions,
@@ -1143,7 +1143,6 @@ impl GameRenderer {
             sky_state,
             level_options,
             level,
-            lighting,
             &mut features,
         );
         self.render_3d_hud(options);

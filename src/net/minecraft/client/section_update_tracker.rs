@@ -2,8 +2,8 @@
 //!
 //! Which sections around the camera need compiling: all of them when they come into the render
 //! distance, and those a block update marks (`setDirty`). `hasAllNeighbors` asks whether the
-//! level has the chunks around a section; Java also asks whether the light engine has lit their
-//! columns (`lightOnInColumn`), which the client's light engine (the world track's) will answer.
+//! level has the chunks around a section and has turned their columns' light on
+//! (`lightOnInColumn`), so a section first compiles with its neighbours' light in.
 
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::rotating_section_storage::{RotatingSectionStorage, Value};
@@ -57,7 +57,7 @@ impl SectionUpdateTracker {
         self.storage.get_value_mut(section_node)
     }
 
-    /// Whether the level has the eight chunks around the section's.
+    /// Whether the level has the eight chunks around the section's, with their light on.
     pub fn has_all_neighbors(&self, level: &ClientLevel, section_node: i64) -> bool {
         let x = SectionPos::x_of(section_node);
         let z = SectionPos::z_of(section_node);
@@ -72,7 +72,20 @@ impl SectionUpdateTracker {
             (1, 1),
         ]
         .iter()
-        .all(|(dx, dz)| level.get_chunk_source().get_chunk(x + dx, z + dz).is_some())
+        .all(|(dx, dz)| SectionUpdateTracker::does_chunk_exist_at(level, x + dx, z + dz))
+    }
+
+    /// `doesChunkExistAt`: the level has the chunk, and the light engine has turned its column's
+    /// light on (the chunk's queued light update has run).
+    fn does_chunk_exist_at(level: &ClientLevel, chunk_x: i32, chunk_z: i32) -> bool {
+        level
+            .get_chunk_source()
+            .get_chunk(chunk_x, chunk_z)
+            .is_some()
+            && level
+                .get_chunk_source()
+                .get_light_engine()
+                .light_on_in_column(SectionPos::as_long_xyz(chunk_x, 0, chunk_z))
     }
 }
 

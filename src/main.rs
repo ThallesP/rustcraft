@@ -465,7 +465,9 @@ fn render_frame(
 
 /// `--render-scenario`: the level a capture fills, its clocks set by the capture's `set_time`s,
 /// the player where the scenario puts it, settled like the oracle client's settle, a frame each
-/// tick until it has landed and the sections have compiled, and a screenshot of the last.
+/// tick until it has landed and the sections have compiled (on the worker threads: until the
+/// last two frames left no compile behind, so the last scheduled none and drew every mesh), and a
+/// screenshot of the last.
 fn render_scenario(
     device: &'static dyn GpuDevice,
     scenario: &Path,
@@ -562,7 +564,8 @@ fn render_scenario(
     // frames rendered here don't tick them, like those before the marker don't count.
     game_renderer.restart_texture_animations();
     let mut ticks = 0;
-    while ticks < OracleGameTest::SETTLE_TICKS * 3 || !player.on_ground() {
+    let mut compiled_frames = 0;
+    while ticks < OracleGameTest::SETTLE_TICKS * 3 || !player.on_ground() || compiled_frames < 2 {
         // The window resized to the scenario's size after the first frame, like
         // `Minecraft.render_level`'s.
         if ticks == 1 {
@@ -575,7 +578,6 @@ fn render_scenario(
         game_renderer.update(Some(&player), Some(&level), 1.0, &render_options);
         let eye_y = player.get_y() + f64::from(player.get_eye_height());
         game_renderer.render_level_frame(
-            &level,
             &level,
             &environment,
             Some(&player),
@@ -610,6 +612,11 @@ fn render_scenario(
         game_renderer.render_gui(options.gui_scale);
         // The frame's commands submitted, as `Minecraft.renderFrame` does each frame.
         game_renderer.device().create_command_encoder().submit();
+        if game_renderer.level_renderer().has_rendered_all_sections() {
+            compiled_frames += 1;
+        } else {
+            compiled_frames = 0;
+        }
         ticks += 1;
         if ticks > OracleGameTest::LOAD_TIMEOUT_TICKS {
             return Err("the player never landed".to_string());

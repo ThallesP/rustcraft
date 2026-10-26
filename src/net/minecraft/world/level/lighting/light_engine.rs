@@ -23,6 +23,7 @@ use crate::net::minecraft::world::level::chunk::data_layer::DataLayer;
 use crate::net::minecraft::world::level::chunk::light_chunk_getter::LightChunkGetter;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
 use crate::net::minecraft::world::level::lighting::data_layer_storage_map::SharedDataLayer;
+use crate::net::minecraft::world::level::lighting::layer_light_event_listener::SectionLight;
 use crate::net::minecraft::world::level::lighting::layer_light_section_storage::{
     self, LayerLightSectionStorageClass, SectionType,
 };
@@ -156,6 +157,11 @@ impl<S: LayerLightSectionStorageClass> LightEngine<S> {
 
     pub fn get_light_value(&self, pos: &BlockPos) -> i32 {
         self.storage.get_light_value(pos.as_long())
+    }
+
+    /// What `get_light_value` reads in the section, copied.
+    pub fn copy_section_light(&self, section_node: i64) -> SectionLight {
+        self.storage.copy_section_light(section_node)
     }
 
     pub fn get_debug_data(&self, section_node: i64) -> String {

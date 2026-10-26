@@ -60,6 +60,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Deref;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::java::lang::math::Math;
 use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
@@ -70,6 +71,7 @@ use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::particle::particle_engine::ParticleEngine;
 use crate::net::minecraft::client::renderer::biome_colors;
 use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
+use crate::net::minecraft::client::renderer::chunk::render_section_region::TintsToGiveBack;
 use crate::net::minecraft::client::renderer::extract::level_extractor::LevelExtractor;
 use crate::net::minecraft::client::resources::sounds::entity_bound_sound_instance::EntityBoundSoundInstance;
 use crate::net::minecraft::client::resources::sounds::simple_sound_instance::SimpleSoundInstance;
@@ -172,7 +174,9 @@ pub struct ClientLevel {
     random: RefCell<LegacyRandomSource>,
     respawn_data: RespawnData,
     light_update_queue: VecDeque<LightUpdate>,
-    biomes: Registry,
+    /// The biome registry, shared with the section compiles' copies of the level
+    /// (`RenderSectionRegion`).
+    biomes: Arc<Registry>,
     biome_manager: BiomeManager,
     tint_caches: [(&'static ColorResolver, BlockTintCache); 4],
     biome_blend_radius: i32,
@@ -692,7 +696,7 @@ impl ClientLevel {
             .clone();
         let height = dimension_type_value.level_height();
         let factory = PalettedContainerFactory::create(registry_access);
-        let biomes = registry_access.lookup_or_throw(Registries::BIOME).clone();
+        let biomes = Arc::new(registry_access.lookup_or_throw(Registries::BIOME).clone());
         let has_sky_light = dimension_type_value.has_sky_light();
         let level_extractor = Rc::new(LevelExtractor::new());
         let block_entity_tickers = Rc::new(SharedLevelState::new());
@@ -1230,10 +1234,29 @@ impl ClientLevel {
     /// The resolver's colour at the block, averaged over the blend radius's square of columns
     /// around it at its height.
     pub fn calculate_block_tint(&self, pos: &BlockPos, color_resolver: &ColorResolver) -> i32 {
-        let dist = self.biome_blend_radius;
+        ClientLevel::calculate_block_tint_in(
+            self,
+            &self.biome_manager,
+            &self.biomes,
+            self.biome_blend_radius,
+            pos,
+            color_resolver,
+        )
+    }
+
+    /// `calculateBlockTint` over the noise biomes `biome_source` hands out, which are the level's
+    /// or a copy of some of them (`RenderSectionRegion`'s), zoomed by `biome_manager`.
+    pub fn calculate_block_tint_in(
+        biome_source: &dyn BiomeResolver,
+        biome_manager: &BiomeManager,
+        biomes: &Registry,
+        dist: i32,
+        pos: &BlockPos,
+        color_resolver: &ColorResolver,
+    ) -> i32 {
         if dist == 0 {
             return color_resolver.get_color(
-                self.biome_value(&self.get_biome(pos)),
+                biomes.value::<Biome>(&biome_manager.get_biome(biome_source, pos)),
                 f64::from(pos.get_x()),
                 f64::from(pos.get_z()),
             );
@@ -1255,7 +1278,7 @@ impl ClientLevel {
         while cursor.advance() {
             let next_pos = BlockPos::new(cursor.next_x(), cursor.next_y(), cursor.next_z());
             let color = color_resolver.get_color(
-                self.biome_value(&self.get_biome(&next_pos)),
+                biomes.value::<Biome>(&biome_manager.get_biome(biome_source, &next_pos)),
                 f64::from(next_pos.get_x()),
                 f64::from(next_pos.get_z()),
             );
@@ -1265,6 +1288,38 @@ impl ClientLevel {
         }
 
         ARGB::color_rgb(total_red / count, total_green / count, total_blue / count)
+    }
+
+    /// What a section compile's copy of the level reads to work out tints the way the level does:
+    /// the biome registry, the zoom, the blend radius, and the tint caches by resolver.
+    pub fn biome_registry(&self) -> &Arc<Registry> {
+        &self.biomes
+    }
+
+    pub fn biome_manager(&self) -> BiomeManager {
+        self.biome_manager
+    }
+
+    pub fn biome_blend_radius(&self) -> i32 {
+        self.biome_blend_radius
+    }
+
+    pub fn tint_caches(&self) -> &[(&'static ColorResolver, BlockTintCache); 4] {
+        &self.tint_caches
+    }
+
+    /// The tints a section compile worked out over a copy of the caches, put in them
+    /// (`BlockTintCache::give_back`).
+    pub fn give_back_tints(&self, tints: TintsToGiveBack) {
+        for ((_, cache), (generation, layers)) in self.tint_caches.iter().zip(tints.layers) {
+            cache.give_back(
+                tints.chunk_x,
+                tints.chunk_z,
+                tints.min_y,
+                generation,
+                layers,
+            );
+        }
     }
 
     const NORMAL_LIGHT_UPDATES_PER_FRAME: usize = 10;

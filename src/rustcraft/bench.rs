@@ -33,6 +33,7 @@ use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
 use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
 use crate::net::minecraft::client::multiplayer::registry_data_collector::RegistryDataCollector;
 use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::prioritize_chunk_updates::PrioritizeChunkUpdates;
 use crate::net::minecraft::client::renderer::block::block_state_model_set::BlockStateModelSet;
 use crate::net::minecraft::client::renderer::block::fluid_state_model_set::FluidStateModelSet;
 use crate::net::minecraft::client::renderer::chunk::render_region_cache::RenderRegionCache;
@@ -245,6 +246,7 @@ impl BenchOptions {
         options.texture_filtering_rgss = true;
         options.vignette = false;
         options.enable_vsync = false;
+        options.prioritize_chunk_updates = PrioritizeChunkUpdates::PLAYER_AFFECTED;
         options.gui_scale = self.gui_scale;
         options.framerate_limit = self.max_fps;
         drop(options);
@@ -267,7 +269,8 @@ fn thread_cpu_time() -> Duration {
 /// `--benchLevel CAPTURE`, the offline benchmark (TESTING.md, "Benchmark"): a capture of a bench's
 /// join (`bench.py --capture`) put in a level the way the listener puts it, and every section of
 /// its chunks compiled, each part timed on its own in the thread's CPU time, without a server or
-/// a window. It prints the times and a digest of every mesh and visibility set, which an
+/// a window: the compiles, and the render thread's part of them (each region made, its tints
+/// given back), with one region cache for the whole run. It prints the times and a digest of every mesh and visibility set, which an
 /// optimization must leave as it was.
 pub fn level(capture_path: &Path) -> Result<(), String> {
     let capture = Capture::load(capture_path)
@@ -443,6 +446,8 @@ pub fn level(capture_path: &Path) -> Result<(), String> {
     let mut cache = RenderRegionCache::new();
     let mut digest = Md5::new();
     let mut compiles = Vec::new();
+    // What the render thread does for each compile: the region made, and its tints given back.
+    let (mut regions, mut given_back) = (Duration::ZERO, Duration::ZERO);
     let mut meshed = 0;
     for &(x, z) in &chunks {
         if !(-1..=1).all(|dx| (-1..=1).all(|dz| loaded(x + dx, z + dz))) {
@@ -450,7 +455,9 @@ pub fn level(capture_path: &Path) -> Result<(), String> {
         }
         for y in level.get_min_section_y()..=level.get_max_section_y() {
             let section_pos = SectionPos::of(x, y, z);
-            let region = cache.create_region(&level, &level, section_pos.as_long());
+            let start = thread_cpu_time();
+            let region = cache.create_region(&level, section_pos.as_long());
+            regions += thread_cpu_time() - start;
             let sorting = VertexSorting::by_distance_xyz(
                 (camera[0] - f64::from(section_pos.min_block_x())) as f32,
                 (camera[1] - f64::from(section_pos.min_block_y())) as f32,
@@ -459,6 +466,9 @@ pub fn level(capture_path: &Path) -> Result<(), String> {
             let start = thread_cpu_time();
             let results = compiler.compile(section_pos, &region, &sorting, &mut buffers);
             compiles.push(thread_cpu_time() - start);
+            let start = thread_cpu_time();
+            level.give_back_tints(region.into_tints());
+            given_back += thread_cpu_time() - start;
 
             digest.update(section_pos.as_long().to_le_bytes());
             for (layer, mesh) in &results.rendered_layers {
@@ -499,6 +509,12 @@ pub fn level(capture_path: &Path) -> Result<(), String> {
         millis(total),
         compiles[compiles.len() / 2].as_secs_f64() * 1e6,
         total.as_secs_f64() * 1e6 / compiles.len() as f64
+    );
+    println!(
+        "regions: made in {:.1} ms ({:.1} us each), their tints given back in {:.1} ms",
+        millis(regions),
+        regions.as_secs_f64() * 1e6 / compiles.len() as f64,
+        millis(given_back)
     );
     println!(
         "digest: {}",

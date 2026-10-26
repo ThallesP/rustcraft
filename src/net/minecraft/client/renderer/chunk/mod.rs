@@ -7,6 +7,7 @@ pub mod section_compiler;
 pub mod section_copy;
 pub mod section_mesh;
 pub mod section_render_dispatcher;
+pub mod section_task_dynamic_queue;
 pub mod translucency_point_of_view;
 pub mod vis_graph;
 pub mod visibility_set;

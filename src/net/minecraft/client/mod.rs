@@ -20,6 +20,7 @@ pub mod options;
 pub mod particle;
 pub mod player;
 pub mod preferred_graphics_api;
+pub mod prioritize_chunk_updates;
 pub mod renderer;
 pub mod resources;
 pub mod rotating_section_storage;

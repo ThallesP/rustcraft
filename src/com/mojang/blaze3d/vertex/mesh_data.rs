@@ -87,6 +87,12 @@ impl MeshData {
         &self.draw_state
     }
 
+    /// The vertex and index bytes, which a section's mesh keeps until the uber buffers take them
+    /// (`close()`'s release of the builder's memory is the bytes moving on).
+    pub fn into_buffers(self) -> (Vec<u8>, Option<Vec<u8>>) {
+        (self.vertex_buffer, self.index_buffer)
+    }
+
     /// Sorts the quads by their centroids into an index buffer built out of
     /// `index_buffer_target`, and returns what a later sort needs, or `None` for a mesh that
     /// isn't quads.

@@ -852,7 +852,6 @@ impl Minecraft {
         });
         game_renderer.render_level_frame(
             level,
-            level,
             &self.level_environment(level),
             player.as_ref(),
             &options,

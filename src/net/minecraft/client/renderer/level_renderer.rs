@@ -17,7 +17,10 @@
 //! for. `Minecraft.multiDrawIndirect`, the debug key's toggle `LevelExtractor` copies into the
 //! render state, stays on, so the terrain draws by multi-draws where the device can
 //! (`multi_draw_indirect_available`) and one section at a time where it can't.
-//! The sections' light and tints come through `lighting`, the level itself (`RenderRegionCache`).
+//! The dirty visible sections compile on the dispatcher's worker threads, over regions copied
+//! from the level as the frame's compiles are scheduled (`RenderRegionCache`), but for those the
+//! options say compile at once (`prioritizeChunkUpdates`); the tints those compiles worked out go
+//! back to the level's caches before the next frame's are scheduled.
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -38,7 +41,7 @@ use crate::com::mojang::renderpearl::api::textures::gpu_sampler::GpuSampler;
 use crate::com::mojang::renderpearl::api::textures::gpu_texture_view::GpuTextureView;
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
-use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
+use crate::net::minecraft::client::prioritize_chunk_updates::PrioritizeChunkUpdates;
 use crate::net::minecraft::client::renderer::block::block_state_model_set::BlockStateModelSet;
 use crate::net::minecraft::client::renderer::block::fluid_state_model_set::FluidStateModelSet;
 use crate::net::minecraft::client::renderer::chunk::chunk_section_layer::ChunkSectionLayer;
@@ -86,6 +89,7 @@ pub struct LevelRenderOptions {
     /// `chunkSectionFadeInTime`, in seconds.
     pub chunk_section_fade_in_time: f64,
     pub fov: i32,
+    pub prioritize_chunk_updates: PrioritizeChunkUpdates,
 }
 
 /// What draws the level: the device's pipelines for the terrain and the sky, the block atlas, the
@@ -155,8 +159,9 @@ pub struct LevelRenderer {
     view_area: Option<ViewArea>,
     section_render_dispatcher: Option<SectionRenderDispatcher>,
     section_update_tracker: Option<SectionUpdateTracker>,
-    /// The sections `extract_sections` found dirty, to compile after this frame's draws.
-    sections_to_compile: Vec<usize>,
+    /// The sections `extract_sections` found dirty, to compile after this frame's draws, and
+    /// whether the player's changes made them dirty (`SectionUpdateRenderState`).
+    sections_to_compile: Vec<(usize, bool)>,
     chunk_layer_sampler: Option<Rc<dyn GpuSampler>>,
     prev_cam_rot_x: f64,
     prev_cam_rot_y: f64,
@@ -221,7 +226,17 @@ impl LevelRenderer {
             Arc::clone(block_colors),
         );
         match &mut self.section_render_dispatcher {
-            Some(dispatcher) => dispatcher.set_compiler(section_compiler),
+            Some(dispatcher) => {
+                dispatcher.set_compiler(section_compiler);
+                // `viewArea.releaseAllBuffers` cancels the old sections' tasks, and
+                // `clearCompileQueue` the rest.
+                if let Some(view_area) = &mut self.view_area {
+                    for index in 0..view_area.size() {
+                        view_area.sections.get_mut(index).cancel_tasks();
+                    }
+                }
+                dispatcher.clear_compile_queue();
+            }
             None => {
                 self.section_render_dispatcher =
                     Some(SectionRenderDispatcher::new(section_compiler))
@@ -315,12 +330,15 @@ impl LevelRenderer {
             let render_section = view_area.section(section);
             let section_node = render_section.section_node();
             let is_uncompiled = render_section.get_section_mesh().is_uncompiled();
-            let has_all_neighbors = tracker.has_all_neighbors(level, section_node);
-            if let Some(dirty_state) = tracker.get_dirty_state(section_node)
-                && dirty_state.is_dirty()
-                && (!is_uncompiled || has_all_neighbors)
+            let is_dirty = tracker
+                .get_dirty_state(section_node)
+                .is_some_and(|dirty_state| dirty_state.is_dirty());
+            if is_dirty
+                && (!is_uncompiled || tracker.has_all_neighbors(level, section_node))
+                && let Some(dirty_state) = tracker.get_dirty_state(section_node)
             {
-                self.sections_to_compile.push(section);
+                self.sections_to_compile
+                    .push((section, dirty_state.is_dirty_from_player()));
                 dirty_state.set_not_dirty();
             }
         }
@@ -350,7 +368,6 @@ impl LevelRenderer {
         sky_state: &SkyRenderState,
         options: &LevelRenderOptions,
         level: &ClientLevel,
-        lighting: &dyn BlockAndTintGetter,
         features: &mut dyn LevelFeatures,
     ) {
         let terrain_fog = fog_renderer.get_buffer(FogMode::WORLD);
@@ -428,7 +445,7 @@ impl LevelRenderer {
             stack.pop_matrix();
         });
         features.close(resources.quad_indices);
-        self.compile_sections(level, lighting);
+        self.compile_sections(level, camera_state, options);
         self.schedule_translucent_section_resort(&camera_state.pos);
         self.upload_terrain_buffers(device);
         if let Some(view_area) = &mut self.view_area {
@@ -903,20 +920,45 @@ impl LevelRenderer {
         )
     }
 
-    /// `compileSections`: the dirty visible sections, compiled now over regions of the level.
-    fn compile_sections(&mut self, level: &ClientLevel, lighting: &dyn BlockAndTintGetter) {
+    /// `compileSections`: the dirty visible sections, each over a region of the level, compiled
+    /// now if the options put it first (a section the player changed, or with `NEARBY` one whose
+    /// centre is within 768 blocks squared of the camera), else queued for the workers. The tints
+    /// the compiles taken since the last frame worked out go to the level's caches first, so this
+    /// frame's regions copy them.
+    fn compile_sections(
+        &mut self,
+        level: &ClientLevel,
+        camera: &CameraRenderState,
+        options: &LevelRenderOptions,
+    ) {
         let (Some(dispatcher), Some(view_area)) =
             (&mut self.section_render_dispatcher, &mut self.view_area)
         else {
             return;
         };
+        for tints in dispatcher.take_tints() {
+            level.give_back_tints(tints);
+        }
         let mut cache = RenderRegionCache::new();
-        for section in std::mem::take(&mut self.sections_to_compile) {
+        let camera_position = camera.block_pos;
+        for (section, player_changed) in std::mem::take(&mut self.sections_to_compile) {
             let render_section = view_area.sections.get_mut(section);
-            let region = cache.create_region(level, lighting, render_section.section_node());
-            if dispatcher.compile_sync(render_section, &region) {
-                self.section_occlusion_graph
-                    .schedule_propagation_from(section);
+            let section_node = render_section.section_node();
+            let center = SectionPos::of_long(section_node).center();
+            let is_nearby = center.dist_sqr(&camera_position) < 768.0;
+            let rebuild_sync = match options.prioritize_chunk_updates {
+                PrioritizeChunkUpdates::NEARBY => is_nearby || player_changed,
+                PrioritizeChunkUpdates::PLAYER_AFFECTED => player_changed,
+                PrioritizeChunkUpdates::NONE => false,
+            };
+            let region = cache.create_region(level, section_node);
+            if rebuild_sync {
+                if dispatcher.compile_sync(render_section, region) {
+                    self.section_occlusion_graph
+                        .schedule_propagation_from(section);
+                }
+            } else {
+                dispatcher.compile_async(render_section, region);
             }
         }
     }

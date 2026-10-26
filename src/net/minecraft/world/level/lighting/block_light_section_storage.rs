@@ -1,6 +1,7 @@
 //! net/minecraft/world/level/lighting/BlockLightSectionStorage.java
 
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::section_pos::SectionPos;
@@ -8,6 +9,7 @@ use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::data_layer_storage_map::{
     DataLayerStorageMap, DataLayerStorageMapClass,
 };
+use crate::net::minecraft::world::level::lighting::layer_light_event_listener::SectionLight;
 use crate::net::minecraft::world::level::lighting::layer_light_section_storage::{
     LayerLightSectionStorage, LayerLightSectionStorageClass,
 };
@@ -41,6 +43,13 @@ impl LayerLightSectionStorageClass for BlockLightSectionStorage {
                 SectionPos::section_relative(BlockPos::get_y_i64(block_node)),
                 SectionPos::section_relative(BlockPos::get_z_i64(block_node)),
             ),
+        }
+    }
+    /// The visible layer, or 0 everywhere in a section without one.
+    fn copy_section_light(&self, section_node: i64) -> SectionLight {
+        match self.get_data_layer(section_node, false) {
+            None => SectionLight::Uniform(0),
+            Some(layer) => SectionLight::Layer(Arc::new(layer.borrow().copy())),
         }
     }
 }

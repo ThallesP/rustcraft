@@ -40,6 +40,7 @@ use crate::net::minecraft::client::minecraft::{Minecraft, TestDriver};
 use crate::net::minecraft::client::multiplayer::resolver::server_address::ServerAddress;
 use crate::net::minecraft::client::multiplayer::server_data::ServerData;
 use crate::net::minecraft::client::options::Options;
+use crate::net::minecraft::client::prioritize_chunk_updates::PrioritizeChunkUpdates;
 use crate::net::minecraft::client::renderer::game_renderer::RenderOptions;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::network::chat::component::Component;
@@ -139,6 +140,7 @@ impl OracleGameTest {
             options.texture_filtering_rgss = true;
             options.vignette = false;
             options.enable_vsync = false;
+            options.prioritize_chunk_updates = PrioritizeChunkUpdates::PLAYER_AFFECTED;
             options.gui_scale = scenario.options.gui_scale;
             options.hide_splash_texts = scenario.options.hide_splash;
         }
@@ -170,7 +172,7 @@ impl OracleGameTest {
 
     /// The options the oracle client renders with: its `options.txt` (`oracle/client/options.txt`:
     /// smooth lighting, cut-out leaves, no chunk fade, gamma 0.5, glint 0.75, RGSS texture
-    /// filtering, cloud range 64) with `applyOptions`' (the scenario's field of view and render
+    /// filtering, cloud range 64, the sections the player changed compiled at once) with `applyOptions`' (the scenario's field of view and render
     /// distance, no bobbing or clouds).
     pub fn render_options(scenario: &Scenario) -> RenderOptions {
         RenderOptions {
@@ -186,6 +188,7 @@ impl OracleGameTest {
             use_rgss: true,
             hide_gui: scenario.options.hide_gui,
             menu_background_blurriness: 5,
+            prioritize_chunk_updates: PrioritizeChunkUpdates::PLAYER_AFFECTED,
         }
     }
 

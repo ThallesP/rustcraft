@@ -15,6 +15,7 @@ use crate::com::mojang::blaze3d::vertex::vertex_consumer::VertexConsumer;
 use crate::com::mojang::blaze3d::vertex::vertex_sorting::VertexSorting;
 use crate::com::mojang::renderpearl::api::pipeline::primitive_topology::PrimitiveTopology;
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
+use crate::net::minecraft::client::renderer::block::block_and_tint_getter::BlockAndTintGetter;
 use crate::net::minecraft::client::renderer::block::block_quad_output::BlockQuadOutput;
 use crate::net::minecraft::client::renderer::block::block_state_model_set::BlockStateModelSet;
 use crate::net::minecraft::client::renderer::block::fluid_renderer::{self, FluidRenderer};
@@ -65,13 +66,18 @@ impl SectionCompiler {
         }
     }
 
-    pub fn compile(
+    /// The section's meshes over a region, whose light and tints are the level's copied or a
+    /// test level's.
+    pub fn compile<L>(
         &self,
         section_pos: SectionPos,
-        region: &RenderSectionRegion,
+        region: &RenderSectionRegion<L>,
         vertex_sorting: &VertexSorting,
         builders: &mut SectionBufferBuilderPack,
-    ) -> Results {
+    ) -> Results
+    where
+        RenderSectionRegion<L>: BlockAndTintGetter,
+    {
         let mut results = Results::default();
         let min_pos = BlockPos::new(
             section_pos.min_block_x(),
@@ -377,7 +383,7 @@ mod tests {
     /// `SectionCompilerSuite.compile`'s encoding of the results.
     fn compile(
         compiler: &SectionCompiler,
-        region: &RenderSectionRegion,
+        region: &RenderSectionRegion<&dyn BlockAndTintGetter>,
         section_pos: SectionPos,
         camera: [f64; 3],
     ) -> Value {
@@ -497,7 +503,7 @@ mod tests {
             light_engine: LevelLightEngine::empty(),
         };
         golden.check("walk", |x: i32, y: i32, z: i32, ambient_occlusion: bool| {
-            let region = cache.borrow_mut().create_region(
+            let region = cache.borrow_mut().create_region_over(
                 &level,
                 &lighting,
                 SectionPos::as_long_xyz(x, y, z),
@@ -541,7 +547,7 @@ mod tests {
                     tinted: false,
                     light_engine: LevelLightEngine::empty(),
                 };
-                let region = RenderSectionRegion::new(&lighting, -1, -1, -1, sections);
+                let region = RenderSectionRegion::over(&lighting, -1, -1, -1, sections);
                 compile(
                     &compilers[usize::from(ambient_occlusion)],
                     &region,
@@ -581,7 +587,7 @@ mod tests {
                     tinted: true,
                     light_engine: LevelLightEngine::empty(),
                 };
-                let region = RenderSectionRegion::new(&lighting, -1, -1, -1, sections);
+                let region = RenderSectionRegion::over(&lighting, -1, -1, -1, sections);
                 compile(
                     &fluid_compilers[usize::from(ambient_occlusion)],
                     &region,
