@@ -568,13 +568,28 @@ impl Minecraft {
                 }
 
                 // `level.tick`, with the listener's clocks, the sky's darkening first
-                // (`updateSkyBrightness`) from the environment attributes.
+                // (`updateSkyBrightness`) from the environment attributes, and the rain's
+                // particles and sound near the camera.
                 let sky_light_level = self.sky_light_level();
-                if let (Some(level), Some(connection)) =
-                    (self.level.borrow_mut().as_mut(), self.get_connection())
-                {
+                let camera_position = self.camera_position();
+                if let (Some(level), Some(connection), Some(camera_position)) = (
+                    self.level.borrow_mut().as_mut(),
+                    self.get_connection(),
+                    camera_position,
+                ) {
+                    let particle_engine = self.particle_engine.borrow();
+                    let effects = LevelEffects {
+                        particle_engine: particle_engine.as_ref(),
+                        sound_manager: self.sound_manager.as_ref(),
+                        camera_position,
+                        particles: self.options.borrow().particles(),
+                        weather_radius: self.options.borrow().weather_radius(),
+                        player: self.player.borrow().as_ref().map(|player| player.get_id()),
+                        environment: None,
+                        block_colors: &self.block_colors,
+                    };
                     level.update_sky_brightness(sky_light_level);
-                    level.tick(connection.borrow_mut().clock_manager_mut());
+                    level.tick(connection.borrow_mut().clock_manager_mut(), &effects);
                 }
             }
 
@@ -639,6 +654,7 @@ impl Minecraft {
                 |game_renderer| game_renderer.main_camera().position(),
             ),
             particles: self.options.borrow().particles(),
+            weather_radius: self.options.borrow().weather_radius(),
             player: Some(player.get_id()),
             environment: game_renderer
                 .as_ref()
@@ -671,6 +687,7 @@ impl Minecraft {
                 |game_renderer| game_renderer.main_camera().position(),
             ),
             particles: self.options.borrow().particles(),
+            weather_radius: self.options.borrow().weather_radius(),
             player: Some(player.get_id()),
             environment: None,
             block_colors: &self.block_colors,
@@ -680,6 +697,17 @@ impl Minecraft {
             effects: &effects,
             player: Some(player),
         }))
+    }
+
+    /// The camera's position: the game renderer's, or the player's eyes for a headless client,
+    /// which has none; none without a player.
+    fn camera_position(&self) -> Option<Vec3> {
+        let player = self.player.borrow();
+        let player = player.as_ref()?;
+        Some(self.game_renderer.borrow().as_ref().map_or_else(
+            || Vec3::new(player.get_x(), player.get_eye_y(), player.get_z()),
+            |game_renderer| game_renderer.main_camera().position(),
+        ))
     }
 
     /// Hands the game to the test driver, if there's one.

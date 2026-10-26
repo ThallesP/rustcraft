@@ -40,6 +40,8 @@ pub struct Options {
     main_hand: HumanoidArm,
     allow_server_listing: bool,
     particles: ParticleStatus,
+    /// `weatherRadius`: how many blocks around the camera rain and snow fall, 3 to 10.
+    weather_radius: i32,
     pub joined_first_server: bool,
     pub key_up: KeyMapping,
     pub key_left: KeyMapping,
@@ -111,6 +113,7 @@ impl Options {
             main_hand: HumanoidArm::RIGHT,
             allow_server_listing: true,
             particles: ParticleStatus::ALL,
+            weather_radius: 10,
             joined_first_server: false,
             key_up: KeyMapping::new("key.forward"),
             key_left: KeyMapping::new("key.left"),
@@ -310,6 +313,11 @@ impl Options {
     /// `particles().get()`.
     pub fn particles(&self) -> ParticleStatus {
         self.particles
+    }
+
+    /// `weatherRadius().get()`.
+    pub fn weather_radius(&self) -> i32 {
+        self.weather_radius
     }
 
     /// `particles().set(value)`.

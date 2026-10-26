@@ -9,6 +9,10 @@ use crate::net::minecraft::sounds::sound_event::SoundEvent;
 pub struct SoundEvents;
 
 impl SoundEvents {
+    pub const WEATHER_RAIN: SoundEvent =
+        SoundEvent::create_variable_range_event("minecraft:weather.rain");
+    pub const WEATHER_RAIN_ABOVE: SoundEvent =
+        SoundEvent::create_variable_range_event("minecraft:weather.rain.above");
     pub const BLASTFURNACE_FIRE_CRACKLE: SoundEvent =
         SoundEvent::create_variable_range_event("minecraft:block.blastfurnace.fire_crackle");
     pub const BUBBLE_COLUMN_UPWARDS_AMBIENT: SoundEvent =
@@ -71,7 +75,9 @@ mod tests {
     #[test]
     fn matches_vanilla() {
         let golden = Golden::load("net.minecraft.sounds.SoundEvents");
-        let ported: [(&str, SoundEvent); 24] = [
+        let ported: [(&str, SoundEvent); 26] = [
+            ("WEATHER_RAIN", SoundEvents::WEATHER_RAIN),
+            ("WEATHER_RAIN_ABOVE", SoundEvents::WEATHER_RAIN_ABOVE),
             (
                 "BLASTFURNACE_FIRE_CRACKLE",
                 SoundEvents::BLASTFURNACE_FIRE_CRACKLE,

@@ -102,7 +102,7 @@ final class BlockEntityTickSuites {
     }
 
     static List<Suite> suites() {
-        return List.of(new OpenHashMapSuite(), new BlockEventPacketSuite(), new TickSuite());
+        return List.of(new OpenHashMapSuite(), new BlockEventPacketSuite(), new TickSuite(), new LevelSuites.ClientLevelSuite());
     }
 
     private static JsonElement bits(final float value) {
@@ -295,13 +295,13 @@ final class BlockEntityTickSuites {
 
         @Override
         public SoundEngine.PlayResult play(final SoundInstance instance) {
-            EVENTS.add(ChunkSuites.array("sound", instance.getIdentifier().toString()));
+            EVENTS.add(LevelSuites.AnimateTick.sound(instance, -1));
             return null;
         }
 
         @Override
         public void playDelayed(final SoundInstance instance, final int delay) {
-            EVENTS.add(ChunkSuites.array("sound", instance.getIdentifier().toString()));
+            EVENTS.add(LevelSuites.AnimateTick.sound(instance, delay));
         }
     }
 
@@ -314,6 +314,22 @@ final class BlockEntityTickSuites {
         @Override
         public void move(final MoverType moverType, final Vec3 delta) {
             EVENTS.add(ChunkSuites.array("move", moverType.name(), bits(delta.x), bits(delta.y), bits(delta.z)));
+        }
+
+        /** The blocks' effects on what a piston moves, which the port doesn't have (PistonMovingBlockEntity's header). */
+        @Override
+        public void applyEffectsFromBlocks(final Vec3 from, final Vec3 to) {
+        }
+
+        @Override
+        public void removeLatestMovementRecording() {
+        }
+
+        /** A slime block's bounce, recorded. */
+        @Override
+        public void setDeltaMovement(final Vec3 deltaMovement) {
+            EVENTS.add(ChunkSuites.array("motion", bits(deltaMovement.x), bits(deltaMovement.y), bits(deltaMovement.z)));
+            super.setDeltaMovement(deltaMovement);
         }
 
         @Override
@@ -459,6 +475,12 @@ final class BlockEntityTickSuites {
                 bits(table.oRot), bits(table.tRot)
             );
             case PotentSulfurBlockEntity sulfur -> ChunkSuites.array(sulfur.eruptionTick);
+            case net.minecraft.world.level.block.piston.PistonMovingBlockEntity piston -> ChunkSuites.array(
+                Block.getId(piston.getMovedState()), piston.getDirection().name(), piston.isExtending(), piston.isSourcePiston(),
+                bits(piston.getProgress(0.0F)), bits(piston.getProgress(1.0F)), piston.getLastTicked(),
+                (Integer)get(net.minecraft.world.level.block.piston.PistonMovingBlockEntity.class, piston, "deathTicks"),
+                boxes(piston.getCollisionShape(level, piston.getBlockPos()))
+            );
             default -> JsonNull.INSTANCE;
         };
         BlockPos pos = entity.getBlockPos();
@@ -486,8 +508,150 @@ final class BlockEntityTickSuites {
     }
 
     /**
+     * {@code ClientLevel.tickWeatherEffects} ({@code weather}, in ClientLevel's file): {@code [levelSeed, particles,
+     * weatherRadius, camera, gameTime, course, ticks]} → for each tick (each {@code [rainLevel, camera]}), the particles and
+     * sounds it makes and {@code rainSoundTime} after, then the level random's next long. The level is the tick suite's
+     * {@code ClientLevel} over the walk's chunks (its biome manager over them, plains), a course of blocks the rain falls on
+     * set first: slabs, fences, glass, leaves, torches, carpets, snow, water and lava at any level, magma, campfires lit or
+     * not, pillars up past the camera's ten blocks either way, and a roof of glass over the camera a quarter of the time.
+     */
+    static final class Weather {
+        private Weather() {
+        }
+
+        static void write(final GoldenWriter writer) throws IOException {
+            sun.misc.Unsafe unsafe;
+            try {
+                Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+                theUnsafe.setAccessible(true);
+                unsafe = (sun.misc.Unsafe)theUnsafe.get(null);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+            ShapeSuites.BlockStateShapeSuite.bindBlockTags();
+            bindFluidTags();
+
+            Minecraft minecraft;
+            OptionInstance<?> particles;
+            OptionInstance<?> weatherRadius;
+            Camera camera;
+            try {
+                minecraft = (Minecraft)unsafe.allocateInstance(Minecraft.class);
+                Options options = (Options)unsafe.allocateInstance(Options.class);
+                particles = (OptionInstance<?>)unsafe.allocateInstance(OptionInstance.class);
+                weatherRadius = (OptionInstance<?>)unsafe.allocateInstance(OptionInstance.class);
+                set(Options.class, options, "particles", particles);
+                set(Options.class, options, "weatherRadius", weatherRadius);
+                GameRenderer gameRenderer = (GameRenderer)unsafe.allocateInstance(GameRenderer.class);
+                camera = (Camera)unsafe.allocateInstance(Camera.class);
+                set(GameRenderer.class, gameRenderer, "mainCamera", camera);
+                set(Minecraft.class, minecraft, "options", options);
+                set(Minecraft.class, minecraft, "gameRenderer", gameRenderer);
+                set(Minecraft.class, minecraft, "particleEngine", unsafe.allocateInstance(Particles.class));
+                set(Minecraft.class, minecraft, "soundManager", unsafe.allocateInstance(Sounds.class));
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+            Field instance;
+            Object previousInstance;
+            try {
+                instance = Minecraft.class.getDeclaredField("instance");
+                instance.setAccessible(true);
+                previousInstance = instance.get(null);
+                instance.set(null, minecraft);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+
+            Random random = new Random(0x4a1e);
+            ParticleStatus[] statuses = ParticleStatus.values();
+            List<BlockState> blocks = List.of(
+                Blocks.STONE.defaultBlockState(), Blocks.OAK_SLAB.defaultBlockState(),
+                Blocks.OAK_SLAB.defaultBlockState().setValue(BlockStateProperties.SLAB_TYPE, net.minecraft.world.level.block.state.properties.SlabType.TOP),
+                Blocks.OAK_FENCE.defaultBlockState(), Blocks.GLASS.defaultBlockState(), Blocks.OAK_LEAVES.defaultBlockState(), Blocks.TORCH.defaultBlockState(),
+                Blocks.MOSS_CARPET.defaultBlockState(), Blocks.SNOW.defaultBlockState().setValue(BlockStateProperties.LAYERS, 3),
+                Blocks.WATER.defaultBlockState(), Blocks.WATER.defaultBlockState().setValue(BlockStateProperties.LEVEL, 3),
+                Blocks.LAVA.defaultBlockState(), Blocks.LAVA.defaultBlockState().setValue(BlockStateProperties.LEVEL, 5),
+                Blocks.MAGMA_BLOCK.defaultBlockState(), Blocks.CAMPFIRE.defaultBlockState(),
+                Blocks.CAMPFIRE.defaultBlockState().setValue(CampfireBlock.LIT, false), Blocks.SOUL_CAMPFIRE.defaultBlockState(),
+                Blocks.HOPPER.defaultBlockState(), Blocks.OAK_STAIRS.defaultBlockState(), Blocks.FARMLAND.defaultBlockState()
+            );
+            try {
+                for (int program = 0; program < 64; program++) {
+                    long levelSeed = random.nextLong();
+                    ParticleStatus status = statuses[program % statuses.length];
+                    int radius = program % 5 == 0 ? 3 + random.nextInt(7) : 10;
+                    long gameTime = random.nextInt(100000);
+                    Level level = TickSuite.level(unsafe, minecraft, levelSeed, gameTime);
+                    set(net.minecraft.world.level.Level.class, level, "biomeManager", new net.minecraft.world.level.biome.BiomeManager(level, 0L));
+                    set(ClientLevel.class, level, "seaLevel", 63);
+                    set(OptionInstance.class, particles, "value", status);
+                    set(OptionInstance.class, weatherRadius, "value", radius);
+
+                    // The course: blocks on the ground, some on pillars, around the camera's columns.
+                    JsonArray course = new JsonArray();
+                    for (int i = 0; i < 160; i++) {
+                        int x = random.nextInt(25) - 12;
+                        int z = random.nextInt(25) - 12;
+                        int height = random.nextInt(6) == 0 ? random.nextInt(14) : 0;
+                        for (int y = -60; y < -60 + height; y++) {
+                            course.add(ChunkSuites.array(x, y, z, Block.getId(Blocks.STONE.defaultBlockState())));
+                        }
+                        course.add(ChunkSuites.array(x, -60 + height, z, Block.getId(blocks.get(random.nextInt(blocks.size())))));
+                    }
+                    Vec3 camera0 = new Vec3(random.nextDouble() * 10.0 - 5.0, -58.5 + random.nextDouble() * (random.nextInt(4) == 0 ? 20.0 : 3.0), random.nextDouble() * 10.0 - 5.0);
+                    if (program % 4 == 1) {
+                        // A roof over the camera, which the rain sounds above (WEATHER_RAIN_ABOVE).
+                        BlockPos center = BlockPos.containing(camera0);
+                        for (int x = -3; x <= 3; x++) {
+                            for (int z = -3; z <= 3; z++) {
+                                course.add(ChunkSuites.array(center.getX() + x, center.getY() + 4, center.getZ() + z, Block.getId(Blocks.GLASS.defaultBlockState())));
+                            }
+                        }
+                    }
+                    for (JsonElement placement : course) {
+                        JsonArray place = placement.getAsJsonArray();
+                        level.setBlock(new BlockPos(place.get(0).getAsInt(), place.get(1).getAsInt(), place.get(2).getAsInt()), Block.stateById(place.get(3).getAsInt()), 18);
+                    }
+
+                    JsonArray ticks = new JsonArray();
+                    JsonArray results = new JsonArray();
+                    EVENTS.clear();
+                    for (int tick = 0; tick < 24; tick++) {
+                        float rain = switch (random.nextInt(6)) {
+                            case 0 -> 0.0F;
+                            case 1 -> random.nextFloat();
+                            case 2 -> 0.3F;
+                            default -> 1.0F;
+                        };
+                        Vec3 cameraPosition = random.nextInt(8) == 0 ? camera0.add(random.nextDouble() * 4.0 - 2.0, 0.0, random.nextDouble() * 4.0 - 2.0) : camera0;
+                        ((ClientLevel.ClientLevelData)level.getLevelData()).setGameTime(gameTime + tick);
+                        level.setRainLevel(rain);
+                        set(Camera.class, camera, "position", cameraPosition);
+                        level.tickWeatherEffects();
+                        JsonArray events = new JsonArray();
+                        EVENTS.forEach(events::add);
+                        EVENTS.clear();
+                        results.add(ChunkSuites.array(events, (Integer)get(ClientLevel.class, level, "rainSoundTime")));
+                        ticks.add(ChunkSuites.array(bits(rain), ChunkSuites.array(bits(cameraPosition.x), bits(cameraPosition.y), bits(cameraPosition.z))));
+                    }
+                    results.add(ChunkSuites.array("end", level.getRandom().nextLong()));
+                    writer.result("weather", ChunkSuites.array(levelSeed, status.name(), radius, gameTime, course, ticks), results, null);
+                }
+            } finally {
+                try {
+                    instance.set(null, previousInstance);
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+        }
+    }
+
+    /**
      * Binds the fluids' tags from the vanilla pack, as the server's {@code update_tags} binds them (a conduit's water is
-     * {@code isWaterAt}'s tag). The other suites bind only the blocks', so these suites run last.
+     * {@code isWaterAt}'s tag, the rain smokes on lava). The other suites bind only the blocks', so these suites run last,
+     * with ClientLevel's.
      */
     static void bindFluidTags() {
         net.minecraft.server.packs.resources.CloseableResourceManager resources = new net.minecraft.server.packs.resources.MultiPackResourceManager(
@@ -659,6 +823,7 @@ final class BlockEntityTickSuites {
                         null
                     );
                 }
+                pistons(writer, unsafe, minecraft, camera, particles);
             } finally {
                 try {
                     instance.set(null, previousInstance);
@@ -668,8 +833,143 @@ final class BlockEntityTickSuites {
             }
         }
 
+
+        /**
+         * {@code pistons}: programs like {@code programs}' on courses of pistons, each with a line of blocks in front of it, the
+         * player standing on one pushed up or in one's way; each tick the pistons extended and retracted by their block events,
+         * worked out as the program runs from what's there ({@code ["event", x, y, z, 0, facing]} for a retracted piston,
+         * {@code 1} or {@code 2} for an extended one). A line adds the blocks in front of each piston: {@code [events, tickers,
+         * blockEntities, blocks]}, the blocks each piston's position and the four in front of it, by id.
+         */
+        private static void pistons(
+            final GoldenWriter writer, final sun.misc.Unsafe unsafe, final Minecraft minecraft, final Camera camera, final OptionInstance<?> particles
+        ) throws IOException {
+            Random random = new Random(0x915701L);
+            for (int program = 0; program < 64; program++) {
+                long levelSeed = random.nextLong();
+                long gameTime = random.nextInt(2000);
+                Level level = level(unsafe, minecraft, levelSeed, gameTime);
+                Player player;
+                try {
+                    player = (Player)unsafe.allocateInstance(Player.class);
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException(e);
+                }
+                set(Entity.class, player, "id", 7);
+                set(Entity.class, player, "type", net.minecraft.world.entity.EntityTypes.PLAYER);
+                level.player = player;
+                minecraft.player = player;
+                set(OptionInstance.class, particles, "value", ParticleStatus.ALL);
+
+                List<JsonArray> ops = new ArrayList<>();
+                List<BlockPos> pistons = new ArrayList<>();
+                List<Direction> facings = new ArrayList<>();
+                List<BlockPos> lines = new ArrayList<>();
+                List<Vec3> spots = new ArrayList<>();
+                for (int slot = 0; slot < 9; slot++) {
+                    if (random.nextInt(3) == 0) {
+                        continue;
+                    }
+                    Direction facing = random.nextInt(3) == 0 ? Direction.UP : random.nextInt(6) == 0 ? Direction.DOWN : Direction.Plane.HORIZONTAL.getRandomDirection(RandomSource.create(random.nextLong()));
+                    BlockPos piston = new BlockPos(-10 + 10 * (slot % 3), facing == Direction.DOWN ? -55 : -60, -10 + 10 * (slot / 3));
+                    boolean sticky = random.nextBoolean();
+                    place(ops, piston, (sticky ? Blocks.STICKY_PISTON : Blocks.PISTON).defaultBlockState().setValue(BlockStateProperties.FACING, facing));
+                    pistons.add(piston);
+                    facings.add(facing);
+                    int length = random.nextInt(5);
+                    BlockPos last = piston;
+                    for (int i = 1; i <= length; i++) {
+                        BlockPos pos = piston.relative(facing, i);
+                        BlockState state = List.of(
+                            Blocks.STONE, Blocks.DIRT, Blocks.SLIME_BLOCK, Blocks.HONEY_BLOCK, Blocks.GLASS, Blocks.OAK_PLANKS, Blocks.OBSIDIAN, Blocks.STONE
+                        ).get(random.nextInt(8)).defaultBlockState();
+                        place(ops, pos, state);
+                        last = pos;
+                        if ((state.is(Blocks.SLIME_BLOCK) || state.is(Blocks.HONEY_BLOCK)) && random.nextBoolean()) {
+                            // A block stuck to its side.
+                            Direction side = facing.getAxis() == Direction.Axis.Y ? Direction.NORTH : Direction.UP;
+                            place(ops, pos.relative(side), (random.nextBoolean() ? Blocks.STONE : Blocks.SLIME_BLOCK).defaultBlockState());
+                        }
+                    }
+                    lines.add(last);
+                    // Where the player can be: on what an upward piston pushes, in a sideways one's way, on what it pushes.
+                    if (facing == Direction.UP) {
+                        spots.add(new Vec3(piston.getX() + 0.5, last.getY() + 1.0, piston.getZ() + 0.5));
+                    } else if (facing != Direction.DOWN) {
+                        BlockPos ahead = last.relative(facing);
+                        spots.add(new Vec3(ahead.getX() + 0.5 - facing.getStepX() * 0.2, -60.0, ahead.getZ() + 0.5 - facing.getStepZ() * 0.2));
+                        if (last != piston) {
+                            spots.add(new Vec3(last.getX() + 0.5, last.getY() + 1.0, last.getZ() + 0.5));
+                        }
+                    }
+                }
+                Vec3 position = spots.isEmpty() || random.nextInt(8) == 0
+                    ? new Vec3(40.5, -60.0, 40.5)
+                    : spots.get(random.nextInt(spots.size())).add((random.nextDouble() - 0.5) * 0.2, 0.0, (random.nextDouble() - 0.5) * 0.2);
+                set(Entity.class, player, "position", position);
+                set(Entity.class, player, "bb", new AABB(position.x - 0.3, position.y, position.z - 0.3, position.x + 0.3, position.y + 1.8, position.z + 0.3));
+                set(Camera.class, camera, "position", position.add(0.0, 1.62, 0.0));
+                // Players stand on what they're pushed onto, which the moves the harness records don't change.
+                set(Entity.class, player, "onGround", true);
+                set(Entity.class, player, "mainSupportingBlockPos", java.util.Optional.empty());
+                set(Entity.class, player, "deltaMovement", new Vec3(0.0, -0.0784000015258789, 0.0));
+                // Its level, which says it moves itself (canSimulateMovement).
+                set(Entity.class, player, "level", level);
+
+                JsonArray results = new JsonArray();
+                EVENTS.clear();
+                for (JsonArray op : ops) {
+                    level.setBlock(new BlockPos(op.get(1).getAsInt(), op.get(2).getAsInt(), op.get(3).getAsInt()), Block.stateById(op.get(4).getAsInt()), 18);
+                }
+                long time = gameTime;
+                for (int tick = 0; tick < 30; tick++) {
+                    for (int i = 0; i < pistons.size(); i++) {
+                        if (random.nextInt(5) != 0) {
+                            continue;
+                        }
+                        BlockPos piston = pistons.get(i);
+                        BlockState state = level.getBlockState(piston);
+                        if (!(state.getBlock() instanceof net.minecraft.world.level.block.piston.PistonBaseBlock)) {
+                            continue;
+                        }
+                        int b0 = state.getValue(net.minecraft.world.level.block.piston.PistonBaseBlock.EXTENDED) ? (random.nextInt(4) == 0 ? 2 : 1) : 0;
+                        int b1 = facings.get(i).get3DDataValue();
+                        ops.add(ChunkSuites.array("event", piston.getX(), piston.getY(), piston.getZ(), b0, b1));
+                        level.blockEvent(piston, state.getBlock(), b0, b1);
+                    }
+                    ops.add(ChunkSuites.array("tick"));
+                    ((ClientLevel.ClientLevelData)level.getLevelData()).setGameTime(time);
+                    level.tickBlockEntities();
+                    time++;
+                    JsonArray events = new JsonArray();
+                    EVENTS.forEach(events::add);
+                    EVENTS.clear();
+                    JsonArray blocks = new JsonArray();
+                    for (int i = 0; i < pistons.size(); i++) {
+                        for (int j = 0; j <= 4; j++) {
+                            blocks.add(Block.getId(level.getBlockState(pistons.get(i).relative(facings.get(i), j))));
+                        }
+                    }
+                    results.add(ChunkSuites.array(events, tickers(level), blockEntities(level), blocks));
+                }
+                results.add(ChunkSuites.array("end", level.getRandom().nextLong()));
+                JsonArray opsJson = new JsonArray();
+                ops.forEach(opsJson::add);
+                JsonArray watched = new JsonArray();
+                for (int i = 0; i < pistons.size(); i++) {
+                    watched.add(ChunkSuites.array(pistons.get(i).getX(), pistons.get(i).getY(), pistons.get(i).getZ(), facings.get(i).name()));
+                }
+                writer.result(
+                    "pistons",
+                    ChunkSuites.array(levelSeed, ChunkSuites.array(bits(position.x), bits(position.y), bits(position.z)), gameTime, watched, opsJson),
+                    results,
+                    null
+                );
+            }
+        }
+
         /** A new level over the walk's 3 by 3 chunks around the spawn, its random seeded, at the game time. */
-        private static Level level(final sun.misc.Unsafe unsafe, final Minecraft minecraft, final long seed, final long gameTime) {
+        static Level level(final sun.misc.Unsafe unsafe, final Minecraft minecraft, final long seed, final long gameTime) {
             Level level;
             try {
                 level = (Level)unsafe.allocateInstance(Level.class);
@@ -694,6 +994,15 @@ final class BlockEntityTickSuites {
             set(base, level, "neighborUpdater", new net.minecraft.world.level.redstone.CollectingNeighborUpdater(level, 1000000));
             set(base, level, "pendingBlockEntityTickers", new ArrayList<>());
             set(ClientLevel.class, level, "minecraft", minecraft);
+            // The listener, for the vanilla features a moving piston's block is checked against.
+            try {
+                net.minecraft.client.multiplayer.ClientPacketListener connection =
+                    (net.minecraft.client.multiplayer.ClientPacketListener)unsafe.allocateInstance(net.minecraft.client.multiplayer.ClientPacketListener.class);
+                set(net.minecraft.client.multiplayer.ClientPacketListener.class, connection, "enabledFeatures", net.minecraft.world.flag.FeatureFlags.DEFAULT_FLAGS);
+                set(ClientLevel.class, level, "connection", connection);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
             set(ClientLevel.class, level, "tickRateManager", new TickRateManager());
             set(ClientLevel.class, level, "worldBorder", new WorldBorder());
             set(ClientLevel.class, level, "dragonParts", new ArrayList<>());

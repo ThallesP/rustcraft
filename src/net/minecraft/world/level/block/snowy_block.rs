@@ -1,21 +1,28 @@
 //! net/minecraft/world/level/block/SnowyBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! Its properties and default state, and `updateShape`: snowy while snow is on it. Not ported
+//! yet: the rest of its behaviour (`getStateForPlacement`).
 
+use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::world::level::block::block::{
     self, Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
 use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
+use crate::net::minecraft::world::level::block_getter::BlockGetter;
 
 pub struct SnowyBlock;
 
-pub static CLASS: BlockClass =
-    BlockClass::new("net.minecraft.world.level.block.SnowyBlock", &block::CLASS);
+pub static CLASS: BlockClass = BlockClass {
+    update_shape: Some(SnowyBlock::update_shape),
+    ..BlockClass::new("net.minecraft.world.level.block.SnowyBlock", &block::CLASS)
+};
 
 impl SnowyBlock {
     pub const SNOWY: &'static BooleanProperty = BlockStateProperties::SNOWY;
@@ -45,5 +52,32 @@ impl SnowyBlock {
 
     pub fn create_block_state_definition(builder: &mut Builder) {
         builder.add(&[SnowyBlock::SNOWY]);
+    }
+}
+
+impl SnowyBlock {
+    /// `updateShape`: snowy from what's above it.
+    fn update_shape(
+        _block: &BlockData,
+        state: BlockState,
+        _level: &dyn BlockGetter,
+        _pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        _neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+    ) -> BlockState {
+        if direction_to_neighbour == Direction::UP {
+            state.set_value(
+                SnowyBlock::SNOWY,
+                SnowyBlock::is_snowy_setting(neighbour_state),
+            )
+        } else {
+            state
+        }
+    }
+
+    /// `isSnowySetting`: snow, as the `snow` tag has it.
+    fn is_snowy_setting(above_state: BlockState) -> bool {
+        above_state.is_tag(BlockTags::SNOW)
     }
 }

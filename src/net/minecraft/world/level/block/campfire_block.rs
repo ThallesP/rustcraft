@@ -12,6 +12,7 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
 use crate::net::minecraft::sounds::sound_events::SoundEvents;
 use crate::net::minecraft::sounds::sound_source::SoundSource;
+use crate::net::minecraft::tags::block_tags::BlockTags;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEntityBlock};
 use crate::net::minecraft::world::level::block::block::Block;
@@ -131,6 +132,13 @@ impl CampfireBlock {
 }
 
 impl CampfireBlock {
+    /// `isLitCampfire`: a campfire, lit.
+    pub fn is_lit_campfire(block_state: BlockState) -> bool {
+        block_state.has_property(CampfireBlock::LIT)
+            && block_state.is_tag(BlockTags::CAMPFIRES)
+            && block_state.get_value(CampfireBlock::LIT)
+    }
+
     /// `makeParticles`: a puff of smoke rising from it, cosy or a signal's, with smoke on it while
     /// it's `smoking`, from the level's random.
     pub fn make_particles(

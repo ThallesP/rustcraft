@@ -739,6 +739,22 @@ impl LevelPlayer for LocalPlayer {
     fn r#move(&mut self, level: &ClientLevel, mover_type: MoverType, delta: Vec3) {
         EntityClass::r#move(self, level, mover_type, delta);
     }
+
+    fn get_delta_movement(&self) -> Vec3 {
+        self.entity().get_delta_movement()
+    }
+
+    fn set_delta_movement(&mut self, delta_movement: Vec3) {
+        self.entity_mut().set_delta_movement(delta_movement);
+    }
+
+    fn on_ground(&self) -> bool {
+        self.entity().on_ground()
+    }
+
+    fn is_supported_by(&self, pos: &BlockPos) -> bool {
+        self.entity().main_supporting_block_pos() == Some(*pos)
+    }
 }
 
 impl EntityClass for LocalPlayer {

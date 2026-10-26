@@ -586,6 +586,11 @@ impl Level for FlatLevel {
     fn has_fast_lava(&self) -> bool {
         false
     }
+
+    /// No piston moves on the flat level.
+    fn get_game_time(&self) -> i64 {
+        0
+    }
 }
 
 /// `GameProtocols.Context` for the replay's protocol, which no ported packet asks.

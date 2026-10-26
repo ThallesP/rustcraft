@@ -79,6 +79,9 @@ pub trait Level: CollisionGetter {
     /// `environmentAttributes().getDimensionValue(EnvironmentAttributes.FAST_LAVA)`: whether lava
     /// flows fast here, and pushes harder.
     fn has_fast_lava(&self) -> bool;
+
+    /// `getGameTime()`, which a piston's pushes are limited by, a tick at a time.
+    fn get_game_time(&self) -> i64;
 }
 
 /// `LevelReader.containsAnyLiquid(AABB)`: whether a block from the box's lower corner's to its

@@ -26,6 +26,8 @@ impl BlockTags {
     pub const CLIMBABLE: TagKey = TagKey("climbable");
     pub const BEACON_BASE_BLOCKS: TagKey = TagKey("beacon_base_blocks");
     pub const CONDUIT_EFFECT_BLOCK: TagKey = TagKey("conduit_effect_block");
+    pub const SNOW: TagKey = TagKey("snow");
+    pub const CAMPFIRES: TagKey = TagKey("campfires");
     pub const FENCES: TagKey = TagKey("fences");
     pub const WALLS: TagKey = TagKey("walls");
     pub const SUPPRESSES_BOUNCE: TagKey = TagKey("suppresses_bounce");

@@ -1,11 +1,11 @@
 //! net/minecraft/world/level/block/piston/MovingPistonBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
-//!
-//! Of its behaviour, its shapes and render shape (invisible: its block entity draws what moves) are
-//! ported, with its collision shape as for a level without its block entity, nothing: block
-//! entities aren't kept yet, so a moving block's collision isn't.
+//! Its properties and default state, its shapes (its collision shape its block entity's, what it
+//! moves where it is so far, nothing without one), its render shape (invisible: its block entity
+//! draws what moves) and its block entity's ticker, on both sides; `newBlockEntity` makes none,
+//! a piston's block event makes it (`PistonMovingBlockEntity::new_moving`, Java's
+//! `newMovingBlockEntity`). Not ported yet: `destroy`, `useWithoutItem` and its drops, the
+//! server's.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
@@ -14,7 +14,12 @@ use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::directional_block::DirectionalBlock;
+use crate::net::minecraft::world::level::block::entity::block_entity::BlockEntityData;
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
+use crate::net::minecraft::world::level::block::entity::block_entity_types::BlockEntityTypes;
 use crate::net::minecraft::world::level::block::piston::piston_head_block::PistonHeadBlock;
+use crate::net::minecraft::world::level::block::piston::piston_moving_block_entity::PistonMovingBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_behaviour::RenderShape;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -30,6 +35,7 @@ use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 pub struct MovingPistonBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(MovingPistonBlock::get_ticker),
     get_shape: Some(MovingPistonBlock::get_shape),
     get_collision_shape: Some(MovingPistonBlock::get_collision_shape),
     get_render_shape: Some(MovingPistonBlock::get_render_shape),
@@ -83,16 +89,36 @@ impl MovingPistonBlock {
         Shapes::empty()
     }
 
-    /// `getCollisionShape`: its block entity's, or nothing without one (block entities aren't
-    /// kept yet).
+    /// `getCollisionShape`: its block entity's, or nothing without one.
     fn get_collision_shape(
         _block: &BlockData,
         _state: BlockState,
-        _level: &dyn BlockGetter,
-        _pos: &BlockPos,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
-        Shapes::empty()
+        let entity = match level
+            .get_block_entity(pos)
+            .as_deref()
+            .map(|entity| &entity.data)
+        {
+            Some(BlockEntityData::Piston(entity)) => entity.clone(),
+            _ => return Shapes::empty(),
+        };
+        entity.get_collision_shape(level, pos)
+    }
+
+    /// `getTicker`: the moving block's `tick`, on both sides.
+    fn get_ticker(
+        _block: &BlockData,
+        _state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        base_entity_block::create_ticker_helper(
+            r#type,
+            BlockEntityTypes::PISTON,
+            PistonMovingBlockEntity::tick,
+        )
     }
 
     fn get_render_shape(_block: &BlockData, _state: BlockState) -> RenderShape {

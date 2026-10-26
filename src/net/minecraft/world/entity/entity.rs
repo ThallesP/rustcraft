@@ -18,7 +18,7 @@
 //! - water's splash (`doWaterSplashEffect`), which only plays a sound and makes particles, from
 //!   the entity's random source; lava's speed in a dimension with fast lava
 //!   (`EnvironmentAttributes.FAST_LAVA`, the nether's), which panics;
-//! - pistons (`limitPistonMovement`, which panics), the blocks' `fallOn`,
+//! - the blocks' `fallOn`,
 //!   `bounceOn` (which panics when an entity would bounce), `stepOn` and `entityInside`
 //!   (`applyEffectsFromBlocks`: none of the blocks ported so far does anything there), and the
 //!   movement's sounds and game events (`applyMovementEmissionAndPlaySound`), which change nothing
@@ -84,6 +84,10 @@ pub struct Entity {
     eye_height: f32,
     pub no_physics: bool,
     stuck_speed_multiplier: Vec3,
+    /// `pistonDeltas` and `pistonDeltasGameTime`: how far pistons have moved it along each axis
+    /// this game tick.
+    piston_deltas: [f64; 3],
+    piston_deltas_game_time: i64,
     main_supporting_block_pos: Option<BlockPos>,
     on_ground_no_blocks: bool,
     fluid_interaction: EntityFluidInteraction,
@@ -103,6 +107,16 @@ pub struct Entity {
 }
 
 impl Entity {
+    /// `applyPistonMovementRestriction`: the part of `amount` that keeps this tick's pushes
+    /// along the axis within 0.51 either way.
+    fn apply_piston_movement_restriction(&mut self, axis: Axis, amount: f64) -> f64 {
+        let ordinal = axis as usize;
+        let min = Mth::clamp_f64(amount + self.piston_deltas[ordinal], -0.51, 0.51);
+        let amount = min - self.piston_deltas[ordinal];
+        self.piston_deltas[ordinal] = min;
+        amount
+    }
+
     pub const FLAG_ONFIRE: i32 = 0;
     pub const FLAG_SHIFT_KEY_DOWN: i32 = 1;
     pub const FLAG_SPRINTING: i32 = 3;
@@ -140,6 +154,8 @@ impl Entity {
             dimensions,
             no_physics: false,
             stuck_speed_multiplier: Vec3::ZERO,
+            piston_deltas: [0.0; 3],
+            piston_deltas_game_time: 0,
             main_supporting_block_pos: None,
             on_ground_no_blocks: false,
             fluid_interaction: EntityFluidInteraction::new(&Entity::FLUIDS_WITH_CURRENT),
@@ -891,13 +907,17 @@ pub fn r#move(
         return;
     }
 
-    assert!(
-        mover_type != MoverType::PISTON,
-        "limitPistonMovement needs the level's game time, which isn't ported"
-    );
+    if mover_type == MoverType::PISTON {
+        delta = limit_piston_movement(this.entity_mut(), level, &delta);
+        if delta == Vec3::ZERO {
+            return;
+        }
+    }
 
     if this.entity().stuck_speed_multiplier.length_sqr() > 1.0E-7 {
-        delta = delta.multiply(&this.entity().stuck_speed_multiplier);
+        if mover_type != MoverType::PISTON {
+            delta = delta.multiply(&this.entity().stuck_speed_multiplier);
+        }
         let entity = this.entity_mut();
         entity.stuck_speed_multiplier = Vec3::ZERO;
         entity.set_delta_movement(Vec3::ZERO);
@@ -985,6 +1005,45 @@ pub fn r#move(
         f64::from(block_speed_factor),
     );
     this.entity_mut().set_delta_movement(delta_movement);
+}
+
+/// `limitPistonMovement`: what pistons push it by along one axis, held to 0.51 blocks either way
+/// a game tick, nothing when that leaves less than 1.0E-5.
+fn limit_piston_movement(entity: &mut Entity, level: &dyn Level, vec: &Vec3) -> Vec3 {
+    if vec.length_sqr() <= 1.0E-7 {
+        return *vec;
+    }
+
+    let current_game_time = level.get_game_time();
+    if current_game_time != entity.piston_deltas_game_time {
+        entity.piston_deltas = [0.0; 3];
+        entity.piston_deltas_game_time = current_game_time;
+    }
+
+    if vec.x != 0.0 {
+        let xa = entity.apply_piston_movement_restriction(Axis::X, vec.x);
+        if xa.abs() <= f64::from(1.0E-5_f32) {
+            Vec3::ZERO
+        } else {
+            Vec3::new(xa, 0.0, 0.0)
+        }
+    } else if vec.y != 0.0 {
+        let ya = entity.apply_piston_movement_restriction(Axis::Y, vec.y);
+        if ya.abs() <= f64::from(1.0E-5_f32) {
+            Vec3::ZERO
+        } else {
+            Vec3::new(0.0, ya, 0.0)
+        }
+    } else if vec.z != 0.0 {
+        let za = entity.apply_piston_movement_restriction(Axis::Z, vec.z);
+        if za.abs() <= f64::from(1.0E-5_f32) {
+            Vec3::ZERO
+        } else {
+            Vec3::new(0.0, 0.0, za)
+        }
+    } else {
+        Vec3::ZERO
+    }
 }
 
 /// Stops the movement along each axis it collided on, bouncing by the restitution, which only a

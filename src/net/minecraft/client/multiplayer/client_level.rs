@@ -36,10 +36,11 @@
 //!
 //! The game time is what the server last sent, and each tick adds one and ticks the listener's
 //! clocks (`tickTime`, the clocks a parameter, Java's `clockManager()`). The tick also steps the
-//! world border's move and the sky's flash, after the sky's darkening (`updateSkyBrightness`, its
-//! `SKY_LIGHT_LEVEL` a parameter, from the environment attributes the game renderer holds); the
-//! rest of `tick` isn't ported: the rain's particles and sounds (`tickWeatherEffects`), block
-//! breaking progress, the End's flashes and the explosions.
+//! world border's move, the rain's particles and sound around the camera (`tickWeatherEffects`,
+//! with what the game hands it: `LevelEffects`) and the sky's flash, after the sky's darkening
+//! (`updateSkyBrightness`, its `SKY_LIGHT_LEVEL` a parameter, from the environment attributes the
+//! game renderer holds); the rest of `tick` isn't ported: block breaking progress, the End's
+//! flashes and the explosions.
 //!
 //! Each tick the game animates it (`animateTick`): blocks near the player picked with the level's
 //! random (`Level.random`), each block's and fluid's `animateTick`, and the drips under fluids,
@@ -54,12 +55,13 @@
 //! Its dimension type is the synchronized registry's value of the holder the login named
 //! (`dimensionType()`), which gives its height, sky light, cardinal lighting and fast lava.
 
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Deref;
 use std::rc::Rc;
 
+use crate::java::lang::math::Math;
 use crate::net::minecraft::client::client_clock_manager::ClientClockManager;
 use crate::net::minecraft::client::color::block::block_colors::BlockColors;
 use crate::net::minecraft::client::color::block::block_tint_cache::BlockTintCache;
@@ -89,8 +91,10 @@ use crate::net::minecraft::resources::identifier::Identifier;
 use crate::net::minecraft::resources::resource_key::ResourceKey;
 use crate::net::minecraft::server::level::particle_status::ParticleStatus;
 use crate::net::minecraft::sounds::sound_event::SoundEvent;
+use crate::net::minecraft::sounds::sound_events::SoundEvents;
 use crate::net::minecraft::sounds::sound_source::SoundSource;
 use crate::net::minecraft::tags::block_tags::BlockTags;
+use crate::net::minecraft::tags::fluid_tags::FluidTags;
 use crate::net::minecraft::util::argb::ARGB;
 use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::random_source::{self, RandomSource};
@@ -108,6 +112,7 @@ use crate::net::minecraft::world::level::biome::biome_resolver::BiomeResolver;
 use crate::net::minecraft::world::level::biome::biomes::Biomes;
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
+use crate::net::minecraft::world::level::block::campfire_block::CampfireBlock;
 use crate::net::minecraft::world::level::block::entity::block_entity::BlockEntity;
 use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -158,6 +163,8 @@ pub struct ClientLevel {
     o_thunder_level: f32,
     thunder_level: f32,
     sky_flash_time: i32,
+    /// `rainSoundTime`: ticks since the rain's sound last played, which make the next likelier.
+    rain_sound_time: Cell<i32>,
     /// `Level.skyDarken`: how far the sky's light is down, by the time of day and the weather.
     sky_darken: i32,
     /// `Level.random`, which `animateTick`'s positions, the particles' and sounds' choices and
@@ -197,6 +204,15 @@ pub trait LevelPlayer {
     fn get_piston_push_reaction(&self) -> PushReaction {
         PushReaction::PUSH_PULL
     }
+
+    fn get_delta_movement(&self) -> Vec3;
+
+    fn set_delta_movement(&mut self, delta_movement: Vec3);
+
+    fn on_ground(&self) -> bool;
+
+    /// `isSupportedBy(pos)`: whether it stands on that block.
+    fn is_supported_by(&self, pos: &BlockPos) -> bool;
 
     /// `move(MoverType, Vec3)`.
     fn r#move(&mut self, level: &ClientLevel, mover_type: MoverType, delta: Vec3);
@@ -268,6 +284,8 @@ pub struct LevelEffects<'a> {
     pub camera_position: Vec3,
     /// `minecraft.options.particles()`.
     pub particles: ParticleStatus,
+    /// `minecraft.options.weatherRadius()`.
+    pub weather_radius: i32,
     /// `minecraft.player`'s id, which `playPlayerSound` binds its sound to.
     pub player: Option<i32>,
     /// `environmentAttributes()`, read with the level as the layers see it; none before the game
@@ -518,6 +536,115 @@ impl<'a> LevelWithEffects<'a> {
         }
     }
 
+    /// `tickWeatherEffects`: while it rains, raindrops (smoke on lava, magma and lit campfires)
+    /// on the blocks the rain falls on around the camera, a tick's from its own random seeded by
+    /// the game time, and now and then the rain's sound where the last fell.
+    pub fn tick_weather_effects(&self) {
+        let particle_status = self.effects.particles;
+        let weather_radius = self.effects.weather_radius;
+        let rain_level = self.level.get_rain_level(1.0);
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(rain_level <= 0.0) {
+            let mut random = random_source::create_thread_local_instance_with_seed(
+                self.level.get_game_time().wrapping_mul(312987231),
+            );
+            let camera_position = BlockPos::containing(&self.effects.camera_position);
+            let mut rain_particle_position = None;
+            let weather_diameter = 2 * weather_radius + 1;
+            let weather_area = weather_diameter * weather_diameter;
+            let rain_particles = (0.225_f32 * weather_area as f32 * rain_level * rain_level) as i32
+                / if particle_status == ParticleStatus::DECREASED {
+                    2
+                } else {
+                    1
+                };
+
+            for _ in 0..rain_particles {
+                let x = random.next_int_bounded(weather_diameter) - weather_radius;
+                let z = random.next_int_bounded(weather_diameter) - weather_radius;
+                let heightmap_position = self.level.get_heightmap_pos(
+                    Types::MOTION_BLOCKING,
+                    &camera_position.offset_xyz(x, 0, z),
+                );
+                if heightmap_position.get_y() > LevelHeightAccessor::get_min_y(self.level)
+                    && heightmap_position.get_y() <= camera_position.get_y() + 10
+                    && heightmap_position.get_y() >= camera_position.get_y() - 10
+                    && self.level.get_precipitation_at(&heightmap_position) == Precipitation::RAIN
+                {
+                    let position = heightmap_position.below();
+                    rain_particle_position = Some(position);
+                    if particle_status == ParticleStatus::MINIMAL {
+                        break;
+                    }
+
+                    let block_x = random.next_double();
+                    let block_z = random.next_double();
+                    let block = self.level.get_block_state(&position);
+                    let fluid = self.level.get_fluid_state(&position);
+                    let block_shape = block.get_collision_shape(self.level, &position);
+                    let block_top = block_shape.max_at(Axis::Y, block_x, block_z);
+                    let fluid_top = f64::from(fluid.get_height(self.level, &position));
+                    let particle_y = Math::max_f64(block_top, fluid_top);
+                    let particle_type = if !fluid.is_tag(FluidTags::LAVA)
+                        && !block.is(Blocks::MAGMA_BLOCK)
+                        && !CampfireBlock::is_lit_campfire(block)
+                    {
+                        ParticleTypes::RAIN
+                    } else {
+                        ParticleTypes::SMOKE
+                    };
+                    self.add_particle(
+                        particle_type,
+                        f64::from(position.get_x()) + block_x,
+                        f64::from(position.get_y()) + particle_y,
+                        f64::from(position.get_z()) + block_z,
+                        0.0,
+                        0.0,
+                        0.0,
+                    );
+                }
+            }
+
+            if let Some(position) = rain_particle_position {
+                let rain_sound_time = self.level.rain_sound_time.get();
+                self.level.rain_sound_time.set(rain_sound_time + 1);
+                if random.next_int_bounded(3) < rain_sound_time {
+                    self.level.rain_sound_time.set(0);
+                    if position.get_y() > camera_position.get_y() + 1
+                        && self
+                            .level
+                            .get_heightmap_pos(Types::MOTION_BLOCKING, &camera_position)
+                            .get_y()
+                            > camera_position.get_y()
+                    {
+                        self.play_local_sound_at(
+                            &position,
+                            SoundEvents::WEATHER_RAIN_ABOVE,
+                            SoundSource::WEATHER,
+                            0.1,
+                            0.5,
+                            false,
+                        );
+                    } else {
+                        self.play_local_sound_at(
+                            &position,
+                            SoundEvents::WEATHER_RAIN,
+                            SoundSource::WEATHER,
+                            0.2,
+                            1.0,
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// `rainSoundTime`, which the golden programs read.
+    pub fn rain_sound_time(&self) -> i32 {
+        self.level.rain_sound_time.get()
+    }
+
     /// `environmentAttributes().getValue(attribute, BlockPos)`: at the block's middle.
     pub fn get_environment_value<V: Value>(
         &self,
@@ -596,6 +723,7 @@ impl ClientLevel {
             o_thunder_level: 0.0,
             thunder_level: 0.0,
             sky_flash_time: 0,
+            rain_sound_time: Cell::new(0),
             sky_darken: 0,
             random: RefCell::new(LegacyRandomSource::new(
                 RandomSupport::generate_unique_seed(),
@@ -653,11 +781,12 @@ impl ClientLevel {
     }
 
     /// `tick(BooleanSupplier)`, as far as it's ported: the world border's move, the game time and
-    /// the clocks, and the sky's flash.
-    pub fn tick(&mut self, clock_manager: &mut ClientClockManager) {
+    /// the clocks, the rain's particles and sound, and the sky's flash.
+    pub fn tick(&mut self, clock_manager: &mut ClientClockManager, effects: &LevelEffects<'_>) {
         // `tickRateManager().runsNormally()`: the tick rate isn't ported, so it always does.
         self.world_border.tick();
         self.tick_time(clock_manager);
+        LevelWithEffects::new(self, effects).tick_weather_effects();
         if self.sky_flash_time > 0 {
             self.set_sky_flash_time(self.sky_flash_time - 1);
         }
@@ -1398,6 +1527,18 @@ impl ClientLevel {
         true
     }
 
+    /// `Level.removeBlock(pos, movedByPiston)`: the block there replaced by its fluid alone, with
+    /// `UPDATE_ALL` (and `UPDATE_MOVE_BY_PISTON`).
+    pub fn remove_block(&mut self, pos: &BlockPos, moved_by_piston: bool) -> bool {
+        let fluid_state = self.get_fluid_state(pos);
+        self.set_block(
+            pos,
+            fluid_state.create_legacy_block(),
+            3 | if moved_by_piston { 64 } else { 0 },
+            512,
+        )
+    }
+
     /// `sendBlockUpdated`: the sections around the block are dirty.
     pub fn send_block_updated(
         &self,
@@ -1598,6 +1739,10 @@ impl Level for ClientLevel {
     fn has_fast_lava(&self) -> bool {
         self.dimension_type_value.fast_lava()
     }
+
+    fn get_game_time(&self) -> i64 {
+        ClientLevel::get_game_time(self)
+    }
 }
 
 impl fmt::Debug for ClientLevel {
@@ -1743,6 +1888,7 @@ mod tests {
         }
         ticks_match_vanilla(&golden, &registries);
         animate_tick_matches_vanilla(&golden, &registries, &packets);
+        weather_matches_vanilla(&golden);
         golden.finish();
     }
 
@@ -1917,6 +2063,7 @@ mod tests {
                 sound_manager: &recorder,
                 camera_position: Vec3::new(camera[0], camera[1], camera[2]),
                 particles,
+                weather_radius: 10,
                 player: Some(7),
                 environment: Some((&system, &layer_level)),
                 block_colors: &block_colors,
@@ -2040,5 +2187,73 @@ mod tests {
                 .collect::<Vec<_>>();
             Value::from(outputs)
         });
+    }
+
+    /// `tickWeatherEffects` over 24 ticks of rain at levels and cameras around a course on the
+    /// walk's chunks: the raindrops, smoke and sounds, `rainSoundTime` after each tick, and the
+    /// level's random, as vanilla's.
+    fn weather_matches_vanilla(golden: &Golden) {
+        use crate::net::minecraft::world::level::block::entity::ticking_block_entity::tests::{
+            Recorder, walk_chunks, walk_level,
+        };
+
+        let (registries, packets) = walk_chunks();
+        let block_colors = BlockColors::create_default();
+        let programs = golden.cases("weather");
+        assert_eq!(programs.len(), 64);
+        for (number, (args, expected)) in programs.into_iter().enumerate() {
+            let mut level = walk_level(&registries, &packets);
+            *level.random.borrow_mut() = LegacyRandomSource::new(i64::decode(&args[0]));
+            let particles = match args[1].as_str().expect("a status") {
+                "ALL" => ParticleStatus::ALL,
+                "DECREASED" => ParticleStatus::DECREASED,
+                _ => ParticleStatus::MINIMAL,
+            };
+            let weather_radius = i32::decode(&args[2]);
+            let game_time = i64::decode(&args[3]);
+            for placement in args[4].as_array().expect("the course") {
+                let placement = Vec::<i32>::decode(placement);
+                level.set_block(
+                    &BlockPos::new(placement[0], placement[1], placement[2]),
+                    Block::state_by_id(placement[3]),
+                    18,
+                    512,
+                );
+            }
+
+            let recorder = Recorder::default();
+            let mut lines = Vec::new();
+            for (tick, step) in args[5].as_array().expect("ticks").iter().enumerate() {
+                let rain = f32::decode(&step[0]);
+                let camera = Vec::<f64>::decode(&step[1]);
+                level.set_time_from_server(game_time + tick as i64);
+                level.set_rain_level(rain);
+                let effects = LevelEffects {
+                    particle_engine: &recorder,
+                    sound_manager: &recorder,
+                    camera_position: Vec3::new(camera[0], camera[1], camera[2]),
+                    particles,
+                    weather_radius,
+                    player: Some(7),
+                    environment: None,
+                    block_colors: &block_colors,
+                };
+                let level_with_effects = super::LevelWithEffects::new(&level, &effects);
+                level_with_effects.tick_weather_effects();
+                lines.push(Value::from(vec![
+                    Value::from(recorder.events.take()),
+                    Value::from(level_with_effects.rain_sound_time()),
+                ]));
+            }
+            lines.push(Value::from(vec![
+                Value::from("end"),
+                Value::from(level.random.borrow_mut().next_long()),
+            ]));
+            let expected = expected.as_array().expect("lines");
+            assert_eq!(lines.len(), expected.len(), "weather {number}");
+            for (tick, (actual, expected)) in lines.iter().zip(expected).enumerate() {
+                assert_eq!(actual, expected, "weather {number}, tick {tick}");
+            }
+        }
     }
 }

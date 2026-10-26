@@ -35,6 +35,7 @@ use crate::net::minecraft::world::level::block::entity::sign_block_entity::SignB
 use crate::net::minecraft::world::level::block::entity::skull_block_entity::SkullBlockEntity;
 use crate::net::minecraft::world::level::block::entity::spawner_block_entity::SpawnerBlockEntity;
 use crate::net::minecraft::world::level::block::entity::the_end_gateway_block_entity::TheEndGatewayBlockEntity;
+use crate::net::minecraft::world::level::block::piston::piston_moving_block_entity::PistonMovingBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::storage::tag_value_input::TagValueInput;
 
@@ -73,6 +74,7 @@ pub enum BlockEntityData {
     Beacon(BeaconBlockEntity),
     EnchantingTable(EnchantingTableBlockEntity),
     PotentSulfur(PotentSulfurBlockEntity),
+    Piston(PistonMovingBlockEntity),
 }
 
 impl BlockEntity {
@@ -161,6 +163,7 @@ impl BlockEntity {
             | BlockEntityData::EnchantingTable(_)
             | BlockEntityData::PotentSulfur(_) => {}
             BlockEntityData::EndGateway(end_gateway) => end_gateway.load_additional(input),
+            BlockEntityData::Piston(piston) => piston.load_additional(input),
             BlockEntityData::Sign(sign) => sign.load_additional(input),
             BlockEntityData::Banner(banner) => banner.load_additional(input),
             BlockEntityData::Skull(skull) => skull.load_additional(input),

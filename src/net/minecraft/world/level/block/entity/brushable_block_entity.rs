@@ -11,7 +11,7 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::storage::tag_value_input::TagValueInput;
 
 // Direction.LEGACY_ID_CODEC.
-static LEGACY_ID_CODEC: StaticCodec<Direction> = LazyLock::new(|| {
+pub(crate) static LEGACY_ID_CODEC: StaticCodec<Direction> = LazyLock::new(|| {
     BYTE.xmap(
         |value: i8| Direction::from_3d_data_value(i32::from(value)),
         |direction: &Direction| direction.get_3d_data_value() as i8,

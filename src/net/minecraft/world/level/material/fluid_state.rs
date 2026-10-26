@@ -15,6 +15,10 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::particles::particle_options::ParticleOptions;
 use crate::net::minecraft::tags::fluid_tags::FluidTagKey;
 use crate::net::minecraft::util::random_source::RandomSource;
+use crate::net::minecraft::world::level::block::blocks::Blocks;
+use crate::net::minecraft::world::level::block::liquid_block::LiquidBlock;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
+use crate::net::minecraft::world::level::block::state::state_holder::StateHolder;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::material::fluids::Fluids;
 use crate::net::minecraft::world::level::material::{lava_fluid, water_fluid};
@@ -80,6 +84,24 @@ impl FluidState {
             Fluids::WATER | Fluids::LAVA => 8,
             Fluids::FLOWING_WATER | Fluids::FLOWING_LAVA => self.level,
         }
+    }
+
+    /// `createLegacyBlock()`: the block a fluid alone is, water or lava at its legacy level
+    /// (`FlowingFluid.getLegacyLevel`), air for the empty fluid.
+    pub fn create_legacy_block(&self) -> BlockState {
+        let block = match self.fluid {
+            Fluids::EMPTY => return Blocks::AIR.default_block_state(),
+            Fluids::WATER | Fluids::FLOWING_WATER => Blocks::WATER,
+            Fluids::LAVA | Fluids::FLOWING_LAVA => Blocks::LAVA,
+        };
+        let legacy_level = if self.is_source() {
+            0
+        } else {
+            8 - self.get_amount().min(8) + if self.falling { 8 } else { 0 }
+        };
+        block
+            .default_block_state()
+            .set_value(LiquidBlock::LEVEL, legacy_level)
     }
 
     pub fn is_randomly_ticking(&self) -> bool {

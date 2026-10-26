@@ -97,6 +97,11 @@ impl<'a> TagValueInput<'a> {
             .map_or(default_value, |tag| tag.int_value())
     }
 
+    pub fn get_float_or(&self, name: &str, default_value: f32) -> f32 {
+        self.get_numeric_tag(name)
+            .map_or(default_value, |tag| tag.float_value())
+    }
+
     pub fn get_long_or(&self, name: &str, default_value: i64) -> i64 {
         self.get_numeric_tag(name)
             .map_or(default_value, |tag| tag.long_value())

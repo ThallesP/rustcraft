@@ -81,6 +81,18 @@ pub type AnimateTickMethod =
 pub type TriggerEventMethod =
     fn(&BlockData, BlockState, &mut LevelTicking<'_>, &BlockPos, i32, i32) -> bool;
 
+/// A class's `updateShape`: the state, given that its neighbour that way is now the neighbour's
+/// state. Java's random isn't passed: no override ported draws from it.
+pub type UpdateShapeMethod = fn(
+    &BlockData,
+    BlockState,
+    &dyn BlockGetter,
+    &BlockPos,
+    Direction,
+    &BlockPos,
+    BlockState,
+) -> BlockState;
+
 /// A class's `getTicker(level, state, type)` on the client, an `EntityBlock`'s: what its block
 /// entity of the type does each tick there, if anything.
 pub type GetTickerMethod = fn(&BlockData, BlockState, BlockEntityType) -> Option<BlockEntityTicker>;
@@ -135,6 +147,9 @@ pub struct BlockClass {
     pub trigger_event: Option<TriggerEventMethod>,
     /// `EntityBlock.getTicker(Level, BlockState, BlockEntityType)`, if it overrides it.
     pub get_ticker: Option<GetTickerMethod>,
+    /// `updateShape(…)`, if it overrides it and the override is ported (`UPDATE_SHAPE_CLASSES`
+    /// names those that override it in Java).
+    pub update_shape: Option<UpdateShapeMethod>,
 }
 
 impl BlockClass {
@@ -165,6 +180,7 @@ impl BlockClass {
             animate_tick: None,
             trigger_event: None,
             get_ticker: None,
+            update_shape: None,
         }
     }
 
@@ -187,6 +203,130 @@ impl BlockClass {
         self.parent.and_then(|parent| parent.find(method))
     }
 }
+
+/// `BlockBehaviour.UPDATE_SHAPE_ORDER`.
+const UPDATE_SHAPE_ORDER: [Direction; 6] = [
+    Direction::WEST,
+    Direction::EAST,
+    Direction::NORTH,
+    Direction::SOUTH,
+    Direction::DOWN,
+    Direction::UP,
+];
+
+/// The classes that override `updateShape` in Java, by binary name: where the port has no
+/// override, `update_shape` says it isn't ported.
+const UPDATE_SHAPE_CLASSES: [&str; 109] = [
+    "net.minecraft.world.level.block.AbstractBedBlock",
+    "net.minecraft.world.level.block.AmethystClusterBlock",
+    "net.minecraft.world.level.block.AttachedStemBlock",
+    "net.minecraft.world.level.block.BambooSaplingBlock",
+    "net.minecraft.world.level.block.BambooStalkBlock",
+    "net.minecraft.world.level.block.BannerBlock",
+    "net.minecraft.world.level.block.BarrierBlock",
+    "net.minecraft.world.level.block.BaseCoralPlantTypeBlock",
+    "net.minecraft.world.level.block.BaseCoralWallFanBlock",
+    "net.minecraft.world.level.block.BasePressurePlateBlock",
+    "net.minecraft.world.level.block.BaseRailBlock",
+    "net.minecraft.world.level.block.BaseTorchBlock",
+    "net.minecraft.world.level.block.BeehiveBlock",
+    "net.minecraft.world.level.block.BellBlock",
+    "net.minecraft.world.level.block.BigDripleafBlock",
+    "net.minecraft.world.level.block.BigDripleafStemBlock",
+    "net.minecraft.world.level.block.BrushableBlock",
+    "net.minecraft.world.level.block.BubbleColumnBlock",
+    "net.minecraft.world.level.block.CactusBlock",
+    "net.minecraft.world.level.block.CakeBlock",
+    "net.minecraft.world.level.block.CampfireBlock",
+    "net.minecraft.world.level.block.CandleBlock",
+    "net.minecraft.world.level.block.CandleCakeBlock",
+    "net.minecraft.world.level.block.CarpetBlock",
+    "net.minecraft.world.level.block.CeilingHangingSignBlock",
+    "net.minecraft.world.level.block.ChainBlock",
+    "net.minecraft.world.level.block.ChestBlock",
+    "net.minecraft.world.level.block.ChorusFlowerBlock",
+    "net.minecraft.world.level.block.ChorusPlantBlock",
+    "net.minecraft.world.level.block.CocoaBlock",
+    "net.minecraft.world.level.block.ComparatorBlock",
+    "net.minecraft.world.level.block.ConcretePowderBlock",
+    "net.minecraft.world.level.block.ConduitBlock",
+    "net.minecraft.world.level.block.CopperChestBlock",
+    "net.minecraft.world.level.block.CopperGolemStatueBlock",
+    "net.minecraft.world.level.block.CoralBlock",
+    "net.minecraft.world.level.block.CoralFanBlock",
+    "net.minecraft.world.level.block.CoralPlantBlock",
+    "net.minecraft.world.level.block.CoralWallFanBlock",
+    "net.minecraft.world.level.block.CreakingHeartBlock",
+    "net.minecraft.world.level.block.DecoratedPotBlock",
+    "net.minecraft.world.level.block.DoorBlock",
+    "net.minecraft.world.level.block.DoublePlantBlock",
+    "net.minecraft.world.level.block.DriedGhastBlock",
+    "net.minecraft.world.level.block.EnderChestBlock",
+    "net.minecraft.world.level.block.FaceAttachedHorizontalDirectionalBlock",
+    "net.minecraft.world.level.block.FallingBlock",
+    "net.minecraft.world.level.block.FarmlandBlock",
+    "net.minecraft.world.level.block.FenceBlock",
+    "net.minecraft.world.level.block.FenceGateBlock",
+    "net.minecraft.world.level.block.FireBlock",
+    "net.minecraft.world.level.block.FlowerPotBlock",
+    "net.minecraft.world.level.block.FrogspawnBlock",
+    "net.minecraft.world.level.block.GrowingPlantBodyBlock",
+    "net.minecraft.world.level.block.GrowingPlantHeadBlock",
+    "net.minecraft.world.level.block.HangingMossBlock",
+    "net.minecraft.world.level.block.HangingRootsBlock",
+    "net.minecraft.world.level.block.HeavyCoreBlock",
+    "net.minecraft.world.level.block.HugeMushroomBlock",
+    "net.minecraft.world.level.block.IronBarsBlock",
+    "net.minecraft.world.level.block.LadderBlock",
+    "net.minecraft.world.level.block.LanternBlock",
+    "net.minecraft.world.level.block.LeavesBlock",
+    "net.minecraft.world.level.block.LightBlock",
+    "net.minecraft.world.level.block.LightningRodBlock",
+    "net.minecraft.world.level.block.LiquidBlock",
+    "net.minecraft.world.level.block.MangrovePropaguleBlock",
+    "net.minecraft.world.level.block.MangroveRootsBlock",
+    "net.minecraft.world.level.block.MossyCarpetBlock",
+    "net.minecraft.world.level.block.MultifaceBlock",
+    "net.minecraft.world.level.block.NetherPortalBlock",
+    "net.minecraft.world.level.block.NoteBlock",
+    "net.minecraft.world.level.block.ObserverBlock",
+    "net.minecraft.world.level.block.PathBlock",
+    "net.minecraft.world.level.block.PitcherCropBlock",
+    "net.minecraft.world.level.block.PotentSulfurBlock",
+    "net.minecraft.world.level.block.RedstoneWallTorchBlock",
+    "net.minecraft.world.level.block.RedstoneWireBlock",
+    "net.minecraft.world.level.block.RepeaterBlock",
+    "net.minecraft.world.level.block.ScaffoldingBlock",
+    "net.minecraft.world.level.block.SculkSensorBlock",
+    "net.minecraft.world.level.block.SculkShriekerBlock",
+    "net.minecraft.world.level.block.SeaPickleBlock",
+    "net.minecraft.world.level.block.SeagrassBlock",
+    "net.minecraft.world.level.block.ShelfBlock",
+    "net.minecraft.world.level.block.ShelfMushroomBlock",
+    "net.minecraft.world.level.block.SignBlock",
+    "net.minecraft.world.level.block.SlabBlock",
+    "net.minecraft.world.level.block.SmallDripleafBlock",
+    "net.minecraft.world.level.block.SnowLayerBlock",
+    "net.minecraft.world.level.block.SnowyBlock",
+    "net.minecraft.world.level.block.SoulFireBlock",
+    "net.minecraft.world.level.block.SpeleothemBlock",
+    "net.minecraft.world.level.block.SporeBlossomBlock",
+    "net.minecraft.world.level.block.StairBlock",
+    "net.minecraft.world.level.block.StandingSignBlock",
+    "net.minecraft.world.level.block.SugarCaneBlock",
+    "net.minecraft.world.level.block.TrapDoorBlock",
+    "net.minecraft.world.level.block.TripWireBlock",
+    "net.minecraft.world.level.block.TripWireHookBlock",
+    "net.minecraft.world.level.block.VegetationBlock",
+    "net.minecraft.world.level.block.VineBlock",
+    "net.minecraft.world.level.block.WallBannerBlock",
+    "net.minecraft.world.level.block.WallBlock",
+    "net.minecraft.world.level.block.WallHangingSignBlock",
+    "net.minecraft.world.level.block.WallSignBlock",
+    "net.minecraft.world.level.block.WallTorchBlock",
+    "net.minecraft.world.level.block.WaterloggedTransparentBlock",
+    "net.minecraft.world.level.block.piston.PistonHeadBlock",
+];
 
 /// `Block` itself.
 pub static CLASS: BlockClass = BlockClass {
@@ -390,6 +530,63 @@ impl Block {
         self.class()
             .find(|class| class.get_ticker)
             .and_then(|get_ticker| get_ticker(self, state, r#type))
+    }
+
+    /// `updateShape(state, level, ticks, pos, direction, neighbourPos, neighbourState, random)`:
+    /// its class's, or `BlockBehaviour`'s, the state as it is. A class whose override isn't
+    /// ported says so and keeps the state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_shape(
+        &self,
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+        direction_to_neighbour: Direction,
+        neighbour_pos: &BlockPos,
+        neighbour_state: BlockState,
+    ) -> BlockState {
+        let mut class = Some(self.class());
+        while let Some(current) = class {
+            if let Some(update_shape) = current.update_shape {
+                return update_shape(
+                    self,
+                    state,
+                    level,
+                    pos,
+                    direction_to_neighbour,
+                    neighbour_pos,
+                    neighbour_state,
+                );
+            }
+            if UPDATE_SHAPE_CLASSES.contains(&current.name) {
+                eprintln!("{}.updateShape isn't ported", current.name);
+                return state;
+            }
+            class = current.parent;
+        }
+        state
+    }
+
+    /// `updateFromNeighbourShapes`: the state as each neighbour, in `UPDATE_SHAPE_ORDER`, has it
+    /// update its shape.
+    pub fn update_from_neighbour_shapes(
+        state: BlockState,
+        level: &dyn BlockGetter,
+        pos: &BlockPos,
+    ) -> BlockState {
+        let mut new_state = state;
+        for direction in UPDATE_SHAPE_ORDER {
+            let neighbour_pos = pos.relative(direction);
+            new_state = new_state.get_block().update_shape(
+                new_state,
+                level,
+                pos,
+                direction,
+                &neighbour_pos,
+                level.get_block_state(&neighbour_pos),
+            );
+        }
+        new_state
     }
 
     /// `super.animateTick(...)` from `class`'s override: its parent's, if one overrides it.

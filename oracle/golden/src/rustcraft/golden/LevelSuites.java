@@ -86,7 +86,8 @@ final class LevelSuites {
     }
 
     static List<Suite> suites() {
-        return List.of(new WorldBorderSuite(), new ClientLevelSuite());
+        // ClientLevelSuite runs last, with BlockEntityTickSuites, after the fluids' tags are bound.
+        return List.of(new WorldBorderSuite());
     }
 
     private static JsonElement bits(final double value) {
@@ -297,6 +298,7 @@ final class LevelSuites {
 
         @Override
         public void write(final GoldenWriter writer) throws IOException {
+            BlockEntityTickSuites.bindFluidTags();
             new BiomeSuites.TintSuite().write(writer);
             try {
                 this.writeTicks(writer);
@@ -304,6 +306,7 @@ final class LevelSuites {
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(e);
             }
+            BlockEntityTickSuites.Weather.write(writer);
         }
 
         @SuppressWarnings("unchecked")
@@ -770,7 +773,7 @@ final class LevelSuites {
         }
 
         /** A sound: its event, source, volume, pitch, its random's first long, and where it is (or its entity). */
-        private static JsonArray sound(final SoundInstance instance, final int delay) {
+        static JsonArray sound(final SoundInstance instance, final int delay) {
             try {
                 long first = ((RandomSource)get(AbstractSoundInstance.class, instance, "random")).nextLong();
                 // The volume and pitch it was made with: its getters scale them by the sound resolved, which isn't.

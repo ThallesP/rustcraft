@@ -33,6 +33,7 @@ use crate::net::minecraft::world::level::block::entity::sign_block_entity::SignB
 use crate::net::minecraft::world::level::block::entity::skull_block_entity::SkullBlockEntity;
 use crate::net::minecraft::world::level::block::entity::spawner_block_entity::SpawnerBlockEntity;
 use crate::net::minecraft::world::level::block::entity::the_end_gateway_block_entity::TheEndGatewayBlockEntity;
+use crate::net::minecraft::world::level::block::piston::piston_moving_block_entity::PistonMovingBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 
 /// A kind of block entity, by its id in `BuiltInRegistries.BLOCK_ENTITY_TYPE`.
@@ -129,6 +130,7 @@ impl BlockEntityType {
             BlockEntityTypes::POTENT_SULFUR => {
                 BlockEntityData::PotentSulfur(PotentSulfurBlockEntity::new())
             }
+            BlockEntityTypes::PISTON => BlockEntityData::Piston(PistonMovingBlockEntity::new()),
             _ => BlockEntityData::None,
         };
         entity

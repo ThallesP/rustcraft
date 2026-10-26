@@ -634,6 +634,12 @@ impl LevelHeightAccessor for LevelChunk {
 }
 
 impl BlockGetter for LevelChunk {
+    /// `getBlockEntity(pos)`, `CHECK`: what the collisions read through the chunk (a shulker
+    /// box's lid, a moving piston's block).
+    fn get_block_entity(&self, pos: &BlockPos) -> Option<Ref<'_, BlockEntity>> {
+        LevelChunk::get_block_entity(self, pos)
+    }
+
     fn get_block_state(&self, pos: &BlockPos) -> BlockState {
         self.get_block_state_xyz(pos.get_x(), pos.get_y(), pos.get_z())
     }
