@@ -16,6 +16,10 @@ in the formats from TESTING.md. Needs tools/setup_vanilla.py to have run, and xv
 
 `--gl-profile macos` runs the client on llvmpipe restricted to what Apple's OpenGL 4.1 offers
 (oracle/gl-profiles.json, TESTING.md's "GL profiles"); port_client.py takes the same option.
+`--backend vulkan` runs it on vanilla's Vulkan backend (`--graphicsBackend vulkan`) on Mesa's
+lavapipe, into references of their own (TESTING.md's "Backends"):
+
+    python3 tools/oracle_client.py capture walk --accept-eula --backend vulkan --out vanilla/26.3/oracle-vulkan
 """
 
 import argparse
@@ -40,6 +44,11 @@ SCENARIOS_DIR = ROOT / "oracle" / "scenarios"
 LAVAPIPE_ICD = Path("/usr/share/vulkan/icd.d/lvp_icd.json")
 # Mesa's environment for each GL profile both clients can run under (TESTING.md, "GL profiles").
 GL_PROFILES = json.loads((ROOT / "oracle" / "gl-profiles.json").read_text())
+# The graphics backends both clients can render with: vanilla's `--graphicsBackend` (TESTING.md, "Backends").
+BACKENDS = ("opengl", "vulkan")
+# What vanilla logs once it made a backend's device; with `--graphicsBackend vulkan` it falls back to OpenGL when
+# Vulkan fails, so a run on Vulkan has to say so.
+BACKEND_LOG_LINES = {"opengl": "Using graphics backend OpenGL", "vulkan": "Using graphics backend Vulkan"}
 SERVER_PORT = 25565
 PROXY_PORT = 25566
 # OracleGameTest prints this when it waits for the server's ready file.
@@ -92,7 +101,7 @@ def expected_ticks(scenario):
     return sum(step.get("ticks", 0) for step in steps), [step["screenshot"] for step in steps if "screenshot" in step]
 
 
-def start(scenario, out_dir, server=None, server_ready=None, ping=False, gl_profile=None):
+def start(scenario, out_dir, server=None, server_ready=None, ping=False, gl_profile=None, backend="opengl"):
     """Starts the client replaying the scenario, joining `server` once `server_ready` exists if it's given.
 
     With `ping`, the client pings `server` the way the server list does instead, into `<out_dir>/<scenario>-ping`.
@@ -111,6 +120,7 @@ def start(scenario, out_dir, server=None, server_ready=None, ping=False, gl_prof
         "./gradlew", "--no-daemon", "--console=plain", "runOracle",
         f"-Poracle.scenario={scenario}",
         f"-Poracle.out={out_dir.resolve()}",
+        f"-Poracle.backend={backend}",
     ]
     if server:
         command.append(f"-Poracle.ping={server}" if ping else f"-Poracle.server={server}")
@@ -134,14 +144,17 @@ def stop(client):
         client.wait(timeout=60)
 
 
-def finish(scenario, client, scenario_out, ping=False):
-    """Waits for the client to exit and checks it wrote the whole trace and every screenshot."""
+def finish(scenario, client, scenario_out, ping=False, backend="opengl"):
+    """Waits for the client to exit and checks it rendered with the backend asked for and wrote the whole trace and
+    every screenshot."""
     log_path = scenario_out / "client.log"
     if client.wait() != 0:
         print("".join(log_path.read_text().splitlines(keepends=True)[-40:]))
         if fell_behind(scenario_out):
             raise SystemExit(f"{FELL_BEHIND}: {scenario_out.name}, see {log_path}")
         raise SystemExit(f"the client exited with {client.returncode}, see {log_path}")
+    if BACKEND_LOG_LINES[backend] not in log_path.read_text(errors="replace"):
+        raise SystemExit(f"the client didn't render with {backend} (no {BACKEND_LOG_LINES[backend]!r}), see {log_path}")
     if ping:
         return scenario_out
 
@@ -155,10 +168,10 @@ def finish(scenario, client, scenario_out, ping=False):
     return scenario_out
 
 
-def run(scenario, out_dir, server=None, gl_profile=None):
-    client, scenario_out = start(scenario, out_dir, server, gl_profile=gl_profile)
+def run(scenario, out_dir, server=None, gl_profile=None, backend="opengl"):
+    client, scenario_out = start(scenario, out_dir, server, gl_profile=gl_profile, backend=backend)
     try:
-        return finish(scenario, client, scenario_out)
+        return finish(scenario, client, scenario_out, backend=backend)
     finally:
         stop(client)
 
@@ -188,13 +201,17 @@ def again_if_behind(attempt):
             print(f"{failure}: running it again ({remaining} more at most)")
 
 
-def capture(scenario, out_dir, accept_eula, compression_threshold=None, ping=False, gl_profile=None):
+def capture(scenario, out_dir, accept_eula, compression_threshold=None, ping=False, gl_profile=None, backend="opengl"):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run,
     again if a paced run fell behind the server's ticks."""
-    return again_if_behind(lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping, gl_profile))
+    return again_if_behind(
+        lambda: capture_once(scenario, out_dir, accept_eula, compression_threshold, ping, gl_profile, backend)
+    )
 
 
-def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, ping=False, gl_profile=None):
+def capture_once(
+    scenario, out_dir, accept_eula, compression_threshold=None, ping=False, gl_profile=None, backend="opengl"
+):
     """Replays the scenario against a fresh vanilla server through packet-proxy, adding capture.jsonl to the run.
 
     The client starts first and waits on the title screen: the server starts once it's up, and the client joins as soon
@@ -207,7 +224,7 @@ def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, pin
     seed = json.loads(scenario.read_text())["world"]["seed"]
     server_ready = logs / "server-ready"
 
-    client, scenario_out = start(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", server_ready, ping, gl_profile)
+    client, scenario_out = start(scenario, out_dir, f"127.0.0.1:{PROXY_PORT}", server_ready, ping, gl_profile, backend)
     server = None
     proxy = None
     try:
@@ -229,7 +246,7 @@ def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, pin
         wait_for_line(logs / "proxy.log", "capturing to", proxy)
         server_ready.touch()
 
-        finish(scenario, client, scenario_out, ping)
+        finish(scenario, client, scenario_out, ping, backend)
         proxy.wait(timeout=30)
     finally:
         stop(client)
@@ -245,11 +262,11 @@ def capture_once(scenario, out_dir, accept_eula, compression_threshold=None, pin
     return scenario_out
 
 
-def check_determinism(scenario, with_capture, accept_eula, gl_profile=None):
+def check_determinism(scenario, with_capture, accept_eula, gl_profile=None, backend="opengl"):
     base = VERSION_DIR / "oracle-determinism"
     runs = [
-        capture(scenario, base / name, accept_eula, gl_profile=gl_profile) if with_capture
-        else run(scenario, base / name, gl_profile=gl_profile)
+        capture(scenario, base / name, accept_eula, gl_profile=gl_profile, backend=backend) if with_capture
+        else run(scenario, base / name, gl_profile=gl_profile, backend=backend)
         for name in ("a", "b")
     ]
     diff = subprocess.run(["cargo", "run", "--quiet", "-p", "oracle-diff", "--", "dir", *runs], cwd=ROOT)
@@ -266,6 +283,7 @@ def main():
     run_parser.add_argument("--out", type=Path, default=VERSION_DIR / "oracle", help="output directory (default: vanilla/<version>/oracle)")
     run_parser.add_argument("--server", help="join HOST:PORT instead of creating a singleplayer world")
     run_parser.add_argument("--gl-profile", choices=sorted(GL_PROFILES), help="restrict llvmpipe's OpenGL to a profile's (TESTING.md)")
+    run_parser.add_argument("--backend", choices=BACKENDS, default="opengl", help="vanilla's graphics backend (default: opengl; TESTING.md)")
     capture_parser = commands.add_parser("capture", help="replay a scenario on a fresh vanilla server and capture its packets")
     capture_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     capture_parser.add_argument("--out", type=Path, default=VERSION_DIR / "oracle", help="output directory (default: vanilla/<version>/oracle)")
@@ -273,20 +291,22 @@ def main():
     capture_parser.add_argument("--compression-threshold", type=int, help="turn the server's compression on, from this packet size")
     capture_parser.add_argument("--ping", action="store_true", help="ping the server like the server list does instead of joining it")
     capture_parser.add_argument("--gl-profile", choices=sorted(GL_PROFILES), help="restrict llvmpipe's OpenGL to a profile's (TESTING.md)")
+    capture_parser.add_argument("--backend", choices=BACKENDS, default="opengl", help="vanilla's graphics backend (default: opengl; TESTING.md)")
     check_parser = commands.add_parser("check-determinism", help="replay a scenario twice and diff the runs")
     check_parser.add_argument("scenario", help="scenario name in oracle/scenarios/, or a path to one")
     check_parser.add_argument("--capture", action="store_true", help="run on a vanilla server and compare packets too")
     check_parser.add_argument("--accept-eula", action="store_true", help="accept Mojang's EULA for the server")
     check_parser.add_argument("--gl-profile", choices=sorted(GL_PROFILES), help="restrict llvmpipe's OpenGL to a profile's (TESTING.md)")
+    check_parser.add_argument("--backend", choices=BACKENDS, default="opengl", help="vanilla's graphics backend (default: opengl; TESTING.md)")
     args = parser.parse_args()
 
     scenario = resolve_scenario(args.scenario)
     if args.command == "run":
-        run(scenario, args.out, args.server, args.gl_profile)
+        run(scenario, args.out, args.server, args.gl_profile, args.backend)
     elif args.command == "capture":
-        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping, args.gl_profile)
+        capture(scenario, args.out, args.accept_eula, args.compression_threshold, args.ping, args.gl_profile, args.backend)
     else:
-        check_determinism(scenario, args.capture, args.accept_eula, args.gl_profile)
+        check_determinism(scenario, args.capture, args.accept_eula, args.gl_profile, args.backend)
 
 
 if __name__ == "__main__":
