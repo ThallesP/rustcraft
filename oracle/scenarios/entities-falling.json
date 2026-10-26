@@ -2,13 +2,14 @@
   "world": {"seed": 0, "preset": "flat", "time": 6000, "game_mode": "survival", "tick_rate": 2},
   "player": {"pos": [0.5, -60.0, 0.5], "y_rot": 0.0, "x_rot": 0.0},
   "options": {"window": [854, 480], "fov": 70, "gui_scale": 2, "render_distance": 4},
-  "setup": [
-    "summon minecraft:armor_stand 3.5 40.0 6.5 {UUID:[I;0,0,2,1],Silent:1b}",
-    "summon minecraft:armor_stand -2.5 20.0 9.5 {UUID:[I;0,0,2,2],Silent:1b,Rotation:[45.0f,0.0f]}",
-    "summon minecraft:armor_stand 1.5 -40.0 12.5 {UUID:[I;0,0,2,3],Silent:1b,Rotation:[-90.0f,0.0f]}"
-  ],
   "steps": [
-    {"ticks": 30, "keys": ["forward"]},
+    {"ticks": 1, "keys": ["forward"]},
+    {"command": "summon minecraft:armor_stand 3.5 40.0 6.5 {UUID:[I;0,0,2,1],Silent:1b}"},
+    {"ticks": 1, "keys": ["forward"]},
+    {"command": "summon minecraft:armor_stand -2.5 20.0 9.5 {UUID:[I;0,0,2,2],Silent:1b,Rotation:[45.0f,0.0f]}"},
+    {"ticks": 1, "keys": ["forward"]},
+    {"command": "summon minecraft:armor_stand 1.5 -40.0 12.5 {UUID:[I;0,0,2,3],Silent:1b,Rotation:[-90.0f,0.0f]}"},
+    {"ticks": 27, "keys": ["forward"]},
     {"ticks": 40, "keys": []}
   ]
 }

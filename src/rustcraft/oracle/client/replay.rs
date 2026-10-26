@@ -800,10 +800,20 @@ pub fn replay(
             if let ReplayLevel::Flat(flat) = &mut level {
                 flat.tick_entities(&mut player);
             }
-            if let ReplayLevel::Captured { level, play } = &mut level {
+            if let ReplayLevel::Captured { level, .. } = &mut level {
                 level.tick_entities(Some(&mut player));
-                // The tick's own packets, up to its end; what came amid them is handled before the
-                // next tick.
+            }
+            packets.extend(player.sent.drain(..).map(&encode));
+            packets.push(encode(Box::new(ServerboundClientTickEndPacket::INSTANCE)));
+            trace.push(trace_writer::line(
+                trace.len() as i32,
+                &player,
+                level.others(),
+            ));
+            // The tick's own packets, up to its end. What came amid them is handled after the
+            // tick's line, before the next tick, like the live clients handle it at their next
+            // frame.
+            if let ReplayLevel::Captured { level, play } = &mut level {
                 while let Some(packet) = play.get(next) {
                     next += 1;
                     if !packet.serverbound {
@@ -814,13 +824,6 @@ pub fn replay(
                     }
                 }
             }
-            packets.extend(player.sent.drain(..).map(&encode));
-            packets.push(encode(Box::new(ServerboundClientTickEndPacket::INSTANCE)));
-            trace.push(trace_writer::line(
-                trace.len() as i32,
-                &player,
-                level.others(),
-            ));
             if tick_of_step == step.ticks - 1 && !step.wait_for.is_empty() {
                 let answers = answers.unwrap_or_else(|| {
                     panic!(
@@ -844,12 +847,13 @@ pub fn replay(
 }
 
 /// The serverbound packets the client sends on no tick of its own: the answers to the server's
-/// clock and its chunk batches.
-const NOT_TICKS: [&str; 4] = [
+/// clock and its chunk batches, and a command step's command, sent between two ticks.
+const NOT_TICKS: [&str; 5] = [
     "minecraft:keep_alive",
     "minecraft:pong",
     "minecraft:ping_request",
     "minecraft:chunk_batch_received",
+    "minecraft:chat_command",
 ];
 
 /// What the client's listener does with a packet about another entity than the player (an entity
@@ -1102,12 +1106,12 @@ mod tests {
         .unwrap();
         let waits = answered || scenario.steps.iter().any(|step| !step.wait_for.is_empty());
         // The flat level's entities stay where they're summoned, which the server's stay too only
-        // without its AI or gravity moving them.
+        // without its AI or gravity moving them, and a command step is the server's to run.
         let moves = scenario.setup.iter().any(|command| {
             command.starts_with("summon ")
                 && !command.contains("NoAI:1b")
                 && !command.contains("NoGravity:1b")
-        });
+        }) || scenario.steps.iter().any(|step| step.command.is_some());
         // Vanilla's player is the server's first entity.
         let mut flat = FlatLevel::with_setup(&scenario.setup);
         if !waits && !moves {
@@ -1438,8 +1442,8 @@ mod tests {
     fn entities_falling() {
         check_scenario(
             "entities-falling",
-            "4f44104845a42ec6bdf62d78c5d4af91",
-            "c1cc2fe9f328c4e6633af5fd1018cb93",
+            "3e4299dbf82720756246196747143fb8",
+            "9536f508869ecd69eeebe6ebc9ef9bf0",
         );
     }
 
@@ -1543,8 +1547,8 @@ mod tests {
     fn entities_falling_blocks() {
         check_scenario(
             "entities-falling-blocks",
-            "d38f79f9ad5cf79a79d2fd0a9eecfc96",
-            "c1cc2fe9f328c4e6633af5fd1018cb93",
+            "4ca24e0653bc7c00353f1d529f8b602f",
+            "2da2afa3b6f937ff3cf710c7adee0dde",
         );
     }
 
@@ -1552,8 +1556,8 @@ mod tests {
     fn entities_items() {
         check_scenario(
             "entities-items",
-            "a177978b0b3767044c79c89432648e9a",
-            "c1cc2fe9f328c4e6633af5fd1018cb93",
+            "ec53e6b67140f9b90002fca2dabbe789",
+            "7104194a73e2b396a6c3ec327979fc04",
         );
     }
 
