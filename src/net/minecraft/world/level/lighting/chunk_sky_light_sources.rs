@@ -5,6 +5,11 @@
 //! client's `LevelChunk` (Java's `ChunkAccess`), and `update` reads blocks at the chunk's own
 //! column coordinates, as `LevelChunk.setBlockState` asks it. Its mutable positions are plain y
 //! coordinates here.
+//!
+//! `fillFrom` reads every column of the chunk down to its source, which is most of handling a
+//! chunk: here it works out what `isEdgeOccluded` reads of each state of a section's palette once
+//! (`EdgeFaces`), and decides from that where it can, which is where `isEdgeOccluded` decides
+//! without joining shapes; the rest it asks `isEdgeOccluded` itself.
 
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
@@ -19,8 +24,65 @@ use crate::net::minecraft::world::level::chunk::level_chunk::LevelChunk;
 use crate::net::minecraft::world::level::level_height_accessor::LevelHeightAccessor;
 use crate::net::minecraft::world::level::lighting::light_engine::LightEngine;
 use crate::net::minecraft::world::phys::shapes::shapes::Shapes;
+use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
 
 const SIZE: i32 = 16;
+
+/// What `isEdgeOccluded` reads of a state: whether it dampens light, and its occlusion shapes'
+/// faces down (as the top of an edge) and up (as the bottom).
+#[derive(Clone, Copy)]
+struct EdgeFaces {
+    state: BlockState,
+    dampens: bool,
+    down: FaceKind,
+    up: FaceKind,
+}
+
+/// A face shape as `Shapes.faceShapeOccludes` first looks at it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FaceKind {
+    /// `Shapes.block()` itself.
+    Block,
+    /// Empty, and not the block.
+    Empty,
+    Other,
+}
+
+impl FaceKind {
+    fn of(shape: &VoxelShape) -> FaceKind {
+        if shape == Shapes::block_ref() {
+            FaceKind::Block
+        } else if shape.is_empty() {
+            FaceKind::Empty
+        } else {
+            FaceKind::Other
+        }
+    }
+}
+
+impl EdgeFaces {
+    fn of(state: BlockState) -> EdgeFaces {
+        EdgeFaces {
+            state,
+            dampens: state.get_light_dampening() != 0,
+            down: FaceKind::of(LightEngine::occlusion_shape_ref(state, Direction::DOWN)),
+            up: FaceKind::of(LightEngine::occlusion_shape_ref(state, Direction::UP)),
+        }
+    }
+
+    /// `isEdgeOccluded` of the two states: the bottom dampening, then `faceShapeOccludes`' first
+    /// two answers from the faces' kinds, and else `isEdgeOccluded` itself.
+    #[inline]
+    fn is_edge_occluded(top: &EdgeFaces, bottom: &EdgeFaces) -> bool {
+        if bottom.dampens || top.down == FaceKind::Block || bottom.up == FaceKind::Block {
+            true
+        } else if top.down == FaceKind::Empty && bottom.up == FaceKind::Empty {
+            false
+        } else {
+            ChunkSkyLightSources::is_edge_occluded(top.state, bottom.state)
+        }
+    }
+}
 
 /// The lowest sky light source of each of a chunk's 256 columns.
 #[derive(Clone, Debug)]
@@ -49,10 +111,11 @@ impl ChunkSkyLightSources {
         if max_section_index == -1 {
             self.fill(self.min_y);
         } else {
+            let mut sections = vec![None; max_section_index as usize + 1];
             for z in 0..SIZE {
                 for x in 0..SIZE {
                     let initial_edge_y = self
-                        .find_lowest_source_y(chunk, max_section_index, x, z)
+                        .find_lowest_source_y(chunk, &mut sections, max_section_index, x, z)
                         .max(self.min_y);
                     self.set(ChunkSkyLightSources::index(x, z), initial_edge_y);
                 }
@@ -60,9 +123,13 @@ impl ChunkSkyLightSources {
         }
     }
 
+    /// `findLowestSourceY`, reading each section's states through its palette's `EdgeFaces`
+    /// (`sections`, by section index, worked out the first time a column reaches it), or one
+    /// state at a time for a section with the global palette.
     fn find_lowest_source_y(
         &self,
         chunk: &LevelChunk,
+        sections: &mut [Option<Option<Vec<EdgeFaces>>>],
         top_section_index: i32,
         x: i32,
         z: i32,
@@ -73,19 +140,29 @@ impl ChunkSkyLightSources {
         // Java's two mutable positions, at (x, top, z) and the one below.
         let mut top_pos_y = top_y;
         let mut bottom_pos_y = top_y - 1;
-        let mut top_state = Blocks::AIR.default_block_state();
+        let air = EdgeFaces::of(Blocks::AIR.default_block_state());
+        let mut top_state = air;
 
         for section_index in (0..=top_section_index).rev() {
             let section = chunk.get_section(section_index);
             if section.has_only_air() {
-                top_state = Blocks::AIR.default_block_state();
+                top_state = air;
                 let section_y = chunk.get_section_y_from_section_index(section_index);
                 top_pos_y = SectionPos::section_to_block_coord(section_y);
                 bottom_pos_y = top_pos_y - 1;
             } else {
+                let states = section.get_states();
+                let palette = sections[section_index as usize].get_or_insert_with(|| {
+                    states
+                        .own_palette()
+                        .map(|values| values.into_iter().map(EdgeFaces::of).collect())
+                });
                 for y in (0..=15).rev() {
-                    let bottom_state = section.get_block_state(x, y, z);
-                    if ChunkSkyLightSources::is_edge_occluded(top_state, bottom_state) {
+                    let bottom_state = match palette {
+                        Some(palette) => palette[states.id_at(x, y, z) as usize],
+                        None => EdgeFaces::of(section.get_block_state(x, y, z)),
+                    };
+                    if EdgeFaces::is_edge_occluded(&top_state, &bottom_state) {
                         return top_pos_y;
                     }
 
@@ -194,9 +271,9 @@ impl ChunkSkyLightSources {
             return true;
         }
 
-        let top_shape = LightEngine::get_occlusion_shape(top_state, Direction::DOWN);
-        let bottom_shape = LightEngine::get_occlusion_shape(bottom_state, Direction::UP);
-        Shapes::face_shape_occludes(&top_shape, &bottom_shape)
+        let top_shape = LightEngine::occlusion_shape_ref(top_state, Direction::DOWN);
+        let bottom_shape = LightEngine::occlusion_shape_ref(bottom_state, Direction::UP);
+        Shapes::face_shape_occludes(top_shape, bottom_shape)
     }
 
     /// The column's lowest source, or `NEGATIVE_INFINITY` when the sky reaches below the level.

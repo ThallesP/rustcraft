@@ -10,6 +10,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::it::unimi::dsi::fastutil::hash_common::BuildMixHasher;
+
 use crate::net::minecraft::client::renderer::culling::frustum::Frustum;
 use crate::net::minecraft::client::renderer::state::level::camera_render_state::CameraRenderState;
 use crate::net::minecraft::client::renderer::view_area::ViewArea;
@@ -21,12 +23,16 @@ use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::vec3::Vec3;
 use crate::org::joml::vector3d::Vector3d;
 
+/// A set of section or chunk nodes, hashed with fastutil's `mix` like Java's `LongOpenHashSet`:
+/// the graph only asks it what it holds.
+pub type LongSet = HashSet<i64, BuildMixHasher>;
+
 pub struct SectionOcclusionGraph {
     needs_full_update: bool,
     current_graph: Option<GraphState>,
     needs_frustum_update: bool,
-    empty_sections: HashSet<i64>,
-    loaded_chunks: HashSet<i64>,
+    empty_sections: LongSet,
+    loaded_chunks: LongSet,
     prev_cam_x: f64,
     prev_cam_y: f64,
     prev_cam_z: f64,
@@ -120,8 +126,8 @@ impl SectionOcclusionGraph {
             needs_full_update: true,
             current_graph: None,
             needs_frustum_update: false,
-            empty_sections: HashSet::new(),
-            loaded_chunks: HashSet::new(),
+            empty_sections: LongSet::default(),
+            loaded_chunks: LongSet::default(),
             prev_cam_x: f64::from_bits(1),
             prev_cam_y: f64::from_bits(1),
             prev_cam_z: f64::from_bits(1),
@@ -221,8 +227,8 @@ impl SectionOcclusionGraph {
         camera: &CameraRenderState,
         fov: i32,
         view_area: &mut ViewArea,
-        loaded_chunks: HashSet<i64>,
-        empty_sections: HashSet<i64>,
+        loaded_chunks: LongSet,
+        empty_sections: LongSet,
     ) {
         let loaded_expected_chunks: Vec<i64> = self
             .current_graph
@@ -404,8 +410,8 @@ impl SectionOcclusionGraph {
         mut queue: VecDeque<usize>,
         smart_cull: bool,
         on_section_added: &mut dyn FnMut(&AABB),
-        empty_sections: &HashSet<i64>,
-        loaded_chunks: &HashSet<i64>,
+        empty_sections: &LongSet,
+        loaded_chunks: &LongSet,
     ) {
         let camera_section_pos = SectionPos::of_block_pos(&BlockPos::containing_xyz(
             camera_pos.x,

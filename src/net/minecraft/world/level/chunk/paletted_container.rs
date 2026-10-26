@@ -17,6 +17,10 @@
 //! `count` hands each value out in the order it first comes in the storage, where Java's goes by
 //! an `Int2IntOpenHashMap`'s table; its only caller (`LevelChunkSection.recalcBlockCounts`) adds
 //! them up. `getAll` goes in that order too, like Java's `IntArraySet`.
+//!
+//! `own_palette` and `id_at` are the port's: `get` in two steps, the palette's values once and the
+//! id at a position each time, for a caller that works something out of each value once
+//! (`ChunkSkyLightSources.fillFrom`).
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -150,6 +154,25 @@ impl<T: Clone + PartialEq + Hash> PalettedContainer<T> {
     #[inline]
     pub fn get_by_index(&self, index: i32) -> T {
         self.data.palette.value_for(self.data.storage.get(index))
+    }
+
+    /// The palette's values by id, where the container has a palette of its own: none for the
+    /// global palette, whose ids are the registry's.
+    pub fn own_palette(&self) -> Option<Vec<T>> {
+        if matches!(self.data.palette, AnyPalette::Global(_)) {
+            return None;
+        }
+        Some(
+            (0..self.data.palette.get_size())
+                .map(|id| self.data.palette.value_for(id))
+                .collect(),
+        )
+    }
+
+    /// The palette id at a position: `get`'s value is the palette's value for it.
+    #[inline]
+    pub fn id_at(&self, x: i32, y: i32, z: i32) -> i32 {
+        self.data.storage.get(self.strategy.get_index(x, y, z))
     }
 
     /// Each value there is, once.

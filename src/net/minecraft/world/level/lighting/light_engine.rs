@@ -68,6 +68,19 @@ impl LightEngine<()> {
         }
     }
 
+    /// `getOcclusionShape` borrowed: the shared shapes, which `Shapes.faceShapeOccludes` compares
+    /// by reference, without sharing them again.
+    pub(super) fn occlusion_shape_ref(
+        state: BlockState,
+        direction: Direction,
+    ) -> &'static VoxelShape {
+        if LightEngine::is_empty_shape(state) {
+            Shapes::empty_ref()
+        } else {
+            state.face_occlusion_shape(direction)
+        }
+    }
+
     pub(super) fn is_empty_shape(state: BlockState) -> bool {
         !state.can_occlude() || !state.use_shape_for_light_occlusion()
     }
@@ -91,9 +104,9 @@ impl LightEngine<()> {
         to_state: BlockState,
         direction: Direction,
     ) -> bool {
-        let from_shape = LightEngine::get_occlusion_shape(from_state, direction);
-        let to_shape = LightEngine::get_occlusion_shape(to_state, direction.get_opposite());
-        Shapes::face_shape_occludes(&from_shape, &to_shape)
+        let from_shape = LightEngine::occlusion_shape_ref(from_state, direction);
+        let to_shape = LightEngine::occlusion_shape_ref(to_state, direction.get_opposite());
+        Shapes::face_shape_occludes(from_shape, to_shape)
     }
 }
 

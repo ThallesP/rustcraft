@@ -380,7 +380,7 @@ impl Shapes {
 
     /// Whether `occluder`, next to `shape` in `direction`, covers the face of it on that side.
     pub fn block_occludes(shape: &VoxelShape, occluder: &VoxelShape, direction: Direction) -> bool {
-        if *shape == Shapes::block() && *occluder == Shapes::block() {
+        if shape == Shapes::block_ref() && occluder == Shapes::block_ref() {
             return true;
         }
 
@@ -416,7 +416,7 @@ impl Shapes {
         occluder: &VoxelShape,
         direction: Direction,
     ) -> bool {
-        if *shape != Shapes::block() && *occluder != Shapes::block() {
+        if shape != Shapes::block_ref() && occluder != Shapes::block_ref() {
             let axis = direction.get_axis();
             let sign = direction.get_axis_direction();
             let (mut first, mut second) = if sign == AxisDirection::POSITIVE {
@@ -449,7 +449,7 @@ impl Shapes {
 
     /// Whether two face shapes together cover the block's face.
     pub fn face_shape_occludes(shape: &VoxelShape, occluder: &VoxelShape) -> bool {
-        if *shape == Shapes::block() || *occluder == Shapes::block() {
+        if shape == Shapes::block_ref() || occluder == Shapes::block_ref() {
             true
         } else if shape.is_empty() && occluder.is_empty() {
             false

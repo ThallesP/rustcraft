@@ -14,14 +14,17 @@
 //! nothing reads their order but `markNewInconsistencies`, whose loops come out the same in any
 //! order (each node's step reads no other node's, and the sky's `onNodeRemoved` runs after every
 //! removal), and the calls to `onLightUpdate`, which the order of only changes when the renderer
-//! hears of each section. Those are kept sorted. The `volatile` fields and the synchronized queue
-//! (Java's light runs off the game thread on the server) are plain fields.
+//! hears of each section. Those are kept sorted: `onLightUpdate`'s sections are sorted as they're
+//! told, the ones a chunk's light marks being many and the same many times over. The sets and
+//! maps nothing iterates hash with fastutil's `mix`, like Java's. The `volatile` fields and the
+//! synchronized queue (Java's light runs off the game thread on the server) are plain fields.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::DerefMut;
 use std::rc::Rc;
 
+use crate::it::unimi::dsi::fastutil::hash_common::BuildMixHasher;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::section_pos::SectionPos;
 use crate::net::minecraft::world::level::chunk::data_layer::DataLayer;
@@ -35,14 +38,14 @@ use crate::net::minecraft::world::level::lighting::layer_light_event_listener::S
 /// What a layer's storage keeps of its sections.
 pub struct LayerLightSectionStorage<M> {
     layer: LightLayer,
-    section_states: HashMap<i64, i8>,
-    columns_with_sources: HashSet<i64>,
+    section_states: HashMap<i64, i8, BuildMixHasher>,
+    columns_with_sources: HashSet<i64, BuildMixHasher>,
     pub(super) visible_section_data: M,
     pub(super) updating_section_data: M,
-    pub(super) changed_sections: HashSet<i64>,
-    sections_affected_by_light_updates: BTreeSet<i64>,
+    pub(super) changed_sections: HashSet<i64, BuildMixHasher>,
+    sections_affected_by_light_updates: HashSet<i64, BuildMixHasher>,
     pub(super) queued_sections: BTreeMap<i64, SharedDataLayer>,
-    columns_to_retain_queued_data_for: HashSet<i64>,
+    columns_to_retain_queued_data_for: HashSet<i64, BuildMixHasher>,
     to_remove: BTreeSet<i64>,
     has_inconsistencies: bool,
 }
@@ -51,14 +54,14 @@ impl<M: DataLayerStorageMapClass> LayerLightSectionStorage<M> {
     pub(super) fn new(layer: LightLayer, initial_map: M) -> LayerLightSectionStorage<M> {
         LayerLightSectionStorage {
             layer,
-            section_states: HashMap::new(),
-            columns_with_sources: HashSet::new(),
+            section_states: HashMap::default(),
+            columns_with_sources: HashSet::default(),
             visible_section_data: initial_map.copy(),
             updating_section_data: initial_map,
-            changed_sections: HashSet::new(),
-            sections_affected_by_light_updates: BTreeSet::new(),
+            changed_sections: HashSet::default(),
+            sections_affected_by_light_updates: HashSet::default(),
             queued_sections: BTreeMap::new(),
-            columns_to_retain_queued_data_for: HashSet::new(),
+            columns_to_retain_queued_data_for: HashSet::default(),
             to_remove: BTreeSet::new(),
             has_inconsistencies: false,
         }
@@ -217,11 +220,11 @@ impl<M: DataLayerStorageMapClass> LayerLightSectionStorage<M> {
         }
 
         if !self.sections_affected_by_light_updates.is_empty() {
-            for &section_node in &self.sections_affected_by_light_updates {
+            let mut affected: Vec<i64> = self.sections_affected_by_light_updates.drain().collect();
+            affected.sort_unstable();
+            for section_node in affected {
                 chunk_source.on_light_update(self.layer, SectionPos::of_long(section_node));
             }
-
-            self.sections_affected_by_light_updates.clear();
         }
     }
 

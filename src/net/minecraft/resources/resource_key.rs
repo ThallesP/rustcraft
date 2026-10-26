@@ -10,9 +10,14 @@
 //! pairs, so here a key is a value that compares its names. Its `hashCode`, an identity hash that
 //! changes from run to run, isn't ported. `ResourceKey<T>`'s type argument only tells the compiler
 //! what it's a key of, so it's a plain `ResourceKey`, like `PacketType`.
+//!
+//! The names are shared, like Java's one object: a key copied is the same names (`Arc`), which a
+//! comparison checks first, and a key hashes a digest of its names worked out when it's made, so a
+//! map of keys (a registry's ids, a biome's holder) hashes eight bytes rather than four strings.
 
 use std::fmt;
-use std::sync::LazyLock;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, LazyLock};
 
 use crate::io::netty::buffer::byte_buf::ByteBuf;
 use crate::net::minecraft::core::registries::registries::Registries;
@@ -29,10 +34,33 @@ static REGISTRY_STREAM_CODEC: StaticStreamCodec<ByteBuf, ResourceKey> = LazyLock
 
 /// The name of an element of a registry, `minecraft:plains` in `minecraft:worldgen/biome`. A
 /// registry's own key is in the root registry, `minecraft:root`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ResourceKey {
+#[derive(Clone, Debug)]
+pub struct ResourceKey(Arc<Names>);
+
+/// A key's names, and the digest of them it hashes.
+#[derive(Debug)]
+struct Names {
     registry_name: Identifier,
     identifier: Identifier,
+    digest: u64,
+}
+
+impl PartialEq for ResourceKey {
+    fn eq(&self, other: &ResourceKey) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+            || self.0.digest == other.0.digest
+                && self.0.registry_name == other.0.registry_name
+                && self.0.identifier == other.0.identifier
+    }
+}
+
+impl Eq for ResourceKey {}
+
+/// The names' digest: keys with the same names hash the same.
+impl Hash for ResourceKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.0.digest);
+    }
 }
 
 impl ResourceKey {
@@ -52,7 +80,7 @@ impl ResourceKey {
     }
 
     pub fn create(registry_name: &ResourceKey, location: Identifier) -> ResourceKey {
-        ResourceKey::create_named(registry_name.identifier.clone(), location)
+        ResourceKey::create_named(registry_name.identifier().clone(), location)
     }
 
     pub fn create_registry_key(identifier: Identifier) -> ResourceKey {
@@ -61,14 +89,27 @@ impl ResourceKey {
 
     /// `create(Identifier, Identifier)`, which interns the key in Java.
     fn create_named(registry_name: Identifier, identifier: Identifier) -> ResourceKey {
-        ResourceKey {
+        // FNV-1a over the four names, each ended by a byte no name has.
+        let mut digest: u64 = 0xcbf29ce484222325;
+        for name in [
+            registry_name.get_namespace(),
+            registry_name.get_path(),
+            identifier.get_namespace(),
+            identifier.get_path(),
+        ] {
+            for byte in name.bytes().chain([0xff]) {
+                digest = (digest ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+            }
+        }
+        ResourceKey(Arc::new(Names {
             registry_name,
             identifier,
-        }
+            digest,
+        }))
     }
 
     pub fn is_for(&self, registry: &ResourceKey) -> bool {
-        self.registry_name == *registry.identifier()
+        self.0.registry_name == *registry.identifier()
     }
 
     /// The key itself when it's in the registry. Java returns the same key, cast.
@@ -83,20 +124,20 @@ impl ResourceKey {
     /// The key in the other registry whose identifier is this one's with the suffix. Panics
     /// where `Identifier.withSuffix` throws.
     pub fn dependent(&self, registry_key: &ResourceKey, suffix: &str) -> ResourceKey {
-        ResourceKey::create(registry_key, self.identifier.with_suffix(suffix))
+        ResourceKey::create(registry_key, self.0.identifier.with_suffix(suffix))
     }
 
     pub fn identifier(&self) -> &Identifier {
-        &self.identifier
+        &self.0.identifier
     }
 
     /// The registry's name: its key's identifier.
     pub fn registry(&self) -> &Identifier {
-        &self.registry_name
+        &self.0.registry_name
     }
 
     pub fn registry_key(&self) -> ResourceKey {
-        ResourceKey::create_registry_key(self.registry_name.clone())
+        ResourceKey::create_registry_key(self.0.registry_name.clone())
     }
 }
 
@@ -106,7 +147,7 @@ impl fmt::Display for ResourceKey {
         write!(
             f,
             "ResourceKey[{} / {}]",
-            self.registry_name, self.identifier
+            self.0.registry_name, self.0.identifier
         )
     }
 }
@@ -114,14 +155,34 @@ impl fmt::Display for ResourceKey {
 #[cfg(test)]
 mod tests {
     use super::ResourceKey;
-    use crate::golden::{Golden, encode_fields};
+    use crate::golden::{Decode, Encode, Golden, elements};
     use crate::net::minecraft::resources::identifier::Identifier;
 
     // [registry, identifier].
-    encode_fields!(ResourceKey {
-        registry_name: Identifier,
-        identifier: Identifier,
-    });
+    impl Decode for ResourceKey {
+        fn decode(value: &serde_json::Value) -> Self {
+            let [registry_name, identifier] = elements(value);
+            ResourceKey::create_named(
+                Identifier::decode(registry_name),
+                Identifier::decode(identifier),
+            )
+        }
+    }
+
+    impl Encode for ResourceKey {
+        fn encode(&self) -> serde_json::Value {
+            serde_json::Value::from(vec![self.registry().encode(), self.identifier().encode()])
+        }
+
+        fn matches(&self, expected: &serde_json::Value) -> bool {
+            match expected.as_array().map(Vec::as_slice) {
+                Some([registry_name, identifier]) => {
+                    self.registry().matches(registry_name) && self.identifier().matches(identifier)
+                }
+                _ => false,
+            }
+        }
+    }
 
     #[test]
     fn matches_vanilla() {

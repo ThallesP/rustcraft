@@ -22,7 +22,6 @@
 //! options say compile at once (`prioritizeChunkUpdates`); the tints those compiles worked out go
 //! back to the level's caches before the next frame's are scheduled.
 
-use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -57,7 +56,9 @@ use crate::net::minecraft::client::renderer::chunk::translucency_point_of_view::
 use crate::net::minecraft::client::renderer::dynamic_gpu_data::{DynamicGpuData, TerrainTransform};
 use crate::net::minecraft::client::renderer::fog::fog_renderer::{FogMode, FogRenderer};
 use crate::net::minecraft::client::renderer::rendertype::render_types::RenderTypes;
-use crate::net::minecraft::client::renderer::section_occlusion_graph::SectionOcclusionGraph;
+use crate::net::minecraft::client::renderer::section_occlusion_graph::{
+    LongSet, SectionOcclusionGraph,
+};
 use crate::net::minecraft::client::renderer::sky_renderer::{
     SkyPipelines, SkyRenderState, SkyRenderer, SkyResources,
 };
@@ -1046,13 +1047,10 @@ impl LevelRenderer {
 
     /// The chunk cache's loaded chunks and empty sections, which Java's cache tracks as they
     /// change: here, the chunks the view area covers that the level has, and their sections of
-    /// only air.
-    fn chunk_loading_state(
-        level: &ClientLevel,
-        view_area: &ViewArea,
-    ) -> (HashSet<i64>, HashSet<i64>) {
-        let mut loaded_chunks = HashSet::new();
-        let mut empty_sections = HashSet::new();
+    /// only air, in sets hashed with fastutil's `mix`, which nothing iterates.
+    fn chunk_loading_state(level: &ClientLevel, view_area: &ViewArea) -> (LongSet, LongSet) {
+        let mut loaded_chunks = LongSet::default();
+        let mut empty_sections = LongSet::default();
         let center = view_area.get_camera_section_pos();
         let radius = view_area.get_view_distance();
         for x in center.x() - radius..=center.x() + radius {
