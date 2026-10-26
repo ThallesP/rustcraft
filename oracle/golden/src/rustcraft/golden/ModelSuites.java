@@ -650,6 +650,96 @@ final class ModelSuites {
             } finally {
                 bindBlockTags(Map.of());
             }
+            writeFlat(writer, models);
+        }
+
+        /**
+         * "flat": the sections around a scenario's course on the flat world (bedrock, two dirt and grass at -61), with
+         * the blocks its setup's commands place as they're written ({@code strict}), and the light a client has there:
+         * the sky's 15 everywhere but inside opaque blocks, and no block light. The faces of a dug hole and those beside
+         * a wall and a log get their ambient occlusion from neighbours flat ground hasn't got. A case is the scenario, the
+         * section and whether ambient occlusion is on, the camera at the scenario's eye.
+         */
+        private static void writeFlat(final GoldenWriter writer, final net.minecraft.client.renderer.block.BlockStateModelSet models) throws IOException {
+            for (String scenario : List.of("block-update")) {
+                Map<net.minecraft.core.BlockPos, BlockState> blocks = setupBlocks(scenario);
+                for (int[] section : new int[][]{{0, -4, 0}, {-1, -4, 0}}) {
+                    net.minecraft.client.renderer.chunk.RenderSectionRegion region = region(0, section[0], section[1], section[2], (x, y, z) -> {
+                        net.minecraft.world.level.chunk.PalettedContainer<BlockState> states = LevelChunkSuites.factory().createForBlockStates();
+                        boolean empty = true;
+                        for (int i = 0; i < 4096; i++) {
+                            int bx = i & 15;
+                            int bz = i >> 4 & 15;
+                            int by = i >> 8;
+                            BlockState state = flatBlock(blocks, new net.minecraft.core.BlockPos(16 * x + bx, 16 * y + by, 16 * z + bz));
+                            states.getAndSetUnchecked(bx, by, bz, state);
+                            empty &= state.isAir();
+                        }
+                        return empty ? null : states;
+                    });
+                    ((GoldenRegion)region).flatLight = true;
+                    for (boolean ambientOcclusion : new boolean[]{false, true}) {
+                        writer.result(
+                            "flat",
+                            RenderSuites.array(
+                                new JsonPrimitive(scenario),
+                                new JsonPrimitive(section[0]),
+                                new JsonPrimitive(section[1]),
+                                new JsonPrimitive(section[2]),
+                                new JsonPrimitive(ambientOcclusion)
+                            ),
+                            compile(models, region, net.minecraft.core.SectionPos.of(section[0], section[1], section[2]), ambientOcclusion, WALK_CAMERA),
+                            null
+                        );
+                    }
+                }
+            }
+        }
+
+        /** The flat preset's block, or the one the setup placed there last. */
+        private static BlockState flatBlock(final Map<net.minecraft.core.BlockPos, BlockState> blocks, final net.minecraft.core.BlockPos pos) {
+            BlockState placed = blocks.get(pos);
+            if (placed != null) {
+                return placed;
+            }
+            return switch (pos.getY()) {
+                case -64 -> net.minecraft.world.level.block.Blocks.BEDROCK.defaultBlockState();
+                case -63, -62 -> net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState();
+                case -61 -> net.minecraft.world.level.block.Blocks.GRASS_BLOCK.defaultBlockState();
+                default -> net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+            };
+        }
+
+        /** The blocks a scenario's {@code fill} and {@code setblock} commands place, the last one's at each place. */
+        private static Map<net.minecraft.core.BlockPos, BlockState> setupBlocks(final String scenario) throws IOException {
+            JsonObject root = JsonParser.parseString(java.nio.file.Files.readString(
+                java.nio.file.Path.of("../../oracle/scenarios/" + scenario + ".json")
+            )).getAsJsonObject();
+            Map<net.minecraft.core.BlockPos, BlockState> blocks = new HashMap<>();
+            for (JsonElement command : root.getAsJsonArray("setup")) {
+                String[] parts = command.getAsString().split(" ");
+                boolean fill = parts[0].equals("fill");
+                int[] numbers = new int[fill ? 6 : 3];
+                for (int i = 0; i < numbers.length; i++) {
+                    numbers[i] = Integer.parseInt(parts[1 + i]);
+                }
+                BlockState state;
+                try {
+                    state = net.minecraft.commands.arguments.blocks.BlockStateParser
+                        .parseForBlock(net.minecraft.core.registries.BuiltInRegistries.BLOCK, parts[1 + numbers.length], false)
+                        .blockState();
+                } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+                    throw new IllegalStateException(e);
+                }
+                int[] box = fill ? numbers : new int[]{numbers[0], numbers[1], numbers[2], numbers[0], numbers[1], numbers[2]};
+                for (net.minecraft.core.BlockPos pos : net.minecraft.core.BlockPos.betweenClosed(
+                    Math.min(box[0], box[3]), Math.min(box[1], box[4]), Math.min(box[2], box[5]),
+                    Math.max(box[0], box[3]), Math.max(box[1], box[4]), Math.max(box[2], box[5])
+                )) {
+                    blocks.put(pos.immutable(), state);
+                }
+            }
+            return blocks;
         }
 
         private static Map<net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block>, List<net.minecraft.core.Holder<net.minecraft.world.level.block.Block>>> vanillaBlockTags() {
@@ -855,6 +945,8 @@ final class ModelSuites {
     static final class GoldenRegion extends net.minecraft.client.renderer.chunk.RenderSectionRegion {
         int seed;
         boolean tinted;
+        // "flat"'s light: the sky's 15 but inside opaque blocks, no block light.
+        boolean flatLight;
 
         // Never called: regions are made without a constructor (SectionCompilerSuite.region).
         private GoldenRegion() {
@@ -863,6 +955,9 @@ final class ModelSuites {
 
         @Override
         public int getBrightness(final net.minecraft.world.level.LightLayer layer, final net.minecraft.core.BlockPos pos) {
+            if (this.flatLight) {
+                return layer == net.minecraft.world.level.LightLayer.SKY && !this.getBlockState(pos).isSolidRender() ? 15 : 0;
+            }
             return layer == net.minecraft.world.level.LightLayer.SKY
                 ? Math.floorMod(3 * pos.getX() + 5 * pos.getY() + 7 * pos.getZ() + this.seed, 16)
                 : Math.floorMod(7 * pos.getX() + 11 * pos.getY() + 13 * pos.getZ(), 16);

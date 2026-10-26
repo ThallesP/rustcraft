@@ -642,6 +642,15 @@ const VANILLA_SCREENSHOTS: Screenshots = &[
             ("tick-0158", "81a1514954d59e42806f3ecbae296791"),
         ],
     ),
+    // A hole dug, a wall, a log and a glass block set once the client has the chunks, so the
+    // sections compile again.
+    (
+        "block-update",
+        &[
+            ("spawn", "9597f7a9e75fb28d07aa8cf89c403eb0"),
+            ("closer", "dabb20c88043fc19accf4f656a90b1c9"),
+        ],
+    ),
     (
         "sky-sunset",
         &[

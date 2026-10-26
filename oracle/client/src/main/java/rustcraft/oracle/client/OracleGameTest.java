@@ -305,6 +305,7 @@ public final class OracleGameTest implements FabricClientGameTest {
         try (TraceWriter trace = new TraceWriter(outDir.resolve("trace.jsonl"))) {
             for (Scenario.Step step : scenario.steps()) {
                 if (step.screenshot() != null) {
+                    context.runOnClient(client -> LightDump.screenshot(step.screenshot(), client.level));
                     takeScreenshot(context, step, outDir);
                     continue;
                 }

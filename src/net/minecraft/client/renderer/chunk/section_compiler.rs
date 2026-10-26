@@ -268,6 +268,9 @@ mod tests {
     use crate::net::minecraft::world::level::light_layer::LightLayer;
     use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
     use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+    use crate::rustcraft::oracle::client::replay::FlatLevel;
+    use crate::rustcraft::oracle::client::scenario::Scenario;
+    use std::path::Path;
 
     /// What `ModelSuites.GoldenRegion` answers for the level: `MeshLevel`'s light, the default
     /// cardinal lighting, and white tints, or with `tinted` a colour by `MeshLevel`'s hash.
@@ -276,6 +279,47 @@ mod tests {
         tinted: bool,
         // `LevelLightEngine.EMPTY`: its light is `get_brightness`'s own.
         light_engine: LevelLightEngine,
+    }
+
+    /// `GoldenRegion`'s `flatLight`: the light a client has on the flat world, the sky's 15 but
+    /// inside opaque blocks, and no block light.
+    struct FlatLighting<'a> {
+        level: &'a FlatLevel,
+        light_engine: LevelLightEngine,
+    }
+
+    impl BlockGetter for FlatLighting<'_> {
+        fn get_block_state(&self, pos: &BlockPos) -> BlockState {
+            self.level.get_block_state(pos)
+        }
+
+        fn get_fluid_state(&self, pos: &BlockPos) -> FluidState {
+            self.level.get_fluid_state(pos)
+        }
+    }
+
+    impl BlockAndLightGetter for FlatLighting<'_> {
+        fn get_light_engine(&self) -> &LevelLightEngine {
+            &self.light_engine
+        }
+
+        fn get_brightness(&self, layer: LightLayer, pos: &BlockPos) -> i32 {
+            if layer == LightLayer::SKY && !self.level.get_block_state(pos).is_solid_render() {
+                15
+            } else {
+                0
+            }
+        }
+    }
+
+    impl BlockAndTintGetter for FlatLighting<'_> {
+        fn cardinal_lighting(&self) -> CardinalLighting {
+            CardinalLighting::DEFAULT
+        }
+
+        fn get_block_tint(&self, _pos: &BlockPos, _color: &'static ColorResolver) -> i32 {
+            -1
+        }
     }
 
     impl BlockGetter for Lighting {
@@ -593,6 +637,51 @@ mod tests {
                     &region,
                     SectionPos::of(0, 0, 0),
                     [x, y, z],
+                )
+            },
+        );
+        // The sections around a scenario's course on the flat world, with the light a client has
+        // there (`ModelSuites`' "flat").
+        golden.check(
+            "flat",
+            |scenario: String, x: i32, y: i32, z: i32, ambient_occlusion: bool| {
+                let scenario = Scenario::load(Path::new(&format!(
+                    "{}/oracle/scenarios/{scenario}.json",
+                    env!("CARGO_MANIFEST_DIR")
+                )))
+                .expect("the scenario");
+                let flat = FlatLevel::with_setup(&scenario.setup);
+                let mut sections = Vec::new();
+                for section_z in z - 1..=z + 1 {
+                    for section_y in y - 1..=y + 1 {
+                        for section_x in x - 1..=x + 1 {
+                            let mut states = factory.create_for_block_states();
+                            let mut empty = true;
+                            for i in 0..4096 {
+                                let (bx, bz, by) = (i & 15, i >> 4 & 15, i >> 8);
+                                let state = flat.get_block_state(&BlockPos::new(
+                                    16 * section_x + bx,
+                                    16 * section_y + by,
+                                    16 * section_z + bz,
+                                ));
+                                states.get_and_set_unchecked(bx, by, bz, &state);
+                                empty &= state.is_air();
+                            }
+                            sections
+                                .push(Arc::new(SectionCopy::of_states((!empty).then_some(states))));
+                        }
+                    }
+                }
+                let lighting = FlatLighting {
+                    level: &flat,
+                    light_engine: LevelLightEngine::empty(),
+                };
+                let region = RenderSectionRegion::over(&lighting, x - 1, y - 1, z - 1, sections);
+                compile(
+                    &compilers[usize::from(ambient_occlusion)],
+                    &region,
+                    SectionPos::of(x, y, z),
+                    walk_camera,
                 )
             },
         );

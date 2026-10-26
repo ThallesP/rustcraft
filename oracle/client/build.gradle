@@ -2,10 +2,16 @@ plugins {
     id 'net.fabricmc.fabric-loom' version "${loom_version}"
 }
 
+// Only the Fabric API modules the client game tests need, not the whole API: its renderer (fabric-renderer-api-v1
+// and Indigo) meshes the level's blocks in place of ModelBlockRenderer, with its own ambient occlusion, and other
+// modules hook vanilla's rendering, registries and networking too. The oracle has to be vanilla (TESTING.md).
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    implementation fabricApi.module("fabric-client-gametest-api-v1", project.fabric_api_version)
+    implementation fabricApi.module("fabric-networking-api-v1", project.fabric_api_version)
+    implementation fabricApi.module("fabric-resource-loader-v1", project.fabric_api_version)
+    implementation fabricApi.module("fabric-api-base", project.fabric_api_version)
 }
 
 // tools/oracle_client.py passes the scenario, output directory and optional server as -Poracle.*, and the graphics
