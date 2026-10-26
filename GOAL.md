@@ -57,7 +57,7 @@ The work runs as parallel tracks. Each has its own git worktree under `../rustcr
 
   When vanilla's output looks odd, it's still the reference. Changing a check is fine only when the check itself was wrong; say why in the commit and in PROGRESS.md.
 - Never commit anything from `vanilla/`: no decompiled code, no assets, no natives. The port loads assets from `vanilla/<version>/resources/` and natives from `vanilla/libraries/` at runtime (later from the player's own install).
-- The machine is shared by the tracks. Wrap anything that starts a vanilla server, the oracle client or a capture in `flock /tmp/rustcraft-oracle.lock …`. Never kill processes you didn't start.
+- The machine is shared by the tracks. Wrap anything that starts a vanilla server, the oracle client or a capture in `flock /tmp/rustcraft-oracle.lock …`. Take the lock for one run at a time, never around a batch: a script that records several scenarios takes it for each one, so the other tracks' runs get in between. Never kill processes you didn't start.
 - So is the disk. Keep scratch files in your worktree's `target/` or in `/tmp/rustcraft-<track>-…`, and delete them when the step ends, with your worktree's `target/debug/incremental` (the next build remakes it). Never work in the main checkout (`/home/ubuntu/.t3/projects/rustcraft`): only the coordinator does.
 - Every step ends green and pushed:
   - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and `python3 tools/hotspot_port_check.py` pass;
