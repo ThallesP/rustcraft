@@ -7,8 +7,14 @@ use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEn
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::blocks::Blocks;
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
+use crate::net::minecraft::world::level::block::entity::block_entity_types::BlockEntityTypes;
+use crate::net::minecraft::world::level::block::entity::skull_block_entity::SkullBlockEntity;
 use crate::net::minecraft::world::level::block::skull_block::Types;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::boolean_property::BooleanProperty;
 use crate::net::minecraft::world::level::block::state::state_definition::Builder;
@@ -18,10 +24,13 @@ pub struct AbstractSkullBlock {
     skull_type: Types,
 }
 
-pub static CLASS: BlockClass = BlockClass::new(
-    "net.minecraft.world.level.block.AbstractSkullBlock",
-    &base_entity_block::CLASS,
-);
+pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(AbstractSkullBlock::get_ticker),
+    ..BlockClass::new(
+        "net.minecraft.world.level.block.AbstractSkullBlock",
+        &base_entity_block::CLASS,
+    )
+};
 
 impl AbstractSkullBlock {
     pub const POWERED: &'static BooleanProperty = BlockStateProperties::POWERED;
@@ -50,5 +59,28 @@ impl AbstractSkullBlock {
     /// `getType()`: what kind of head it is.
     pub fn get_type(block: &BlockData) -> Types {
         block.fields::<AbstractSkullBlock>().skull_type
+    }
+}
+
+impl AbstractSkullBlock {
+    /// `getTicker`: on the client, a dragon's or a piglin's head's `animation`.
+    fn get_ticker(
+        _block: &BlockData,
+        state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        let is_animated = state.is(Blocks::DRAGON_HEAD)
+            || state.is(Blocks::DRAGON_WALL_HEAD)
+            || state.is(Blocks::PIGLIN_HEAD)
+            || state.is(Blocks::PIGLIN_WALL_HEAD);
+        if is_animated {
+            base_entity_block::create_ticker_helper(
+                r#type,
+                BlockEntityTypes::SKULL,
+                SkullBlockEntity::animation,
+            )
+        } else {
+            None
+        }
     }
 }

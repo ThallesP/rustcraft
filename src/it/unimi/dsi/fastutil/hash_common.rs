@@ -52,6 +52,12 @@ impl Hasher for MixHasher {
 }
 
 impl HashCommon {
+    /// `mix(int)`: a hash code's bits spread by the golden ratio, which picks its slot.
+    pub fn mix_i32(x: i32) -> i32 {
+        let h = x.wrapping_mul(-1640531527);
+        h ^ ((h as u32) >> 16) as i32
+    }
+
     /// `mix(long)`: the key's bits spread by the golden ratio, which picks its slot.
     pub fn mix_i64(x: i64) -> i64 {
         let mut h = x.wrapping_mul(-7046029254386353131);

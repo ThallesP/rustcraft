@@ -12,6 +12,8 @@ use crate::net::minecraft::world::item::dye_color::DyeColor;
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::entity::banner_block_entity::BannerBlockEntity;
+use crate::net::minecraft::world::level::block::entity::beacon_block_entity::BeaconBlockEntity;
+use crate::net::minecraft::world::level::block::entity::bell_block_entity::BellBlockEntity;
 use crate::net::minecraft::world::level::block::entity::block_entity::{
     BlockEntity, BlockEntityData,
 };
@@ -20,10 +22,17 @@ use crate::net::minecraft::world::level::block::entity::block_entity_types::{
 };
 use crate::net::minecraft::world::level::block::entity::brushable_block_entity::BrushableBlockEntity;
 use crate::net::minecraft::world::level::block::entity::campfire_block_entity::CampfireBlockEntity;
+use crate::net::minecraft::world::level::block::entity::chest_block_entity::ChestBlockEntity;
+use crate::net::minecraft::world::level::block::entity::conduit_block_entity::ConduitBlockEntity;
+use crate::net::minecraft::world::level::block::entity::decorated_pot_block_entity::DecoratedPotBlockEntity;
+use crate::net::minecraft::world::level::block::entity::enchanting_table_block_entity::EnchantingTableBlockEntity;
+use crate::net::minecraft::world::level::block::entity::ender_chest_block_entity::EnderChestBlockEntity;
+use crate::net::minecraft::world::level::block::entity::potent_sulfur_block_entity::PotentSulfurBlockEntity;
 use crate::net::minecraft::world::level::block::entity::shulker_box_block_entity::ShulkerBoxBlockEntity;
 use crate::net::minecraft::world::level::block::entity::sign_block_entity::SignBlockEntity;
 use crate::net::minecraft::world::level::block::entity::skull_block_entity::SkullBlockEntity;
 use crate::net::minecraft::world::level::block::entity::spawner_block_entity::SpawnerBlockEntity;
+use crate::net::minecraft::world::level::block::entity::the_end_gateway_block_entity::TheEndGatewayBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 
 /// A kind of block entity, by its id in `BuiltInRegistries.BLOCK_ENTITY_TYPE`.
@@ -99,6 +108,27 @@ impl BlockEntityType {
             BlockEntityTypes::SHULKER_BOX => BlockEntityData::ShulkerBox(
                 ShulkerBoxBlockEntity::new(color_of(&Blocks::DYED_SHULKER_BOX, block)),
             ),
+            BlockEntityTypes::CHEST | BlockEntityTypes::TRAPPED_CHEST => {
+                BlockEntityData::Chest(ChestBlockEntity::new())
+            }
+            BlockEntityTypes::ENDER_CHEST => {
+                BlockEntityData::EnderChest(EnderChestBlockEntity::new())
+            }
+            BlockEntityTypes::BELL => BlockEntityData::Bell(BellBlockEntity::new()),
+            BlockEntityTypes::END_GATEWAY => {
+                BlockEntityData::EndGateway(TheEndGatewayBlockEntity::new())
+            }
+            BlockEntityTypes::DECORATED_POT => {
+                BlockEntityData::DecoratedPot(DecoratedPotBlockEntity::new())
+            }
+            BlockEntityTypes::CONDUIT => BlockEntityData::Conduit(ConduitBlockEntity::new()),
+            BlockEntityTypes::BEACON => BlockEntityData::Beacon(BeaconBlockEntity::new()),
+            BlockEntityTypes::ENCHANTING_TABLE => {
+                BlockEntityData::EnchantingTable(EnchantingTableBlockEntity::new())
+            }
+            BlockEntityTypes::POTENT_SULFUR => {
+                BlockEntityData::PotentSulfur(PotentSulfurBlockEntity::new())
+            }
             _ => BlockEntityData::None,
         };
         entity

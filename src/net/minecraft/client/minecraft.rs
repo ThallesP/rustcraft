@@ -52,7 +52,7 @@ use crate::net::minecraft::client::input_type::{self, InputType};
 use crate::net::minecraft::client::keyboard_handler::{KeyAction, KeyboardHandler};
 use crate::net::minecraft::client::mouse_handler::MouseHandler;
 use crate::net::minecraft::client::multiplayer::client_level::ClientLevel;
-use crate::net::minecraft::client::multiplayer::client_level::LevelEffects;
+use crate::net::minecraft::client::multiplayer::client_level::{LevelEffects, LevelTicking};
 use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
 use crate::net::minecraft::client::multiplayer::multi_player_game_mode::MultiPlayerGameMode;
 use crate::net::minecraft::client::options::Options;
@@ -550,6 +550,11 @@ impl Minecraft {
                 if let Some(level) = self.level.borrow_mut().as_mut() {
                     level.tick_entities();
                 }
+                // `level.tickBlockEntities()`.
+                self.with_level_ticking(|level| {
+                    let (level, effects, player) = (level.level, level.effects, level.player);
+                    level.tick_block_entities(effects, player);
+                });
                 // `playerSync`.
                 let mut player = self.player.borrow_mut();
                 if let Some(player) = player.as_mut() {
@@ -643,6 +648,38 @@ impl Minecraft {
         };
         let pos = player.block_position();
         level.animate_tick(pos.get_x(), pos.get_y(), pos.get_z(), None, &effects);
+    }
+
+    /// The level as a block event or a block entity's ticker reaches it (`LevelTicking`): the
+    /// level, the player, and the game's particle engine and sound manager, near the camera (the
+    /// game renderer's, or the player's eyes for a headless client). Its effects have no
+    /// environment attributes, which borrow the level: no ticker or block event ported reads
+    /// them. None before the level and the player are there.
+    pub fn with_level_ticking<R>(&self, f: impl FnOnce(LevelTicking<'_>) -> R) -> Option<R> {
+        let mut level = self.level.borrow_mut();
+        let mut player = self.player.borrow_mut();
+        let (Some(level), Some(player)) = (level.as_mut(), player.as_mut()) else {
+            return None;
+        };
+        let game_renderer = self.game_renderer.borrow();
+        let particle_engine = self.particle_engine.borrow();
+        let effects = LevelEffects {
+            particle_engine: particle_engine.as_ref(),
+            sound_manager: self.sound_manager.as_ref(),
+            camera_position: game_renderer.as_ref().map_or_else(
+                || Vec3::new(player.get_x(), player.get_eye_y(), player.get_z()),
+                |game_renderer| game_renderer.main_camera().position(),
+            ),
+            particles: self.options.borrow().particles(),
+            player: Some(player.get_id()),
+            environment: None,
+            block_colors: &self.block_colors,
+        };
+        Some(f(LevelTicking {
+            level,
+            effects: &effects,
+            player: Some(player),
+        }))
     }
 
     /// Hands the game to the test driver, if there's one.

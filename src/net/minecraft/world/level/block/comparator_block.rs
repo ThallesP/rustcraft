@@ -1,15 +1,19 @@
 //! net/minecraft/world/level/block/ComparatorBlock.java
 //!
-//! Only what decides its blocks' states so far: its properties and its default state. Not ported
-//! yet: its behaviour.
+//! What decides its blocks' states: its properties and its default state, and its block event,
+//! which its block entity handles (`triggerEvent`). Not ported yet: the rest of its behaviour.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::world::level::block::base_entity_block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
 use crate::net::minecraft::world::level::block::diode_block::{self, DiodeBlock};
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
 use crate::net::minecraft::world::level::block::state::properties::comparator_mode::ComparatorMode;
 use crate::net::minecraft::world::level::block::state::properties::enum_property::EnumProperty;
@@ -20,6 +24,7 @@ pub struct ComparatorBlock;
 
 pub static CLASS: BlockClass = BlockClass {
     entity_block: true,
+    trigger_event: Some(ComparatorBlock::trigger_event),
     ..BlockClass::new(
         "net.minecraft.world.level.block.ComparatorBlock",
         &diode_block::CLASS,
@@ -60,5 +65,19 @@ impl ComparatorBlock {
             ComparatorBlock::MODE,
             DiodeBlock::POWERED,
         ]);
+    }
+}
+
+impl ComparatorBlock {
+    /// `triggerEvent`: its block entity's (made there if it has none), which handles nothing.
+    fn trigger_event(
+        _block: &BlockData,
+        _state: BlockState,
+        level: &mut LevelTicking<'_>,
+        pos: &BlockPos,
+        b0: i32,
+        b1: i32,
+    ) -> bool {
+        base_entity_block::block_entity_trigger_event(level, pos, b0, b1)
     }
 }

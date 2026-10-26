@@ -4,17 +4,30 @@
 //! are set), its sky light sources, its block entities, and reading and setting blocks. Java's
 //! `LevelChunk` extends `ChunkAccess`, whose fields it holds here. `setBlockState` tells the
 //! level's light engine (Java's `level.getChunkSource().getLightEngine()`, a parameter here) when a
-//! section's emptiness or a block's light changes. The block entities are a Java `HashMap` by
-//! position, as Java's iterates; `replaceWithPacketData` loads the packet's with the level's
-//! registries (a parameter, Java's `level.registryAccess()`). Not ported yet: the block entities'
-//! tickers (`tickersInLevel`), the pending ones (`pendingBlockEntities`, the server's), the debug
+//! section's emptiness or a block's light changes. The block entities are fastutil's
+//! `Object2ObjectOpenHashMap` by position (`ChunkAccess.blockEntities`), which iterates as Java's;
+//! `replaceWithPacketData` loads the packet's with the level's registries (a parameter, Java's
+//! `level.registryAccess()`). Each block entity is in a `RefCell`, since the level's tickers
+//! change one while they read the level, as Java's change the object.
+//!
+//! A block entity whose class ticks on the client has a ticker in its level's list
+//! (`tickersInLevel`, `updateBlockEntityTicker`): the chunk keeps a wrapper for each position, which
+//! it rebinds to the block entity there when its state changes, and to `NULL_TICKER` when it goes,
+//! and adds a new one to the level's tickers (`SharedLevelState`, which the level shares with its
+//! chunks: Java's back-reference). A bound ticker names its block entity by position and identity
+//! (`BlockEntity::identity`): the one the chunk holds there, or a removed one.
+//!
+//! Not ported yet: the pending block entities (`pendingBlockEntities`, the server's), the debug
 //! level's blocks (`getBlockState` in a debug world), priming a heightmap whose data didn't fit,
 //! the chunk source's `onSectionEmptinessChanged` and the level's `onBlockEntityAdded` (the
 //! renderer's), ticks, and everything the server does with a chunk.
 
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
-use crate::java::util::hash_map::HashMap;
+use crate::it::unimi::dsi::fastutil::objects::object2_object_open_hash_map::Object2ObjectOpenHashMap;
+use crate::net::minecraft::client::multiplayer::client_level::{ClientLevel, LevelTicking};
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::holder::Holder;
 use crate::net::minecraft::core::quart_pos::QuartPos;
@@ -25,13 +38,18 @@ use crate::net::minecraft::util::mth::Mth;
 use crate::net::minecraft::util::problem_reporter::ScopedCollector;
 use crate::net::minecraft::world::level::block::blocks::Blocks;
 use crate::net::minecraft::world::level::block::entity::block_entity::BlockEntity;
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
 use crate::net::minecraft::world::level::block::entity::block_entity_types::BY_BLOCK;
+use crate::net::minecraft::world::level::block::entity::ticking_block_entity::TickingBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
 use crate::net::minecraft::world::level::chunk::level_chunk_section::LevelChunkSection;
 use crate::net::minecraft::world::level::chunk::light_chunk::LightChunk;
 use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
+use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
+use crate::net::minecraft::world::level::level::SharedLevelState;
 use crate::net::minecraft::world::level::level_height_accessor::{Height, LevelHeightAccessor};
 use crate::net::minecraft::world::level::levelgen::heightmap::{Heightmap, Types};
 use crate::net::minecraft::world::level::lighting::chunk_sky_light_sources::ChunkSkyLightSources;
@@ -57,16 +75,21 @@ pub struct LevelChunk {
     sections: Vec<LevelChunkSection>,
     heightmaps: BTreeMap<Types, Heightmap>,
     sky_light_sources: ChunkSkyLightSources,
-    block_entities: HashMap<BlockPos, BlockEntity>,
+    block_entities: Object2ObjectOpenHashMap<BlockPos, RefCell<BlockEntity>>,
+    /// `tickersInLevel`: only `clearAllBlockEntities` iterates it, rebinding each in any order.
+    tickers_in_level: std::collections::HashMap<BlockPos, Rc<RebindableTickingBlockEntityWrapper>>,
+    /// The level's block entity tickers, which Java's chunk reaches through its level.
+    level_tickers: Rc<SharedLevelState>,
 }
 
 impl LevelChunk {
     /// `LevelChunk(level, pos)`: every section new, air and the default biome, and the full
-    /// chunk's heightmaps.
+    /// chunk's heightmaps, in a level with those block entity tickers.
     pub fn new(
         level_height: Height,
         container_factory: &PalettedContainerFactory,
         pos: ChunkPos,
+        level_tickers: Rc<SharedLevelState>,
     ) -> LevelChunk {
         let sections = (0..level_height.get_sections_count())
             .map(|_| LevelChunkSection::new(container_factory))
@@ -86,7 +109,9 @@ impl LevelChunk {
             sections,
             heightmaps,
             sky_light_sources: ChunkSkyLightSources::new(&level_height),
-            block_entities: HashMap::new(),
+            block_entities: Object2ObjectOpenHashMap::new(),
+            tickers_in_level: std::collections::HashMap::new(),
+            level_tickers,
         }
     }
 
@@ -174,24 +199,41 @@ impl LevelChunk {
         });
     }
 
-    /// `clearAllBlockEntities`: each dropped (Java marks them removed for whoever still holds
-    /// one, which nothing here can).
-    fn clear_all_block_entities(&mut self) {
-        self.block_entities = HashMap::new();
+    /// `clearAllBlockEntities`: each marked removed (for a ticker that still names one) and
+    /// dropped, and each ticker rebound to `NULL_TICKER`.
+    pub fn clear_all_block_entities(&mut self) {
+        for block_entity in self.block_entities.values() {
+            block_entity.borrow_mut().set_removed();
+        }
+        self.block_entities.clear();
+        for ticker in self.tickers_in_level.values() {
+            ticker.rebind(TickingBlockEntity::Null);
+        }
+        self.tickers_in_level.clear();
     }
 
     /// `getBlockEntity(pos)`, `CHECK`: the block entity there, if it has one that isn't removed.
     /// Java also drops a removed one from the map, which only saves the next look.
-    pub fn get_block_entity(&self, pos: &BlockPos) -> Option<&BlockEntity> {
-        self.block_entities
-            .get(pos)
-            .filter(|block_entity| !block_entity.is_removed())
+    pub fn get_block_entity(&self, pos: &BlockPos) -> Option<Ref<'_, BlockEntity>> {
+        let block_entity = self.block_entities.get(pos)?.borrow();
+        (!block_entity.is_removed()).then_some(block_entity)
+    }
+
+    /// The block entity there to change, like `get_block_entity`: what a ticker or a block event
+    /// changes while it reads the level.
+    pub fn get_block_entity_mut(&self, pos: &BlockPos) -> Option<RefMut<'_, BlockEntity>> {
+        let block_entity = self.block_entities.get(pos)?.borrow_mut();
+        (!block_entity.is_removed()).then_some(block_entity)
     }
 
     /// `getBlockEntity(pos, IMMEDIATE)`: the block entity there, made if its block makes one and
     /// it has none.
     pub fn get_block_entity_immediate(&mut self, pos: &BlockPos) -> Option<&mut BlockEntity> {
-        match self.block_entities.get(pos).map(BlockEntity::is_removed) {
+        match self
+            .block_entities
+            .get(pos)
+            .map(|block_entity| block_entity.borrow().is_removed())
+        {
             None => {
                 if let Some(block_entity) = self.create_block_entity(pos) {
                     self.add_and_register_block_entity(block_entity);
@@ -203,11 +245,11 @@ impl LevelChunk {
             }
             Some(false) => {}
         }
-        self.block_entities.get_mut(pos)
+        self.block_entities.get_mut(pos).map(RefCell::get_mut)
     }
 
     /// The block entities, by position, in the map's order.
-    pub fn get_block_entities(&self) -> &HashMap<BlockPos, BlockEntity> {
+    pub fn get_block_entities(&self) -> &Object2ObjectOpenHashMap<BlockPos, RefCell<BlockEntity>> {
         &self.block_entities
     }
 
@@ -220,22 +262,31 @@ impl LevelChunk {
         BY_BLOCK[state.get_block().0 as usize].map(|r#type| r#type.create(*pos, state))
     }
 
-    /// `addAndRegisterBlockEntity`: `setBlockEntity`. The level's `onBlockEntityAdded` (the
-    /// renderer's) and the ticker aren't ported.
+    /// `addAndRegisterBlockEntity`: `setBlockEntity`, then its ticker. The level's
+    /// `onBlockEntityAdded` (the renderer's) isn't ported. A block entity `setBlockEntity` refused
+    /// still gets a ticker, as in Java, which never ticks: Java's block entity has no level then.
     pub fn add_and_register_block_entity(&mut self, block_entity: BlockEntity) {
-        self.set_block_entity(block_entity);
+        let pos = block_entity.get_block_pos();
+        let identity = block_entity.identity();
+        let r#type = block_entity.get_type();
+        let state = block_entity.get_block_state();
+        match self.set_block_entity(block_entity) {
+            Some(state) => self.update_block_entity_ticker(pos, state, r#type, identity, true),
+            None => self.update_block_entity_ticker(pos, state, r#type, identity, false),
+        }
     }
 
     /// `setBlockEntity`: the block entity kept at its position, given the chunk's state there if
-    /// its type takes it, unless the chunk's block makes none there.
-    pub fn set_block_entity(&mut self, mut block_entity: BlockEntity) {
+    /// its type takes it, unless the chunk's block makes none there. The state it has then, if
+    /// the chunk took it.
+    pub fn set_block_entity(&mut self, mut block_entity: BlockEntity) -> Option<BlockState> {
         let pos = block_entity.get_block_pos();
         let block_state = self.get_block_state(&pos);
         if !block_state.has_block_entity() {
             eprintln!(
                 "Trying to set block entity {block_entity:?} at position {pos}, but state {block_state} does not allow it"
             );
-            return;
+            return None;
         }
 
         let cached_block_state = block_entity.get_block_state();
@@ -244,7 +295,7 @@ impl LevelChunk {
                 eprintln!(
                     "Trying to set block entity {block_entity:?} at position {pos}, but state {block_state} does not allow it"
                 );
-                return;
+                return None;
             }
 
             if block_state.get_block() != cached_block_state.get_block() {
@@ -256,16 +307,66 @@ impl LevelChunk {
             block_entity.set_block_state(block_state);
         }
 
+        block_entity.set_level(
+            self.level_height.get_min_y(),
+            self.level_tickers.get_game_time(),
+        );
         block_entity.clear_removed();
-        if let Some(mut previous_entry) = self.block_entities.put(pos, block_entity) {
-            previous_entry.set_removed();
+        if let Some(previous_entry) = self.block_entities.put(pos, RefCell::new(block_entity)) {
+            previous_entry.into_inner().set_removed();
+        }
+        Some(block_state)
+    }
+
+    /// `removeBlockEntity`: dropped, marked removed, and its ticker rebound to `NULL_TICKER`.
+    pub fn remove_block_entity(&mut self, pos: &BlockPos) {
+        if let Some(remove_this) = self.block_entities.remove(pos) {
+            remove_this.into_inner().set_removed();
+        }
+
+        self.remove_block_entity_ticker(pos);
+    }
+
+    fn remove_block_entity_ticker(&mut self, pos: &BlockPos) {
+        if let Some(ticker) = self.tickers_in_level.remove(pos) {
+            ticker.rebind(TickingBlockEntity::Null);
         }
     }
 
-    /// `removeBlockEntity`: dropped, marked removed.
-    pub fn remove_block_entity(&mut self, pos: &BlockPos) {
-        if let Some(mut remove_this) = self.block_entities.remove(pos) {
-            remove_this.set_removed();
+    /// `updateBlockEntityTicker`: the block entity's state's ticker for its type, bound to it in
+    /// the position's wrapper, or a new wrapper the level ticks from now on; or the wrapper
+    /// rebound to `NULL_TICKER` when its state has none.
+    fn update_block_entity_ticker(
+        &mut self,
+        pos: BlockPos,
+        state: BlockState,
+        r#type: BlockEntityType,
+        identity: u64,
+        has_level: bool,
+    ) {
+        match state.get_ticker(r#type) {
+            None => self.remove_block_entity_ticker(&pos),
+            Some(ticker) => {
+                let actual_ticker = TickingBlockEntity::Bound(Rc::new(BoundTickingBlockEntity {
+                    pos,
+                    block_entity: identity,
+                    r#type,
+                    ticker,
+                    has_level,
+                    logged_invalid_block_state: Cell::new(false),
+                }));
+                match self.tickers_in_level.get(&pos) {
+                    Some(existing_ticker) => existing_ticker.rebind(actual_ticker),
+                    None => {
+                        let result = Rc::new(RebindableTickingBlockEntityWrapper {
+                            ticker: RefCell::new(actual_ticker),
+                        });
+                        self.level_tickers
+                            .add_block_entity_ticker(Rc::clone(&result));
+                        self.tickers_in_level.insert(pos, result);
+                    }
+                }
+            }
         }
     }
 
@@ -409,11 +510,110 @@ impl LevelChunk {
                     self.add_and_register_block_entity(r#type.create(*pos, state));
                 }
             } else if let Some(block_entity) = self.block_entities.get_mut(pos) {
+                let block_entity = block_entity.get_mut();
                 block_entity.set_block_state(state);
+                let (r#type, identity) = (block_entity.get_type(), block_entity.identity());
+                self.update_block_entity_ticker(*pos, state, r#type, identity, true);
             }
         }
 
         Some(old_state)
+    }
+}
+
+/// `LevelChunk.BoundTickingBlockEntity`: a block entity's ticker, bound to the block entity by its
+/// position and identity.
+pub struct BoundTickingBlockEntity {
+    pos: BlockPos,
+    block_entity: u64,
+    r#type: BlockEntityType,
+    ticker: BlockEntityTicker,
+    /// `blockEntity.hasLevel()`: whether the chunk took the block entity.
+    has_level: bool,
+    logged_invalid_block_state: Cell<bool>,
+}
+
+impl BoundTickingBlockEntity {
+    /// `tick()`: the ticker, with the state the chunk has there, unless the block entity is
+    /// removed or outside the world border, or the state isn't one its type is valid for (which
+    /// is logged once until it is again).
+    pub fn tick(&self, level: &mut LevelTicking<'_>) {
+        if self.is_removed(level.level) || !self.has_level {
+            return;
+        }
+
+        // `LevelChunk.isTicking`: inside the world border, all the client asks.
+        if !level
+            .level
+            .get_world_border()
+            .is_within_bounds_block_pos(&self.pos)
+        {
+            return;
+        }
+
+        let block_state = level.level.get_block_state(&self.pos);
+        if self.r#type.is_valid(block_state) {
+            (self.ticker)(level, &self.pos, block_state);
+            self.logged_invalid_block_state.set(false);
+        } else if !self.logged_invalid_block_state.get() {
+            self.logged_invalid_block_state.set(true);
+            eprintln!(
+                "Block entity {} @ {} state {block_state} invalid for ticking:",
+                self.r#type.key(),
+                self.pos
+            );
+        }
+    }
+
+    /// `isRemoved()`: whether its block entity is: no longer the one the level holds at its
+    /// position, which is the only way a block entity stops being held. One the chunk refused
+    /// was never held, and isn't removed.
+    pub fn is_removed(&self, level: &ClientLevel) -> bool {
+        self.has_level
+            && level
+                .get_existing_block_entity(&self.pos)
+                .is_none_or(|block_entity| block_entity.identity() != self.block_entity)
+    }
+
+    pub fn get_pos(&self) -> BlockPos {
+        self.pos
+    }
+
+    pub fn get_type(&self) -> BlockEntityType {
+        self.r#type
+    }
+}
+
+/// `LevelChunk.RebindableTickingBlockEntityWrapper`: what the level keeps for a position's
+/// ticker, which the chunk rebinds.
+pub struct RebindableTickingBlockEntityWrapper {
+    ticker: RefCell<TickingBlockEntity>,
+}
+
+impl RebindableTickingBlockEntityWrapper {
+    fn rebind(&self, ticker: TickingBlockEntity) {
+        *self.ticker.borrow_mut() = ticker;
+    }
+
+    /// The ticker it holds now, which a block entity's own tick may rebind meanwhile.
+    pub fn tick(&self, level: &mut LevelTicking<'_>) {
+        let bound = match &*self.ticker.borrow() {
+            TickingBlockEntity::Null => return,
+            TickingBlockEntity::Bound(bound) => Rc::clone(bound),
+        };
+        bound.tick(level);
+    }
+
+    pub fn is_removed(&self, level: &ClientLevel) -> bool {
+        self.ticker.borrow().is_removed(level)
+    }
+
+    pub fn get_pos(&self) -> BlockPos {
+        self.ticker.borrow().get_pos()
+    }
+
+    pub fn get_type(&self) -> &'static str {
+        self.ticker.borrow().get_type()
     }
 }
 

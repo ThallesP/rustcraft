@@ -1,13 +1,59 @@
-//! net/minecraft/world/level/Level.java, as far as entities read it.
+//! net/minecraft/world/level/Level.java, as far as entities read it, and its block entities'
+//! tickers.
 //!
 //! Java's `Level` is the world an entity lives in; the client's is `ClientLevel`, which the world
 //! track brings with chunk storage. Until then this is what an entity's movement asks of it
 //! besides collisions, and tests implement it over a few blocks. Entities hold their level in
 //! Java; here it's a parameter of what reads it.
+//!
+//! The level's block entity tickers (`blockEntityTickers`, `pendingSharedLevelState` and
+//! `tickingBlockEntities`) are a struct the level shares with its chunks, which add their block
+//! entities' tickers to it (`addBlockEntityTicker`, called through Java's back-reference from a
+//! chunk to its level); `tickBlockEntities` is `ClientLevel`'s.
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use crate::net::minecraft::core::block_pos::BlockPos;
+use crate::net::minecraft::world::level::chunk::level_chunk::RebindableTickingBlockEntityWrapper;
 use crate::net::minecraft::world::level::collision_getter::CollisionGetter;
 use crate::net::minecraft::world::phys::aabb::AABB;
+
+/// What a level shares with its chunks: its block entity tickers, those it ticks in the order
+/// they came and those that came while it ticked them, which it ticks from its next tick on; and
+/// its game time.
+#[derive(Default)]
+pub struct SharedLevelState {
+    pub(crate) block_entity_tickers: RefCell<Vec<Rc<RebindableTickingBlockEntityWrapper>>>,
+    pub(crate) pending_block_entity_tickers: RefCell<Vec<Rc<RebindableTickingBlockEntityWrapper>>>,
+    pub(crate) ticking_block_entities: Cell<bool>,
+    /// `levelData`'s game time.
+    pub(crate) game_time: Cell<i64>,
+}
+
+impl SharedLevelState {
+    pub fn new() -> SharedLevelState {
+        SharedLevelState::default()
+    }
+
+    /// `addBlockEntityTicker`: to the tickers, or to the pending ones while the level ticks them.
+    pub fn add_block_entity_ticker(&self, ticker: Rc<RebindableTickingBlockEntityWrapper>) {
+        if self.ticking_block_entities.get() {
+            self.pending_block_entity_tickers.borrow_mut().push(ticker);
+        } else {
+            self.block_entity_tickers.borrow_mut().push(ticker);
+        }
+    }
+
+    pub fn get_game_time(&self) -> i64 {
+        self.game_time.get()
+    }
+
+    /// The tickers in the order the level ticks them, without the pending ones.
+    pub fn tickers(&self) -> Vec<Rc<RebindableTickingBlockEntityWrapper>> {
+        self.block_entity_tickers.borrow().clone()
+    }
+}
 
 /// A level, as an entity's tick reads it.
 pub trait Level: CollisionGetter {

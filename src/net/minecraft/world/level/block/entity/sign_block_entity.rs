@@ -4,10 +4,14 @@
 //! A sign's two sides and whether it's waxed, as `loadAdditional` reads them; the client keeps
 //! each side's lines as they came (`resolveLines` only changes them on a server). Not ported yet:
 //! `allow_op_features` (which the server reads), the editing (`updateSignText`, the player
-//! editing it), `executeClickCommandsIfPresent`, the line heights and widths the renderer and the
-//! screen read, and the ticker (`tick`, the server's editing timeout).
+//! editing it), `executeClickCommandsIfPresent`, and the line heights and widths the renderer and
+//! the screen read. Its ticker runs on both sides (`tick`), and does nothing on the client: only a
+//! server sets the player who may edit it, whose editing it times out.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
+use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::entity::sign_text::SignText;
+use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::storage::tag_value_input::TagValueInput;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -18,6 +22,10 @@ pub struct SignBlockEntity {
 }
 
 impl SignBlockEntity {
+    /// `tick`: the player who may edit it is let go of once too far away; a client's sign has
+    /// none.
+    pub fn tick(_level: &mut LevelTicking<'_>, _pos: &BlockPos, _state: BlockState) {}
+
     pub fn new() -> SignBlockEntity {
         SignBlockEntity {
             front_text: SignText::empty(),

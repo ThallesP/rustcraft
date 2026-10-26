@@ -12,6 +12,7 @@ pub mod entity_types;
 pub mod humanoid_arm;
 pub mod living_entity;
 pub mod mob_category;
+pub mod monster;
 pub mod mover_type;
 pub mod player;
 pub mod pose;

@@ -20,12 +20,15 @@ use std::any::Any;
 use std::fmt;
 use std::ops::Deref;
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
 use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::id_mapper::IdMapper;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::blocks::{self, Blocks, REGISTRY};
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
 use crate::net::minecraft::world::level::block::state::block_behaviour::{
     BlockBehaviour, EmptyBlockGetter, Properties, RenderShape,
 };
@@ -74,6 +77,14 @@ pub type PositionShapeMethod =
 pub type AnimateTickMethod =
     fn(&BlockData, BlockState, &LevelWithEffects<'_>, &BlockPos, &mut dyn RandomSource);
 
+/// A class's `triggerEvent`: what a block event does to its block, whether it was handled.
+pub type TriggerEventMethod =
+    fn(&BlockData, BlockState, &mut LevelTicking<'_>, &BlockPos, i32, i32) -> bool;
+
+/// A class's `getTicker(level, state, type)` on the client, an `EntityBlock`'s: what its block
+/// entity of the type does each tick there, if anything.
+pub type GetTickerMethod = fn(&BlockData, BlockState, BlockEntityType) -> Option<BlockEntityTicker>;
+
 /// A block class: Java's `Class<? extends Block>` and the overrides that matter so far.
 pub struct BlockClass {
     /// `getName()`, the binary name.
@@ -120,6 +131,10 @@ pub struct BlockClass {
     pub get_seed: Option<fn(&BlockData, BlockState, &BlockPos) -> i64>,
     /// `animateTick(BlockState, Level, BlockPos, RandomSource)`, if it overrides it.
     pub animate_tick: Option<AnimateTickMethod>,
+    /// `triggerEvent(BlockState, Level, BlockPos, int, int)`, if it overrides it.
+    pub trigger_event: Option<TriggerEventMethod>,
+    /// `EntityBlock.getTicker(Level, BlockState, BlockEntityType)`, if it overrides it.
+    pub get_ticker: Option<GetTickerMethod>,
 }
 
 impl BlockClass {
@@ -148,6 +163,8 @@ impl BlockClass {
             get_max_vertical_offset: None,
             get_seed: None,
             animate_tick: None,
+            trigger_event: None,
+            get_ticker: None,
         }
     }
 
@@ -342,6 +359,37 @@ impl Block {
         if let Some(animate_tick) = self.class().find(|class| class.animate_tick) {
             animate_tick(self, state, level, pos, random);
         }
+    }
+
+    /// `triggerEvent(BlockState, Level, BlockPos, int, int)`: its class's, or `BlockBehaviour`'s,
+    /// which handles nothing.
+    pub fn trigger_event(
+        &self,
+        state: BlockState,
+        level: &mut LevelTicking<'_>,
+        pos: &BlockPos,
+        b0: i32,
+        b1: i32,
+    ) -> bool {
+        match self.class().find(|class| class.trigger_event) {
+            Some(trigger_event) => trigger_event(self, state, level, pos, b0, b1),
+            None => false,
+        }
+    }
+
+    /// `getTicker(Level, BlockEntityType)` of a state on the client: its class's, for an
+    /// `EntityBlock`, or none.
+    pub fn get_ticker(
+        &self,
+        state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        if !self.class().is_entity_block() {
+            return None;
+        }
+        self.class()
+            .find(|class| class.get_ticker)
+            .and_then(|get_ticker| get_ticker(self, state, r#type))
     }
 
     /// `super.animateTick(...)` from `class`'s override: its parent's, if one overrides it.

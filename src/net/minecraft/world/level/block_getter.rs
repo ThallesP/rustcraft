@@ -2,15 +2,20 @@
 //!
 //! What collisions, the renderer and physics read blocks through: a level, one of its chunks, or
 //! a copy of its sections, and the ray cast through its blocks (`clip`, with `traverseBlocks` and
-//! `clipWithInteractionOverride`). Not ported yet: `getBlockEntity` (block entities),
-//! `getBlockStates(AABB)`, `isBlockInLine` and `clipShape`. Java's extends
+//! `clipWithInteractionOverride`). Its `getBlockEntity` is the block entity a level or chunk holds
+//! there, borrowed, without making one (Java's level makes one, `IMMEDIATE`, which only a block
+//! whose chunk came without its block entity lacks). Not ported yet: `getBlockStates(AABB)`,
+//! `isBlockInLine` and `clipShape`. Java's extends
 //! `LevelHeightAccessor`, which is a trait of its own here that the levels and chunks implement,
 //! so that what only reads blocks (the shapes' `EmptyBlockGetter`, the collisions' tests) needs
 //! no height.
 
+use std::cell::Ref;
+
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::util::mth::Mth;
+use crate::net::minecraft::world::level::block::entity::block_entity::BlockEntity;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::clip_context::ClipContext;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
@@ -20,6 +25,11 @@ use crate::net::minecraft::world::phys::vec3::Vec3;
 
 /// Something blocks can be read from: a level, or one of its chunks.
 pub trait BlockGetter {
+    /// `getBlockEntity(pos)`: none where it keeps no block entities.
+    fn get_block_entity(&self, _pos: &BlockPos) -> Option<Ref<'_, BlockEntity>> {
+        None
+    }
+
     fn get_block_state(&self, pos: &BlockPos) -> BlockState;
 
     fn get_fluid_state(&self, pos: &BlockPos) -> FluidState;

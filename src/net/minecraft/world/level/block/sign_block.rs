@@ -11,6 +11,10 @@ use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
+use crate::net::minecraft::world::level::block::entity::block_entity_types::BlockEntityTypes;
+use crate::net::minecraft::world::level::block::entity::sign_block_entity::SignBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
@@ -26,6 +30,7 @@ use std::sync::LazyLock;
 pub struct SignBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(SignBlock::get_ticker),
     get_shape: Some(SignBlock::get_shape),
     get_fluid_state: Some(SignBlock::get_fluid_state),
     ..BlockClass::new(
@@ -68,5 +73,20 @@ impl SignBlock {
         _context: &dyn CollisionContext,
     ) -> VoxelShape {
         SHAPE.clone()
+    }
+}
+
+impl SignBlock {
+    /// `getTicker`: `SignBlockEntity::tick`, on both sides.
+    fn get_ticker(
+        _block: &BlockData,
+        _state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        base_entity_block::create_ticker_helper(
+            r#type,
+            BlockEntityTypes::SIGN,
+            SignBlockEntity::tick,
+        )
     }
 }

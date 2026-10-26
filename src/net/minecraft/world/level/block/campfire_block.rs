@@ -18,6 +18,10 @@ use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
+use crate::net::minecraft::world::level::block::entity::block_entity_types::BlockEntityTypes;
+use crate::net::minecraft::world::level::block::entity::campfire_block_entity::CampfireBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
@@ -42,6 +46,7 @@ pub struct CampfireBlockFields {
 }
 
 pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(CampfireBlock::get_ticker),
     animate_tick: Some(CampfireBlock::animate_tick),
     get_shape: Some(CampfireBlock::get_shape),
     get_fluid_state: Some(CampfireBlock::get_fluid_state),
@@ -126,6 +131,50 @@ impl CampfireBlock {
 }
 
 impl CampfireBlock {
+    /// `makeParticles`: a puff of smoke rising from it, cosy or a signal's, with smoke on it while
+    /// it's `smoking`, from the level's random.
+    pub fn make_particles(
+        level: &LevelWithEffects<'_>,
+        pos: &BlockPos,
+        is_signal_fire: bool,
+        smoking: bool,
+    ) {
+        let draw = |f: &mut dyn FnMut(&mut dyn RandomSource) -> f64| f(&mut *level.get_random());
+        let sign = |random: &mut dyn RandomSource| if random.next_boolean() { 1.0 } else { -1.0 };
+        let smoke_particle = if is_signal_fire {
+            ParticleTypes::CAMPFIRE_SIGNAL_SMOKE
+        } else {
+            ParticleTypes::CAMPFIRE_COSY_SMOKE
+        };
+        let x = f64::from(pos.get_x())
+            + 0.5
+            + draw(&mut |random| random.next_double() / 3.0 * sign(random));
+        let y = f64::from(pos.get_y())
+            + draw(&mut |random| random.next_double())
+            + draw(&mut |random| random.next_double());
+        let z = f64::from(pos.get_z())
+            + 0.5
+            + draw(&mut |random| random.next_double() / 3.0 * sign(random));
+        level.add_always_visible_particle_limited(smoke_particle, true, x, y, z, 0.0, 0.07, 0.0);
+        if smoking {
+            let x = f64::from(pos.get_x())
+                + 0.5
+                + draw(&mut |random| random.next_double() / 4.0 * sign(random));
+            let z = f64::from(pos.get_z())
+                + 0.5
+                + draw(&mut |random| random.next_double() / 4.0 * sign(random));
+            level.add_particle(
+                ParticleTypes::SMOKE,
+                x,
+                f64::from(pos.get_y()) + 0.4,
+                z,
+                0.0,
+                0.005,
+                0.0,
+            );
+        }
+    }
+
     /// `animateTick`: while lit, its crackle now and then, and, if it makes them (`spawnParticles`), sparks of lava.
     fn animate_tick(
         block: &BlockData,
@@ -170,6 +219,25 @@ impl CampfireBlock {
                     i += 1;
                 }
             }
+        }
+    }
+}
+
+impl CampfireBlock {
+    /// `getTicker`: on the client, the smoke of a lit campfire (`particleTick`).
+    fn get_ticker(
+        _block: &BlockData,
+        state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        if state.get_value(CampfireBlock::LIT) {
+            base_entity_block::create_ticker_helper(
+                r#type,
+                BlockEntityTypes::CAMPFIRE,
+                CampfireBlockEntity::particle_tick,
+            )
+        } else {
+            None
         }
     }
 }

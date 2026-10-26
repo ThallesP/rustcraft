@@ -29,6 +29,7 @@ pub mod base_fire_block;
 pub mod base_pressure_plate_block;
 pub mod base_rail_block;
 pub mod base_torch_block;
+pub mod beacon_beam_block;
 pub mod beacon_block;
 pub mod bed_block;
 pub mod beehive_block;

@@ -150,6 +150,16 @@ impl ARGB {
         ((alpha & 0xFF) << 24) | ((red & 0xFF) << 16) | ((green & 0xFF) << 8) | (blue & 0xFF)
     }
 
+    /// Each channel the mean of both colours', rounded down.
+    pub fn average(lhs: i32, rhs: i32) -> i32 {
+        ARGB::color(
+            (ARGB::alpha(lhs) + ARGB::alpha(rhs)) / 2,
+            (ARGB::red(lhs) + ARGB::red(rhs)) / 2,
+            (ARGB::green(lhs) + ARGB::green(rhs)) / 2,
+            (ARGB::blue(lhs) + ARGB::blue(rhs)) / 2,
+        )
+    }
+
     /// Both colors' channels multiplied; white (-1) leaves the other as it is.
     pub fn multiply(lhs: i32, rhs: i32) -> i32 {
         if lhs == -1 {
@@ -436,6 +446,7 @@ mod tests {
         golden.check("green(I)I", ARGB::green);
         golden.check("blue(I)I", ARGB::blue);
         golden.check("color(IIII)I", ARGB::color);
+        golden.check("average(II)I", ARGB::average);
         golden.check("color(III)I", ARGB::color_rgb);
         golden.check("alpha(I)I", ARGB::alpha);
         golden.check("opaque(I)I", ARGB::opaque);

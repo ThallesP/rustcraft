@@ -9,10 +9,15 @@
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::world::level::block::abstract_chest_block::{self, AbstractChestBlock};
+use crate::net::minecraft::world::level::block::base_entity_block;
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
+use crate::net::minecraft::world::level::block::entity::block_entity_types::BY_BLOCK;
+use crate::net::minecraft::world::level::block::entity::chest_block_entity::ChestBlockEntity;
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -33,6 +38,7 @@ use std::sync::LazyLock;
 pub struct ChestBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(ChestBlock::get_ticker),
     get_shape: Some(ChestBlock::get_shape),
     get_fluid_state: Some(ChestBlock::get_fluid_state),
     ..BlockClass::new(
@@ -119,5 +125,21 @@ impl ChestBlock {
         } else {
             facing.get_counter_clock_wise()
         }
+    }
+}
+
+impl ChestBlock {
+    /// `getTicker`: on the client, the lid's (`lidAnimateTick`) for the type of block entity its block makes
+    /// (`blockEntityType()`).
+    fn get_ticker(
+        _block: &BlockData,
+        state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        base_entity_block::create_ticker_helper(
+            r#type,
+            BY_BLOCK[state.get_block().0 as usize]?,
+            ChestBlockEntity::lid_animate_tick,
+        )
     }
 }

@@ -9,10 +9,15 @@
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::Axis;
 use crate::net::minecraft::core::direction::Direction;
+use crate::net::minecraft::world::level::block::base_entity_block;
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
+use crate::net::minecraft::world::level::block::entity::block_entity_types::BlockEntityTypes;
+use crate::net::minecraft::world::level::block::entity::sign_block_entity::SignBlockEntity;
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::sign_block::{self, SignBlock};
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
@@ -30,6 +35,7 @@ use std::sync::LazyLock;
 pub struct WallHangingSignBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(WallHangingSignBlock::get_ticker),
     get_shape: Some(WallHangingSignBlock::get_shape),
     get_block_support_shape: Some(WallHangingSignBlock::get_block_support_shape),
     get_collision_shape: Some(WallHangingSignBlock::get_collision_shape),
@@ -116,5 +122,20 @@ impl WallHangingSignBlock {
             state.get_value(WallHangingSignBlock::FACING).get_axis(),
         )
         .clone()
+    }
+}
+
+impl WallHangingSignBlock {
+    /// `getTicker`: `SignBlockEntity::tick`, on both sides.
+    fn get_ticker(
+        _block: &BlockData,
+        _state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        base_entity_block::create_ticker_helper(
+            r#type,
+            BlockEntityTypes::HANGING_SIGN,
+            SignBlockEntity::tick,
+        )
     }
 }

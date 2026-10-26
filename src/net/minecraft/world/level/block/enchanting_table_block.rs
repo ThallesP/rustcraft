@@ -15,6 +15,10 @@ use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEn
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
+use crate::net::minecraft::world::level::block::entity::block_entity_types::BlockEntityTypes;
+use crate::net::minecraft::world::level::block::entity::enchanting_table_block_entity::EnchantingTableBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block_getter::BlockGetter;
@@ -25,6 +29,7 @@ use std::sync::LazyLock;
 pub struct EnchantingTableBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(EnchantingTableBlock::get_ticker),
     animate_tick: Some(EnchantingTableBlock::animate_tick),
     get_shape: Some(EnchantingTableBlock::get_shape),
     use_shape_for_light_occlusion: Some(EnchantingTableBlock::use_shape_for_light_occlusion),
@@ -136,3 +141,18 @@ pub static BOOKSHELF_OFFSETS: LazyLock<Vec<BlockPos>> = LazyLock::new(|| {
 });
 
 impl EnchantingTableBlock {}
+
+impl EnchantingTableBlock {
+    /// `getTicker`: on the client, `bookAnimationTick`.
+    fn get_ticker(
+        _block: &BlockData,
+        _state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        base_entity_block::create_ticker_helper(
+            r#type,
+            BlockEntityTypes::ENCHANTING_TABLE,
+            EnchantingTableBlockEntity::book_animation_tick,
+        )
+    }
+}

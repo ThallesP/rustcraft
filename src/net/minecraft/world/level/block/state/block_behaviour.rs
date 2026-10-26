@@ -33,6 +33,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::direction::{Axis, Direction};
 use crate::net::minecraft::core::registries::registries::Registries;
@@ -43,6 +44,8 @@ use crate::net::minecraft::util::util::Util;
 use crate::net::minecraft::world::item::dye_color::DyeColor;
 use crate::net::minecraft::world::level::block::block::{Block, BlockClass, BlockData};
 use crate::net::minecraft::world::level::block::blocks::{self, REGISTRY};
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::note_block_instrument::NoteBlockInstrument;
 use crate::net::minecraft::world::level::block::support_type::SupportType;
@@ -819,6 +822,24 @@ impl BlockState {
     /// `hasBlockEntity()`: whether the block's class is an `EntityBlock`.
     pub fn has_block_entity(&self) -> bool {
         Block::data(self.get_block()).class().is_entity_block()
+    }
+
+    /// `getTicker(level, type)` on the client: what its block's block entity of the type does
+    /// each tick, if anything.
+    pub fn get_ticker(&self, r#type: BlockEntityType) -> Option<BlockEntityTicker> {
+        self.get_block().get_ticker(*self, r#type)
+    }
+
+    /// `triggerEvent(level, pos, b0, b1)`: what a block event does to it there, whether it was
+    /// handled.
+    pub fn trigger_event(
+        &self,
+        level: &mut LevelTicking<'_>,
+        pos: &BlockPos,
+        b0: i32,
+        b1: i32,
+    ) -> bool {
+        self.get_block().trigger_event(*self, level, pos, b0, b1)
     }
 
     /// `shouldChangedStateKeepBlockEntity(oldState)`: whether a block becoming this one keeps the

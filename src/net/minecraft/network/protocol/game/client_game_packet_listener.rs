@@ -7,6 +7,7 @@
 use crate::net::minecraft::network::protocol::common::client_common_packet_listener::ClientCommonPacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_entity_data_packet::ClientboundBlockEntityDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_block_event_packet::ClientboundBlockEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
@@ -115,6 +116,8 @@ pub trait ClientGamePacketListener: ClientCommonPacketListener + ClientPongPacke
     fn handle_block_update(&mut self, packet: &ClientboundBlockUpdatePacket);
 
     fn handle_block_entity_data(&mut self, packet: &ClientboundBlockEntityDataPacket);
+
+    fn handle_block_event(&mut self, packet: &ClientboundBlockEventPacket);
 
     fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket);
 
@@ -293,6 +296,12 @@ impl ClientGamePacketListener for crate::net::minecraft::network::packet_listene
         let r#type =
             crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
         self.record("handleBlockEntityData", r#type);
+    }
+
+    fn handle_block_event(&mut self, packet: &ClientboundBlockEventPacket) {
+        let r#type =
+            crate::net::minecraft::network::protocol::packet::Packet::<Self>::r#type(packet);
+        self.record("handleBlockEvent", r#type);
     }
 
     fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket) {

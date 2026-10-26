@@ -32,6 +32,7 @@ use std::rc::Rc;
 
 use crate::java::lang::math::Math;
 use crate::net::minecraft::client::minecraft::Minecraft;
+use crate::net::minecraft::client::multiplayer::client_level::{ClientLevel, LevelPlayer};
 use crate::net::minecraft::client::multiplayer::client_packet_listener::ClientPacketListener;
 use crate::net::minecraft::client::options::Options;
 use crate::net::minecraft::client::player::first_person_hands_and_items::FirstPersonHandsAndItems;
@@ -713,6 +714,30 @@ impl LocalPlayer {
     /// `autoJumpEnabled` as the options set it, which `sendPosition` does each tick.
     pub fn set_auto_jump_enabled(&mut self, auto_jump_enabled: bool) {
         self.auto_jump_enabled = auto_jump_enabled;
+    }
+}
+
+/// The player as the level's block entities find it: Java's `getEntities` and `players()`.
+impl LevelPlayer for LocalPlayer {
+    fn get_bounding_box(&self) -> AABB {
+        self.entity().get_bounding_box()
+    }
+
+    fn position(&self) -> Vec3 {
+        self.entity().position()
+    }
+
+    fn is_spectating(&self) -> bool {
+        LivingEntityClass::is_spectator(self)
+    }
+
+    /// `LivingEntity.isAlive()`: health left (the player is never removed while it plays).
+    fn is_alive(&self) -> bool {
+        self.living_entity().get_health() > 0.0
+    }
+
+    fn r#move(&mut self, level: &ClientLevel, mover_type: MoverType, delta: Vec3) {
+        EntityClass::r#move(self, level, mover_type, delta);
     }
 }
 

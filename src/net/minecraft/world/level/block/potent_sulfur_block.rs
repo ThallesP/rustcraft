@@ -3,8 +3,10 @@
 //! What decides its blocks' states: its properties and its default state. Not ported yet: the rest
 //! of its behaviour.
 //!
-//! Of its behaviour, its bubbles and sound (`animateTick`) are ported.
+//! Of its behaviour, its bubbles and sound (`animateTick`) and its block event (`triggerEvent`) are
+//! ported; its block entity's tickers aren't.
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
 use crate::net::minecraft::client::multiplayer::client_level::LevelWithEffects;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
@@ -15,6 +17,7 @@ use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEn
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::entity::block_entity::BlockEntityData;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::block::state::properties::block_state_properties::BlockStateProperties;
@@ -29,6 +32,7 @@ pub struct PotentSulfurBlock;
 
 pub static CLASS: BlockClass = BlockClass {
     animate_tick: Some(PotentSulfurBlock::animate_tick),
+    trigger_event: Some(PotentSulfurBlock::trigger_event),
     ..BlockClass::new(
         "net.minecraft.world.level.block.PotentSulfurBlock",
         &base_entity_block::CLASS,
@@ -120,5 +124,26 @@ impl PotentSulfurBlock {
         let by = y + f64::from(random.next_float());
         let bz = z + f64::from(random.next_float());
         level.add_always_visible_particle(ParticleTypes::SULFUR_BUBBLES, bx, by, bz, 0.0, 0.0, 0.0);
+    }
+}
+
+impl PotentSulfurBlock {
+    /// `triggerEvent`: its block entity erupted now (made there if it has none).
+    fn trigger_event(
+        _block: &BlockData,
+        _state: BlockState,
+        level: &mut LevelTicking<'_>,
+        pos: &BlockPos,
+        _b0: i32,
+        _b1: i32,
+    ) -> bool {
+        let game_time = level.level.get_game_time();
+        if let Some(block_entity) = level.level.get_block_entity(pos)
+            && let BlockEntityData::PotentSulfur(entity) = &mut block_entity.data
+        {
+            entity.eruption_tick = game_time;
+        }
+
+        true
     }
 }

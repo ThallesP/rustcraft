@@ -14,7 +14,10 @@ use crate::net::minecraft::world::level::block::base_entity_block::{self, BaseEn
 use crate::net::minecraft::world::level::block::block::{
     Block, BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
 use crate::net::minecraft::world::level::block::entity::block_entity_types::BlockEntityTypes;
+use crate::net::minecraft::world::level::block::entity::the_end_gateway_block_entity::TheEndGatewayBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_behaviour::RenderShape;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -23,6 +26,7 @@ use crate::net::minecraft::world::level::block_getter::BlockGetter;
 pub struct EndGatewayBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(EndGatewayBlock::get_ticker),
     animate_tick: Some(EndGatewayBlock::animate_tick),
     get_render_shape: Some(EndGatewayBlock::get_render_shape),
     ..BlockClass::new(
@@ -96,5 +100,20 @@ impl EndGatewayBlock {
 
             level.add_particle(ParticleTypes::PORTAL, x, y, z, xa, ya, za);
         }
+    }
+}
+
+impl EndGatewayBlock {
+    /// `getTicker`: on the client, `beamAnimationTick`.
+    fn get_ticker(
+        _block: &BlockData,
+        _state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        base_entity_block::create_ticker_helper(
+            r#type,
+            BlockEntityTypes::END_GATEWAY,
+            TheEndGatewayBlockEntity::beam_animation_tick,
+        )
     }
 }

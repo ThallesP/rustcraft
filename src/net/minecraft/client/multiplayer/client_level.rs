@@ -11,10 +11,16 @@
 //! ported, so it stays where the server put it. The local player isn't in the storage here:
 //! `Minecraft` holds it and ticks it first, as it is in Java's tick list, added at the login. An
 //! entity ticks from when it's added, where Java waits for its chunk to tick (the chunk is loaded
-//! first in all the server sends). Its block entities are its chunks' (`getBlockEntity`). Not
-//! ported: entity sections and their visibility, other entities' collisions with the player,
-//! block entities' ticking, the block state predictions (`blockStatePredictionHandler`, which
-//! the player's own block changes make) and neighbour updates. What the renderer is told of the
+//! first in all the server sends). Its block entities are its chunks' (`getBlockEntity`), and their
+//! tickers its own (`Level.blockEntityTickers`, which it shares with its chunks), ticked in the
+//! order they came by `tickBlockEntities`, as the server's block events are handled
+//! (`blockEvent`, a state's `triggerEvent`). Both reach the game through `LevelTicking`: the
+//! level, the particle engine and sound manager, and the player, the only entity a block pushes
+//! here (`LevelPlayer`: Java's `getEntities` finds the level's other entities too, whose classes
+//! aren't ported, so they don't move). Not ported: entity sections and their visibility, other
+//! entities' collisions with the player, the block state predictions
+//! (`blockStatePredictionHandler`, which the player's own block changes make) and neighbour
+//! updates. What the renderer is told of the
 //! level's changes (`setBlocksDirty`, `sendBlockUpdated`, `setSectionDirtyWithNeighbors`,
 //! `setSectionRangeDirty`) goes to the `LevelExtractor` the level shares with its chunk cache and
 //! the level renderer, Java's `Minecraft.levelExtractor`.
@@ -48,7 +54,7 @@
 //! Its dimension type is the synchronized registry's value of the holder the login named
 //! (`dimensionType()`), which gives its height, sky light, cardinal lighting and fast lava.
 
-use std::cell::{RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Deref;
@@ -94,6 +100,7 @@ use crate::net::minecraft::world::attribute::environment_attribute_layer::LayerL
 use crate::net::minecraft::world::attribute::environment_attribute_system::EnvironmentAttributeSystem;
 use crate::net::minecraft::world::attribute::environment_attributes::EnvironmentAttributes;
 use crate::net::minecraft::world::entity::entity::{Entity, EntityClass};
+use crate::net::minecraft::world::entity::mover_type::MoverType;
 use crate::net::minecraft::world::level::biome::biome::Biome;
 use crate::net::minecraft::world::level::biome::biome::Precipitation;
 use crate::net::minecraft::world::level::biome::biome_manager::BiomeManager;
@@ -116,7 +123,7 @@ use crate::net::minecraft::world::level::color_resolver::ColorResolver;
 use crate::net::minecraft::world::level::dimension::dimension_type::DimensionType;
 use crate::net::minecraft::world::level::entity::entity_lookup::EntityLookup;
 use crate::net::minecraft::world::level::entity::entity_tick_list::EntityTickList;
-use crate::net::minecraft::world::level::level::Level;
+use crate::net::minecraft::world::level::level::{Level, SharedLevelState};
 use crate::net::minecraft::world::level::level_height_accessor::{Height, LevelHeightAccessor};
 use crate::net::minecraft::world::level::levelgen::heightmap::Types;
 use crate::net::minecraft::world::level::levelgen::legacy_random_source::LegacyRandomSource;
@@ -124,6 +131,7 @@ use crate::net::minecraft::world::level::levelgen::random_support::RandomSupport
 use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
 use crate::net::minecraft::world::level::lighting::light_event_listener::LightEventListener;
 use crate::net::minecraft::world::level::material::fluid_state::FluidState;
+use crate::net::minecraft::world::level::material::push_reaction::PushReaction;
 use crate::net::minecraft::world::level::storage::level_data::RespawnData;
 use crate::net::minecraft::world::phys::aabb::AABB;
 use crate::net::minecraft::world::phys::shapes::voxel_shape::VoxelShape;
@@ -144,7 +152,6 @@ pub struct ClientLevel {
     hardcore: bool,
     is_flat: bool,
     world_border: WorldBorder,
-    game_time: i64,
     /// `Level`'s `oRainLevel`, `rainLevel`, `oThunderLevel` and `thunderLevel`.
     o_rain_level: f32,
     rain_level: f32,
@@ -167,6 +174,82 @@ pub struct ClientLevel {
     ticking_entities: EntityTickList,
     /// `Minecraft.levelExtractor`, which the level's changes mark sections dirty in.
     level_extractor: Rc<LevelExtractor>,
+    /// `Level.blockEntityTickers` and the pending ones, which the chunks add to, and
+    /// `levelData`'s game time, which they read.
+    block_entity_tickers: Rc<SharedLevelState>,
+}
+
+/// The player as a block entity's ticker finds it among the level's entities (Java's
+/// `getEntities`, `players()`): what it reads of it, and its `move`, which a shulker box's lid
+/// pushes it with.
+pub trait LevelPlayer {
+    fn get_bounding_box(&self) -> AABB;
+
+    fn position(&self) -> Vec3;
+
+    /// `isSpectator()`, which `EntitySelector.NO_SPECTATORS` leaves out.
+    fn is_spectating(&self) -> bool;
+
+    /// `isAlive()`.
+    fn is_alive(&self) -> bool;
+
+    /// `getPistonPushReaction()`: an entity's, `PUSH_PULL`.
+    fn get_piston_push_reaction(&self) -> PushReaction {
+        PushReaction::PUSH_PULL
+    }
+
+    /// `move(MoverType, Vec3)`.
+    fn r#move(&mut self, level: &ClientLevel, mover_type: MoverType, delta: Vec3);
+}
+
+/// The level as a block event or a block entity's ticker reaches it, Java's `Level` argument: the
+/// level, which they change, what their particles and sounds reach of the game, and the player,
+/// which their blocks push.
+pub struct LevelTicking<'a> {
+    pub level: &'a mut ClientLevel,
+    pub effects: &'a LevelEffects<'a>,
+    pub player: Option<&'a mut dyn LevelPlayer>,
+}
+
+impl LevelTicking<'_> {
+    /// The level with its particles and sounds, as `addParticle` and `playLocalSound` read it.
+    pub fn effects_level(&self) -> LevelWithEffects<'_> {
+        LevelWithEffects::new(self.level, self.effects)
+    }
+
+    /// The block entity there, borrowed to change: one a ticker or a block event is sure of.
+    pub fn block_entity(&self, pos: &BlockPos) -> RefMut<'_, BlockEntity> {
+        self.level
+            .get_block_entity_mut(pos)
+            .unwrap_or_else(|| panic!("a block entity at {pos}"))
+    }
+
+    pub fn player_bounding_box(&self) -> Option<AABB> {
+        self.player.as_deref().map(LevelPlayer::get_bounding_box)
+    }
+
+    /// `hasNearbyAlivePlayer`: whether a player that's alive and no spectator is nearer than the
+    /// range (any distance for a negative one).
+    pub fn has_nearby_alive_player(&self, x: f64, y: f64, z: f64, range: f64) -> bool {
+        self.player.as_deref().is_some_and(|player| {
+            !player.is_spectating()
+                && player.is_alive()
+                && (range < 0.0 || player.position().distance_to_sqr_xyz(x, y, z) < range * range)
+        })
+    }
+
+    /// `getNearestPlayer(x, y, z, maxDist, false)`: the position of the nearest player that's no
+    /// spectator nearer than the distance (any for a negative one).
+    pub fn get_nearest_player(&self, x: f64, y: f64, z: f64, max_dist: f64) -> Option<Vec3> {
+        self.player
+            .as_deref()
+            .filter(|player| {
+                !player.is_spectating()
+                    && (max_dist < 0.0
+                        || player.position().distance_to_sqr_xyz(x, y, z) < max_dist * max_dist)
+            })
+            .map(LevelPlayer::position)
+    }
 }
 
 /// A light update queued for the level, Java's `Runnable`.
@@ -275,6 +358,25 @@ impl<'a> LevelWithEffects<'a> {
         zd: f64,
     ) {
         self.do_add_particle(&particle.into(), false, true, x, y, z, xd, yd, zd);
+    }
+
+    /// `addAlwaysVisibleParticle(ParticleOptions, boolean, double…)`: shown however far if its
+    /// type overrides the limiter or `override_limiter` does.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_always_visible_particle_limited(
+        &self,
+        particle: impl Into<ParticleOptions>,
+        override_limiter: bool,
+        x: f64,
+        y: f64,
+        z: f64,
+        xd: f64,
+        yd: f64,
+        zd: f64,
+    ) {
+        let particle = particle.into();
+        let override_limiter = particle.get_type().get_override_limiter() || override_limiter;
+        self.do_add_particle(&particle, override_limiter, true, x, y, z, xd, yd, zd);
     }
 
     /// `doAddParticle`: to the particle engine, unless it's more than 32 blocks from the camera or
@@ -466,6 +568,7 @@ impl ClientLevel {
         let biomes = registry_access.lookup_or_throw(Registries::BIOME).clone();
         let has_sky_light = dimension_type_value.has_sky_light();
         let level_extractor = Rc::new(LevelExtractor::new());
+        let block_entity_tickers = Rc::new(SharedLevelState::new());
         ClientLevel {
             dimension,
             dimension_type,
@@ -478,6 +581,7 @@ impl ClientLevel {
                 server_chunk_radius,
                 Rc::clone(&level_extractor),
                 std::sync::Arc::new(registry_access.clone()),
+                Rc::clone(&block_entity_tickers),
             ),
             server_chunk_radius,
             server_simulation_distance,
@@ -487,7 +591,6 @@ impl ClientLevel {
             hardcore,
             is_flat,
             world_border: WorldBorder::new(),
-            game_time: 0,
             o_rain_level: 0.0,
             rain_level: 0.0,
             o_thunder_level: 0.0,
@@ -514,6 +617,7 @@ impl ClientLevel {
             entity_storage: EntityLookup::new(),
             ticking_entities: EntityTickList::new(),
             level_extractor,
+            block_entity_tickers,
         }
     }
 
@@ -561,8 +665,8 @@ impl ClientLevel {
 
     /// `tickTime()`: a game tick more, which the clocks follow.
     pub(crate) fn tick_time(&mut self, clock_manager: &mut ClientClockManager) {
-        let game_time = self.game_time.wrapping_add(1);
-        self.game_time = game_time;
+        let game_time = self.get_game_time().wrapping_add(1);
+        self.block_entity_tickers.game_time.set(game_time);
         clock_manager.tick(game_time);
     }
 
@@ -908,6 +1012,50 @@ impl ClientLevel {
 
     /// `tickEntities()` for the entities besides the player, in the tick list's order:
     /// `tickNonPassenger`'s `commonTick`; their classes' `tick` isn't ported.
+    /// `Level.tickBlockEntities()`: the pending tickers added to the end, then each ticker in
+    /// order, a removed one dropped from the list. Those added while they tick wait for the next
+    /// tick. Java's `tickRateManager().runsNormally()` and `shouldTickBlocksAt` are always true
+    /// here: the tick rate isn't ported, and a client ticks blocks everywhere.
+    pub fn tick_block_entities(
+        &mut self,
+        effects: &LevelEffects<'_>,
+        player: Option<&mut dyn LevelPlayer>,
+    ) {
+        let tickers = Rc::clone(&self.block_entity_tickers);
+        tickers.ticking_block_entities.set(true);
+        let mut block_entity_tickers =
+            std::mem::take(&mut *tickers.block_entity_tickers.borrow_mut());
+        block_entity_tickers.append(&mut tickers.pending_block_entity_tickers.borrow_mut());
+
+        let mut level = LevelTicking {
+            level: self,
+            effects,
+            player: player.map(|player| player as &mut dyn LevelPlayer),
+        };
+        block_entity_tickers.retain(|ticker| {
+            if ticker.is_removed(level.level) {
+                return false;
+            }
+            ticker.tick(&mut level);
+            true
+        });
+
+        *tickers.block_entity_tickers.borrow_mut() = block_entity_tickers;
+        tickers.ticking_block_entities.set(false);
+    }
+
+    /// The tickers the level ticks, in order: `blockEntityTickers`.
+    pub fn block_entity_tickers(&self) -> &SharedLevelState {
+        &self.block_entity_tickers
+    }
+
+    /// `Level.blockEvent(pos, block, b0, b1)`: the state there's `triggerEvent` (the block the
+    /// server named isn't read).
+    pub fn block_event(level: &mut LevelTicking<'_>, pos: &BlockPos, b0: i32, b1: i32) {
+        let state = level.level.get_block_state(pos);
+        state.trigger_event(level, pos, b0, b1);
+    }
+
     pub fn tick_entities(&mut self) {
         for id in self.ticking_entities.for_each() {
             if let Some(entity) = self.entity_storage.get_entity_mut(id) {
@@ -1089,11 +1237,11 @@ impl ClientLevel {
 
     /// `getLevelData().getGameTime()`.
     pub fn get_game_time(&self) -> i64 {
-        self.game_time
+        self.block_entity_tickers.get_game_time()
     }
 
     pub fn set_time_from_server(&mut self, game_time: i64) {
-        self.game_time = game_time;
+        self.block_entity_tickers.game_time.set(game_time);
     }
 
     pub fn get_respawn_data(&self) -> &RespawnData {
@@ -1142,13 +1290,51 @@ impl ClientLevel {
 
     /// The block entity there if the chunk has one, without making it (`CHECK`), which what
     /// only reads the level (the shapes, the renderer) asks.
-    pub fn get_existing_block_entity(&self, pos: &BlockPos) -> Option<&BlockEntity> {
+    pub fn get_existing_block_entity(&self, pos: &BlockPos) -> Option<Ref<'_, BlockEntity>> {
         self.chunk_source
             .get_chunk(
                 SectionPos::block_to_section_coord(pos.get_x()),
                 SectionPos::block_to_section_coord(pos.get_z()),
             )?
             .get_block_entity(pos)
+    }
+
+    /// The block entity there to change, without making it: what a ticker changes while it
+    /// reads the level.
+    pub fn get_block_entity_mut(&self, pos: &BlockPos) -> Option<RefMut<'_, BlockEntity>> {
+        self.chunk_source
+            .get_chunk(
+                SectionPos::block_to_section_coord(pos.get_x()),
+                SectionPos::block_to_section_coord(pos.get_z()),
+            )?
+            .get_block_entity_mut(pos)
+    }
+
+    /// `Level.removeBlockEntity(pos)`.
+    pub fn remove_block_entity(&mut self, pos: &BlockPos) {
+        if !self.is_in_valid_bounds(pos) {
+            return;
+        }
+        if let Some(chunk) = self.chunk_source.get_chunk_mut(
+            SectionPos::block_to_section_coord(pos.get_x()),
+            SectionPos::block_to_section_coord(pos.get_z()),
+        ) {
+            chunk.remove_block_entity(pos);
+        }
+    }
+
+    /// `Level.setBlockEntity(blockEntity)`: its chunk's (`addAndRegisterBlockEntity`).
+    pub fn set_block_entity(&mut self, block_entity: BlockEntity) {
+        let pos = block_entity.get_block_pos();
+        if !self.is_in_valid_bounds(&pos) {
+            return;
+        }
+        if let Some(chunk) = self.chunk_source.get_chunk_mut(
+            SectionPos::block_to_section_coord(pos.get_x()),
+            SectionPos::block_to_section_coord(pos.get_z()),
+        ) {
+            chunk.add_and_register_block_entity(block_entity);
+        }
     }
 
     /// `Level.isInValidBounds`: in the build height, and in a chunk that's valid.
@@ -1272,6 +1458,10 @@ impl LevelHeightAccessor for ClientLevel {
 /// `Level.getBlockState` and `getFluidState`: void air (and no fluid) out of the level's bounds
 /// and in a chunk it doesn't have (Java's `EmptyLevelChunk`), the chunk's otherwise.
 impl BlockGetter for ClientLevel {
+    fn get_block_entity(&self, pos: &BlockPos) -> Option<Ref<'_, BlockEntity>> {
+        self.get_existing_block_entity(pos)
+    }
+
     #[inline]
     fn get_block_state(&self, pos: &BlockPos) -> BlockState {
         if !self.is_in_valid_bounds(pos) {
@@ -1706,7 +1896,7 @@ mod tests {
             let clock_time = i64::decode(&args[7]);
             *level.random.borrow_mut() = LegacyRandomSource::new(level_seed);
             level.sky_darken = i32::decode(&args[5]);
-            level.game_time = i64::decode(&args[6]);
+            level.set_time_from_server(i64::decode(&args[6]));
             level.set_rain_level(f32::decode(&args[8]));
             level.set_thunder_level(f32::decode(&args[9]));
             // AttributeSuites.Clock: every clock at the program's time.

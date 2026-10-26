@@ -4,28 +4,45 @@
 //! and what its class loads (`loadAdditional`). Java's subclasses are a class each; the client
 //! tells them apart with `instanceof` (the shapes, the renderers), so here a block entity is one
 //! struct whose `data` is an enum of the classes ported (`BlockEntityData`), the others holding
-//! nothing more. `loadWithComponents` is `loadAdditional` by class; the components
+//! nothing more. `loadWithComponents` is `loadAdditional` by class, and `triggerEvent` the class's
+//! block event. Java tells block entities apart by reference (a ticker holds its own); here each
+//! has an identity, a number no other block entity the game makes has. The components
 //! (`DataComponentMap.CODEC`, item data the client shows in tooltips and on items picked from the
 //! block) aren't ported, nor are saving (`saveWithFullMetadata`…, the server's), `setChanged`, the
 //! level back-reference (`setLevel`, `hasLevel`: the chunk that holds a block entity is its
-//! level's), `preRemoveSideEffects`, `getUpdatePacket`, `triggerEvent` and the crash report
-//! details.
+//! level's), `preRemoveSideEffects`, `getUpdatePacket` and the crash report details.
+
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::fmt;
 
+use crate::net::minecraft::client::multiplayer::client_level::LevelTicking;
 use crate::net::minecraft::core::block_pos::BlockPos;
 use crate::net::minecraft::world::level::block::entity::banner_block_entity::BannerBlockEntity;
+use crate::net::minecraft::world::level::block::entity::beacon_block_entity::BeaconBlockEntity;
+use crate::net::minecraft::world::level::block::entity::bell_block_entity::BellBlockEntity;
 use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
 use crate::net::minecraft::world::level::block::entity::brushable_block_entity::BrushableBlockEntity;
 use crate::net::minecraft::world::level::block::entity::campfire_block_entity::CampfireBlockEntity;
+use crate::net::minecraft::world::level::block::entity::chest_block_entity::ChestBlockEntity;
+use crate::net::minecraft::world::level::block::entity::conduit_block_entity::ConduitBlockEntity;
+use crate::net::minecraft::world::level::block::entity::decorated_pot_block_entity::DecoratedPotBlockEntity;
+use crate::net::minecraft::world::level::block::entity::enchanting_table_block_entity::EnchantingTableBlockEntity;
+use crate::net::minecraft::world::level::block::entity::ender_chest_block_entity::EnderChestBlockEntity;
+use crate::net::minecraft::world::level::block::entity::potent_sulfur_block_entity::PotentSulfurBlockEntity;
 use crate::net::minecraft::world::level::block::entity::shulker_box_block_entity::ShulkerBoxBlockEntity;
 use crate::net::minecraft::world::level::block::entity::sign_block_entity::SignBlockEntity;
 use crate::net::minecraft::world::level::block::entity::skull_block_entity::SkullBlockEntity;
 use crate::net::minecraft::world::level::block::entity::spawner_block_entity::SpawnerBlockEntity;
+use crate::net::minecraft::world::level::block::entity::the_end_gateway_block_entity::TheEndGatewayBlockEntity;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
 use crate::net::minecraft::world::level::storage::tag_value_input::TagValueInput;
 
+/// The identities handed out so far.
+static IDENTITIES: AtomicU64 = AtomicU64::new(0);
+
 pub struct BlockEntity {
+    identity: u64,
     r#type: BlockEntityType,
     world_position: BlockPos,
     remove: bool,
@@ -46,6 +63,16 @@ pub enum BlockEntityData {
     Campfire(CampfireBlockEntity),
     Brushable(BrushableBlockEntity),
     ShulkerBox(ShulkerBoxBlockEntity),
+    /// The chest's, the copper chests' and the trapped chest's.
+    Chest(ChestBlockEntity),
+    EnderChest(EnderChestBlockEntity),
+    Bell(BellBlockEntity),
+    EndGateway(TheEndGatewayBlockEntity),
+    DecoratedPot(DecoratedPotBlockEntity),
+    Conduit(ConduitBlockEntity),
+    Beacon(BeaconBlockEntity),
+    EnchantingTable(EnchantingTableBlockEntity),
+    PotentSulfur(PotentSulfurBlockEntity),
 }
 
 impl BlockEntity {
@@ -58,6 +85,7 @@ impl BlockEntity {
         block_state: BlockState,
     ) -> BlockEntity {
         let entity = BlockEntity {
+            identity: IDENTITIES.fetch_add(1, Ordering::Relaxed),
             r#type,
             world_position,
             remove: false,
@@ -82,10 +110,57 @@ impl BlockEntity {
         self.r#type.is_valid(block_state)
     }
 
+    /// `setLevel(level)`: what a class works out of its level when its chunk takes it (a beacon
+    /// starts its beam's check from the bottom, a potent sulfur takes the time as its last
+    /// eruption's), the level as far as a class reads it: its lowest block's height and its game
+    /// time. The moving piston's checks its block is in the level's registry, which every block
+    /// is.
+    pub fn set_level(&mut self, min_y: i32, game_time: i64) {
+        match &mut self.data {
+            BlockEntityData::Beacon(beacon) => beacon.set_level(min_y),
+            BlockEntityData::PotentSulfur(sulfur) if sulfur.eruption_tick == -1 => {
+                sulfur.eruption_tick = game_time;
+            }
+            _ => {}
+        }
+    }
+
+    /// Which block entity it is: Java's reference to it.
+    pub fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    /// `triggerEvent(b0, b1)`: what a block event does to it, by class, whether it was handled
+    /// (`BlockEntity`'s handles nothing).
+    pub fn trigger_event(&mut self, level: &LevelTicking<'_>, b0: i32, b1: i32) -> bool {
+        let pos = self.world_position;
+        match &mut self.data {
+            BlockEntityData::Chest(chest) => chest.trigger_event(b0, b1),
+            BlockEntityData::EnderChest(ender_chest) => ender_chest.trigger_event(b0, b1),
+            BlockEntityData::ShulkerBox(shulker_box) => shulker_box.trigger_event(b0, b1),
+            BlockEntityData::Bell(bell) => bell.trigger_event(level, &pos, b0, b1),
+            BlockEntityData::EndGateway(end_gateway) => end_gateway.trigger_event(b0, b1),
+            BlockEntityData::DecoratedPot(decorated_pot) => {
+                decorated_pot.trigger_event(level.level, b0, b1)
+            }
+            BlockEntityData::Spawner(spawner) => spawner.trigger_event(b0, b1),
+            _ => false,
+        }
+    }
+
     /// `loadWithComponents`: `loadAdditional`, the class's own fields.
     pub fn load_with_components(&mut self, input: &TagValueInput<'_>) {
         match &mut self.data {
-            BlockEntityData::None => {}
+            BlockEntityData::None
+            | BlockEntityData::Chest(_)
+            | BlockEntityData::EnderChest(_)
+            | BlockEntityData::Bell(_)
+            | BlockEntityData::DecoratedPot(_)
+            | BlockEntityData::Conduit(_)
+            | BlockEntityData::Beacon(_)
+            | BlockEntityData::EnchantingTable(_)
+            | BlockEntityData::PotentSulfur(_) => {}
+            BlockEntityData::EndGateway(end_gateway) => end_gateway.load_additional(input),
             BlockEntityData::Sign(sign) => sign.load_additional(input),
             BlockEntityData::Banner(banner) => banner.load_additional(input),
             BlockEntityData::Skull(skull) => skull.load_additional(input),
@@ -243,6 +318,8 @@ mod tests {
                 format!("{:?}", shulker_box.get_animation_status()),
                 format!("{:08x}", shulker_box.get_progress(1.0).to_bits())
             ]),
+            // The classes the suite writes no fields of.
+            _ => Value::Null,
         };
         json!([
             entity.get_type().key(),

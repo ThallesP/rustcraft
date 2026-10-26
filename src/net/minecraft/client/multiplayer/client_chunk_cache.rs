@@ -7,8 +7,12 @@
 //! `get_chunk` answers `None`, and the level answers void air) and the sets of sections and chunks added and removed since the renderer last looked
 //! (`addedEmptySections` and the rest, `flipUpdateTrackingSets`), which come with the renderer's
 //! section compiler. A chunk dropped or replaced unloads in Java's level (`ClientLevel.unload`),
-//! which turns its light off; its entities aren't ported. The level's registries, which a chunk
-//! loads its block entities with (Java's `level.registryAccess()`), are the cache's.
+//! which turns its light off and drops its block entities, whose tickers the level drops at its
+//! next tick (a block entity's ticker finds it no longer the level's); its entities aren't ported.
+//! A chunk a smaller view radius leaves out goes the same way, where Java forgets it without
+//! unloading it and its block entities tick on. The level's registries, which a chunk loads its
+//! block entities with (Java's `level.registryAccess()`), are the cache's, and so are its block
+//! entity tickers, which a new chunk adds to.
 
 use std::sync::Arc;
 
@@ -25,6 +29,7 @@ use crate::net::minecraft::world::level::chunk::light_chunk::LightChunk;
 use crate::net::minecraft::world::level::chunk::light_chunk_getter::LightChunkGetter;
 use crate::net::minecraft::world::level::chunk::paletted_container_factory::PalettedContainerFactory;
 use crate::net::minecraft::world::level::chunk_pos::ChunkPos;
+use crate::net::minecraft::world::level::level::SharedLevelState;
 use crate::net::minecraft::world::level::level_height_accessor::Height;
 use crate::net::minecraft::world::level::light_layer::LightLayer;
 use crate::net::minecraft::world::level::lighting::level_light_engine::LevelLightEngine;
@@ -37,6 +42,7 @@ pub struct ClientChunkCache {
     level_height: Height,
     container_factory: PalettedContainerFactory,
     registries: Arc<RegistryAccess>,
+    block_entity_tickers: Rc<SharedLevelState>,
 }
 
 impl ClientChunkCache {
@@ -49,6 +55,7 @@ impl ClientChunkCache {
         server_chunk_radius: i32,
         level_extractor: Rc<LevelExtractor>,
         registries: Arc<RegistryAccess>,
+        block_entity_tickers: Rc<SharedLevelState>,
     ) -> ClientChunkCache {
         ClientChunkCache {
             light_engine: LevelLightEngine::new(level_height, true, has_sky_light),
@@ -59,6 +66,7 @@ impl ClientChunkCache {
             level_height,
             container_factory,
             registries,
+            block_entity_tickers,
         }
     }
 
@@ -156,6 +164,7 @@ impl ClientChunkCache {
                 self.level_height,
                 &self.container_factory,
                 ChunkPos::new(chunk_x, chunk_z),
+                Rc::clone(&self.block_entity_tickers),
             );
             chunk.replace_with_packet_data(chunk_x, chunk_z, chunk_data, &self.registries);
             if let Some(removed_chunk) = self.storage.replace(index, Some(chunk)) {

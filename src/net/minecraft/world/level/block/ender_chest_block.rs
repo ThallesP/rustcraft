@@ -12,10 +12,15 @@ use crate::net::minecraft::core::direction::Direction;
 use crate::net::minecraft::core::particles::particle_types::ParticleTypes;
 use crate::net::minecraft::util::random_source::RandomSource;
 use crate::net::minecraft::world::level::block::abstract_chest_block::{self, AbstractChestBlock};
+use crate::net::minecraft::world::level::block::base_entity_block;
 use crate::net::minecraft::world::level::block::block::Block;
 use crate::net::minecraft::world::level::block::block::{
     BlockClass, BlockData, CreateBlockStateDefinition,
 };
+use crate::net::minecraft::world::level::block::entity::block_entity_ticker::BlockEntityTicker;
+use crate::net::minecraft::world::level::block::entity::block_entity_type::BlockEntityType;
+use crate::net::minecraft::world::level::block::entity::block_entity_types::BlockEntityTypes;
+use crate::net::minecraft::world::level::block::entity::ender_chest_block_entity::EnderChestBlockEntity;
 use crate::net::minecraft::world::level::block::horizontal_directional_block::HorizontalDirectionalBlock;
 use crate::net::minecraft::world::level::block::state::block_behaviour::Properties;
 use crate::net::minecraft::world::level::block::state::block_state::BlockState;
@@ -34,6 +39,7 @@ use std::sync::LazyLock;
 pub struct EnderChestBlock;
 
 pub static CLASS: BlockClass = BlockClass {
+    get_ticker: Some(EnderChestBlock::get_ticker),
     animate_tick: Some(EnderChestBlock::animate_tick),
     get_shape: Some(EnderChestBlock::get_shape),
     get_fluid_state: Some(EnderChestBlock::get_fluid_state),
@@ -121,5 +127,20 @@ impl EnderChestBlock {
             let za = f64::from(random.next_float() * flip_z as f32);
             level.add_particle(ParticleTypes::PORTAL, x, y, z, xa, ya, za);
         }
+    }
+}
+
+impl EnderChestBlock {
+    /// `getTicker`: on the client, the lid's (`lidAnimateTick`).
+    fn get_ticker(
+        _block: &BlockData,
+        _state: BlockState,
+        r#type: BlockEntityType,
+    ) -> Option<BlockEntityTicker> {
+        base_entity_block::create_ticker_helper(
+            r#type,
+            BlockEntityTypes::ENDER_CHEST,
+            EnderChestBlockEntity::lid_animate_tick,
+        )
     }
 }

@@ -74,6 +74,17 @@ impl NoteBlockInstrument {
     pub fn values() -> [NoteBlockInstrument; 27] {
         NoteBlockInstrument::VALUES
     }
+
+    /// `isTunable()`: a base block's instrument (`Type.BASE_BLOCK`), every one before the mobs'
+    /// heads.
+    pub fn is_tunable(&self) -> bool {
+        (*self as usize) <= NoteBlockInstrument::TRUMPET_WEATHERED as usize
+    }
+
+    /// `hasCustomSound()`: a player's head's (`Type.CUSTOM`), whose sound the head names.
+    pub fn has_custom_sound(&self) -> bool {
+        *self == NoteBlockInstrument::CUSTOM_HEAD
+    }
 }
 
 impl Enum for NoteBlockInstrument {

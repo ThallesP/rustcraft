@@ -60,6 +60,7 @@ use crate::net::minecraft::network::protocol::configuration::configuration_proto
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_entity_data_packet::ClientboundBlockEntityDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_block_event_packet::ClientboundBlockEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_change_difficulty_packet::ClientboundChangeDifficultyPacket;
@@ -1089,6 +1090,28 @@ impl ClientGamePacketListener for ClientPacketListener {
         }
     }
 
+    /// `level.blockEvent(pos, block, b0, b1)`: the block there's event.
+    fn handle_block_event(&mut self, packet: &ClientboundBlockEventPacket) {
+        let minecraft = Rc::clone(&self.common.minecraft);
+        if PacketUtils::ensure_running_on_same_thread(
+            packet,
+            &self.this,
+            minecraft.packet_processor(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        minecraft.with_level_ticking(|mut level| {
+            ClientLevel::block_event(
+                &mut level,
+                &packet.get_pos(),
+                packet.get_b0(),
+                packet.get_b1(),
+            );
+        });
+    }
+
     /// Each change, in order. A state the registry doesn't have is null in Java, where setting
     /// it throws; it's skipped here.
     fn handle_chunk_blocks_update(&mut self, packet: &ClientboundSectionBlocksUpdatePacket) {
@@ -1975,6 +1998,10 @@ impl ClientGamePacketListener for NettyHalf {
     }
 
     fn handle_block_entity_data(&mut self, packet: &ClientboundBlockEntityDataPacket) {
+        self.common.on_game_thread(&self.this, packet);
+    }
+
+    fn handle_block_event(&mut self, packet: &ClientboundBlockEventPacket) {
         self.common.on_game_thread(&self.this, packet);
     }
 

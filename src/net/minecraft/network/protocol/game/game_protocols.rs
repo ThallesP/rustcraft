@@ -34,6 +34,7 @@ use crate::net::minecraft::network::protocol::cookie::serverbound_cookie_respons
 use crate::net::minecraft::network::protocol::game::client_game_packet_listener::ClientGamePacketListener;
 use crate::net::minecraft::network::protocol::game::clientbound_add_entity_packet::ClientboundAddEntityPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_entity_data_packet::ClientboundBlockEntityDataPacket;
+use crate::net::minecraft::network::protocol::game::clientbound_block_event_packet::ClientboundBlockEventPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_block_update_packet::ClientboundBlockUpdatePacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_delimiter_packet::ClientboundBundleDelimiterPacket;
 use crate::net::minecraft::network::protocol::game::clientbound_bundle_packet::ClientboundBundlePacket;
@@ -425,7 +426,7 @@ static CLIENTBOUND_TEMPLATE: StaticSimpleUnboundProtocol<
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_BLOCK_EVENT,
-                Unported::codec(GamePacketTypes::CLIENTBOUND_BLOCK_EVENT),
+                ClientboundBlockEventPacket::STREAM_CODEC,
             )
             .add_packet(
                 GamePacketTypes::CLIENTBOUND_BLOCK_UPDATE,
