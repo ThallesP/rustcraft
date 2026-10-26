@@ -273,10 +273,16 @@ def wait_for_log(log_path, needle, since, process=None, timeout=600):
 
 
 def forget_player(server_run_dir):
-    """Deletes the player's saved data, so the next run joins at the world's spawn like the first."""
+    """Deletes the player's saved data, so the next run joins at the world's spawn like the first. The server logs the
+    player leaving before it saves them (`removePlayerFromWorld` broadcasts it, then `PlayerList.remove` saves), through
+    a file it renames, so this deletes what's there until nothing more has come for a second."""
     uuid = str(vanilla_server.offline_uuid(vanilla_server.OP_NAME))
-    for path in server_run_dir.rglob(f"{uuid}.dat*"):
-        path.unlink()
+    quiet_since = time.monotonic()
+    while time.monotonic() - quiet_since < 1.0:
+        for path in server_run_dir.rglob(f"{uuid}.dat*"):
+            path.unlink(missing_ok=True)
+            quiet_since = time.monotonic()
+        time.sleep(0.1)
 
 
 def stop_client(process):
