@@ -330,3 +330,7 @@ Please send back:
 - `cargo run --release -- --device-info`'s output: the driver, the extensions and the flags the renderer took from them;
 - `rustcraft.log`, the client's output from the run above;
 - a screenshot of the window (Cmd+Shift+4, then space, then click the window), and how it felt: the frame rate, the mouse, anything that looked wrong.
+
+## Community
+
+Questions, ideas or just want to talk? Come say hi on [Discord](https://discord.gg/pF5wfWZMSH).
